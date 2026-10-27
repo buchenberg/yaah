@@ -640,7 +640,7 @@ func TestAnthropicClient_ReplayFallbackConditions(t *testing.T) {
 		{"thinking unsupported 400", "", unsigned, &APIError{StatusCode: 400, Message: "thinking is not supported for this model"}, false},
 		{"designed-for-thinking 400", "", unsigned, &APIError{StatusCode: 400, Message: "this model is not designed for thinking"}, false},
 		{"unsigned-thinking 400", "", unsigned, &APIError{StatusCode: 400, Message: "unsigned thinking is disabled"}, false},
-		{"signature without thinking", "", unsigned, &APIError{StatusCode: 400, Message: "signature verification failed"}, false},
+		{"signature-only 400", "", unsigned, &APIError{StatusCode: 400, Message: "invalid signature"}, true},
 		{"unrelated 400", "", unsigned, &APIError{StatusCode: 400, Message: "bad request"}, false},
 		{"non-400 status", "", unsigned, &APIError{StatusCode: 500, Message: "thinking broke"}, false},
 		{"no unsigned thinking", "", signed, &APIError{StatusCode: 400, Message: "thinking blocks must be signed"}, false},

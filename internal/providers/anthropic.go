@@ -168,16 +168,21 @@ func (c *AnthropicClient) acceptReplayFallback() {
 }
 
 // looksLikeThinkingReplayRejection restricts the fallback to 400s about
-// replayed thinking. "thinking" must be present, so budget and
-// tool_choice errors cannot drop the reasoning; "signed" is matched as a
-// standalone word so "unsigned"/"designed"/"assigned" do not.
+// replayed thinking. A signature complaint is accepted on its own: the
+// caller only consults this when the request actually carried unsigned
+// thinking, and auth-signature failures arrive as 401s. Otherwise
+// "thinking" must be present with block/replay wording (or a standalone
+// "signed"), so budget and tool_choice errors cannot drop the reasoning
+// and "unsigned"/"designed"/"assigned" do not match.
 func looksLikeThinkingReplayRejection(message string) bool {
 	msg := strings.ToLower(message)
+	if strings.Contains(msg, "signature") {
+		return true
+	}
 	if !strings.Contains(msg, "thinking") {
 		return false
 	}
-	if strings.Contains(msg, "signature") || strings.Contains(msg, "block") ||
-		strings.Contains(msg, "replay") || strings.Contains(msg, "passed back") {
+	if strings.Contains(msg, "block") || strings.Contains(msg, "replay") || strings.Contains(msg, "passed back") {
 		return true
 	}
 	for _, field := range strings.FieldsFunc(msg, func(r rune) bool { return !unicode.IsLetter(r) }) {
