@@ -130,3 +130,66 @@ func TestGoMod_UpgradeTidyFailureFlipsSuccess(t *testing.T) {
 		t.Errorf("stderr = %q, want the tidy failure and its cause", got.Stderr)
 	}
 }
+
+// TestGoMod_DryRunAddResolvesVersions pins yaah-k9x: dry_run used to print a
+// canned "would run" string; it must query the module state read-only instead.
+func TestGoMod_DryRunAddResolvesVersions(t *testing.T) {
+	got, err := runGoMod(t, `{"action":"add","module":"example.com/x","dry_run":true}`, func(req ExecRequest) (ExecResult, error) {
+		if !hasArgs(req, "list", "-m", "-versions", "example.com/x") {
+			t.Errorf("dry_run add must query versions via go list, got %v", req.Args)
+		}
+		return ExecResult{Stdout: "example.com/x v1.0.0 v1.1.0"}, nil
+	})
+	if err != nil {
+		t.Fatalf("dry_run add: %v", err)
+	}
+	if !got.Success {
+		t.Error("a successful preview must be success:true")
+	}
+	if !strings.Contains(got.Output, "v1.1.0") {
+		t.Errorf("preview lost the resolved versions: %q", got.Output)
+	}
+	if !strings.Contains(got.Output, "would run: go get -- example.com/x@latest") {
+		t.Errorf("preview lost the command it stands in for: %q", got.Output)
+	}
+}
+
+// TestGoMod_DryRunRemoveReportsCurrentRequirement: the remove preview says
+// what is required now, or that nothing is, instead of a canned string.
+func TestGoMod_DryRunRemoveReportsCurrentRequirement(t *testing.T) {
+	got, err := runGoMod(t, `{"action":"remove","module":"example.com/x","dry_run":true}`, func(req ExecRequest) (ExecResult, error) {
+		if !hasArgs(req, "list", "-m", "example.com/x") {
+			t.Errorf("dry_run remove must query the build list, got %v", req.Args)
+		}
+		return ExecResult{Stdout: "example.com/x v1.1.0"}, nil
+	})
+	if err != nil {
+		t.Fatalf("dry_run remove: %v", err)
+	}
+	if !got.Success {
+		t.Error("a successful preview must be success:true")
+	}
+	if !strings.Contains(got.Output, "currently required: example.com/x v1.1.0") {
+		t.Errorf("preview lost the current requirement: %q", got.Output)
+	}
+}
+
+// TestGoMod_DryRunUpgradeListsCurrentVersions: upgrade cannot predict MVS
+// results, so the preview shows the current state and says the run decides.
+func TestGoMod_DryRunUpgradeListsCurrentVersions(t *testing.T) {
+	got, err := runGoMod(t, `{"action":"upgrade","dry_run":true}`, func(req ExecRequest) (ExecResult, error) {
+		if !hasArgs(req, "list", "-m", "all") {
+			t.Errorf("dry_run upgrade must list current modules, got %v", req.Args)
+		}
+		return ExecResult{Stdout: "go 1.26\nexample.com/x v1.1.0"}, nil
+	})
+	if err != nil {
+		t.Fatalf("dry_run upgrade: %v", err)
+	}
+	if !got.Success {
+		t.Error("a successful preview must be success:true")
+	}
+	if !strings.Contains(got.Output, "current versions:") || !strings.Contains(got.Output, "resolved by the upgrade run") {
+		t.Errorf("preview does not state current versions and the resolution caveat: %q", got.Output)
+	}
+}

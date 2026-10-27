@@ -98,7 +98,7 @@ func (t *GoModTool) Schema() json.RawMessage {
 			},
 			"dry_run": {
 				"type": "boolean",
-				"description": "If true, show what would be done without modifying go.mod (applies to add, remove, upgrade, tidy)"
+				"description": "If true, preview without modifying go.mod (applies to add, remove, upgrade, tidy): add reports available versions, remove reports the current requirement, upgrade lists current versions, tidy prints the diff that would apply. The versions a real run resolves are decided by that run."
 			}
 		},
 		"required": ["action"]
@@ -276,8 +276,17 @@ func (t *GoModTool) runAdd(ctx context.Context, params goModParams, result *goMo
 		return
 	}
 	if params.DryRun {
+		// Preview: resolve what @latest picks read-only instead of
+		// printing a canned string. The go.sum effects of a real run are
+		// not previewed.
+		out, errOut, err := t.runGo(ctx, "list", "-m", "-versions", params.Module)
+		if err != nil {
+			result.Success = false
+			result.Stderr = fmt.Sprintf("go_mod: dry_run could not resolve %s: %v\n%s", params.Module, err, errOut)
+			return
+		}
+		result.Output = fmt.Sprintf("would run: go get -- %s@latest\navailable versions: %s", params.Module, strings.TrimSpace(out))
 		result.Success = true
-		result.Output = fmt.Sprintf("would run: go get %s@latest", params.Module)
 		return
 	}
 	mod := params.Module
@@ -296,8 +305,17 @@ func (t *GoModTool) runRemove(ctx context.Context, params goModParams, result *g
 		return
 	}
 	if params.DryRun {
+		// Preview: report the current requirement read-only instead of a
+		// canned string. `go list -m <mod>` fails locally when the module
+		// is not in the build list, which is itself the useful answer.
+		out, _, err := t.runGo(ctx, "list", "-m", params.Module)
+		if err != nil {
+			result.Output = fmt.Sprintf("would run: go get -- %s@none && go mod tidy\n%s is not currently required", params.Module, params.Module)
+			result.Success = true
+			return
+		}
+		result.Output = fmt.Sprintf("would run: go get -- %s@none && go mod tidy\ncurrently required: %s", params.Module, strings.TrimSpace(out))
 		result.Success = true
-		result.Output = fmt.Sprintf("would run: go get %s@none && go mod tidy", params.Module)
 		return
 	}
 	cmdArgs := append([]string{"get", "--", params.Module + "@none"}, params.Flags...)
@@ -320,11 +338,22 @@ func (t *GoModTool) runRemove(ctx context.Context, params goModParams, result *g
 func (t *GoModTool) runUpgrade(ctx context.Context, params goModParams, result *goModResult) {
 	if params.DryRun {
 		target := "./..."
+		query := []string{"list", "-m", "all"}
 		if params.Module != "" {
 			target = params.Module
+			query = []string{"list", "-m", params.Module}
 		}
+		// Preview: list the current versions read-only. Which versions a
+		// real upgrade resolves is decided by that run's module graph, so
+		// the preview says so instead of inventing a result.
+		out, errOut, err := t.runGo(ctx, query...)
+		if err != nil {
+			result.Success = false
+			result.Stderr = fmt.Sprintf("go_mod: dry_run could not list module state: %v\n%s", err, errOut)
+			return
+		}
+		result.Output = fmt.Sprintf("would run: go get -u %s && go mod tidy\ncurrent versions:\n%s\nresulting versions are resolved by the upgrade run itself", target, strings.TrimSpace(out))
 		result.Success = true
-		result.Output = fmt.Sprintf("would run: go get -u %s && go mod tidy", target)
 		return
 	}
 	var cmdArgs []string

@@ -35,29 +35,17 @@ var docForTool = map[string]string{
 
 // docExemptions lists registered tools that still carry an inline
 // description instead of an embedded doc. Value is the bead tracking
-// the doc's creation.
-var docExemptions = map[string]string{
-	"proposal":   "yaah-t8b",
-	"supervisor": "yaah-t8b",
-}
+// the doc's creation. Empty today: proposal and supervisor gained docs
+// (yaah-t8b).
+var docExemptions = map[string]string{}
 
 // propertyDocGaps lists "tool/property" pairs whose doc does not name
 // the schema property yet. Value is the bead tracking the doc fix;
 // these docs are all scheduled for rewrites by their instance bead, so
 // naming the properties here would state a contract the rewrite is
-// about to change.
-var propertyDocGaps = map[string]string{
-	"bisect/action":   "yaah-nxb",
-	"bisect/ref":      "yaah-nxb",
-	"bisect/good_ref": "yaah-nxb",
-	"bisect/bad_ref":  "yaah-nxb",
-	"bisect/test_cmd": "yaah-nxb",
-	"go_mod/action":   "yaah-k9x",
-	"go_mod/flags":    "yaah-k9x",
-	"go_refactor/dir": "yaah-hae",
-	"ls/path":         "yaah-3lm",
-	"webfetch/url":    "yaah-f36h",
-}
+// about to change. Empty today: the gl5m instance rewrites named every
+// property, so new entries only appear when a doc regresses.
+var propertyDocGaps = map[string]string{}
 
 // docName resolves the doc base name for a registered tool.
 func docName(toolName string) string {

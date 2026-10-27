@@ -121,18 +121,12 @@ func (t *EditTool) executeSingleEdit(ctx context.Context, ws Workspace, filePath
 		}
 	}
 
-	// If fuzzy matching was used, verify the mapped-back match actually
-	// exists in the original content the expected number of times.
-	// This prevents silent corruption when fuzzy match maps to wrong location.
+	// Fuzzy matching picks a candidate location by similarity; the mapped-
+	// back string is what would actually be replaced. Refresh count from
+	// it so the generic uniqueness check below sees reality — that check
+	// (and only that check) is the guard against editing the wrong spot.
 	if usedFuzzy {
-		actualCount := strings.Count(content, matched)
-		if actualCount == 0 {
-			return "", fmt.Errorf("edit: fuzzy match found candidate but it does not exist in original file (oldString: %q)", oldStr)
-		}
-		if !replaceAll && actualCount > 1 {
-			return "", fmt.Errorf("edit: fuzzy match produced %d matches in original file; use replaceAll or provide more context (oldString: %q)", actualCount, oldStr)
-		}
-		count = actualCount
+		count = strings.Count(content, matched)
 	}
 
 	if !replaceAll {

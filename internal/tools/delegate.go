@@ -248,8 +248,8 @@ func (t *DelegateTool) classifyRunnerResult(result string, err error, role strin
 // clampTimeoutSeconds caps the model-supplied timeout at the schema's
 // 600s maximum so a runaway or injected value cannot pin a sub-agent
 // open indefinitely. Any positive value below the maximum is honoured
-// as-is (the advertised minimum of 10s is advisory); 0 means "use the
-// role default" and is preserved.
+// as-is; 0 means "use the role default" and is preserved, matching the
+// schema's advertised 0–600 window.
 func clampTimeoutSeconds(v int) int {
 	if v > 600 {
 		return 600
