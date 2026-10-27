@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/types"
@@ -70,6 +71,15 @@ const (
 	intentSimilarityThreshold = 0.30
 )
 
+// delegateStatusWindow bounds the head inspected for a delegate status
+// envelope: the status field is first, and the tool-result cap can truncate
+// the diff that follows.
+const delegateStatusWindow = 512
+
+// delegateStatus matches a head-anchored status envelope, tolerating the
+// truncation that cuts the diff tail.
+var delegateStatus = regexp.MustCompile(`^\s*\{\s*"status"\s*:\s*"([A-Za-z _-]+)"`)
+
 // madeProgress reports whether a successful tool call advanced the plan
 // rather than gathering more information. File mutations reuse
 // mutationSucceeded (which understands dry_run and per-tool read actions);
@@ -120,20 +130,30 @@ func madeProgress(r ToolResult) bool {
 			return true
 		}
 	case "delegate":
-		// A dispatch only counts as progress when it produced work — a
-		// sealed proposal or a report. An error, cancellation, or a
-		// background job id is still a turn spent talking, so it does not
-		// reset the streak.
-		var res struct {
-			Status string `json:"status"`
+		// A dispatch counts as progress when it produced work: a sealed
+		// proposal or a report. Only the HEAD of the result is inspected
+		// — the tool-result cap truncates long proposal envelopes and
+		// `status` is the first field — and report lanes return the
+		// report text itself, with no envelope. Failure-shaped envelopes
+		// (timed out, stuck, cancelled, error) do not reset the streak.
+		head := r.Result
+		if len(head) > delegateStatusWindow {
+			head = head[:delegateStatusWindow]
 		}
-		if json.Unmarshal([]byte(r.Result), &res) != nil {
+		if m := delegateStatus.FindStringSubmatch(head); m != nil {
+			switch m[1] {
+			case "proposal", "report":
+				return true
+			}
 			return false
 		}
-		switch res.Status {
-		case "proposal", "report":
-			return true
+		// A background dispatch returns only a job id; it is a turn spent
+		// talking, not work this loop performed.
+		if strings.Contains(head, `"job_id"`) {
+			return false
 		}
+		// Report and shared lanes return the report text itself.
+		return strings.TrimSpace(head) != ""
 	case "background_process":
 		var p struct {
 			Action string `json:"action"`

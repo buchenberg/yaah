@@ -182,8 +182,11 @@ func TestIntentLoop_ProgressClassification(t *testing.T) {
 		{"plan create", ToolResult{Name: "plan", Args: `{"action":"create"}`, Result: "ok"}, true},
 		{"memory add", ToolResult{Name: "memory_add", Args: `{}`, Result: "ok"}, false},
 		{"delegate proposal", ToolResult{Name: "delegate", Args: `{"role":"developer"}`, Result: `{"status":"proposal","proposal_id":"p1"}`}, true},
+		{"delegate truncated proposal", ToolResult{Name: "delegate", Args: `{"role":"developer"}`, Result: `{"status":"proposal","proposal_id":"p1","diff":"` + strings.Repeat("x", 30000) + `"}`}, true},
 		{"delegate report", ToolResult{Name: "delegate", Args: `{"role":"reviewer"}`, Result: `{"status":"report"}`}, true},
+		{"delegate plain report", ToolResult{Name: "delegate", Args: `{"role":"reviewer"}`, Result: "## Report\n\nEverything passed."}, true},
 		{"delegate error", ToolResult{Name: "delegate", Args: `{}`, Result: `{"status":"error"}`}, false},
+		{"delegate timed out", ToolResult{Name: "delegate", Args: `{}`, Result: `{"status":"timed out"}`}, false},
 		{"delegate background", ToolResult{Name: "delegate", Args: `{}`, Result: `{"job_id":"j1"}`}, false},
 		{"failed edit", ToolResult{Name: "edit", Args: `{}`, Error: errSentinel}, false},
 	}

@@ -581,10 +581,15 @@ func Load() (*Config, error) {
 	if cfg.Agent.Default.IntentSteerAfter < 0 || cfg.Agent.Default.IntentHaltAfter < 0 {
 		return nil, fmt.Errorf("agents.default.intent_steer_after / intent_halt_after must not be negative")
 	}
-	if cfg.Agent.Default.IntentSteerAfter > 0 && cfg.Agent.Default.IntentHaltAfter > 0 &&
-		cfg.Agent.Default.IntentHaltAfter <= cfg.Agent.Default.IntentSteerAfter {
+	// The steer default (4) applies when unset, so a halt below it must
+	// fail here rather than be silently clamped by the middleware.
+	steer := cfg.Agent.Default.IntentSteerAfter
+	if steer <= 0 {
+		steer = 4 // defaultIntentSteerAfter in internal/agent/pipeline
+	}
+	if cfg.Agent.Default.IntentHaltAfter > 0 && cfg.Agent.Default.IntentHaltAfter <= steer {
 		return nil, fmt.Errorf("agents.default.intent_halt_after (%d) must be greater than intent_steer_after (%d)",
-			cfg.Agent.Default.IntentHaltAfter, cfg.Agent.Default.IntentSteerAfter)
+			cfg.Agent.Default.IntentHaltAfter, steer)
 	}
 
 	// reasoning_replay must name one of the three strategies; anything
