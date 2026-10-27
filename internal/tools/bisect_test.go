@@ -79,6 +79,48 @@ func TestBisectAutoRunAbortIsNotInProgress(t *testing.T) {
 	}
 }
 
+func TestBisectLogFailureIsAnError(t *testing.T) {
+	ws := &fakeExecWorkspace{respond: func(req ExecRequest) (ExecResult, error) {
+		return ExecResult{ExitCode: 1, Stdout: "fatal: no bisect in progress\n"}, errors.New("exit status 1")
+	}}
+
+	raw, err := (&BisectTool{WS: ws}).Execute(context.Background(), `{"action":"log"}`)
+	if err == nil {
+		t.Fatal("a failed bisect log must return a non-nil error")
+	}
+	if !strings.Contains(err.Error(), "bisect log failed") || !strings.Contains(err.Error(), "no bisect in progress") {
+		t.Errorf("error lost the log failure: %v", err)
+	}
+	var got bisectResult
+	if decodeErr := json.Unmarshal([]byte(raw), &got); decodeErr != nil {
+		t.Fatalf("decode: %v\n%s", decodeErr, raw)
+	}
+	if got.Status != "error" {
+		t.Errorf("Status = %q, want error", got.Status)
+	}
+}
+
+func TestBisectResetFailureIsAnError(t *testing.T) {
+	ws := &fakeExecWorkspace{respond: func(req ExecRequest) (ExecResult, error) {
+		return ExecResult{ExitCode: 1, Stdout: "fatal: cannot reset\n"}, errors.New("exit status 1")
+	}}
+
+	raw, err := (&BisectTool{WS: ws}).Execute(context.Background(), `{"action":"reset"}`)
+	if err == nil {
+		t.Fatal("a failed bisect reset must return a non-nil error")
+	}
+	if !strings.Contains(err.Error(), "bisect reset failed") || !strings.Contains(err.Error(), "cannot reset") {
+		t.Errorf("error lost the reset failure: %v", err)
+	}
+	var got bisectResult
+	if decodeErr := json.Unmarshal([]byte(raw), &got); decodeErr != nil {
+		t.Fatalf("decode: %v\n%s", decodeErr, raw)
+	}
+	if got.Status != "error" {
+		t.Errorf("Status = %q, want error", got.Status)
+	}
+}
+
 func TestBisectMarkFailureIsNotInProgress(t *testing.T) {
 	ws := &fakeExecWorkspace{respond: func(req ExecRequest) (ExecResult, error) {
 		return ExecResult{

@@ -99,16 +99,16 @@ func (t *PatchTool) Execute(ctx context.Context, args string) (string, error) {
 }
 
 // patchTargets returns the distinct target paths named by the patch's
-// "diff --git" and "+++ " header lines. Hunk bodies are skipped using their
-// declared line counts, so a hunk line whose added text begins with "++ " is
-// not mistaken for a header. Timestamps after a tab are stripped, /dev/null (a
-// deletion) is ignored, and a/b prefixes are removed.
+// "+++ " header lines. Hunk bodies are skipped using their declared line
+// counts, so a hunk line whose added text begins with "++ " is not mistaken for
+// a header. Timestamps after a tab are stripped, /dev/null (a deletion) is
+// ignored, and a/b prefixes are removed.
 //
-// A hunk may over-count its body and swallow the next file's header pair. That
-// makes the counts untrustworthy: the second target would go undetected and
-// the hunks would be applied to the first file. A matching "--- a/x" / "+++ b/x"
-// pair inside a hunk body is therefore reported as a multi-file error rather
-// than guessed at.
+// A hunk may over-count its body and swallow the next file's header pair. A
+// second file's hunk header then appears while the patch claims to describe one
+// file. Same-file hunks never overlap, so an old range that starts before the
+// previous hunk ends proves the patch is multi-file (or malformed) even though
+// the "+++" header was hidden.
 func patchTargets(patch string) ([]string, error) {
 	lines := strings.Split(patch, "\n")
 	var targets []string
@@ -122,62 +122,91 @@ func patchTargets(patch string) ([]string, error) {
 		targets = append(targets, t)
 	}
 
-	// A raw "diff --git" line is unambiguous: every hunk body line carries a
-	// ' ', '+', '-' or '\' prefix, so it can never look like a header.
-	// Collecting these first catches multi-file git diffs even when a hunk
-	// over-counts its body and the "+++" headers are swallowed below.
+	// A raw "diff --git" line starts a file section: hunk body lines always
+	// carry a ' ', '+', '-' or '\' prefix. Count sections rather than parsing
+	// their paths, because git does not quote spaces and whitespace cannot
+	// reliably separate "a/my file.txt b/my file.txt".
+	gitSections := 0
 	for _, line := range lines {
-		if !strings.HasPrefix(line, "diff --git ") {
-			continue
-		}
-		if parts := strings.Fields(line); len(parts) >= 4 {
-			add(parts[3], "b/")
+		if strings.HasPrefix(line, "diff --git ") {
+			gitSections++
 		}
 	}
+	if gitSections > 1 {
+		return nil, fmt.Errorf("patch: multi-file diffs are not supported (found %d git sections); apply each file separately", gitSections)
+	}
 
+	prevOldStart, prevOldCount := -1, 0
 	for i := 0; i < len(lines); i++ {
 		line := lines[i]
 		if strings.HasPrefix(line, "@@") {
-			oldLeft, newLeft := parseHunkCounts(line)
-			for j := i + 1; j < len(lines) && (oldLeft > 0 || newLeft > 0); j++ {
-				body := lines[j]
-				i = j
-				if body == "" {
-					break
-				}
-				if strings.HasPrefix(body, "--- ") && j+1 < len(lines) && strings.HasPrefix(lines[j+1], "+++ ") {
-					oldPath := normalizePatchPath(body, "a/")
-					newPath := normalizePatchPath(lines[j+1], "b/")
-					// Prefixed paths that agree are a file header, not
-					// plausible hunk content.
-					if oldPath != "" && oldPath == newPath &&
-						(hasDiffPathPrefix(body, "a/") || hasDiffPathPrefix(lines[j+1], "b/")) {
-						return nil, fmt.Errorf("patch: hunk declares more lines than its body (it runs into the header for %q); multi-file diffs are not supported — apply each file separately", newPath)
-					}
-				}
-				switch body[0] {
-				case ' ':
-					oldLeft--
-					newLeft--
-				case '-':
-					oldLeft--
-				case '+':
-					newLeft--
-				case '\\':
-					// "\ No newline at end of file" consumes no lines.
-				default:
-					oldLeft, newLeft = 0, 0
-				}
+			oldStart, oldCount := parseHunkOldRange(line)
+			if prevOldStart >= 0 && oldStart < prevOldStart+prevOldCount {
+				return nil, fmt.Errorf("patch: hunk at line %d overlaps the previous hunk (which ends at line %d); multi-file diffs are not supported — apply each file separately", oldStart, prevOldStart+prevOldCount)
 			}
-			continue
-		}
+			prevOldStart, prevOldCount = oldStart, oldCount
 
-		if !strings.HasPrefix(line, "+++ ") {
+			oldLeft, newLeft := parseHunkCounts(line)
+			i = hunkBodyEnd(lines, i+1, oldLeft, newLeft) - 1
 			continue
 		}
-		add(line, "b/")
+		if strings.HasPrefix(line, "+++ ") {
+			add(line, "b/")
+		}
 	}
 	return targets, nil
+}
+
+// hunkBodyEnd returns the index of the first line after the hunk body. A line
+// that is not a hunk op (the next "@@", a file header, or EOF) is left for the
+// caller. A body that runs out of lines returns len(lines).
+func hunkBodyEnd(lines []string, start, oldLeft, newLeft int) int {
+	j := start
+	for ; j < len(lines) && (oldLeft > 0 || newLeft > 0); j++ {
+		body := lines[j]
+		if body == "" || strings.HasPrefix(body, "@@") {
+			return j
+		}
+		switch body[0] {
+		case ' ':
+			oldLeft--
+			newLeft--
+		case '-':
+			oldLeft--
+		case '+':
+			newLeft--
+		case '\\':
+			// "\ No newline at end of file" consumes no lines.
+		default:
+			return j
+		}
+	}
+	return j
+}
+
+// parseHunkOldRange extracts the old start line and line count from a
+// "@@ -a,b +c,d @@" header. A missing count means one line.
+func parseHunkOldRange(header string) (start, count int) {
+	start, count = 0, 1
+	for _, field := range strings.Fields(header) {
+		if !strings.HasPrefix(field, "-") || len(field) <= 1 {
+			continue
+		}
+		spec := field[1:]
+		if comma := strings.IndexByte(spec, ','); comma >= 0 {
+			start, _ = strconv.Atoi(spec[:comma])
+			spec = spec[comma+1:]
+		} else {
+			start, _ = strconv.Atoi(spec)
+			spec = "1"
+		}
+		n, err := strconv.Atoi(spec)
+		if err == nil && n >= 0 {
+			count = n
+		}
+		return start, count
+	}
+	return 0, 0
 }
 
 // normalizePatchPath strips a "--- "/"+++ " marker, a tab-separated timestamp,
@@ -195,14 +224,6 @@ func normalizePatchPath(header, prefix string) string {
 		return ""
 	}
 	return p
-}
-
-func hasDiffPathPrefix(header, prefix string) bool {
-	p := strings.TrimSpace(header)
-	if strings.HasPrefix(p, "+++ ") || strings.HasPrefix(p, "--- ") {
-		p = strings.TrimSpace(p[4:])
-	}
-	return strings.HasPrefix(p, prefix)
 }
 
 // parseHunkCounts extracts the old/new line counts from a "@@ -a,b +c,d @@"

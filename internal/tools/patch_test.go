@@ -222,6 +222,40 @@ func TestPatchTool_overcountedGitHunkCannotHideSecondFile(t *testing.T) {
 	}
 }
 
+// TestPatchTool_pathWithSpaces: git does not quote spaces, so splitting the
+// "diff --git" line on whitespace invents a bogus second target.
+func TestPatchTool_pathWithSpaces(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "my file.txt")
+	os.WriteFile(path, []byte("a\n"), 0o644)
+
+	patch := "diff --git a/my file.txt b/my file.txt\n--- a/my file.txt\n+++ b/my file.txt\n@@ -1 +1 @@\n-a\n+b\n"
+	if _, err := runPatch(t, path, patch); err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != "b\n" {
+		t.Errorf("content = %q, want %q", data, "b\n")
+	}
+}
+
+// TestPatchTool_headerLikeHunkContent: a hunk that removes "-- a/old" and adds
+// "++ b/new" renders as a "--- a/..." / "+++ b/..." pair. It is content, not a
+// file header, and must not be rejected.
+func TestPatchTool_headerLikeHunkContent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "f.txt")
+	os.WriteFile(path, []byte("before\n-- a/old\nafter\n"), 0o644)
+
+	patch := "@@ -2 +2 @@\n--- a/old\n+++ b/new\n"
+	if _, err := runPatch(t, path, patch); err != nil {
+		t.Fatalf("header-like hunk content was rejected: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if want := "before\n++ b/new\nafter\n"; string(data) != want {
+		t.Errorf("content = %q, want %q", data, want)
+	}
+}
+
 // TestPatchTool_addedLineStartingWithPlusIsNotAHeader: an added line whose
 // text begins with "++ " produces a "+++ " diff line; it must be treated as
 // hunk content, not as a second file header.

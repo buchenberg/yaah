@@ -223,7 +223,9 @@ func (t *BisectTool) doLog(ctx context.Context, result *bisectResult) {
 	out, err := t.runGitCmd(ctx, "bisect", "log")
 	result.Log = out
 	if err != nil {
-		result.Stderr = err.Error()
+		result.Status = "error"
+		result.Stderr = fmt.Sprintf("bisect log failed: %v\n%s", err, out)
+		return
 	}
 	// Count steps
 	result.StepsCompleted = strings.Count(out, "# bad: ")
@@ -232,10 +234,12 @@ func (t *BisectTool) doLog(ctx context.Context, result *bisectResult) {
 func (t *BisectTool) doReset(ctx context.Context, result *bisectResult) {
 	out, err := t.runGitCmd(ctx, "bisect", "reset")
 	result.Log = out
-	result.Status = "reset"
 	if err != nil {
-		result.Stderr = err.Error()
+		result.Status = "error"
+		result.Stderr = fmt.Sprintf("bisect reset failed: %v\n%s", err, out)
+		return
 	}
+	result.Status = "reset"
 }
 
 func (t *BisectTool) parseRemaining(output string, result *bisectResult) {
