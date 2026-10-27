@@ -427,6 +427,12 @@ func retainedNote(result, note string) string {
 // that may carry a "note: " caveat from its body, so a caller can bound the
 // body and re-attach the note without losing it. The bare note text is
 // returned (no "note: " prefix), ready for retainedNote.
+//
+// The marker search is a heuristic: retainedNote appends the caveat at the
+// end, so LastIndex lands on the real caveat even when the report body also
+// contains "note: " lines. A report that *begins* with "note: " is treated
+// as all caveat — mislabelled, but bounded by foldRetainedPartial either
+// way, so the worst case is cosmetic.
 func splitRetainedNote(partial string) (body, note string) {
 	if strings.HasPrefix(partial, "note: ") {
 		return "", strings.TrimSpace(partial[len("note: "):])
@@ -435,6 +441,18 @@ func splitRetainedNote(partial string) (body, note string) {
 		return partial[:i], strings.TrimSpace(partial[i+len("\nnote: "):])
 	}
 	return partial, ""
+}
+
+// foldRetainedPartial projects a failed operation's partial result into an
+// error text. Both halves are bounded, because the loop delivers error text
+// verbatim: the body keeps its head (the part that orients), the caveat
+// keeps its tail (teardown notes end with the worktree path they report).
+func foldRetainedPartial(body, note string) string {
+	const (
+		bodyBudget = toolResultMaxBytes
+		noteBudget = 4096
+	)
+	return retainedNote(truncateAt(body, bodyBudget), keepTail(note, noteBudget))
 }
 
 // worktreeOnDisk reports whether a worktree directory still exists.

@@ -257,16 +257,17 @@ func (t *DelegateTool) classifyRunnerResult(result string, err error, role strin
 			// A non-nil error makes the agent loop replace the result with
 			// the error text delivered verbatim, so a partial the
 			// orchestrator should see must ride inside the error. The
-			// partial is success-detail content: keep its head — the part
-			// that orients — bounded at the tool-result cap, and always
-			// re-attach a retainedNote caveat, whose stranded-worktree
-			// note (yaah-atn) is the payload that must survive. The
-			// error's own diagnostic stays untruncated.
+			// partial is success-detail content: keep the body's head —
+			// the part that orients — bounded at the tool-result cap, and
+			// always re-attach a retainedNote caveat, itself tail-bounded
+			// because teardown notes end with the worktree path
+			// (yaah-atn). The folded error stays finite; the error's own
+			// diagnostic stays untruncated.
 			if strings.TrimSpace(partial) == "" {
 				return "", err
 			}
 			body, note := splitRetainedNote(partial)
-			return "", fmt.Errorf("%w\n%s", err, retainedNote(truncateAt(body, toolResultMaxBytes), note))
+			return "", fmt.Errorf("%w\n%s", err, foldRetainedPartial(body, note))
 		}
 	}
 	return result, nil

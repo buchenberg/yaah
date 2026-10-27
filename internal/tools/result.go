@@ -30,8 +30,9 @@ import (
 // the report lane's retainedNote caveat naming a stranded worktree is the
 // reason — the partial travels inside the error text, because the loop
 // delivers error text verbatim and discards the result. The partial is
-// success-detail content: it is bounded like success detail (truncateAt at
-// toolResultMaxBytes), while the error's own diagnostic stays untruncated.
+// success-detail content: foldRetainedPartial bounds both halves (body
+// head-first, caveat tail-first) to keep the whole error finite while the
+// error's own diagnostic stays untruncated.
 const (
 	// toolResultMaxBytes caps the success detail a single tool call returns.
 	toolResultMaxBytes = 8192
@@ -39,8 +40,13 @@ const (
 	// by shell tools. The agent loop's outer cap may cut this further and
 	// spill the full text to disk.
 	commandOutputMaxBytes = 1 << 20 // 1 MiB
-	// truncationMarker is the only marker tools append when they cap output.
+	// truncationMarker is the only marker tools append when they cap
+	// success output.
 	truncationMarker = "\n...[truncated]..."
+	// tailTruncationMarker prefixes text kept from the END of an over-long
+	// payload: what was lost came before the kept text, not after. Both
+	// markers are the only ones tools append when they cap output.
+	tailTruncationMarker = "...[earlier text truncated]..."
 )
 
 // truncateAt caps s at max bytes on a UTF-8 rune boundary and appends
@@ -60,6 +66,21 @@ func truncateAt(s string, max int) string {
 // appends truncationMarker when it cuts.
 func truncateResult(s string) string {
 	return truncateAt(s, toolResultMaxBytes)
+}
+
+// keepTail caps s at max bytes on a UTF-8 rune boundary, keeping the LAST
+// max bytes and prefixing tailTruncationMarker when it cuts. Teardown notes
+// end with the worktree path they are reporting, so a note that must fit a
+// budget keeps its tail, not its head.
+func keepTail(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	cut := len(s) - max
+	for cut < len(s) && !utf8.RuneStart(s[cut]) {
+		cut++
+	}
+	return tailTruncationMarker + s[cut:]
 }
 
 // truncateOutput caps raw command output at commandOutputMaxBytes on a UTF-8
