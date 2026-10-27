@@ -127,6 +127,7 @@ func makeOAuthProvider(name string, r config.Provider) (agent.Provider, bool) {
 	case "anthropic":
 		client := providers.NewAnthropicClient(r.BaseURL, token.AccessToken, r.TimeoutSeconds)
 		client.DefaultMaxTokens = r.MaxTokens
+		client.ReasoningReplay = r.ReasoningReplay
 		return client, true
 	default:
 		client := providers.NewOpenAIClient(r.BaseURL, token.AccessToken, r.TimeoutSeconds)
@@ -179,7 +180,17 @@ func resolveCompact(cfg *config.Config) (agent.Provider, string) {
 	if compactProviderName != "" {
 		if p, ok := cfg.Providers[compactProviderName]; ok {
 			if prov, ok2 := makeProvider(compactProviderName, p); ok2 {
-				if compactModel == cfg.Agent.Default.Model && compactProviderName == resolveProviderName(cfg) {
+				// Compare the resolved pair: the configured main model may
+				// carry a "provider/" prefix while compactModel is already
+				// stripped.
+				mainProvider := resolveProviderName(cfg)
+				mainModel := cfg.Agent.Default.Model
+				if parts := strings.SplitN(mainModel, "/", 2); len(parts) == 2 {
+					if _, ok := cfg.Providers[parts[0]]; ok {
+						mainModel = parts[1]
+					}
+				}
+				if compactModel == mainModel && compactProviderName == mainProvider {
 					slog.Warn("compaction: compaction_model equals the main model; "+
 						"set a cheaper compaction_model for faster, more reliable summarization",
 						"model", compactModel)

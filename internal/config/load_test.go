@@ -408,3 +408,13 @@ providers:
 		t.Errorf("invalid reasoning_replay must fail the load, got %v", err)
 	}
 }
+
+// TestResolve_preservesReasoningReplay pins the wiring gap found in review:
+// config.Resolve builds a fresh Provider and must carry every field the
+// provider layer reads, or per-provider knobs silently vanish.
+func TestResolve_preservesReasoningReplay(t *testing.T) {
+	got := Resolve(Provider{ReasoningReplay: "text", APIKey: "$NOT_SET"})
+	if got.ReasoningReplay != "text" {
+		t.Errorf("Resolve dropped reasoning_replay: %q", got.ReasoningReplay)
+	}
+}

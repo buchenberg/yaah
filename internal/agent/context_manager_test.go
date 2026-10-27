@@ -288,3 +288,29 @@ func TestCompactContextAcceptsSubstantiveSummary(t *testing.T) {
 		t.Errorf("applied summary lost its substance: %q", cm.State.PreviousSummary)
 	}
 }
+
+// TestCompactContextRejectsTemplateEchoFromChunkedSummarizer: validating only
+// the primary response would leave the yaah-v378.1 shape reachable through
+// the chunked path — every chunk/merge reply echoing the template must fall
+// through to trim, never install.
+func TestCompactContextRejectsTemplateEchoFromChunkedSummarizer(t *testing.T) {
+	echoes := make([]*types.ChatResponse, 12)
+	for i := range echoes {
+		echoes[i] = templateEchoResponse()
+	}
+	p := &compactionRecordingProvider{responses: echoes}
+	cm := compactionTestManager(p)
+
+	before := len(cm.State.Messages)
+	cm.compactContext(context.Background(), 0.25)
+
+	if strings.Contains(cm.State.PreviousSummary, "(none)") {
+		t.Errorf("chunked template echo was installed: %q", cm.State.PreviousSummary)
+	}
+	if len(cm.State.Messages) >= before {
+		t.Errorf("expected heuristic trim after every summary source failed: before=%d after=%d", before, len(cm.State.Messages))
+	}
+	if cm.State.Messages[0].Role != "system" {
+		t.Errorf("system message lost: role=%q", cm.State.Messages[0].Role)
+	}
+}

@@ -157,3 +157,38 @@ func TestIntentLoop_ShortPreamblesAreIgnored(t *testing.T) {
 		t.Errorf("streak = %d from short preambles, want 0 (ignored)", m.streak)
 	}
 }
+
+// TestIntentLoop_ProgressClassification: the reset must follow what actually
+// advances the plan — a proposal SELECT resets, a proposal LIST does not; a
+// real go_mod add resets, a dry_run does not.
+func TestIntentLoop_ProgressClassification(t *testing.T) {
+	tests := []struct {
+		name     string
+		result   ToolResult
+		progress bool
+	}{
+		{"edit", ToolResult{Name: "edit", Args: `{"filePath":"x.go"}`, Result: "ok"}, true},
+		{"replace dry-run", ToolResult{Name: "replace", Args: `{"dry_run":true}`, Result: "Would replace"}, false},
+		{"proposal list", ToolResult{Name: "proposal", Args: `{"action":"list"}`, Result: "{}"}, false},
+		{"proposal select", ToolResult{Name: "proposal", Args: `{"action":"select"}`, Result: "settled"}, true},
+		{"json_query read", ToolResult{Name: "json_query", Args: `{"action":"query"}`, Result: "[]"}, false},
+		{"json_query write", ToolResult{Name: "json_query", Args: `{"action":"write"}`, Result: "ok"}, true},
+		{"go_mod list", ToolResult{Name: "go_mod", Args: `{"action":"list"}`, Result: "[]"}, false},
+		{"go_mod add dry-run", ToolResult{Name: "go_mod", Args: `{"action":"add","dry_run":true}`, Result: "would run"}, false},
+		{"go_mod add", ToolResult{Name: "go_mod", Args: `{"action":"add"}`, Result: "ok"}, true},
+		{"git status", ToolResult{Name: "git", Args: `{"action":"status"}`, Result: "clean"}, false},
+		{"git commit", ToolResult{Name: "git", Args: `{"action":"commit"}`, Result: "ok"}, true},
+		{"plan list", ToolResult{Name: "plan", Args: `{"action":"list"}`, Result: "[]"}, false},
+		{"plan create", ToolResult{Name: "plan", Args: `{"action":"create"}`, Result: "ok"}, true},
+		{"failed edit", ToolResult{Name: "edit", Args: `{}`, Error: errSentinel}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := madeProgress(tt.result); got != tt.progress {
+				t.Errorf("madeProgress(%s) = %v, want %v", tt.name, got, tt.progress)
+			}
+		})
+	}
+}
+
+var errSentinel = errors.New("tool failed")

@@ -484,18 +484,19 @@ func SubstituteEnv(s string) string {
 // in APIKey, BaseURL, and OAuth fields substituted by environment variables.
 func Resolve(p Provider) Provider {
 	return Provider{
-		API:            p.API,
-		Auth:           p.Auth,
-		BaseURL:        SubstituteEnv(p.BaseURL),
-		APIKey:         SubstituteEnv(p.APIKey),
-		Name:           p.Name,
-		Models:         p.Models,
-		TimeoutSeconds: p.TimeoutSeconds,
-		Headers:        p.Headers,
-		MaxTokens:      p.MaxTokens,
-		OAuthClientID:  SubstituteEnv(p.OAuthClientID),
-		OAuthScope:     SubstituteEnv(p.OAuthScope),
-		OAuthDomain:    SubstituteEnv(p.OAuthDomain),
+		API:             p.API,
+		Auth:            p.Auth,
+		BaseURL:         SubstituteEnv(p.BaseURL),
+		APIKey:          SubstituteEnv(p.APIKey),
+		Name:            p.Name,
+		Models:          p.Models,
+		TimeoutSeconds:  p.TimeoutSeconds,
+		Headers:         p.Headers,
+		MaxTokens:       p.MaxTokens,
+		ReasoningReplay: p.ReasoningReplay,
+		OAuthClientID:   SubstituteEnv(p.OAuthClientID),
+		OAuthScope:      SubstituteEnv(p.OAuthScope),
+		OAuthDomain:     SubstituteEnv(p.OAuthDomain),
 	}
 }
 
@@ -567,7 +568,7 @@ func Load() (*Config, error) {
 		} `yaml:"agents"`
 	}
 	if err := yaml.Unmarshal(data, &legacySmallModel); err == nil && legacySmallModel.Agents.Default.SmallModel != nil {
-		fmt.Fprintf(os.Stderr, "warning: config key `agents.default.small_model` was renamed to `compaction_model`; the old key is ignored, so context compaction is running on the main model\n")
+		fmt.Fprintf(os.Stderr, "warning: config key `agents.default.small_model` was renamed to `compaction_model`; the old key is ignored — compaction uses the default compaction_model unless you set `compaction_model` explicitly\n")
 	}
 
 	// reasoning_replay must name one of the three strategies; anything

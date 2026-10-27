@@ -428,11 +428,13 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 		}
 	}
 	if span != nil {
+		accepted := err == nil && resp != nil && len(resp.Choices) > 0 &&
+			resp.Choices[0].Message.Content != "" && summaryRejected == ""
 		span.SetAttributes(
 			attribute.Int("compaction.excerpt_bytes", sb.Len()),
-			attribute.Bool("compaction.accepted", err == nil && resp != nil),
+			attribute.Bool("compaction.accepted", accepted),
 		)
-		if resp != nil && len(resp.Choices) > 0 && summaryRejected == "" {
+		if accepted {
 			span.SetAttributes(attribute.String("compaction.summary_prefix",
 				agentctx.BoundedSummaryPrefix(resp.Choices[0].Message.Content)))
 		}
@@ -464,28 +466,37 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 		}
 		if agentctx.PreflightTokens(oldMsgs, nil, factor) > agentctx.MinChunkTokens {
 			if chunkSummary, chunkErr := cm.chunkedCompact(ctx, oldMsgs, compactModel); chunkErr == nil && chunkSummary != "" {
-				cm.applyCompactedSummary(chunkSummary, sysMsg, oldMsgs, keepMsgs, effectiveTokens)
-				cm.State.LastCompactionMethod = "chunked"
-				cm.State.LastCompactionSummary = chunkSummary
-				afterEstimate := cm.estimatedTokens()
-				savingsPct := 0.0
-				if beforeEstimate > 0 {
-					savingsPct = float64(beforeEstimate-afterEstimate) / float64(beforeEstimate)
+				if ok, vreason := agentctx.ValidateSummary(chunkSummary); ok {
+					cm.applyCompactedSummary(chunkSummary, sysMsg, oldMsgs, keepMsgs, effectiveTokens)
+					cm.State.LastCompactionMethod = "chunked"
+					cm.State.LastCompactionSummary = chunkSummary
+					afterEstimate := cm.estimatedTokens()
+					savingsPct := 0.0
+					if beforeEstimate > 0 {
+						savingsPct = float64(beforeEstimate-afterEstimate) / float64(beforeEstimate)
+					}
+					if cm.Broker != nil {
+						cm.Broker.Publish(&CompactionDoneEvent{
+							BeforeTokens:   beforeEstimate,
+							AfterTokens:    afterEstimate,
+							SavingsPct:     savingsPct,
+							Method:         "chunked",
+							ElapsedSeconds: time.Since(startTime).Seconds(),
+							OldMsgCount:    len(oldMsgs),
+							KeepMsgCount:   len(keepMsgs),
+							Budget:         budget,
+						})
+					}
+					observability.RecordCompaction(ctx, compactReason, time.Since(startTime), beforeEstimate, afterEstimate, savingsPct)
+					return
+				} else {
+					// The chunked summarizer can echo the template too;
+					// validating only the primary response would leave the
+					// yaah-v378.1 shape reachable through this path.
+					reason = "chunked summary rejected: " + vreason
+					slog.Warn("compaction rejected the chunked summary; falling back to heuristic trim",
+						"session_id", cm.SessionID, "reason", vreason)
 				}
-				if cm.Broker != nil {
-					cm.Broker.Publish(&CompactionDoneEvent{
-						BeforeTokens:   beforeEstimate,
-						AfterTokens:    afterEstimate,
-						SavingsPct:     savingsPct,
-						Method:         "chunked",
-						ElapsedSeconds: time.Since(startTime).Seconds(),
-						OldMsgCount:    len(oldMsgs),
-						KeepMsgCount:   len(keepMsgs),
-						Budget:         budget,
-					})
-				}
-				observability.RecordCompaction(ctx, compactReason, time.Since(startTime), beforeEstimate, afterEstimate, savingsPct)
-				return
 			}
 		}
 		cm.trimContext()
@@ -506,7 +517,7 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 				SavingsPct:      trimSavings,
 				Method:          "trim",
 				ElapsedSeconds:  time.Since(startTime).Seconds(),
-				IneffectiveNote: "summarization failed; old messages trimmed",
+				IneffectiveNote: "summarization failed (" + reason + "); old messages trimmed",
 				OldMsgCount:     len(oldMsgs),
 				KeepMsgCount:    len(keepMsgs),
 				Budget:          budget,

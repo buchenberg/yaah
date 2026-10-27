@@ -1,6 +1,9 @@
 package context
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // summaryPrefixBytes bounds the summary prefix recorded on the compaction
 // span: enough to recognize what the summarizer said, small enough to stay
@@ -39,18 +42,10 @@ func ValidateSummary(summary string) (bool, string) {
 	substantive := 0
 	for _, line := range strings.Split(trimmed, "\n") {
 		line = strings.TrimSpace(line)
-		// Blank lines and markdown scaffold headings carry nothing; a
-		// real summary may be prose (no bullets), so every other line
-		// counts unless it is a placeholder.
-		if line == "" || strings.HasPrefix(line, "#") {
+		if line == "" || isMarkdownHeading(line) {
 			continue
 		}
-		text := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(line, "- "), "* "))
-		switch strings.ToLower(text) {
-		case "", "(none)", "none", "n/a":
-			continue
-		}
-		if strings.HasPrefix(text, "[") && strings.HasSuffix(text, "]") {
+		if isPlaceholderLine(line) {
 			continue
 		}
 		substantive++
@@ -59,4 +54,39 @@ func ValidateSummary(summary string) (bool, string) {
 		return false, "no substantive content (every section is a placeholder)"
 	}
 	return true, ""
+}
+
+// isMarkdownHeading reports whether line is a markdown heading ("#" runs
+// followed by a space or end of line). A line like "#123 fixed the bug" is
+// content, not scaffold.
+func isMarkdownHeading(line string) bool {
+	i := 0
+	for i < len(line) && line[i] == '#' {
+		i++
+	}
+	return i > 0 && (i == len(line) || line[i] == ' ')
+}
+
+// numberedBullet matches "1. ", "2) " and friends.
+var numberedBullet = regexp.MustCompile(`^\d+[.)]\s*`)
+
+// isPlaceholderLine reports whether a bullet carries no information:
+// "(none)", "none", "n/a", a lone marker, or a bracketed template stub —
+// including numbered bullets and trailing punctuation variants.
+func isPlaceholderLine(line string) bool {
+	text := strings.TrimSpace(line)
+	text = strings.TrimPrefix(text, "- ")
+	text = strings.TrimPrefix(text, "* ")
+	text = strings.TrimPrefix(text, "+ ")
+	text = numberedBullet.ReplaceAllString(text, "")
+	text = strings.TrimSpace(text)
+	text = strings.TrimRight(text, " .,;:!—-")
+	switch strings.ToLower(text) {
+	case "", "(none)", "none", "n/a", "na", "tbd", "todo", "...":
+		return true
+	}
+	if strings.HasPrefix(text, "[") && strings.HasSuffix(text, "]") {
+		return true
+	}
+	return false
 }

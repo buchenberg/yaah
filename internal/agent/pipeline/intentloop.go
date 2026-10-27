@@ -17,6 +17,7 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -69,19 +70,57 @@ const (
 	intentSimilarityThreshold = 0.30
 )
 
-// mutatingTools are names whose successful call changes the workspace. bash
-// is deliberately absent: it cannot be classified without parsing, and the
-// incident shape is all-read bash turns — counting bash as progress would
-// have hidden last night's loop.
-var mutatingTools = map[string]bool{
-	"write":       true,
-	"edit":        true,
-	"patch":       true,
-	"delete":      true,
-	"replace":     true,
-	"apply_out":   true,
-	"proposal":    true,
-	"go_refactor": true,
+// madeProgress reports whether a successful tool call advanced the plan
+// rather than gathering more information. File mutations reuse
+// mutationSucceeded (which understands dry_run and per-tool read actions);
+// state-changing module, git, and plan actions count too. Unknown tools
+// (MCP) count as non-progress: the steer is advisory and the halt is the
+// backstop, and treating unclassifiable calls as progress would disable the
+// detector for the read-only loops it exists to catch.
+func madeProgress(r ToolResult) bool {
+	if r.Error != nil {
+		return false
+	}
+	if mutationSucceeded(r) {
+		return true
+	}
+	switch r.Name {
+	case "go_mod":
+		var p struct {
+			Action string `json:"action"`
+			DryRun bool   `json:"dry_run"`
+		}
+		if json.Unmarshal([]byte(r.Args), &p) != nil || p.DryRun {
+			return false
+		}
+		switch p.Action {
+		case "add", "remove", "upgrade", "tidy":
+			return true
+		}
+	case "git":
+		var p struct {
+			Action string `json:"action"`
+		}
+		if json.Unmarshal([]byte(r.Args), &p) != nil {
+			return false
+		}
+		switch p.Action {
+		case "add", "commit", "push", "pull":
+			return true
+		}
+	case "plan":
+		var p struct {
+			Action string `json:"action"`
+		}
+		if json.Unmarshal([]byte(r.Args), &p) != nil {
+			return false
+		}
+		switch p.Action {
+		case "create", "edit", "delete", "approve":
+			return true
+		}
+	}
+	return false
 }
 
 // IntentLoopMiddleware detects cross-turn plan repetition.
@@ -144,7 +183,7 @@ func (m *IntentLoopMiddleware) PostModel(ctx context.Context, msg *types.Message
 
 func (m *IntentLoopMiddleware) PostTool(ctx context.Context, results []ToolResult, step *Step) (*Step, error) {
 	for _, r := range results {
-		if r.Error == nil && mutatingTools[r.Name] {
+		if madeProgress(r) {
 			// The plan changed the workspace: any following preamble is
 			// a new attempt, not a repetition.
 			m.streak = 0

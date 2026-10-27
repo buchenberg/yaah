@@ -51,3 +51,28 @@ func TestValidateSummary_acceptsSingleWord(t *testing.T) {
 		t.Errorf("single-word summary rejected: %q", reason)
 	}
 }
+
+func TestValidateSummary_headingVsIssueReference(t *testing.T) {
+	// "#123 fixed ..." is content, not a scaffold heading.
+	if ok, reason := ValidateSummary("## Progress\n- #123 fixed the login redirect\n"); !ok {
+		t.Errorf("issue reference rejected as scaffold: %q", reason)
+	}
+}
+
+func TestValidateSummary_placeholderVariants(t *testing.T) {
+	placeholders := []string{
+		"## Goal\n1. (none)\n",
+		"## Progress\n- none.\n",
+		"## Next Steps\n* N/A\n",
+		"## Blocked\n- —\n",
+		"## Done\n2) [completed work]\n",
+		"## Notes\n- tbd\n",
+	}
+	for _, summary := range placeholders {
+		t.Run(summary, func(t *testing.T) {
+			if ok, _ := ValidateSummary(summary); ok {
+				t.Errorf("placeholder-only summary accepted: %q", summary)
+			}
+		})
+	}
+}

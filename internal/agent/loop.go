@@ -305,6 +305,12 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 
 			step, req, err := l.buildTurnRequest(ctx, iter, messages, pipe, turnSpan)
 			if err != nil {
+				// The turn ends here: end its span so a PrepareStep halt
+				// (intent_loop, middleware errors) does not leak the trace.
+				if turnSpan != nil {
+					observability.RecordError(turnSpan, err)
+					turnSpan.End()
+				}
 				if traceMw != nil {
 					traceMw.FailTurn(ctx, iter, err)
 				}

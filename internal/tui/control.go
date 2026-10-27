@@ -89,8 +89,10 @@ func (t *App) handleControlMsg(msg control.Msg) {
 		}
 		t.conversationLog = append(t.conversationLog, convItem{text: header})
 		if m.Summary != "" {
+			// The markdown renderer emits its own color tags; wrapping
+			// this item in tview tags would render them literally.
 			t.conversationLog = append(t.conversationLog, convItem{
-				text:       fmt.Sprintf("[%s]%s[-]", t.Theme.Dim, m.Summary),
+				text:       m.Summary,
 				isMarkdown: true,
 			})
 		}
