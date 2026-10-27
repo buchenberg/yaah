@@ -257,35 +257,61 @@ type skillMatch struct {
 	score float64
 }
 
+// skillRelevanceFloor is the minimum cosine similarity for a semantic skill
+// hit. Embedding models place loosely related text around 0.2–0.4, so without
+// a floor every discovered skill is reported as a match and "Found N matching
+// skill(s)" is just the skill count (yaah-92p). The value is deliberately low
+// enough that a genuinely related description still matches; raise it only
+// with test evidence.
+const skillRelevanceFloor = 0.35
+
 func skillSearch(ctx context.Context, emb memory.Embedder, query string, found []skills.Skill) string {
 	searchText := func(s skills.Skill) string { return s.Name + ": " + s.Description }
 
-	if emb != nil {
-		qEmb, err := emb.Embed(ctx, query)
-		if err != nil {
-			return keywordSearch(query, found, searchText)
-		}
-
-		embeddings := make([]memory.Embedding, len(found))
-		for i, s := range found {
-			embeddings[i], _ = emb.Embed(ctx, searchText(s))
-		}
-
-		matches := make([]skillMatch, len(found))
-		for i := range found {
-			score := float64(0)
-			if embeddings[i] != nil {
-				score = float64(memory.CosineSimilarity(qEmb, embeddings[i]))
-			}
-			matches[i] = skillMatch{skill: &found[i], score: score}
-		}
-
-		sort.Slice(matches, func(i, j int) bool { return matches[i].score > matches[j].score })
-
-		return formatSearchResults(matches, true)
+	if emb == nil {
+		return keywordSearch(query, found, searchText)
 	}
 
-	return keywordSearch(query, found, searchText)
+	qEmb, err := emb.Embed(ctx, query)
+	if err != nil {
+		// Keyword recall still works; label the path so a miss is not read as
+		// "no such skill" when the semantic path was simply down.
+		return fmt.Sprintf("semantic search unavailable: %v\n%s", err, keywordSearch(query, found, searchText))
+	}
+
+	matches := make([]skillMatch, 0, len(found))
+	var embedErrs []error
+	best := 0.0
+	for i := range found {
+		e, err := emb.Embed(ctx, searchText(found[i]))
+		if err != nil {
+			// A failed embedding is not a zero score: surfacing it keeps a
+			// skill out of the report honestly instead of scoring it as a miss.
+			embedErrs = append(embedErrs, fmt.Errorf("%s: %w", found[i].Name, err))
+			continue
+		}
+		score := float64(memory.CosineSimilarity(qEmb, e))
+		if score > best {
+			best = score
+		}
+		if score < skillRelevanceFloor {
+			continue
+		}
+		matches = append(matches, skillMatch{skill: &found[i], score: score})
+	}
+
+	sort.Slice(matches, func(i, j int) bool { return matches[i].score > matches[j].score })
+
+	var out string
+	if len(matches) == 0 {
+		out = fmt.Sprintf("No skills matched query %q (best score %.2f, floor %.2f).\n", query, best, skillRelevanceFloor)
+	} else {
+		out = formatSearchResults(matches, true)
+	}
+	if len(embedErrs) > 0 {
+		out += fmt.Sprintf("%d skill(s) could not be embedded: %v\n", len(embedErrs), embedErrs[0])
+	}
+	return out
 }
 
 func keywordSearch(query string, found []skills.Skill, searchText func(skills.Skill) string) string {
