@@ -581,15 +581,19 @@ func Load() (*Config, error) {
 	if cfg.Agent.Default.IntentSteerAfter < 0 || cfg.Agent.Default.IntentHaltAfter < 0 {
 		return nil, fmt.Errorf("agents.default.intent_steer_after / intent_halt_after must not be negative")
 	}
-	// The steer default (4) applies when unset, so a halt below it must
-	// fail here rather than be silently clamped by the middleware.
+	// Both knobs fall back to the middleware defaults (4 / 8) when unset;
+	// validate the EFFECTIVE pair so neither a low halt nor a high steer can
+	// slip through and be silently clamped later.
 	steer := cfg.Agent.Default.IntentSteerAfter
 	if steer <= 0 {
 		steer = 4 // defaultIntentSteerAfter in internal/agent/pipeline
 	}
-	if cfg.Agent.Default.IntentHaltAfter > 0 && cfg.Agent.Default.IntentHaltAfter <= steer {
-		return nil, fmt.Errorf("agents.default.intent_halt_after (%d) must be greater than intent_steer_after (%d)",
-			cfg.Agent.Default.IntentHaltAfter, steer)
+	halt := cfg.Agent.Default.IntentHaltAfter
+	if halt <= 0 {
+		halt = 8 // defaultIntentHaltAfter in internal/agent/pipeline
+	}
+	if halt <= steer {
+		return nil, fmt.Errorf("agents.default.intent_halt_after (%d) must be greater than intent_steer_after (%d)", halt, steer)
 	}
 
 	// reasoning_replay must name one of the three strategies; anything

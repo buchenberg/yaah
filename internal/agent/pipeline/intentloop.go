@@ -80,6 +80,10 @@ const delegateStatusWindow = 512
 // truncation that cuts the diff tail.
 var delegateStatus = regexp.MustCompile(`^\s*\{\s*"status"\s*:\s*"([A-Za-z _-]+)"`)
 
+// delegateFailure matches structuredTaskResult's shape: failures come back
+// as {"error":"timed out",...} with a nil Go error.
+var delegateFailure = regexp.MustCompile(`^\s*\{\s*"error"\s*:`)
+
 // madeProgress reports whether a successful tool call advanced the plan
 // rather than gathering more information. File mutations reuse
 // mutationSucceeded (which understands dry_run and per-tool read actions);
@@ -139,6 +143,9 @@ func madeProgress(r ToolResult) bool {
 		head := r.Result
 		if len(head) > delegateStatusWindow {
 			head = head[:delegateStatusWindow]
+		}
+		if delegateFailure.MatchString(head) {
+			return false
 		}
 		if m := delegateStatus.FindStringSubmatch(head); m != nil {
 			switch m[1] {

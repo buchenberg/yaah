@@ -457,6 +457,7 @@ func TestLoad_intentKnobValidation(t *testing.T) {
 		{"negative", "intent_steer_after: -1", "must not be negative"},
 		{"halt below steer", "intent_steer_after: 6\n    intent_halt_after: 6", "must be greater than"},
 		{"halt below DEFAULT steer", "intent_halt_after: 2", "must be greater than"},
+		{"steer above DEFAULT halt", "intent_steer_after: 10", "must be greater than"},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {

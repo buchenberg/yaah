@@ -186,7 +186,7 @@ func TestIntentLoop_ProgressClassification(t *testing.T) {
 		{"delegate report", ToolResult{Name: "delegate", Args: `{"role":"reviewer"}`, Result: `{"status":"report"}`}, true},
 		{"delegate plain report", ToolResult{Name: "delegate", Args: `{"role":"reviewer"}`, Result: "## Report\n\nEverything passed."}, true},
 		{"delegate error", ToolResult{Name: "delegate", Args: `{}`, Result: `{"status":"error"}`}, false},
-		{"delegate timed out", ToolResult{Name: "delegate", Args: `{}`, Result: `{"status":"timed out"}`}, false},
+		{"delegate timed out", ToolResult{Name: "delegate", Args: `{}`, Result: `{"error":"timed out","role":"developer","timeout":"600s"}`}, false},
 		{"delegate background", ToolResult{Name: "delegate", Args: `{}`, Result: `{"job_id":"j1"}`}, false},
 		{"failed edit", ToolResult{Name: "edit", Args: `{}`, Error: errSentinel}, false},
 	}
