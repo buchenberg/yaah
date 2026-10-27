@@ -652,12 +652,15 @@ func TestSchema_BoundsMatchClamp(t *testing.T) {
 // generic failures: the report lane appends a teardown note to a result that
 // ends with a non-nil error, and classifyRunnerResult's default branch must
 // not swallow it. The agent loop replaces a failed result with the error
-// text, so the note can only survive inside the error.
+// text, so the note can only survive inside the error — whole, because the
+// note is appended at the end and a head-first cap would eat it
+// (result.go invariant 2: error detail is never truncated).
 func TestDelegate_ClassifyGenericErrorCarriesPartial(t *testing.T) {
 	tool := &DelegateTool{}
+	partial := strings.Repeat("report body\n", 400) // 4.8 KiB, past any head-cap temptation
 	note := "note: the report dispatch could not discard its isolated scope; it left the worktree at /tmp/wt/scratch"
 
-	got, err := tool.classifyRunnerResult(note, errors.New("max iterations reached"), "reviewer", 30*time.Second, context.Background())
+	got, err := tool.classifyRunnerResult(partial+note, errors.New("max iterations reached"), "reviewer", 30*time.Second, context.Background())
 	if err == nil {
 		t.Fatal("a generic runner error must stay an error")
 	}
@@ -669,6 +672,9 @@ func TestDelegate_ClassifyGenericErrorCarriesPartial(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "left the worktree at /tmp/wt/scratch") {
 		t.Errorf("error lost the partial teardown note: %v", err)
+	}
+	if !strings.Contains(err.Error(), "report body") {
+		t.Errorf("error lost the partial body: %v", err)
 	}
 }
 

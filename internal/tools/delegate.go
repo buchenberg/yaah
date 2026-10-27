@@ -258,19 +258,18 @@ func (t *DelegateTool) classifyRunnerResult(result string, err error, role strin
 			// the error text, so a partial the orchestrator should see —
 			// most critically a report lane's teardown note naming a
 			// stranded worktree (yaah-atn) — must ride inside the error.
+			// result.go's invariant 2 keeps error detail untruncated and
+			// reserves size policy to the loop's outer cap, so the whole
+			// partial travels: retainedNote appends the note at the end,
+			// and a head-first cap would eat it.
 			if strings.TrimSpace(partial) == "" {
 				return "", err
 			}
-			return "", fmt.Errorf("%w\n%s", err, truncateAt(partial, errPartialNoteMaxBytes))
+			return "", fmt.Errorf("%w\n%s", err, partial)
 		}
 	}
 	return result, nil
 }
-
-// errPartialNoteMaxBytes caps the partial output carried inside a generic
-// error. The note naming a stranded worktree is one line; a whole report is
-// not what an error text is for.
-const errPartialNoteMaxBytes = 2048
 
 // clampTimeoutSeconds caps the model-supplied timeout at the schema's
 // 600s maximum so a runaway or injected value cannot pin a sub-agent
