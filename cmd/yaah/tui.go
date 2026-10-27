@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -89,21 +90,19 @@ func runTUI() error {
 		subProvider = sess.ProviderName()
 	}
 	mc := cfg.Agent.Middleware
-	var pipelineList []string
-	if len(mc.Enabled) > 0 {
-		pipelineList = mc.Enabled
-	} else {
-		// Source the canonical list from the pipeline package so this
-		// pane cannot drift from the real default composition.
-		disabled := make(map[string]bool, len(mc.Disabled))
-		for _, d := range mc.Disabled {
-			disabled[d] = true
-		}
-		for _, name := range pipeline.DefaultPipelineNames() {
-			if !disabled[name] {
-				pipelineList = append(pipelineList, name)
-			}
-		}
+	// Show the RESOLVED composition, not the configured additions: a config
+	// that lists middleware.enabled entries used to make this pane display
+	// only those entries, hiding every default (evidence_guard, approval,
+	// and later intent_loop). ResolvedPipelineNames owns the additive
+	// enabled/disabled semantics for the real pipeline.
+	pipelineList := pipeline.ResolvedPipelineNames(mc.Enabled, mc.Disabled)
+	// The prompt_caching boolean is honored independently of the name
+	// lists (an explicit disabled entry wins), so mirror NewFromConfig or
+	// the pane would omit a middleware that runs.
+	if cfg.Agent.Default.PromptCaching &&
+		!slices.Contains(mc.Disabled, "prompt_caching") &&
+		!slices.Contains(pipelineList, "prompt_caching") {
+		pipelineList = append(pipelineList, "prompt_caching")
 	}
 	app.SetConfig(
 		cfg.Agent.SubAgent.Provider != "" || cfg.Agent.SubAgent.Model != "",
