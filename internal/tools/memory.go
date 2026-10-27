@@ -36,7 +36,7 @@ func (t *MemorySearchTool) Schema() json.RawMessage {
 		"type": "object",
 		"properties": {
 			"query": {"type": "string", "description": "The search query (empty to list all)"},
-			"tag": {"type": "string", "description": "Optional tag to filter by (e.g. 'user_info', 'preferences')"},
+			"tag": {"type": "string", "description": "Optional tag to filter by (e.g. 'user_info', 'preferences'). Supplying a tag forces keyword-only (FTS5) matching and withdraws semantic recall; omit it when searching by paraphrase."},
 			"top_k": {"type": "integer", "description": "Maximum number of results (default 10)"},
 			"scope": {"type": "string", "enum": ["global", "session", "all"], "description": "Tier filter. 'global' (default) returns facts that outlive any single session; 'session' returns atoms distilled from conversations, including past ones; 'all' spans both. Session atoms are excluded unless you ask for them."}
 		},
@@ -80,11 +80,21 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 		return "", fmt.Errorf("memory_search: %w", err)
 	}
 
-	if params.Query != "" && params.Tag == "" {
-		if vecResults, err := t.DB.SearchMemoryVectorScoped(ctx, params.Query, params.TopK, scope); err == nil && len(vecResults) > 0 {
+	// Label the path before the entries. Three distinct degradations — no
+	// embedder, a failed embed, and a vector search with no candidates — used
+	// to collapse into one unlabelled FTS result set, so an empty recall could
+	// not be told apart from a semantic path that was down (yaah-17s).
+	hasEmbedder := t.DB.Embedder() != nil
+	attemptVector := params.Query != "" && params.Tag == "" && hasEmbedder
+	var vecResults []memory.VectorResult
+	var vecErr error
+	if attemptVector {
+		vecResults, vecErr = t.DB.SearchMemoryVectorScopedDiag(ctx, params.Query, params.TopK, scope)
+		if vecErr == nil && len(vecResults) > 0 {
 			return formatVectorResults(vecResults), nil
 		}
 	}
+	path := RetrievalLabel(params.Query, params.Tag, hasEmbedder, vecErr, len(vecResults))
 
 	ftsResults, err := t.DB.SearchMemoryScoped(params.Query, params.TopK, params.Tag, scope)
 	if err != nil {
@@ -92,10 +102,55 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 	}
 
 	if len(ftsResults) == 0 {
-		return t.emptyHint(scope), nil
+		return path + "\n" + t.emptyHint(scope), nil
 	}
 
-	return formatEntries(ftsResults), nil
+	return path + "\n" + formatEntries(ftsResults), nil
+}
+
+// Retrieval path labels. Every memory_search result names the path that
+// produced it: a model asking "was this not known or was recall degraded?"
+// must be able to tell the difference from the output alone.
+const (
+	RetrievalSemantic = "Retrieval: semantic (vector)"
+	RetrievalKeyword  = "Retrieval: keyword (FTS5)"
+	// RetrievalListing is the no-query branch: SearchMemoryScoped orders by
+	// created_at and runs no FTS match, so calling it (FTS5) would be a lie.
+	RetrievalListing = "Retrieval: listing (newest first)"
+)
+
+// RetrievalLabel renders the one-line path description shared by the
+// memory_search tool and the `yaah memory search` CLI, so the two front-ends
+// cannot drift. hasEmbedder reports whether an embedding model is configured;
+// semanticErr and candidates describe the vector attempt when one ran.
+func RetrievalLabel(query, tag string, hasEmbedder bool, semanticErr error, candidates int) string {
+	switch {
+	case query == "":
+		label := RetrievalListing
+		if tag != "" {
+			label += fmt.Sprintf(" — tag %q narrows the listing", tag)
+		}
+		return label
+	case tag != "":
+		return RetrievalKeyword + " — tag filter selects keyword-only matching"
+	case !hasEmbedder:
+		return RetrievalKeyword + " — no embedding model configured"
+	case semanticErr != nil:
+		return RetrievalKeyword + " — " + semanticFailureReason(semanticErr)
+	case candidates == 0:
+		return RetrievalKeyword + " — semantic search returned no candidates"
+	}
+	return RetrievalSemantic
+}
+
+// semanticFailureReason distinguishes a failed embedding (the semantic path
+// itself is down) from a store/scan failure, so a database problem is never
+// reported as an embedding outage.
+func semanticFailureReason(err error) string {
+	if memory.IsEmbedFailure(err) {
+		return "semantic search failed (embedding): " + err.Error()
+	}
+	return "semantic search failed (store): " + err.Error()
 }
 
 // emptyHint explains a miss instead of dead-ending on it. The usual cause is a
@@ -118,9 +173,16 @@ func (t *MemorySearchTool) emptyHint(scope string) string {
 // recall is only as useful as the reader's ability to weigh it: a durable
 // global fact and a session atom from four days ago deserve different trust,
 // and that cannot be read off the text alone.
-func entryLine(id, tags, scope, text string, createdAt int64, score *float32) string {
+func entryLine(id, tags, scope, text string, createdAt int64, score *float32, marker string) string {
 	var b strings.Builder
-	b.WriteString("- [")
+	if marker != "" {
+		b.WriteString("[")
+		b.WriteString(marker)
+		b.WriteString("] ")
+	} else {
+		b.WriteString("- ")
+	}
+	b.WriteString("[")
 	b.WriteString(id)
 	b.WriteString("]")
 	if meta := entryMeta(scope, createdAt); meta != "" {
@@ -176,16 +238,17 @@ func memoryAge(createdAt int64) string {
 func formatEntries(results []memory.Entry) string {
 	lines := make([]string, 0, len(results))
 	for _, r := range results {
-		lines = append(lines, entryLine(r.ID, r.Tags, r.Scope, r.Text, r.CreatedAt, nil))
+		lines = append(lines, entryLine(r.ID, r.Tags, r.Scope, r.Text, r.CreatedAt, nil, ""))
 	}
 	return strings.Join(lines, "\n")
 }
 
 func formatVectorResults(results []memory.VectorResult) string {
-	lines := make([]string, 0, len(results))
+	lines := make([]string, 0, len(results)+1)
+	lines = append(lines, RetrievalSemantic)
 	for _, r := range results {
 		score := r.Score
-		lines = append(lines, entryLine(r.ID, r.Tags, r.Scope, r.Text, r.CreatedAt, &score))
+		lines = append(lines, entryLine(r.ID, r.Tags, r.Scope, r.Text, r.CreatedAt, &score, "semantic"))
 	}
 	return strings.Join(lines, "\n")
 }

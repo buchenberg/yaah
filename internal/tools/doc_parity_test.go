@@ -168,6 +168,26 @@ func TestGitDoc_MatchesDangerTable(t *testing.T) {
 	}
 }
 
+// TestMemorySearchDoc_TagForcesKeywordOnly pins the disclosure that a tag
+// withdraws semantic recall (yaah-h4e). memory_search's vector path runs only
+// when tag is empty (MemorySearchTool.Execute), so the doc must not present
+// tag as an orthogonal filter. The claim must be in the same "keyword-only"
+// clause as the tag and the semantic withdrawal, so a rewrite that merely
+// mentions the words cannot pass.
+func TestMemorySearchDoc_TagForcesKeywordOnly(t *testing.T) {
+	text := strings.ToLower(prompts.ToolDescription("memory_search"))
+	clauses := regexp.MustCompile(`[^.\n]*keyword-only[^.\n]*`).FindAllString(text, -1)
+	tagWord := regexp.MustCompile(`\btag\b`)
+	for _, clause := range clauses {
+		if tagWord.MatchString(clause) &&
+			strings.Contains(clause, "semantic") &&
+			(strings.Contains(clause, "withdraw") || strings.Contains(clause, "drops")) {
+			return
+		}
+	}
+	t.Fatalf("memory_search.md must state in one clause that supplying a tag selects keyword-only (FTS5) matching and withdraws semantic recall; doc: %q", text)
+}
+
 // TestReadDoc_OffsetLimitUnits pins read.md to line semantics. The
 // schema owns the units — offset is a 1-based line, limit a line
 // count — and the byte-slicing claims this doc used to make were the

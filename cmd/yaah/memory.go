@@ -9,6 +9,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/spf13/cobra"
 )
 
@@ -48,21 +49,34 @@ with single spaces. Use '--' when the query itself begins with a dash:
 			return err
 		}
 
-		// Try vector search first, fall back to FTS5.
-		if vecResults, vErr := db.SearchMemoryVectorScoped(cmd.Context(), query, 10, scope); vErr == nil && len(vecResults) > 0 {
-			cmd.Printf("Found %d result(s):\n\n", len(vecResults))
-			for _, r := range vecResults {
-				cmd.Printf("  %s  (score: %.2f)\n", Bold(r.Text), r.Score)
-				cmd.Printf("        id: %s\n", Dim(r.ID))
-				if r.Tags != "" && r.Tags != "null" {
-					cmd.Printf("        tags: %s\n", Dim(r.Tags))
+		// Try vector search first, fall back to FTS5. Name the path so a
+		// degraded semantic recall is distinguishable from a true miss
+		// (yaah-17s); the label formatter is shared with the agent tool so the
+		// two front-ends cannot drift.
+		hasEmbedder := db.Embedder() != nil
+		attemptVector := query != "" && hasEmbedder
+		var vecResults []memory.VectorResult
+		var vecErr error
+		if attemptVector {
+			vecResults, vecErr = db.SearchMemoryVectorScopedDiag(cmd.Context(), query, 10, scope)
+			if vecErr == nil && len(vecResults) > 0 {
+				cmd.Printf("%s\nFound %d result(s):\n\n", tools.RetrievalSemantic, len(vecResults))
+				for _, r := range vecResults {
+					cmd.Printf("  %s  (score: %.2f)\n", Bold(r.Text), r.Score)
+					cmd.Printf("        id: %s\n", Dim(r.ID))
+					if r.Tags != "" && r.Tags != "null" {
+						cmd.Printf("        tags: %s\n", Dim(r.Tags))
+					}
+					cmd.Printf("        %s\n", Dim(fmt.Sprintf("source: %s | scope: %s | created: %s", r.Source, r.Scope,
+						time.Unix(r.CreatedAt, 0).Format("2006-01-02 15:04"))))
 				}
-				cmd.Printf("        %s\n", Dim(fmt.Sprintf("source: %s | scope: %s | created: %s", r.Source, r.Scope,
-					time.Unix(r.CreatedAt, 0).Format("2006-01-02 15:04"))))
+				return nil
 			}
-			return nil
 		}
 
+		// Print the path before the keyword call so a store error still carries
+		// the degradation reason that led here.
+		cmd.Printf("%s\n", tools.RetrievalLabel(query, "", hasEmbedder, vecErr, len(vecResults)))
 		results, err := db.SearchMemoryScoped(query, 10, "", scope)
 		if err != nil {
 			return fmt.Errorf("search: %w", err)

@@ -1251,6 +1251,34 @@ func TestDB_SearchMemoryVector_EmbedFailureDegradesToNil(t *testing.T) {
 	}
 }
 
+func TestDB_SearchMemoryVectorScopedDiag_SurfacesEmbedError(t *testing.T) {
+	_ = captureWarnLogs(t)
+	db := openTestDB(t)
+	db.SetEmbedder(failingEmbedder{errors.New("connection refused")})
+
+	results, err := db.SearchMemoryVectorScopedDiag(context.Background(), "anything", 5, ScopeAll)
+	if err == nil {
+		t.Fatal("Diag must return the embed error instead of degrading silently")
+	}
+	if results != nil {
+		t.Fatalf("expected nil results on embed failure, got %d", len(results))
+	}
+	if !IsEmbedFailure(err) {
+		t.Fatalf("error %v is not classified as an embed failure", err)
+	}
+	if !strings.Contains(err.Error(), "connection refused") {
+		t.Errorf("diag error lost the cause: %v", err)
+	}
+}
+
+func TestDB_SearchMemoryVectorScopedDiag_NoEmbedder(t *testing.T) {
+	db := openTestDB(t)
+	results, err := db.SearchMemoryVectorScopedDiag(context.Background(), "query", 5, ScopeAll)
+	if err != nil || results != nil {
+		t.Fatalf("no embedder = (%v, %v), want (nil, nil)", results, err)
+	}
+}
+
 func TestDB_ReconcileEmbeddings_EmbedFailureSkipsRow(t *testing.T) {
 	logs := captureWarnLogs(t)
 	db := openTestDB(t)
@@ -1314,5 +1342,24 @@ func TestDB_DeleteMemory_RemovesRow(t *testing.T) {
 	}
 	if err := db.DeleteMemory(e.ID); !errors.Is(err, ErrMemoryNotFound) {
 		t.Errorf("second DeleteMemory = %v, want memory-not-found", err)
+	}
+}
+
+// TestEmbedError_NilSafe: rendering a nil or zero embedError must not panic.
+// The type is unexported, so only this package can construct one; callers
+// classify with IsEmbedFailure.
+func TestEmbedError_NilSafe(t *testing.T) {
+	var nilErr *embedError
+	if nilErr.Error() == "" {
+		t.Error("nil embedError rendered an empty message")
+	}
+	if nilErr.Unwrap() != nil {
+		t.Error("nil embedError unwrapped to a non-nil cause")
+	}
+	if (&embedError{}).Error() == "" {
+		t.Error("zero embedError rendered an empty message")
+	}
+	if IsEmbedFailure(&embedError{}) {
+		t.Error("a cause-less embedError must not classify as a real embed failure")
 	}
 }

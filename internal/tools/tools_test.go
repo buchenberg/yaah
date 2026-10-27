@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/buchenberg/yaah/internal/memory"
@@ -61,8 +62,8 @@ func TestMemoryUpdateTool_UpdatesEntry(t *testing.T) {
 	t.Logf("update result: %s", result)
 
 	searchResult, _ := search.Execute(context.Background(), `{"query":"Buchenberger"}`)
-	if searchResult == "No matching memories found." {
-		t.Error("expected to find updated memory text")
+	if !strings.Contains(searchResult, "Buchenberger") {
+		t.Errorf("expected to find updated memory text, got %q", searchResult)
 	}
 }
 

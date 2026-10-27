@@ -846,6 +846,36 @@ type VectorResult struct {
 	Score float32
 }
 
+// embedError reports that the vector path could not embed its query. It is
+// unexported so only this package can construct one: callers classify with
+// IsEmbedFailure rather than type-asserting, and a zero value cannot be
+// mistaken for a real outage.
+type embedError struct{ err error }
+
+func (e *embedError) Error() string {
+	if e == nil || e.err == nil {
+		return "memory: embedding failed"
+	}
+	return e.err.Error()
+}
+
+func (e *embedError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
+// IsEmbedFailure reports whether err came from the query-embedding step of a
+// vector search (as opposed to the store/scan step). Callers that need the
+// reason for a degraded semantic path use this: SearchMemoryVectorScopedDiag
+// returns it, while SearchMemoryVectorScoped deliberately degrades it to
+// (nil, nil).
+func IsEmbedFailure(err error) bool {
+	var e *embedError
+	return errors.As(err, &e) && e.err != nil
+}
+
 // SearchMemoryVector embeds the query, scans all rows with non-null
 // embedding, and returns the top-K sorted by cosine similarity
 // (descending). Falls back to an empty result when no embedder is
@@ -858,7 +888,26 @@ func (d *DB) SearchMemoryVector(ctx context.Context, query string, limit int) ([
 
 // SearchMemoryVectorScoped is SearchMemoryVector with an explicit scope (tier)
 // filter. scope must name a tier: ScopeGlobal, ScopeSession, or ScopeAll.
+//
+// An embed failure degrades to (nil, nil): semantic recall is best-effort and
+// the caller keeps its keyword path. Use SearchMemoryVectorScopedDiag when the
+// reason for the degradation must be reported.
 func (d *DB) SearchMemoryVectorScoped(ctx context.Context, query string, limit int, scope string) ([]VectorResult, error) {
+	results, err := d.SearchMemoryVectorScopedDiag(ctx, query, limit, scope)
+	if IsEmbedFailure(err) {
+		return nil, nil
+	}
+	return results, err
+}
+
+// SearchMemoryVectorScopedDiag is SearchMemoryVectorScoped with the reason for
+// a degraded vector search preserved. A non-nil error means the vector path
+// produced nothing: either the query could not be embedded (an embed failure,
+// already recorded for the log and OTel counter; classify it with
+// IsEmbedFailure) or the store query failed.
+// A nil embedder is not an error — it reports (nil, nil) — so a caller that
+// must name that state checks Embedder() first.
+func (d *DB) SearchMemoryVectorScopedDiag(ctx context.Context, query string, limit int, scope string) ([]VectorResult, error) {
 	scope, err := NormalizeScopeFilter(scope)
 	if err != nil {
 		return nil, err
@@ -870,7 +919,7 @@ func (d *DB) SearchMemoryVectorScoped(ctx context.Context, query string, limit i
 	qEmb, err := embedder.Embed(ctx, query)
 	if err != nil {
 		d.recordEmbedFailure("search_memory_vector", err)
-		return nil, nil
+		return nil, &embedError{err: err}
 	}
 
 	vecSQL := `
