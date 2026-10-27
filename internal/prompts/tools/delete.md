@@ -1,1 +1,1 @@
-Deletes a file from the local filesystem. Accepts an absolute path (supports `~` expansion). Returns a confirmation message on success. This is a destructive operation — verify the file path before calling. For directories, use `bash` or `powershell` with `rm -rf` or equivalent.
+Deletes the file at `filePath` from the local filesystem. Accepts an absolute path (supports `~` expansion). Returns a confirmation message on success. This is a destructive operation — verify the file path before calling. For directories, use `bash` or `powershell` with `rm -rf` or equivalent.

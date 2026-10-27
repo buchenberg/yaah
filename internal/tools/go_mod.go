@@ -98,7 +98,7 @@ func (t *GoModTool) Schema() json.RawMessage {
 			},
 			"dry_run": {
 				"type": "boolean",
-				"description": "If true, show what would be done without modifying go.mod (applies to add, remove, upgrade, tidy)"
+				"description": "If true, preview without modifying go.mod (applies to add, remove, upgrade, tidy): add reports available versions, remove reports the current requirement, upgrade lists current versions, tidy prints the diff that would apply. The versions a real run resolves are decided by that run."
 			}
 		},
 		"required": ["action"]
@@ -276,8 +276,23 @@ func (t *GoModTool) runAdd(ctx context.Context, params goModParams, result *goMo
 		return
 	}
 	if params.DryRun {
+		// Preview: resolve what the real command picks, read-only. The
+		// query strips any @ref (versions are what we are asking for) and
+		// the rendered command mirrors the real run including flags. The
+		// go.sum effects of a real run are not previewed.
+		out, errOut, err := t.runGo(ctx, "list", "-m", "-versions", strings.SplitN(params.Module, "@", 2)[0])
+		if err != nil {
+			result.Success = false
+			result.Stderr = fmt.Sprintf("go_mod: dry_run could not resolve %s: %v\n%s", params.Module, err, errOut)
+			return
+		}
+		mod := params.Module
+		if !strings.Contains(mod, "@") {
+			mod += "@latest"
+		}
+		args := append([]string{"get", "--", mod}, params.Flags...)
+		result.Output = fmt.Sprintf("would run: go %s\navailable versions of %s: %s", strings.Join(args, " "), params.Module, strings.TrimSpace(out))
 		result.Success = true
-		result.Output = fmt.Sprintf("would run: go get %s@latest", params.Module)
 		return
 	}
 	mod := params.Module
@@ -296,8 +311,25 @@ func (t *GoModTool) runRemove(ctx context.Context, params goModParams, result *g
 		return
 	}
 	if params.DryRun {
+		// Preview: report the current requirement read-only. `go list -m
+		// <mod>` fails locally when the module is not in the build list,
+		// which is itself the useful answer — any other failure is an
+		// execution error and must not be dressed up as "not required".
+		query := strings.SplitN(params.Module, "@", 2)[0]
+		out, errOut, err := t.runGo(ctx, "list", "-m", query)
+		args := append([]string{"get", "--", params.Module + "@none"}, params.Flags...)
+		if err != nil {
+			if strings.Contains(errOut, "not a known dependency") {
+				result.Output = fmt.Sprintf("would run: go %s && go mod tidy\n%s is not currently required", strings.Join(args, " "), params.Module)
+				result.Success = true
+				return
+			}
+			result.Success = false
+			result.Stderr = fmt.Sprintf("go_mod: dry_run could not list module state: %v\n%s", err, errOut)
+			return
+		}
+		result.Output = fmt.Sprintf("would run: go %s && go mod tidy\ncurrently required: %s", strings.Join(args, " "), strings.TrimSpace(out))
 		result.Success = true
-		result.Output = fmt.Sprintf("would run: go get %s@none && go mod tidy", params.Module)
 		return
 	}
 	cmdArgs := append([]string{"get", "--", params.Module + "@none"}, params.Flags...)
@@ -319,12 +351,32 @@ func (t *GoModTool) runRemove(ctx context.Context, params goModParams, result *g
 
 func (t *GoModTool) runUpgrade(ctx context.Context, params goModParams, result *goModResult) {
 	if params.DryRun {
-		target := "./..."
-		if params.Module != "" {
-			target = params.Module
+		// Preview: list the current versions read-only. Which versions a
+		// real upgrade resolves is decided by that run's module graph, so
+		// the preview says so instead of inventing a result. The query
+		// strips any @ref; the rendered command mirrors the real run.
+		query := params.Module
+		if query != "" {
+			query = strings.SplitN(query, "@", 2)[0]
 		}
+		listArgs := []string{"list", "-m", "all"}
+		if query != "" {
+			listArgs = []string{"list", "-m", query}
+		}
+		out, errOut, err := t.runGo(ctx, listArgs...)
+		if err != nil {
+			result.Success = false
+			result.Stderr = fmt.Sprintf("go_mod: dry_run could not list module state: %v\n%s", err, errOut)
+			return
+		}
+		var cmdArgs []string
+		if params.Module != "" {
+			cmdArgs = append([]string{"get", "-u", "--", params.Module}, params.Flags...)
+		} else {
+			cmdArgs = append([]string{"get", "-u", "./..."}, params.Flags...)
+		}
+		result.Output = fmt.Sprintf("would run: go %s && go mod tidy\ncurrent versions:\n%s\nresulting versions are resolved by the upgrade run itself", strings.Join(cmdArgs, " "), strings.TrimSpace(out))
 		result.Success = true
-		result.Output = fmt.Sprintf("would run: go get -u %s && go mod tidy", target)
 		return
 	}
 	var cmdArgs []string

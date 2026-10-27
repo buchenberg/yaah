@@ -1,0 +1,1 @@
+Supervise running sub-agents, selected by `action`. `list_scopes` shows every scope and its state; `status` reports the supervision system status. `inject` pushes `guidance` text into the scope named by `scope_id`; `halt` force-stops a scope. Use when a sub-agent drifts from its task and you want to correct or stop it without waiting for it to finish.
