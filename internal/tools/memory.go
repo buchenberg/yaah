@@ -84,10 +84,10 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 	// embedder, a failed embed, and a vector search with no candidates — used
 	// to collapse into one unlabelled FTS result set, so an empty recall could
 	// not be told apart from a semantic path that was down (yaah-17s).
-	path := retrievalKeyword
+	path := RetrievalKeyword
 	switch {
 	case params.Query == "":
-		path = retrievalListing
+		path = RetrievalListing
 		if params.Tag != "" {
 			path += fmt.Sprintf(" — tag %q narrows the listing", params.Tag)
 		}
@@ -123,19 +123,18 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 // produced it: a model asking "was this not known or was recall degraded?"
 // must be able to tell the difference from the output alone.
 const (
-	retrievalSemantic = "Retrieval: semantic (vector)"
-	retrievalKeyword  = "Retrieval: keyword (FTS5)"
-	// retrievalListing is the no-query branch: SearchMemoryScoped orders by
+	RetrievalSemantic = "Retrieval: semantic (vector)"
+	RetrievalKeyword  = "Retrieval: keyword (FTS5)"
+	// RetrievalListing is the no-query branch: SearchMemoryScoped orders by
 	// created_at and runs no FTS match, so calling it (FTS5) would be a lie.
-	retrievalListing = "Retrieval: listing (newest first)"
+	RetrievalListing = "Retrieval: listing (newest first)"
 )
 
-// semanticFailureReason distinguishes a failed embedding (an *memory.EmbedError,
-// the semantic path itself is down) from a store/scan failure, so a database
-// problem is never reported as an embedding outage.
+// semanticFailureReason distinguishes a failed embedding (the semantic path
+// itself is down) from a store/scan failure, so a database problem is never
+// reported as an embedding outage.
 func semanticFailureReason(err error) string {
-	var embedErr *memory.EmbedError
-	if errors.As(err, &embedErr) {
+	if memory.IsEmbedFailure(err) {
 		return "semantic search failed (embedding): " + err.Error()
 	}
 	return "semantic search failed (store): " + err.Error()
@@ -233,7 +232,7 @@ func formatEntries(results []memory.Entry) string {
 
 func formatVectorResults(results []memory.VectorResult) string {
 	lines := make([]string, 0, len(results)+1)
-	lines = append(lines, retrievalSemantic)
+	lines = append(lines, RetrievalSemantic)
 	for _, r := range results {
 		score := r.Score
 		lines = append(lines, entryLine(r.ID, r.Tags, r.Scope, r.Text, r.CreatedAt, &score, "semantic"))

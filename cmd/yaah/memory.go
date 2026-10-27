@@ -1,7 +1,6 @@
 package yaah
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/spf13/cobra"
 )
 
@@ -51,16 +51,20 @@ with single spaces. Use '--' when the query itself begins with a dash:
 
 		// Try vector search first, fall back to FTS5. Name the path so a
 		// degraded semantic recall is distinguishable from a true miss
-		// (yaah-17s), matching the agent tool's output.
-		path := "Retrieval: keyword (FTS5)"
-		if db.Embedder() == nil {
+		// (yaah-17s); the labels come from the agent tool so the two
+		// front-ends cannot drift.
+		path := tools.RetrievalKeyword
+		switch {
+		case query == "":
+			// SearchMemoryScoped orders by created_at and runs no FTS match.
+			path = tools.RetrievalListing
+		case db.Embedder() == nil:
 			path += " — no embedding model configured"
-		} else {
+		default:
 			vecResults, vErr := db.SearchMemoryVectorScopedDiag(cmd.Context(), query, 10, scope)
 			switch {
 			case vErr != nil:
-				var embedErr *memory.EmbedError
-				if errors.As(vErr, &embedErr) {
+				if memory.IsEmbedFailure(vErr) {
 					path += " — semantic search failed (embedding): " + vErr.Error()
 				} else {
 					path += " — semantic search failed (store): " + vErr.Error()
@@ -68,7 +72,7 @@ with single spaces. Use '--' when the query itself begins with a dash:
 			case len(vecResults) == 0:
 				path += " — semantic search returned no candidates"
 			default:
-				cmd.Printf("Retrieval: semantic (vector)\nFound %d result(s):\n\n", len(vecResults))
+				cmd.Printf("%s\nFound %d result(s):\n\n", tools.RetrievalSemantic, len(vecResults))
 				for _, r := range vecResults {
 					cmd.Printf("  %s  (score: %.2f)\n", Bold(r.Text), r.Score)
 					cmd.Printf("        id: %s\n", Dim(r.ID))
@@ -82,12 +86,14 @@ with single spaces. Use '--' when the query itself begins with a dash:
 			}
 		}
 
+		// Print the path before the keyword call so a store error still carries
+		// the degradation reason that led here.
+		cmd.Printf("%s\n", path)
 		results, err := db.SearchMemoryScoped(query, 10, "", scope)
 		if err != nil {
 			return fmt.Errorf("search: %w", err)
 		}
 
-		cmd.Printf("%s\n", path)
 		if len(results) == 0 {
 			cmd.Println("No matching memories found.")
 			return nil

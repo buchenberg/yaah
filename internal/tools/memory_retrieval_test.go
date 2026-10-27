@@ -66,7 +66,7 @@ func TestMemorySearchTool_RetrievalPath(t *testing.T) {
 		if err != nil {
 			t.Fatalf("memory_search: %v", err)
 		}
-		if !strings.HasPrefix(out, retrievalSemantic) {
+		if !strings.HasPrefix(out, RetrievalSemantic) {
 			t.Fatalf("semantic hit must lead with the path label, got %q", out)
 		}
 		if !strings.Contains(out, "[semantic]") || !strings.Contains(out, "g1") {
@@ -77,7 +77,7 @@ func TestMemorySearchTool_RetrievalPath(t *testing.T) {
 				t.Fatalf("each semantic hit must begin with the [semantic] marker: %q", line)
 			}
 		}
-		if strings.Contains(out, retrievalKeyword) {
+		if strings.Contains(out, RetrievalKeyword) {
 			t.Fatalf("semantic hit mislabelled as keyword: %q", out)
 		}
 	})
@@ -90,7 +90,7 @@ func TestMemorySearchTool_RetrievalPath(t *testing.T) {
 		if err != nil {
 			t.Fatalf("memory_search: %v", err)
 		}
-		if !strings.Contains(out, retrievalKeyword+" — no embedding model configured") {
+		if !strings.Contains(out, RetrievalKeyword+" — no embedding model configured") {
 			t.Fatalf("missing-embedder path not named: %q", out)
 		}
 		if !strings.Contains(out, "g1") {
@@ -110,7 +110,7 @@ func TestMemorySearchTool_RetrievalPath(t *testing.T) {
 		if err != nil {
 			t.Fatalf("memory_search: %v", err)
 		}
-		if !strings.Contains(out, retrievalKeyword+" — semantic search failed (embedding): connection refused") {
+		if !strings.Contains(out, RetrievalKeyword+" — semantic search failed (embedding): connection refused") {
 			t.Fatalf("embed failure not surfaced in the path line: %q", out)
 		}
 		if strings.Count(out, "connection refused") != 1 {
@@ -151,7 +151,7 @@ func TestMemorySearchTool_RetrievalPath(t *testing.T) {
 		if err != nil {
 			t.Fatalf("memory_search: %v", err)
 		}
-		if !strings.Contains(out, retrievalKeyword+" — tag filter selects keyword-only matching") {
+		if !strings.Contains(out, RetrievalKeyword+" — tag filter selects keyword-only matching") {
 			t.Fatalf("tag path not named: %q", out)
 		}
 		if strings.Contains(out, "[semantic]") {
@@ -173,7 +173,7 @@ func TestMemorySearchTool_RetrievalPath(t *testing.T) {
 		if err != nil {
 			t.Fatalf("memory_search: %v", err)
 		}
-		if !strings.Contains(out, retrievalKeyword+" — semantic search returned no candidates") {
+		if !strings.Contains(out, RetrievalKeyword+" — semantic search returned no candidates") {
 			t.Fatalf("zero-candidate vector path not named: %q", out)
 		}
 		if !strings.Contains(out, "g1") {
@@ -188,7 +188,7 @@ func TestMemorySearchTool_RetrievalPath(t *testing.T) {
 		if err != nil {
 			t.Fatalf("memory_search: %v", err)
 		}
-		if !strings.Contains(out, retrievalKeyword+" — no embedding model configured") {
+		if !strings.Contains(out, RetrievalKeyword+" — no embedding model configured") {
 			t.Fatalf("empty result lost the path label: %q", out)
 		}
 		if !strings.Contains(out, "No matching memories found.") {
@@ -204,7 +204,7 @@ func TestMemorySearchTool_RetrievalPath(t *testing.T) {
 		if err != nil {
 			t.Fatalf("memory_search: %v", err)
 		}
-		if !strings.HasPrefix(out, retrievalListing) {
+		if !strings.HasPrefix(out, RetrievalListing) {
 			t.Fatalf("listing path not named: %q", out)
 		}
 		if strings.Contains(out, "(FTS5)") {
@@ -228,7 +228,7 @@ func TestMemorySearchTool_RetrievalPath(t *testing.T) {
 		if err != nil {
 			t.Fatalf("memory_search: %v", err)
 		}
-		if !strings.HasPrefix(out, retrievalListing) {
+		if !strings.HasPrefix(out, RetrievalListing) {
 			t.Fatalf("tag-only listing path not named: %q", out)
 		}
 		if !strings.Contains(out, `tag "decision" narrows the listing`) {
@@ -243,7 +243,13 @@ func TestMemorySearchTool_RetrievalPath(t *testing.T) {
 // TestSemanticFailureReason distinguishes a failed embed (the semantic path is
 // down) from a store failure instead of reporting both as an embedding outage.
 func TestSemanticFailureReason(t *testing.T) {
-	embed := semanticFailureReason(&memory.EmbedError{Err: errors.New("connection refused")})
+	db := openScopeTestDB(t)
+	db.SetEmbedder(brokenEmbedder{err: errors.New("connection refused")})
+	_, diagErr := db.SearchMemoryVectorScopedDiag(context.Background(), "query", 10, memory.ScopeGlobal)
+	if diagErr == nil {
+		t.Fatal("expected an embed error from the diag path")
+	}
+	embed := semanticFailureReason(diagErr)
 	if !strings.Contains(embed, "(embedding): connection refused") {
 		t.Fatalf("embed failure mislabelled: %q", embed)
 	}

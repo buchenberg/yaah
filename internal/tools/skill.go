@@ -265,10 +265,10 @@ type skillMatch struct {
 //
 // The value is calibrated for the cosine scale shared by common embedding
 // servers (nomic/OpenAI-style models score related text around 0.5+ and
-// unrelated text around 0.2–0.4). It is a floor, not a match oracle: a server
-// whose scale diverges is covered by the keyword backstop below, which keeps
-// a literal name/description match reportable even when the model scores it
-// low.
+// unrelated text around 0.2–0.4). It is a floor, not a match oracle: literal
+// name/description matches are unioned into the results below regardless of
+// their embedding score, so a server whose scale diverges cannot hide a real
+// match.
 const skillRelevanceFloor = 0.35
 
 func skillSearch(ctx context.Context, emb memory.Embedder, query string, found []skills.Skill) string {
@@ -289,7 +289,7 @@ func skillSearch(ctx context.Context, emb memory.Embedder, query string, found [
 	}
 
 	matches := make([]skillMatch, 0, len(found))
-	var embedErrs []string
+	var embedErrs, scoreErrs []string
 	best := math.Inf(-1)
 	scored := 0
 	for i := range found {
@@ -301,10 +301,10 @@ func skillSearch(ctx context.Context, emb memory.Embedder, query string, found [
 			continue
 		}
 		score := float64(memory.CosineSimilarity(qEmb, e))
-		if math.IsNaN(score) {
+		if math.IsNaN(score) || math.IsInf(score, 0) {
 			// A non-finite score cannot be ranked or thresholded; treat it as
-			// unscored rather than letting NaN slip past the floor.
-			embedErrs = append(embedErrs, found[i].Name+": non-finite similarity")
+			// unscored rather than letting it slip past the floor.
+			scoreErrs = append(scoreErrs, found[i].Name+": non-finite similarity")
 			continue
 		}
 		scored++
@@ -317,31 +317,58 @@ func skillSearch(ctx context.Context, emb memory.Embedder, query string, found [
 		matches = append(matches, skillMatch{skill: &found[i], score: score})
 	}
 
+	// A literal name/description match is a real hit regardless of the
+	// embedding score, so union the keyword pass in rather than consulting it
+	// only when nothing cleared the floor. Dedup by skill name, keeping the
+	// higher score.
+	for _, kw := range keywordMatches(query, found, searchText) {
+		if i := skillMatchIndex(matches, kw.skill.Name); i >= 0 {
+			if kw.score > matches[i].score {
+				matches[i].score = kw.score
+			}
+			continue
+		}
+		matches = append(matches, kw)
+	}
+
 	var out string
-	switch {
-	case len(matches) > 0:
+	if len(matches) > 0 {
 		sort.Slice(matches, func(i, j int) bool { return matches[i].score > matches[j].score })
 		out = formatSearchResults(matches, true)
-	default:
-		if kw := keywordMatches(query, found, searchText); len(kw) > 0 {
-			// The floor must not hide a literal match: a skill whose name or
-			// description contains the query is a real hit even when the model
-			// scores it below the semantic floor.
-			sort.Slice(kw, func(i, j int) bool { return kw[i].score > kw[j].score })
-			out = formatSearchResults(kw, false)
-		} else if scored == 0 {
-			// Nothing was actually scored (every embedding failed), so there is
-			// no honest "best score" to report.
-			out = fmt.Sprintf("No skills matched query %q: no skill could be scored.\n", query)
-		} else {
-			out = fmt.Sprintf("No skills matched query %q (best score %.2f, floor %.2f).\n", query, best, skillRelevanceFloor)
-		}
+	} else if scored == 0 {
+		// Nothing was actually scored (every embedding failed), so there is no
+		// honest "best score" to report.
+		out = fmt.Sprintf("No skills matched query %q: no skill could be scored.\n", query)
+	} else {
+		out = fmt.Sprintf("No skills matched query %q (best score %.2f, floor %.2f).\n", query, best, skillRelevanceFloor)
 	}
 
 	if len(embedErrs) > 0 {
-		out += fmt.Sprintf("%d skill(s) could not be embedded: %s\n", len(embedErrs), strings.Join(embedErrs, "; "))
+		out += fmt.Sprintf("%d skill(s) could not be embedded: %s\n", len(embedErrs), joinCapped(embedErrs, 5))
+	}
+	if len(scoreErrs) > 0 {
+		out += fmt.Sprintf("%d skill(s) had a non-finite similarity score: %s\n", len(scoreErrs), joinCapped(scoreErrs, 5))
 	}
 	return out
+}
+
+// skillMatchIndex finds a match by skill name, or -1.
+func skillMatchIndex(matches []skillMatch, name string) int {
+	for i := range matches {
+		if matches[i].skill.Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// joinCapped joins at most max items and reports how many were omitted, so a
+// broad embedding outage cannot bloat the tool result.
+func joinCapped(items []string, max int) string {
+	if len(items) <= max {
+		return strings.Join(items, "; ")
+	}
+	return fmt.Sprintf("%s; and %d more", strings.Join(items[:max], "; "), len(items)-max)
 }
 
 // keywordMatches returns the literal name/description/body hits. It is shared

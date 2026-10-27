@@ -1263,9 +1263,8 @@ func TestDB_SearchMemoryVectorScopedDiag_SurfacesEmbedError(t *testing.T) {
 	if results != nil {
 		t.Fatalf("expected nil results on embed failure, got %d", len(results))
 	}
-	var embedErr *EmbedError
-	if !errors.As(err, &embedErr) {
-		t.Fatalf("error %v is not an *EmbedError", err)
+	if !IsEmbedFailure(err) {
+		t.Fatalf("error %v is not classified as an embed failure", err)
 	}
 	if !strings.Contains(err.Error(), "connection refused") {
 		t.Errorf("diag error lost the cause: %v", err)
@@ -1346,17 +1345,21 @@ func TestDB_DeleteMemory_RemovesRow(t *testing.T) {
 	}
 }
 
-// TestEmbedError_NilSafe: the type is exported, so a zero-value or nil
-// EmbedError must not panic when rendered (yaah-17s review).
+// TestEmbedError_NilSafe: rendering a nil or zero embedError must not panic.
+// The type is unexported, so only this package can construct one; callers
+// classify with IsEmbedFailure.
 func TestEmbedError_NilSafe(t *testing.T) {
-	var nilErr *EmbedError
+	var nilErr *embedError
 	if nilErr.Error() == "" {
-		t.Error("nil EmbedError rendered an empty message")
+		t.Error("nil embedError rendered an empty message")
 	}
 	if nilErr.Unwrap() != nil {
-		t.Error("nil EmbedError unwrapped to a non-nil cause")
+		t.Error("nil embedError unwrapped to a non-nil cause")
 	}
-	if (&EmbedError{}).Error() == "" {
-		t.Error("zero EmbedError rendered an empty message")
+	if (&embedError{}).Error() == "" {
+		t.Error("zero embedError rendered an empty message")
+	}
+	if IsEmbedFailure(&embedError{}) {
+		t.Error("a cause-less embedError must not classify as a real embed failure")
 	}
 }

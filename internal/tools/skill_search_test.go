@@ -147,11 +147,11 @@ func TestSkillSearch_NoSkills(t *testing.T) {
 	}
 }
 
-// TestSkillSearch_KeywordBackstopKeepsLiteralMatch pins the floor's backstop:
-// a skill whose description literally contains the query is a real hit even
-// when the embedding model scores it below the floor, so the floor cannot
-// regress the keyword matcher.
-func TestSkillSearch_KeywordBackstopKeepsLiteralMatch(t *testing.T) {
+// TestSkillSearch_KeywordMatchSurvivesBelowFloor pins the literal-match union:
+// a skill whose description contains the query is a real hit even when the
+// embedding model scores it below the floor, so the floor cannot regress the
+// keyword matcher.
+func TestSkillSearch_KeywordMatchSurvivesBelowFloor(t *testing.T) {
 	emb := vectorEmbedder{vectors: map[string]memory.Embedding{
 		"database":                   {1, 0},
 		"postgres: database queries": {0, 1}, // cosine 0, below the floor
@@ -164,6 +164,31 @@ func TestSkillSearch_KeywordBackstopKeepsLiteralMatch(t *testing.T) {
 	}
 	if strings.Contains(out, "No skills matched") {
 		t.Fatalf("literal keyword match reported as a miss: %q", out)
+	}
+}
+
+// TestSkillSearch_KeywordMatchIsUnionedWithSemanticMatches: the literal match
+// must survive even when a *different* skill clears the floor, not only when
+// nothing does.
+func TestSkillSearch_KeywordMatchIsUnionedWithSemanticMatches(t *testing.T) {
+	found := []skills.Skill{
+		{Name: "postgres", Description: "database queries"},
+		{Name: "database-backup", Description: "database restore runbook"},
+	}
+	emb := vectorEmbedder{vectors: map[string]memory.Embedding{
+		"database":                   {1, 0},
+		"postgres: database queries": {1, 0}, // clears the floor
+		"database-backup: database restore runbook": {0, 1}, // literal but below floor
+	}}
+
+	out := skillSearch(context.Background(), emb, "database", found)
+	if !strings.Contains(out, "Found 2 matching skill(s):") {
+		t.Fatalf("literal match must be unioned with the semantic hit: %q", out)
+	}
+	for _, name := range []string{"postgres", "database-backup"} {
+		if !strings.Contains(out, name) {
+			t.Errorf("unioned result lost %q: %q", name, out)
+		}
 	}
 }
 
@@ -228,8 +253,9 @@ func TestSkillSearch_NegativeBestScore(t *testing.T) {
 }
 
 // TestSkillSearch_NonFiniteScoreIsNotAMatch: an overflowing cosine produces
-// NaN, which `score < floor` would let through. It must be treated as
-// unscored, never ranked as a match.
+// NaN/Inf, which `score < floor` would let through. It must be treated as
+// unscored, never ranked as a match, and must not be described as an embed
+// failure.
 func TestSkillSearch_NonFiniteScoreIsNotAMatch(t *testing.T) {
 	inf := float32(math.Inf(1))
 	emb := vectorEmbedder{vectors: map[string]memory.Embedding{
@@ -239,10 +265,16 @@ func TestSkillSearch_NonFiniteScoreIsNotAMatch(t *testing.T) {
 	}}
 
 	out := skillSearch(context.Background(), emb, "quantum", skillSearchFixture())
-	if strings.Contains(out, "Found ") {
-		t.Fatalf("a NaN similarity passed the floor as a match: %q", out)
+	if !strings.Contains(out, `No skills matched query "quantum": no skill could be scored.`) {
+		t.Fatalf("non-finite scores must produce an explicit unscored miss: %q", out)
 	}
-	if !strings.Contains(out, "non-finite similarity") {
-		t.Fatalf("non-finite scores must be surfaced: %q", out)
+	if strings.Contains(out, "Found ") {
+		t.Fatalf("a non-finite similarity passed the floor as a match: %q", out)
+	}
+	if !strings.Contains(out, "2 skill(s) had a non-finite similarity score") {
+		t.Fatalf("non-finite scores must be surfaced separately: %q", out)
+	}
+	if strings.Contains(out, "could not be embedded") {
+		t.Fatalf("a computed non-finite score is not an embed failure: %q", out)
 	}
 }
