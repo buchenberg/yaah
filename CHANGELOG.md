@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.106.1](https://github.com/buchenberg/yaah/compare/v0.106.0...v0.106.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* **tools:** memory/skill retrieval honesty — label the path, surface degradation ([4b63abd](https://github.com/buchenberg/yaah/commit/4b63abdd7c1e6bf821fe8e0e208fdaf2e3bc1c64))
+
 ## [0.106.0](https://github.com/buchenberg/yaah/compare/v0.105.2...v0.106.0) (2026-10-27)
 
 
