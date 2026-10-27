@@ -80,8 +80,26 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 		return "", fmt.Errorf("memory_search: %w", err)
 	}
 
-	if params.Query != "" && params.Tag == "" {
-		if vecResults, err := t.DB.SearchMemoryVectorScoped(ctx, params.Query, params.TopK, scope); err == nil && len(vecResults) > 0 {
+	// Label the path before the entries. Three distinct degradations — no
+	// embedder, a failed embed, and a vector search with no candidates — used
+	// to collapse into one unlabelled FTS result set, so an empty recall could
+	// not be told apart from a semantic path that was down (yaah-17s).
+	path := retrievalKeyword
+	switch {
+	case params.Query == "":
+		path += " — listing entries without a query"
+	case params.Tag != "":
+		path += " — tag filter selects keyword-only matching"
+	case t.DB.Embedder() == nil:
+		path += " — no embedding model configured"
+	default:
+		vecResults, verr := t.DB.SearchMemoryVectorScopedDiag(ctx, params.Query, params.TopK, scope)
+		switch {
+		case verr != nil:
+			path += " — semantic search failed: " + verr.Error()
+		case len(vecResults) == 0:
+			path += " — semantic search returned no candidates"
+		default:
 			return formatVectorResults(vecResults), nil
 		}
 	}
@@ -92,11 +110,19 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 	}
 
 	if len(ftsResults) == 0 {
-		return t.emptyHint(scope), nil
+		return path + "\n" + t.emptyHint(scope), nil
 	}
 
-	return formatEntries(ftsResults), nil
+	return path + "\n" + formatEntries(ftsResults), nil
 }
+
+// Retrieval path labels. Every memory_search result names the path that
+// produced it: a model asking "was this not known or was recall degraded?"
+// must be able to tell the difference from the output alone.
+const (
+	retrievalSemantic = "Retrieval: semantic (vector)"
+	retrievalKeyword  = "Retrieval: keyword (FTS5)"
+)
 
 // emptyHint explains a miss instead of dead-ending on it. The usual cause is a
 // default (global-only) recall against a store whose knowledge is mostly
@@ -118,9 +144,16 @@ func (t *MemorySearchTool) emptyHint(scope string) string {
 // recall is only as useful as the reader's ability to weigh it: a durable
 // global fact and a session atom from four days ago deserve different trust,
 // and that cannot be read off the text alone.
-func entryLine(id, tags, scope, text string, createdAt int64, score *float32) string {
+func entryLine(id, tags, scope, text string, createdAt int64, score *float32, marker string) string {
 	var b strings.Builder
-	b.WriteString("- [")
+	if marker != "" {
+		b.WriteString("[")
+		b.WriteString(marker)
+		b.WriteString("] ")
+	} else {
+		b.WriteString("- ")
+	}
+	b.WriteString("[")
 	b.WriteString(id)
 	b.WriteString("]")
 	if meta := entryMeta(scope, createdAt); meta != "" {
@@ -176,16 +209,17 @@ func memoryAge(createdAt int64) string {
 func formatEntries(results []memory.Entry) string {
 	lines := make([]string, 0, len(results))
 	for _, r := range results {
-		lines = append(lines, entryLine(r.ID, r.Tags, r.Scope, r.Text, r.CreatedAt, nil))
+		lines = append(lines, entryLine(r.ID, r.Tags, r.Scope, r.Text, r.CreatedAt, nil, ""))
 	}
 	return strings.Join(lines, "\n")
 }
 
 func formatVectorResults(results []memory.VectorResult) string {
-	lines := make([]string, 0, len(results))
+	lines := make([]string, 0, len(results)+1)
+	lines = append(lines, retrievalSemantic)
 	for _, r := range results {
 		score := r.Score
-		lines = append(lines, entryLine(r.ID, r.Tags, r.Scope, r.Text, r.CreatedAt, &score))
+		lines = append(lines, entryLine(r.ID, r.Tags, r.Scope, r.Text, r.CreatedAt, &score, "semantic"))
 	}
 	return strings.Join(lines, "\n")
 }

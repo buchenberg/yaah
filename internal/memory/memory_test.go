@@ -1251,6 +1251,35 @@ func TestDB_SearchMemoryVector_EmbedFailureDegradesToNil(t *testing.T) {
 	}
 }
 
+func TestDB_SearchMemoryVectorScopedDiag_SurfacesEmbedError(t *testing.T) {
+	_ = captureWarnLogs(t)
+	db := openTestDB(t)
+	db.SetEmbedder(failingEmbedder{errors.New("connection refused")})
+
+	results, err := db.SearchMemoryVectorScopedDiag(context.Background(), "anything", 5, ScopeAll)
+	if err == nil {
+		t.Fatal("Diag must return the embed error instead of degrading silently")
+	}
+	if results != nil {
+		t.Fatalf("expected nil results on embed failure, got %d", len(results))
+	}
+	var embedErr *EmbedError
+	if !errors.As(err, &embedErr) {
+		t.Fatalf("error %v is not an *EmbedError", err)
+	}
+	if !strings.Contains(err.Error(), "connection refused") {
+		t.Errorf("diag error lost the cause: %v", err)
+	}
+}
+
+func TestDB_SearchMemoryVectorScopedDiag_NoEmbedder(t *testing.T) {
+	db := openTestDB(t)
+	results, err := db.SearchMemoryVectorScopedDiag(context.Background(), "query", 5, ScopeAll)
+	if err != nil || results != nil {
+		t.Fatalf("no embedder = (%v, %v), want (nil, nil)", results, err)
+	}
+}
+
 func TestDB_ReconcileEmbeddings_EmbedFailureSkipsRow(t *testing.T) {
 	logs := captureWarnLogs(t)
 	db := openTestDB(t)

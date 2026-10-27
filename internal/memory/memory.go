@@ -846,6 +846,16 @@ type VectorResult struct {
 	Score float32
 }
 
+// EmbedError reports that the vector path could not embed its query. It wraps
+// the embedder's error: SearchMemoryVectorScoped and
+// SearchMemoryVectorScopedDiag callers can errors.As it to tell "the
+// embedding step failed" from a store error while still printing the original
+// cause verbatim.
+type EmbedError struct{ Err error }
+
+func (e *EmbedError) Error() string { return e.Err.Error() }
+func (e *EmbedError) Unwrap() error { return e.Err }
+
 // SearchMemoryVector embeds the query, scans all rows with non-null
 // embedding, and returns the top-K sorted by cosine similarity
 // (descending). Falls back to an empty result when no embedder is
@@ -858,7 +868,26 @@ func (d *DB) SearchMemoryVector(ctx context.Context, query string, limit int) ([
 
 // SearchMemoryVectorScoped is SearchMemoryVector with an explicit scope (tier)
 // filter. scope must name a tier: ScopeGlobal, ScopeSession, or ScopeAll.
+//
+// An embed failure degrades to (nil, nil): semantic recall is best-effort and
+// the caller keeps its keyword path. Use SearchMemoryVectorScopedDiag when the
+// reason for the degradation must be reported.
 func (d *DB) SearchMemoryVectorScoped(ctx context.Context, query string, limit int, scope string) ([]VectorResult, error) {
+	results, err := d.SearchMemoryVectorScopedDiag(ctx, query, limit, scope)
+	var embedErr *EmbedError
+	if errors.As(err, &embedErr) {
+		return nil, nil
+	}
+	return results, err
+}
+
+// SearchMemoryVectorScopedDiag is SearchMemoryVectorScoped with the reason for
+// a degraded vector search preserved. A non-nil error means the vector path
+// produced nothing: either the query could not be embedded (an *EmbedError,
+// already recorded for the log and OTel counter) or the store query failed.
+// A nil embedder is not an error — it reports (nil, nil) — so a caller that
+// must name that state checks Embedder() first.
+func (d *DB) SearchMemoryVectorScopedDiag(ctx context.Context, query string, limit int, scope string) ([]VectorResult, error) {
 	scope, err := NormalizeScopeFilter(scope)
 	if err != nil {
 		return nil, err
@@ -870,7 +899,7 @@ func (d *DB) SearchMemoryVectorScoped(ctx context.Context, query string, limit i
 	qEmb, err := embedder.Embed(ctx, query)
 	if err != nil {
 		d.recordEmbedFailure("search_memory_vector", err)
-		return nil, nil
+		return nil, &EmbedError{Err: err}
 	}
 
 	vecSQL := `
