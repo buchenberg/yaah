@@ -338,8 +338,9 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 
 	startTime := time.Now()
 
+	var span trace.Span
 	if cm.OtelEnabled {
-		_, span := otel.Tracer("yaah").Start(ctx, "compaction",
+		_, span = otel.Tracer("yaah").Start(ctx, "compaction",
 			trace.WithAttributes(
 				attribute.Int("compaction.effective_tokens", effectiveTokens),
 				attribute.Int("compaction.raw_tokens", rawTokens),
@@ -409,11 +410,38 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 
 	beforeEstimate := cm.estimatedTokens()
 	resp, err := compactProvider.Send(ctx, req)
+	summaryRejected := ""
+	if err == nil && resp != nil && len(resp.Choices) > 0 {
+		if ok, vreason := agentctx.ValidateSummary(resp.Choices[0].Message.Content); !ok {
+			// yaah-v378.1: a summary that says nothing — the unfilled
+			// template is the recorded failure shape — must not replace
+			// the conversation. Take the same fallback path as an empty
+			// response, with the reason carried on the warn and the
+			// event so the rejection is auditable.
+			summaryRejected = vreason
+			resp = nil
+		}
+	}
+	if span != nil {
+		span.SetAttributes(
+			attribute.Int("compaction.excerpt_bytes", sb.Len()),
+			attribute.Bool("compaction.accepted", err == nil && resp != nil),
+		)
+		if resp != nil && len(resp.Choices) > 0 && summaryRejected == "" {
+			span.SetAttributes(attribute.String("compaction.summary_prefix",
+				agentctx.BoundedSummaryPrefix(resp.Choices[0].Message.Content)))
+		}
+		if summaryRejected != "" {
+			span.SetAttributes(attribute.String("compaction.reject_reason", summaryRejected))
+		}
+	}
 	if err != nil || resp == nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
 		reason := "empty response"
 		switch {
 		case err != nil:
 			reason = err.Error()
+		case summaryRejected != "":
+			reason = "summary rejected: " + summaryRejected
 		case resp != nil && len(resp.Choices) > 0 && resp.Choices[0].FinishReason != "":
 			reason = "finish_reason=" + resp.Choices[0].FinishReason
 		}
