@@ -344,5 +344,11 @@ Or the generic stdio client loop (any language; one JSON object per line):
   `sessionCapabilities.modes`/`configOptions` are not advertised.
 - **`additionalDirectories`** — not advertised; sessions act in the cwd
   the lifecycle request named.
-- **Compaction replay** — yaah does not advertise compaction support, so
-  clients are not promised compaction `session/update` replay on load.
+- **Compaction replay** — with the client advertising
+  `clientCapabilities.session.compaction`, live compaction is sent as
+  ID-addressed `compaction_update` /
+  `compaction_summary_chunk` updates on `session/update`; without it,
+  compaction degrades to plain text message chunks. However, loaded sessions
+  still do not replay compaction cards — the persisted
+  summary is a system prompt row that replay skips, so only live compaction
+  is structured (a persisted compaction record would be needed to replay).

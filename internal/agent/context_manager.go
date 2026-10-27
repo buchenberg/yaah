@@ -437,11 +437,44 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 				if beforeEstimate > 0 {
 					savingsPct = float64(beforeEstimate-afterEstimate) / float64(beforeEstimate)
 				}
+				if cm.Broker != nil {
+					cm.Broker.Publish(&CompactionDoneEvent{
+						BeforeTokens:   beforeEstimate,
+						AfterTokens:    afterEstimate,
+						SavingsPct:     savingsPct,
+						Method:         "chunked",
+						ElapsedSeconds: time.Since(startTime).Seconds(),
+						OldMsgCount:    len(oldMsgs),
+						KeepMsgCount:   len(keepMsgs),
+						Budget:         budget,
+					})
+				}
 				observability.RecordCompaction(ctx, compactReason, time.Since(startTime), beforeEstimate, afterEstimate, savingsPct)
 				return
 			}
 		}
 		cm.trimContext()
+		if cm.Broker != nil {
+			// Terminal event for the compaction card: the LLM
+			// summarization fell back to plain old-message trimming,
+			// which still compacts but does not summarize.
+			afterTrim := cm.estimatedTokens()
+			trimSavings := 0.0
+			if beforeEstimate > 0 {
+				trimSavings = float64(beforeEstimate-afterTrim) / float64(beforeEstimate)
+			}
+			cm.Broker.Publish(&CompactionDoneEvent{
+				BeforeTokens:    beforeEstimate,
+				AfterTokens:     afterTrim,
+				SavingsPct:      trimSavings,
+				Method:          "trim",
+				ElapsedSeconds:  time.Since(startTime).Seconds(),
+				IneffectiveNote: "summarization failed; old messages trimmed",
+				OldMsgCount:     len(oldMsgs),
+				KeepMsgCount:    len(keepMsgs),
+				Budget:          budget,
+			})
+		}
 		return
 	}
 

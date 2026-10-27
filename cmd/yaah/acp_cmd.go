@@ -61,7 +61,7 @@ Implemented:
   session/cancel              Cancel the in-flight turn (notification)
   session/set_mode            Acknowledged; mode switching is not modeled
   session/update              Streaming updates: message/thought chunks,
-                              tool calls, plans, usage
+                              tool calls, plans, usage, compaction
   session/request_permission  Tool approvals delegated to the client
   session/set_config_option   Change a config option (model picker) mid-session
   notifications/initialized   Client readiness announcement (accepted; no-op)

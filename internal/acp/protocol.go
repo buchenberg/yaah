@@ -65,10 +65,28 @@ type InitializeParams struct {
 // through elicitation/create only when the client advertised
 // elicitation.form.
 type ClientCaps struct {
-	Fs          *FSCaps          `json:"fs,omitempty"`
-	Terminal    bool             `json:"terminal,omitempty"`
-	Elicitation *ElicitationCaps `json:"elicitation,omitempty"`
-	Auth        *ClientAuthCaps  `json:"auth,omitempty"`
+	Fs          *FSCaps            `json:"fs,omitempty"`
+	Terminal    bool               `json:"terminal,omitempty"`
+	Session     *ClientSessionCaps `json:"session,omitempty"`
+	Elicitation *ElicitationCaps   `json:"elicitation,omitempty"`
+	Auth        *ClientAuthCaps    `json:"auth,omitempty"`
+}
+
+// ClientSessionCaps mirrors the client's session capabilities object
+// (clientCapabilities.session on initialize). The response-side
+// SessionCaps (the sessionCapabilities the agent advertises) is a
+// separate type; this one is what the client sends.
+type ClientSessionCaps struct {
+	// Compaction advertises support for ID-addressed compaction
+	// updates. The spec shapes it as an object; flexCap tolerant of
+	// both the boolean and object spellings is used to decode it.
+	Compaction flexCap `json:"compaction,omitempty"`
+}
+
+// capsSupportsCompaction reports whether the client advertised the
+// session.compaction capability ({} or true).
+func capsSupportsCompaction(caps *ClientCaps) bool {
+	return caps != nil && caps.Session != nil && bool(caps.Session.Compaction)
 }
 
 // ElicitationCaps is the client's elicitation capability set. On the
@@ -360,6 +378,9 @@ const (
 	UpdatePlan              = "plan"
 	UpdateUsageUpdate       = "usage_update"
 	UpdateSessionInfo       = "session_info_update"
+
+	UpdateCompaction             = "compaction_update"
+	UpdateCompactionSummaryChunk = "compaction_summary_chunk"
 )
 
 // Tool call statuses.
@@ -368,6 +389,9 @@ const (
 	StatusInProgress = "in_progress"
 	StatusCompleted  = "completed"
 	StatusFailed     = "failed"
+	// Compaction lifecycle statuses (CompactionUpdate.Status).
+	CompactionInProgress = "in_progress"
+	CompactionCompleted  = "completed"
 )
 
 // Tool kinds (session/update tool_call.kind).
@@ -422,6 +446,35 @@ type UpdateContent struct {
 	Path    string  `json:"path,omitempty"`
 	OldText *string `json:"oldText,omitempty"`
 	NewText *string `json:"newText,omitempty"`
+}
+
+// CompactionUpdate is the ID-addressed compaction upsert (the spec's
+// compaction_update session-update variant). The first notification
+// for a compactionId fixes the card's timeline position; later updates
+// with the same id patch it in place. Yaah patches by omission only:
+// every field it wants to change is sent with a concrete value, and
+// the explicit-null "clear" form the spec allows is never produced.
+// Agents MUST only send this when the client advertised
+// clientCapabilities.session.compaction; otherwise compaction surfaces
+// as ordinary text message chunks.
+type CompactionUpdate struct {
+	SessionUpdate string         `json:"sessionUpdate"`
+	CompactionID  string         `json:"compactionId"`
+	Status        string         `json:"status"`
+	Error         string         `json:"error,omitempty"`
+	Summary       []ContentBlock `json:"summary,omitempty"`
+	Meta          map[string]any `json:"_meta,omitempty"`
+}
+
+// CompactionSummaryChunk appends one content block to a compaction's
+// summary. A first-seen compactionId creates an in-progress compaction;
+// chunks render in receive order. Also gated on the compaction
+// capability, exactly like CompactionUpdate.
+type CompactionSummaryChunk struct {
+	SessionUpdate string         `json:"sessionUpdate"`
+	CompactionID  string         `json:"compactionId"`
+	Content       ContentBlock   `json:"content"`
+	Meta          map[string]any `json:"_meta,omitempty"`
 }
 
 // ToolCallLocation points the client at a file touched by the tool
