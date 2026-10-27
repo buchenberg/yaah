@@ -153,7 +153,7 @@ func (c *AnthropicClient) replayFallback(req types.ChatRequest, err error) (stri
 	if !errors.As(anthropicAPIError(err), &apiErr) || apiErr.StatusCode != http.StatusBadRequest {
 		return "", false
 	}
-	if !looksLikeThinkingReplayRejection(apiErr.Message) {
+	if !looksLikeThinkingReplayRejection(apiErr.Code, apiErr.Message) {
 		return "", false
 	}
 	return "omit", true
@@ -168,29 +168,30 @@ func (c *AnthropicClient) acceptReplayFallback() {
 }
 
 // looksLikeThinkingReplayRejection restricts the fallback to 400s about
-// replayed thinking. A signature complaint is accepted on its own: the
-// caller only consults this when the request actually carried unsigned
-// thinking, and auth-signature failures arrive as 401s. Otherwise
-// "thinking" must be present with block/replay wording (or a standalone
-// "signed"), so budget and tool_choice errors cannot drop the reasoning
-// and "unsigned"/"designed"/"assigned" do not match.
-func looksLikeThinkingReplayRejection(message string) bool {
+// replayed thinking. Thinking-related wording always qualifies. A bare
+// signature complaint qualifies only when the provider classified the
+// error as invalid_request_error: auth and gateway signature failures use
+// authentication_error (or a non-400 status), while a signature-validating
+// gateway rejecting the replayed block reports invalid_request_error.
+//
+// "signed" is matched as a standalone word so "unsigned"/"designed"/
+// "assigned" do not, and "thinking" plus block/replay wording is required
+// for non-signature matches so budget and tool_choice errors cannot drop
+// the reasoning.
+func looksLikeThinkingReplayRejection(code, message string) bool {
 	msg := strings.ToLower(message)
-	if strings.Contains(msg, "signature") {
-		return true
-	}
-	if !strings.Contains(msg, "thinking") {
-		return false
-	}
-	if strings.Contains(msg, "block") || strings.Contains(msg, "replay") || strings.Contains(msg, "passed back") {
-		return true
-	}
-	for _, field := range strings.FieldsFunc(msg, func(r rune) bool { return !unicode.IsLetter(r) }) {
-		if field == "signed" {
+	if strings.Contains(msg, "thinking") {
+		if strings.Contains(msg, "signature") || strings.Contains(msg, "block") ||
+			strings.Contains(msg, "replay") || strings.Contains(msg, "passed back") {
 			return true
 		}
+		for _, field := range strings.FieldsFunc(msg, func(r rune) bool { return !unicode.IsLetter(r) }) {
+			if field == "signed" {
+				return true
+			}
+		}
 	}
-	return false
+	return strings.Contains(msg, "signature") && code == "invalid_request_error"
 }
 
 const (
