@@ -621,6 +621,137 @@ func TestChatRequestToAnthropic_TextStrategyDowngradesSignedThinking(t *testing.
 	}
 }
 
+// A signature-validating gateway behind a compatible URL rejects the
+// unsigned replay shape with 400. replayFallback recognizes only that
+// rejection, drops unsigned thinking, and asks the caller to retry once.
+func TestAnthropicClient_ReplayFallbackConditions(t *testing.T) {
+	unsigned := []types.Message{{Role: "assistant", ReasoningContent: "cot", Content: "answer"}}
+	signed := []types.Message{{Role: "assistant", ReasoningContent: "cot", ReasoningSignature: "sig", Content: "answer"}}
+	cases := []struct {
+		name   string
+		replay string
+		msgs   []types.Message
+		err    error
+		want   bool
+	}{
+		{"signature 400 with unsigned thinking", "", unsigned, &APIError{StatusCode: 400, Message: "thinking blocks must be signed"}, true},
+		{"unrelated 400", "", unsigned, &APIError{StatusCode: 400, Message: "bad request"}, false},
+		{"non-400 status", "", unsigned, &APIError{StatusCode: 500, Message: "thinking broke"}, false},
+		{"no unsigned thinking", "", signed, &APIError{StatusCode: 400, Message: "thinking blocks must be signed"}, false},
+		{"explicit text mode", "text", unsigned, &APIError{StatusCode: 400, Message: "thinking blocks must be signed"}, false},
+		{"non-provider error", "", unsigned, errors.New("connection reset"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := NewAnthropicClient("https://gateway.example/anthropic", "sk-test", 30)
+			c.ReasoningReplay = tc.replay
+			req := types.ChatRequest{Messages: tc.msgs}
+			if got := c.replayFallback(req, tc.err); got != tc.want {
+				t.Fatalf("replayFallback() = %v, want %v", got, tc.want)
+			}
+			// A successful fallback must also stick for later requests.
+			if tc.want && c.replayMode() != "omit" {
+				t.Errorf("replayMode() = %q after fallback, want omit", c.replayMode())
+			}
+		})
+	}
+}
+
+// The non-streaming path drops the unsigned thinking block and retries once
+// when the endpoint rejects it.
+func TestAnthropicSend_RetriesWithoutUnsignedThinkingWhenRejected(t *testing.T) {
+	var attempts int
+	var sentThinking []bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		body, _ := io.ReadAll(r.Body)
+		sentThinking = append(sentThinking, strings.Contains(string(body), `"type":"thinking"`))
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(string(body), `"type":"thinking"`) {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `{"type":"error","error":{"type":"invalid_request_error","message":"thinking blocks must be signed"}}`)
+			return
+		}
+		fmt.Fprint(w, `{"id":"m1","type":"message","role":"assistant","model":"m","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := NewAnthropicClient(srv.URL, "sk-test", 30)
+	resp, err := client.Send(context.Background(), types.ChatRequest{
+		Model:     "m",
+		MaxTokens: 64,
+		Messages: []types.Message{
+			{Role: "user", Content: "hi"},
+			{Role: "assistant", ReasoningContent: "cot", Content: "answer"},
+			{Role: "user", Content: "again"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if resp == nil || resp.Choices[0].Message.Content != "ok" {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts, got %d", attempts)
+	}
+	if !sentThinking[0] || sentThinking[1] {
+		t.Errorf("thinking block presence per attempt = %v, want [true false]", sentThinking)
+	}
+}
+
+// The streaming path applies the same fallback: the rejection arrives
+// before any event, so the retry cannot duplicate output.
+func TestAnthropicSendStream_RetriesWithoutUnsignedThinkingWhenRejected(t *testing.T) {
+	body := "event: message_start\n" +
+		`data: {"type":"message_start","message":{"id":"m1","model":"m"}}` + "\n\n" +
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}` + "\n\n" +
+		"event: message_delta\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}` + "\n\n" +
+		"event: message_stop\n" +
+		`data: {"type":"message_stop"}` + "\n\n"
+
+	var attempts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		reqBody, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(reqBody), `"type":"thinking"`) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `{"type":"error","error":{"type":"invalid_request_error","message":"thinking blocks must be signed"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, body)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := NewAnthropicClient(srv.URL, "sk-test", 30)
+	chunks, errs := client.SendStream(context.Background(), types.ChatRequest{
+		Model:     "m",
+		MaxTokens: 64,
+		Messages: []types.Message{
+			{Role: "user", Content: "hi"},
+			{Role: "assistant", ReasoningContent: "cot", Content: "answer"},
+			{Role: "user", Content: "again"},
+		},
+	})
+	content, _, streamErr := drainStream(chunks, errs)
+	if streamErr != nil {
+		t.Fatalf("SendStream() error = %v", streamErr)
+	}
+	if content != "ok" {
+		t.Errorf("streamed content = %q, want %q", content, "ok")
+	}
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts, got %d", attempts)
+	}
+}
+
 func TestChatRequestToAnthropic_TemperaturePassthrough(t *testing.T) {
 	req := types.ChatRequest{
 		Model:       "claude-3.5-sonnet",
