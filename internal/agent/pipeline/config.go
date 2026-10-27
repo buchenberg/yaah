@@ -197,6 +197,9 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 		}
 		return &LoopDetectionMiddleware{count: count, window: window}
 	},
+	"intent_loop": func(cfg PipelineConfig) Middleware {
+		return NewIntentLoopMiddleware(defaultIntentSteerAfter, defaultIntentHaltAfter)
+	},
 	"evidence_guard": func(cfg PipelineConfig) Middleware {
 		return NewEvidenceGuardMiddleware(cfg.EvidenceGuardNudge, cfg.EvidenceGuardHalt)
 	},
@@ -280,6 +283,7 @@ var defaultPipelineNames = []string{
 	"inline_limit",
 	"tool_concurrency",
 	"loop_detection",
+	"intent_loop",
 	"evidence_guard",
 	"conflict_detect",
 }

@@ -378,7 +378,7 @@ and orchestrator-only**: listed middleware are added to the default
 orchestrator pipeline (duplicates collapse). `disabled` removes middleware
 from both the orchestrator and sub-agent pipelines. The default orchestrator
 pipeline is
-`steer → followup → compaction → soft_prune → approval → inline_limit → tool_concurrency → loop_detection → evidence_guard → conflict_detect`.
+`steer → followup → compaction → soft_prune → approval → inline_limit → tool_concurrency → loop_detection → intent_loop → evidence_guard → conflict_detect`.
 
 | Middleware | Default | Purpose |
 |---|---|---|
@@ -389,6 +389,7 @@ pipeline is
 | `approval` | on | Gate dangerous tools |
 | `inline_limit` | on | Cap tool calls dispatched per turn (0 = unlimited) |
 | `loop_detection` | on | Halt identical tool+result loops |
+| `intent_loop` | on | Steer (4 turns) and halt (8 turns) when the assistant re-announces the same plan without changing files — catches the paraphrased, read-only loops `loop_detection` cannot see |
 | `evidence_guard` | on | Steer/halt when repeated calls or unchanged re-reads produce no new evidence |
 | `conflict_detect` | on | Flag files touched by multiple sub-agents |
 | `permission` | off | Path-pattern allow/deny rules (auto-added when parent rules exist for sub-agents) |
