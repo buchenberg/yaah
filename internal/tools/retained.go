@@ -334,9 +334,9 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		if provErr != nil {
 			// A provisioning error's reason is at its front, so it is
 			// head-capped here — the note budget of foldRetainedPartial
-			// tail-keeps, which would keep the wrong half. Bounding here
-			// also keeps a success-lane result (bodyErr == nil) inside
-			// the tool-result cap this file's tools observe.
+			// tail-keeps, which would keep the wrong half. The report
+			// body itself is bounded by the role's output_limit; only the
+			// caveat gets this tool-side budget.
 			result = retainedNote(result, truncateAt(provErr.Error(), noteBudget))
 		}
 		// yaah-atn: a report dispatch registers no proposal, so a scratch
