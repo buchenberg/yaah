@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.106.0](https://github.com/buchenberg/yaah/compare/v0.105.2...v0.106.0) (2026-10-27)
+
+
+### Features
+
+* /fix: prefixes. ([32ccaa2](https://github.com/buchenberg/yaah/commit/32ccaa29883b4839595bf530e23f4ad88a9bfda6))
+
 ## [0.105.2](https://github.com/buchenberg/yaah/compare/v0.105.1...v0.105.2) (2026-10-27)
 
 
