@@ -25,6 +25,21 @@ type Status struct{ Text string }
 
 func (*Status) marker() {}
 
+// CompactionSummary carries the summary a completed compaction produced so
+// surfaces can render it in the conversation stream (yaah-v378.5). It is
+// render-only: the summary already lives in the system message, so it must
+// never be persisted as a chat message. Summary is empty when every
+// summarizer attempt failed and the pass fell back to trimming.
+type CompactionSummary struct {
+	Summary string
+	Method  string // "single", "chunked", or "trim"
+	Before  int
+	After   int
+	Window  int
+}
+
+func (*CompactionSummary) marker() {}
+
 // Error carries an error for display.
 type Error struct{ Err error }
 

@@ -338,6 +338,11 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 
 	startTime := time.Now()
 
+	// Reset the pass outcome: whichever path runs (or fails) records it,
+	// so the manual :compact command renders what actually happened.
+	cm.State.LastCompactionMethod = ""
+	cm.State.LastCompactionSummary = ""
+
 	var span trace.Span
 	if cm.OtelEnabled {
 		_, span = otel.Tracer("yaah").Start(ctx, "compaction",
@@ -460,6 +465,8 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 		if agentctx.PreflightTokens(oldMsgs, nil, factor) > agentctx.MinChunkTokens {
 			if chunkSummary, chunkErr := cm.chunkedCompact(ctx, oldMsgs, compactModel); chunkErr == nil && chunkSummary != "" {
 				cm.applyCompactedSummary(chunkSummary, sysMsg, oldMsgs, keepMsgs, effectiveTokens)
+				cm.State.LastCompactionMethod = "chunked"
+				cm.State.LastCompactionSummary = chunkSummary
 				afterEstimate := cm.estimatedTokens()
 				savingsPct := 0.0
 				if beforeEstimate > 0 {
@@ -482,6 +489,8 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 			}
 		}
 		cm.trimContext()
+		cm.State.LastCompactionMethod = "trim"
+		cm.State.LastCompactionSummary = ""
 		if cm.Broker != nil {
 			// Terminal event for the compaction card: the LLM
 			// summarization fell back to plain old-message trimming,
@@ -508,6 +517,8 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 
 	summary := resp.Choices[0].Message.Content
 	cm.applyCompactedSummary(summary, sysMsg, oldMsgs, keepMsgs, effectiveTokens)
+	cm.State.LastCompactionMethod = "single"
+	cm.State.LastCompactionSummary = summary
 	afterEstimate := cm.estimatedTokens()
 	savingsPct := 0.0
 	ineffectiveNote := ""

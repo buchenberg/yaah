@@ -279,6 +279,13 @@ type LoopState struct {
 	CompactionBudgetMultiplier float64
 	CompactionSavingsHistory   []float64
 
+	// LastCompactionMethod/Summary record what the most recent pass
+	// produced ("single", "chunked", or "trim", with the summary empty
+	// for trim) so the manual :compact command can render the outcome.
+	// Both reset at the start of each pass.
+	LastCompactionMethod  string
+	LastCompactionSummary string
+
 	// TurnCheckpoints holds the IDs of live turn checkpoints in creation
 	// order. Only populated when turn checkpointing is active.
 	TurnCheckpoints []string
