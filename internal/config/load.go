@@ -21,6 +21,13 @@ type Provider struct {
 	TimeoutSeconds int               `yaml:"timeout,omitempty"`
 	Headers        map[string]string `yaml:"headers,omitempty"` // extra headers sent on every request
 
+	// ReasoningReplay selects how assistant thinking that lacks a
+	// provider signature is replayed: "auto" (default) re-sends it as a
+	// plain text block so the model keeps its chain-of-thought, "omit"
+	// drops it, and "text" re-sends even signed reasoning as text for
+	// endpoints that reject valid thinking replay.
+	ReasoningReplay string `yaml:"reasoning_replay,omitempty"`
+
 	// MaxTokens caps the output tokens for every request this provider
 	// serves when the request does not set its own cap. Anthropic-
 	// compatible reasoning endpoints count thinking tokens against this
@@ -548,6 +555,31 @@ func Load() (*Config, error) {
 	if cfg.Hooks.Dir != "" {
 		cfg.Hooks.Dir = expandHomeDir(cfg.Hooks.Dir)
 	}
+
+	// `small_model` was renamed to `compaction_model` (yaah-v378.4);
+	// warn so an upgraded config knows the old key is ignored and
+	// context compaction fell back to the main model.
+	var legacySmallModel struct {
+		Agents struct {
+			Default struct {
+				SmallModel *string `yaml:"small_model"`
+			} `yaml:"default"`
+		} `yaml:"agents"`
+	}
+	if err := yaml.Unmarshal(data, &legacySmallModel); err == nil && legacySmallModel.Agents.Default.SmallModel != nil {
+		fmt.Fprintf(os.Stderr, "warning: config key `agents.default.small_model` was renamed to `compaction_model`; the old key is ignored, so context compaction is running on the main model\n")
+	}
+
+	// reasoning_replay must name one of the three strategies; anything
+	// else would silently degrade to the default at replay time.
+	for name, p := range cfg.Providers {
+		switch strings.ToLower(strings.TrimSpace(p.ReasoningReplay)) {
+		case "", "auto", "text", "omit":
+		default:
+			return nil, fmt.Errorf("provider %s: reasoning_replay must be one of auto, text, omit (got %q)", name, p.ReasoningReplay)
+		}
+	}
+
 	if cfg.Agent.Default.ShepherdTracePath != "" {
 		cfg.Agent.Default.ShepherdTracePath = expandHomeDir(cfg.Agent.Default.ShepherdTracePath)
 	}

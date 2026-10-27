@@ -100,6 +100,7 @@ func makeProvider(name string, p config.Provider) (agent.Provider, bool) {
 	case "anthropic":
 		client := providers.NewAnthropicClient(r.BaseURL, r.APIKey, r.TimeoutSeconds)
 		client.DefaultMaxTokens = r.MaxTokens
+		client.ReasoningReplay = r.ReasoningReplay
 		return client, true
 	default:
 		client := providers.NewOpenAIClient(r.BaseURL, r.APIKey, r.TimeoutSeconds)

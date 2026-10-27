@@ -2,9 +2,11 @@ package config
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -361,5 +363,48 @@ agents:
 	got := cfg.Agent.Default.Tools
 	if len(got) != 3 || got[0] != "read" || got[1] != "bash" || got[2] != "write" {
 		t.Errorf("tools = %v, want [read bash write]", got)
+	}
+}
+
+// TestLoad_reasoningReplayValidation: the knob has exactly three values; a
+// typo must fail the load instead of silently degrading to the default at
+// replay time (yaah-v378.6).
+func TestLoad_reasoningReplayValidation(t *testing.T) {
+	valid := []string{"auto", "text", "omit", "Auto", ""}
+	for _, v := range valid {
+		tmp := t.TempDir()
+		t.Setenv("YAAH_HOME", tmp)
+		content := fmt.Sprintf(`
+providers:
+  p:
+    api: anthropic
+    base_url: https://example.com
+    api_key: k
+    reasoning_replay: %q
+`, v)
+		if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(content), 0o644); err != nil {
+			t.Fatalf("WriteFile() error: %v", err)
+		}
+		if _, err := Load(); err != nil {
+			t.Errorf("reasoning_replay %q: Load() error = %v", v, err)
+		}
+	}
+
+	tmp := t.TempDir()
+	t.Setenv("YAAH_HOME", tmp)
+	content := `
+providers:
+  p:
+    api: anthropic
+    base_url: https://example.com
+    api_key: k
+    reasoning_replay: maybe
+`
+	if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "reasoning_replay must be one of") {
+		t.Errorf("invalid reasoning_replay must fail the load, got %v", err)
 	}
 }
