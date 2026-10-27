@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.105.1](https://github.com/buchenberg/yaah/compare/v0.105.0...v0.105.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* **tools:** address review — export before Settle, sanitize id, wire Outcome ([b5f5e1e](https://github.com/buchenberg/yaah/commit/b5f5e1e148c42c03bac53b99e699a272feca5057))
+* **tools:** typed Outcome for settle verbs — release honesty ([96ce841](https://github.com/buchenberg/yaah/commit/96ce841d41708e77f1ae720d47e7ad1fba03e328))
+* **tools:** typed Outcome for settle verbs — release honesty ([0d36c78](https://github.com/buchenberg/yaah/commit/0d36c786f2ca03d19edadd9ab161eb2a4ba3f024))
+
 ## [0.105.0](https://github.com/buchenberg/yaah/compare/v0.104.3...v0.105.0) (2026-10-27)
 
 
