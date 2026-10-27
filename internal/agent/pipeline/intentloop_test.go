@@ -192,3 +192,12 @@ func TestIntentLoop_ProgressClassification(t *testing.T) {
 }
 
 var errSentinel = errors.New("tool failed")
+
+// TestNewIntentLoopMiddlewareClampsHalt: a halt at or below the steer
+// threshold would end the run before the model ever saw the steer.
+func TestNewIntentLoopMiddlewareClampsHalt(t *testing.T) {
+	m := NewIntentLoopMiddleware(6, 6)
+	if m.haltAfter != 7 {
+		t.Errorf("haltAfter = %d, want 7 (steer+1)", m.haltAfter)
+	}
+}

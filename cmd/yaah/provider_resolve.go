@@ -184,13 +184,7 @@ func resolveCompact(cfg *config.Config) (agent.Provider, string) {
 				// carry a "provider/" prefix while compactModel is already
 				// stripped.
 				mainProvider := resolveProviderName(cfg)
-				mainModel := cfg.Agent.Default.Model
-				if parts := strings.SplitN(mainModel, "/", 2); len(parts) == 2 {
-					if _, ok := cfg.Providers[parts[0]]; ok {
-						mainModel = parts[1]
-					}
-				}
-				if compactModel == mainModel && compactProviderName == mainProvider {
+				if compactModel == resolveModel(cfg) && compactProviderName == mainProvider {
 					slog.Warn("compaction: compaction_model equals the main model; "+
 						"set a cheaper compaction_model for faster, more reliable summarization",
 						"model", compactModel)

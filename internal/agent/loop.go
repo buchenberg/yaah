@@ -149,6 +149,8 @@ func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
 		PermissionRules:          l.Config.PermissionRules,
 		LoopDetectCount:          l.Config.LoopDetectCount,
 		LoopDetectWindow:         l.Config.LoopDetectWindow,
+		IntentSteerAfter:         l.Config.IntentSteerAfter,
+		IntentHaltAfter:          l.Config.IntentHaltAfter,
 		EvidenceGuardNudge:       l.Config.EvidenceGuardNudge,
 		EvidenceGuardHalt:        l.Config.EvidenceGuardHalt,
 		MaxToolConcurrency:       l.Config.MaxToolConcurrency,

@@ -119,6 +119,33 @@ func madeProgress(r ToolResult) bool {
 		case "create", "edit", "delete", "approve":
 			return true
 		}
+	case "memory_add", "memory_update", "memory_promote":
+		return true
+	case "delegate":
+		// A successful dispatch did real work on the user's behalf.
+		return true
+	case "background_process":
+		var p struct {
+			Action string `json:"action"`
+		}
+		if json.Unmarshal([]byte(r.Args), &p) != nil {
+			return false
+		}
+		switch p.Action {
+		case "start", "stop", "restart":
+			return true
+		}
+	case "skill":
+		var p struct {
+			Action string `json:"action"`
+		}
+		if json.Unmarshal([]byte(r.Args), &p) != nil {
+			return false
+		}
+		switch p.Action {
+		case "create", "edit", "delete":
+			return true
+		}
 	}
 	return false
 }
@@ -134,8 +161,13 @@ type IntentLoopMiddleware struct {
 }
 
 // NewIntentLoopMiddleware builds the detector. A non-positive steerAfter
-// disables steering; a non-positive haltAfter disables halting.
+// disables steering; a non-positive haltAfter disables halting. A halt at or
+// below the steer threshold would end the run before the model ever saw the
+// steer, so it is clamped one past the steer.
 func NewIntentLoopMiddleware(steerAfter, haltAfter int) *IntentLoopMiddleware {
+	if steerAfter > 0 && haltAfter > 0 && haltAfter <= steerAfter {
+		haltAfter = steerAfter + 1
+	}
 	return &IntentLoopMiddleware{steerAfter: steerAfter, haltAfter: haltAfter}
 }
 

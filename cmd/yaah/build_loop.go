@@ -264,6 +264,8 @@ func (s *agentSession) loopBuilder(
 			QualityGates:             s.cfg.Agent.QualityGates,
 			LoopDetectCount:          s.cfg.Agent.Default.LoopDetectCount,
 			LoopDetectWindow:         s.cfg.Agent.Default.LoopDetectWindow,
+			IntentSteerAfter:         s.cfg.Agent.Default.IntentSteerAfter,
+			IntentHaltAfter:          s.cfg.Agent.Default.IntentHaltAfter,
 			EvidenceGuardNudge:       s.cfg.Agent.Default.EvidenceGuardNudge,
 			EvidenceGuardHalt:        s.cfg.Agent.Default.EvidenceGuardHalt,
 			MaxToolConcurrency:       s.cfg.Agent.Default.MaxToolConcurrency,

@@ -158,8 +158,8 @@ providers:
 agents:
   default:
     model: openai/gpt-4o-mini
-  compaction_model: openai/gpt-4o-mini
-  max_iterations: 50
+    compaction_model: openai/gpt-4o-mini
+    max_iterations: 50
   approval: ask
 `
 	err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(configContent), 0o644)
@@ -416,5 +416,28 @@ func TestResolve_preservesReasoningReplay(t *testing.T) {
 	got := Resolve(Provider{ReasoningReplay: "text", APIKey: "$NOT_SET"})
 	if got.ReasoningReplay != "text" {
 		t.Errorf("Resolve dropped reasoning_replay: %q", got.ReasoningReplay)
+	}
+}
+
+// TestLoad_compactionModelParses pins the yaah-v378.4 rename: the key lives
+// under agents.default and must land in Defaults.CompactionModel.
+func TestLoad_compactionModelParses(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("YAAH_HOME", tmp)
+	content := `
+agents:
+  default:
+    model: main/model
+    compaction_model: compact/model
+`
+	if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.Agent.Default.CompactionModel != "compact/model" {
+		t.Errorf("CompactionModel = %q, want compact/model", cfg.Agent.Default.CompactionModel)
 	}
 }

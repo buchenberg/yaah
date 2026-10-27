@@ -48,6 +48,12 @@ type PipelineConfig struct {
 	LoopDetectCount  int
 	LoopDetectWindow int
 
+	// IntentSteerAfter / IntentHaltAfter configure the cross-turn
+	// intent-repetition detector: steer after N consecutive same-plan
+	// turns, halt after N. Zero uses the defaults (4 / 8).
+	IntentSteerAfter int
+	IntentHaltAfter  int
+
 	// EvidenceGuardNudge / EvidenceGuardHalt configure the stale-evidence
 	// guard. Nudge 0 = default (6); negative = disabled; halt 0 = disabled.
 	EvidenceGuardNudge int
@@ -198,7 +204,14 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 		return &LoopDetectionMiddleware{count: count, window: window}
 	},
 	"intent_loop": func(cfg PipelineConfig) Middleware {
-		return NewIntentLoopMiddleware(defaultIntentSteerAfter, defaultIntentHaltAfter)
+		steer, halt := cfg.IntentSteerAfter, cfg.IntentHaltAfter
+		if steer <= 0 {
+			steer = defaultIntentSteerAfter
+		}
+		if halt <= 0 {
+			halt = defaultIntentHaltAfter
+		}
+		return NewIntentLoopMiddleware(steer, halt)
 	},
 	"evidence_guard": func(cfg PipelineConfig) Middleware {
 		return NewEvidenceGuardMiddleware(cfg.EvidenceGuardNudge, cfg.EvidenceGuardHalt)

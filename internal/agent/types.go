@@ -183,6 +183,8 @@ type LoopConfig struct {
 	RetryBackoff           time.Duration
 	LoopDetectCount        int
 	LoopDetectWindow       int
+	IntentSteerAfter       int
+	IntentHaltAfter        int
 	EvidenceGuardNudge     int
 	EvidenceGuardHalt      int
 	ApprovalMode           string

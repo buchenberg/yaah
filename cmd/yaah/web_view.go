@@ -296,7 +296,7 @@ func forwardCtrl(ctx context.Context, ch <-chan control.Msg, v *sseView, am *ans
 			case *control.Status:
 				v.write(marshalWire(sseWireEvent{Type: "ctrl.status", Text: m.Text}))
 			case *control.CompactionSummary:
-				block := fmt.Sprintf("context compacted (%s): %d → %d tokens", m.Method, m.Before, m.After)
+				block := m.Header()
 				if m.Summary != "" {
 					block += "\n\n" + m.Summary
 				} else {

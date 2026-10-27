@@ -112,36 +112,35 @@ func (s *agentSession) compactContext() {
 		}
 	}
 
-	if newEstimate < estTokens {
-		msg(fmt.Sprintf("compacted: %d/%d tokens (%d%%)", newEstimate, window, newEstimate*100/window))
-	} else {
+	if res.Method == "" {
+		// No pass ran (guards skipped it: too few messages, or the loop
+		// already compacted this turn). Say so once.
 		msg("no messages were compacted (context too small or compaction ineffective)")
+		return
 	}
 
 	// Render the summary in the conversation stream (yaah-v378.5): the
 	// user should be able to read what just replaced their context. The
 	// summary is display-only — it already lives in the system message.
-	if res.Method != "" {
-		block := fmt.Sprintf("context compacted (%s): %d → %d tokens", res.Method, estTokens, newEstimate)
-		if res.Summary == "" {
-			block += " — no summary produced (summarization failed; old messages trimmed)"
+	out := &control.CompactionSummary{
+		Summary: res.Summary,
+		Method:  res.Method,
+		Before:  estTokens,
+		After:   newEstimate,
+		Window:  window,
+	}
+	if ch != nil {
+		select {
+		case ch <- out:
+		default:
 		}
-		if ch != nil {
-			select {
-			case ch <- &control.CompactionSummary{
-				Summary: res.Summary,
-				Method:  res.Method,
-				Before:  estTokens,
-				After:   newEstimate,
-				Window:  window,
-			}:
-			default:
-			}
-		} else if res.Summary != "" {
-			fmt.Fprintf(os.Stderr, "  summary:\n%s\n", res.Summary)
-		} else {
-			fmt.Fprintf(os.Stderr, "  %s\n", block)
-		}
+		return
+	}
+	block := out.Header()
+	if res.Summary != "" {
+		fmt.Fprintf(os.Stderr, "  %s\n  summary:\n%s\n", block, res.Summary)
+	} else {
+		fmt.Fprintf(os.Stderr, "  %s — no summary produced (summarization failed; old messages trimmed)\n", block)
 	}
 }
 

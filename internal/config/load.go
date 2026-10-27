@@ -97,12 +97,17 @@ type Defaults struct {
 	// unset value means compaction runs on the main model, which is both
 	// slower and worse at summarizing; a warning fires at resolution.
 	CompactionModel string `yaml:"compaction_model"`
-	MaxLoopCycles   int    `yaml:"max_iterations"`
-	MaxToolTurns    int    `yaml:"max_turns"`      // soft cap on tool-using turns; 0 = off
-	ContextWindow   int    `yaml:"context_window"` // max context window; resolved window from model is capped by this value
-	Approval        string `yaml:"approval"`
-	MCPApproval     string `yaml:"mcp_approval"`  // approval policy for MCP-served tools: ask (default), allow, deny
-	WorkspaceAsk    bool   `yaml:"workspace_ask"` // prompt before denying out-of-workspace access (with --workspace)
+	// IntentSteerAfter / IntentHaltAfter tune the intent-repetition
+	// detector: steer after N consecutive same-plan turns, halt at N.
+	// Zero uses 4 / 8.
+	IntentSteerAfter int    `yaml:"intent_steer_after"`
+	IntentHaltAfter  int    `yaml:"intent_halt_after"`
+	MaxLoopCycles    int    `yaml:"max_iterations"`
+	MaxToolTurns     int    `yaml:"max_turns"`      // soft cap on tool-using turns; 0 = off
+	ContextWindow    int    `yaml:"context_window"` // max context window; resolved window from model is capped by this value
+	Approval         string `yaml:"approval"`
+	MCPApproval      string `yaml:"mcp_approval"`  // approval policy for MCP-served tools: ask (default), allow, deny
+	WorkspaceAsk     bool   `yaml:"workspace_ask"` // prompt before denying out-of-workspace access (with --workspace)
 	// WorkspaceDenyPatterns are globs denied even inside the workspace
 	// (with --workspace). When unset, a built-in secret-file default
 	// applies (.env, *.pem, private keys). Set explicitly to override,

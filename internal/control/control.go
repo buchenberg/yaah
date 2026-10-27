@@ -10,6 +10,8 @@
 package control
 
 import (
+	"fmt"
+
 	"github.com/buchenberg/yaah/internal/todo"
 )
 
@@ -39,6 +41,13 @@ type CompactionSummary struct {
 }
 
 func (*CompactionSummary) marker() {}
+
+// Header renders the one-line outcome shared by every surface: which path
+// ran and how the token count moved. Surfaces append the summary (or their
+// own no-summary notice) after it.
+func (m *CompactionSummary) Header() string {
+	return fmt.Sprintf("context compacted (%s): %d → %d tokens", m.Method, m.Before, m.After)
+}
 
 // Error carries an error for display.
 type Error struct{ Err error }

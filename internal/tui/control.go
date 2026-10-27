@@ -82,8 +82,7 @@ func (t *App) handleControlMsg(msg control.Msg) {
 		// (yaah-v378.5). Render-only — the summary is never persisted as
 		// a chat message.
 		t.flushPendingTokens()
-		header := fmt.Sprintf("[%s]context compacted (%s): %d → %d tokens[-]",
-			t.Theme.Dim, m.Method, m.Before, m.After)
+		header := fmt.Sprintf("[%s]%s[-]", t.Theme.Dim, m.Header())
 		if m.Summary == "" {
 			header += " — no summary produced"
 		}
