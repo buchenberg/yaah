@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -101,13 +102,28 @@ func (c *AnthropicClient) replayMode() string {
 
 // nativeAnthropicEndpoint reports whether this client targets the native
 // Anthropic API. An empty base URL also counts as native: the SDK then
-// falls back to its default host. The substring test is the one
-// OutputTokenCeiling and fallbackMaxTokens already use, so the endpoint
-// classification cannot diverge between the output cap and reasoning
-// replay.
+// falls back to its default host.
+//
+// The match is exact on purpose. OutputTokenCeiling/fallbackMaxTokens use a
+// looser substring test because they err toward the conservative native
+// cap, but a false positive here silently drops the model's reasoning.
+// Misclassifying a signature-validating gateway as compatible instead
+// surfaces as one 400, which replayFallback converts into a retry.
 func (c *AnthropicClient) nativeAnthropicEndpoint() bool {
-	raw := strings.ToLower(strings.TrimSpace(c.baseURL))
-	return raw == "" || strings.Contains(raw, "api.anthropic.com")
+	raw := strings.TrimSpace(c.baseURL)
+	if raw == "" {
+		return true
+	}
+	host := ""
+	if u, err := url.Parse(raw); err == nil {
+		host = u.Hostname()
+	}
+	if host == "" {
+		// No scheme (some configs omit it): the first path segment is
+		// the host.
+		host = strings.SplitN(raw, "/", 2)[0]
+	}
+	return strings.EqualFold(host, "api.anthropic.com")
 }
 
 // hasUnsignedThinking reports whether any assistant turn carries reasoning
@@ -121,35 +137,46 @@ func hasUnsignedThinking(messages []types.Message) bool {
 	return false
 }
 
-// replayFallback downgrades auto replay when the endpoint rejects the
-// unsigned thinking shape. Auto assumes an Anthropic-compatible endpoint
-// accepts a thinking block with an empty signature, but a signature-
-// validating gateway behind a third-party URL answers 400. In that case
-// unsigned thinking is dropped for the rest of the client's life and the
-// caller retries once; the warning makes the degradation visible.
-func (c *AnthropicClient) replayFallback(req types.ChatRequest, err error) bool {
-	if c.reasoningReplay() != "auto" || c.unsignedReplayRejected.Load() {
-		return false
-	}
-	if !hasUnsignedThinking(req.Messages) {
-		return false
+// replayFallback reports whether err is the endpoint rejecting the unsigned
+// thinking block this request carried, and which replay mode to retry with.
+// Auto assumes an Anthropic-compatible endpoint accepts a thinking block
+// with an empty signature, but a signature-validating gateway behind a
+// third-party URL answers 400. The caller retries once with the returned
+// mode and records success via acceptReplayFallback, so the sticky
+// downgrade is only committed when the retry actually proves it right.
+func (c *AnthropicClient) replayFallback(req types.ChatRequest, err error) (string, bool) {
+	if c.replayMode() != "auto" || !hasUnsignedThinking(req.Messages) {
+		return "", false
 	}
 	var apiErr *APIError
 	if !errors.As(anthropicAPIError(err), &apiErr) || apiErr.StatusCode != http.StatusBadRequest {
-		return false
+		return "", false
 	}
-	msg := strings.ToLower(apiErr.Message)
-	if !strings.Contains(msg, "signature") && !strings.Contains(msg, "thinking") {
-		return false
+	if !looksLikeThinkingReplayRejection(apiErr.Message) {
+		return "", false
 	}
+	return "omit", true
+}
+
+// acceptReplayFallback records a successful downgrade so later requests
+// skip the rejected unsigned replay shape.
+func (c *AnthropicClient) acceptReplayFallback() {
 	c.unsignedReplayRejected.Store(true)
-	c.unsignedReasoningWarn.Do(func() {
-		slog.Warn("reasoning: the endpoint rejected replaying unsigned thinking; omitting unsigned " +
-			"thinking for the rest of this session (the model will re-derive context instead of " +
-			"seeing its own conclusions). Set reasoning_replay: omit to skip this probe, or text to " +
-			"keep reasoning as text (reasoning models may echo it into the answer).")
-	})
-	return true
+}
+
+// looksLikeThinkingReplayRejection restricts the fallback to 400s about
+// replayed thinking. Matching the bare word "thinking" would also catch
+// budget/tool_choice errors and permanently drop the reasoning.
+func looksLikeThinkingReplayRejection(message string) bool {
+	msg := strings.ToLower(message)
+	if strings.Contains(msg, "signature") || strings.Contains(msg, "signed") {
+		return true
+	}
+	if !strings.Contains(msg, "thinking") {
+		return false
+	}
+	return strings.Contains(msg, "block") || strings.Contains(msg, "replay") ||
+		strings.Contains(msg, "passed back")
 }
 
 const (
@@ -233,12 +260,17 @@ func (c *AnthropicClient) requestOpts(ctx context.Context) []option.RequestOptio
 // Send translates a ChatRequest to the Anthropic Messages API and returns
 // the response.
 func (c *AnthropicClient) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
-	msg, err := c.client.Messages.New(ctx, c.lower(req), c.requestOpts(ctx)...)
+	mode := c.replayMode()
+	msg, err := c.client.Messages.New(ctx, c.lowerWithMode(req, mode), c.requestOpts(ctx)...)
 	if err != nil {
 		// A signature-validating gateway behind a compatible URL rejects
 		// the unsigned replay shape; drop unsigned thinking and retry once.
-		if c.replayFallback(req, err) {
-			msg, err = c.client.Messages.New(ctx, c.lower(req), c.requestOpts(ctx)...)
+		if retryMode, ok := c.replayFallback(req, err); ok {
+			mode = retryMode
+			msg, err = c.client.Messages.New(ctx, c.lowerWithMode(req, mode), c.requestOpts(ctx)...)
+			if err == nil && mode != c.replayMode() {
+				c.acceptReplayFallback()
+			}
 		}
 		if err != nil {
 			return nil, anthropicAPIError(err)
@@ -251,21 +283,23 @@ func (c *AnthropicClient) Send(ctx context.Context, req types.ChatRequest) (*typ
 // translating the request. Per-request values always win so callers
 // (for example context compaction) can keep their own explicit budget.
 func (c *AnthropicClient) lower(req types.ChatRequest) anthropic.MessageNewParams {
+	return c.lowerWithMode(req, c.replayMode())
+}
+
+// lowerWithMode applies the output cap and translates the request under an
+// explicit replay mode. Send/SendStream pass "omit" directly for the single
+// fallback retry, before the sticky downgrade is committed.
+func (c *AnthropicClient) lowerWithMode(req types.ChatRequest, mode string) anthropic.MessageNewParams {
 	if req.MaxTokens <= 0 {
 		req.MaxTokens = c.EffectiveMaxTokens(req)
 	}
-	mode := c.replayMode()
-	if mode == "omit" {
-		for _, m := range req.Messages {
-			if m.Role == "assistant" && m.ReasoningContent != "" && m.ReasoningSignature == "" {
-				c.unsignedReasoningWarn.Do(func() {
-					slog.Warn("reasoning: dropping assistant thinking that has no provider signature " +
-						"(reasoning_replay=omit, or the native Anthropic API which validates signatures); " +
-						"the model will re-derive context instead of seeing its own chain-of-thought.")
-				})
-				break
-			}
-		}
+	if mode == "omit" && hasUnsignedThinking(req.Messages) {
+		c.unsignedReasoningWarn.Do(func() {
+			slog.Warn("reasoning: unsigned thinking cannot be replayed on this endpoint " +
+				"(reasoning_replay=omit, the native Anthropic API which validates signatures, or an " +
+				"endpoint that rejected the unsigned block); the model will re-derive context " +
+				"instead of seeing its own chain-of-thought.")
+		})
 	}
 	return lowerAnthropicRequest(req, mode)
 }
@@ -295,7 +329,7 @@ func (c *AnthropicClient) EffectiveMaxTokens(req types.ChatRequest) int {
 // (GLM/DeepSeek/Claude); unknown models return 0 and the retry ladder applies
 // its own global bound.
 func (c *AnthropicClient) OutputTokenCeiling(req types.ChatRequest) int {
-	if c.nativeAnthropicEndpoint() {
+	if strings.Contains(strings.ToLower(c.baseURL), "api.anthropic.com") {
 		return nativeAnthropicMaxTokens
 	}
 	return ResolveOutputLimit(req.Model)
@@ -305,7 +339,7 @@ func (c *AnthropicClient) OutputTokenCeiling(req types.ChatRequest) int {
 // native API must stay at 4096 because older models reject more; the
 // compatible endpoints this code path exists for need room for thinking.
 func (c *AnthropicClient) fallbackMaxTokens() int64 {
-	if c.nativeAnthropicEndpoint() {
+	if strings.Contains(strings.ToLower(c.baseURL), "api.anthropic.com") {
 		return nativeAnthropicMaxTokens
 	}
 	return compatibleAnthropicMaxTokens

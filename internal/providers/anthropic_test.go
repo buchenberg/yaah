@@ -635,23 +635,41 @@ func TestAnthropicClient_ReplayFallbackConditions(t *testing.T) {
 		want   bool
 	}{
 		{"signature 400 with unsigned thinking", "", unsigned, &APIError{StatusCode: 400, Message: "thinking blocks must be signed"}, true},
+		{"thinking block 400", "", unsigned, &APIError{StatusCode: 400, Message: "thinking blocks must be passed back to the API"}, true},
+		{"thinking budget 400", "", unsigned, &APIError{StatusCode: 400, Message: "thinking.budget_tokens must be less than max_tokens"}, false},
+		{"thinking unsupported 400", "", unsigned, &APIError{StatusCode: 400, Message: "thinking is not supported for this model"}, false},
 		{"unrelated 400", "", unsigned, &APIError{StatusCode: 400, Message: "bad request"}, false},
 		{"non-400 status", "", unsigned, &APIError{StatusCode: 500, Message: "thinking broke"}, false},
 		{"no unsigned thinking", "", signed, &APIError{StatusCode: 400, Message: "thinking blocks must be signed"}, false},
 		{"explicit text mode", "text", unsigned, &APIError{StatusCode: 400, Message: "thinking blocks must be signed"}, false},
+		{"native endpoint already omits", "auto", unsigned, &APIError{StatusCode: 400, Message: "signature invalid"}, false},
 		{"non-provider error", "", unsigned, errors.New("connection reset"), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			c := NewAnthropicClient("https://gateway.example/anthropic", "sk-test", 30)
+			baseURL := "https://gateway.example/anthropic"
+			if tc.name == "native endpoint already omits" {
+				baseURL = "https://api.anthropic.com"
+			}
+			c := NewAnthropicClient(baseURL, "sk-test", 30)
 			c.ReasoningReplay = tc.replay
 			req := types.ChatRequest{Messages: tc.msgs}
-			if got := c.replayFallback(req, tc.err); got != tc.want {
+			mode, got := c.replayFallback(req, tc.err)
+			if got != tc.want {
 				t.Fatalf("replayFallback() = %v, want %v", got, tc.want)
 			}
-			// A successful fallback must also stick for later requests.
-			if tc.want && c.replayMode() != "omit" {
-				t.Errorf("replayMode() = %q after fallback, want omit", c.replayMode())
+			if got && mode != "omit" {
+				t.Errorf("replayFallback() mode = %q, want omit", mode)
+			}
+			// The downgrade is only committed once the retry succeeds.
+			if tc.want {
+				if c.replayMode() != "auto" {
+					t.Fatal("replayMode changed before the retry was validated")
+				}
+				c.acceptReplayFallback()
+				if c.replayMode() != "omit" {
+					t.Errorf("replayMode() = %q after a validated fallback, want omit", c.replayMode())
+				}
 			}
 		})
 	}
@@ -697,6 +715,9 @@ func TestAnthropicSend_RetriesWithoutUnsignedThinkingWhenRejected(t *testing.T) 
 	}
 	if !sentThinking[0] || sentThinking[1] {
 		t.Errorf("thinking block presence per attempt = %v, want [true false]", sentThinking)
+	}
+	if client.replayMode() != "omit" {
+		t.Errorf("replayMode() = %q after a validated fallback, want omit", client.replayMode())
 	}
 }
 
@@ -749,6 +770,9 @@ func TestAnthropicSendStream_RetriesWithoutUnsignedThinkingWhenRejected(t *testi
 	}
 	if attempts != 2 {
 		t.Fatalf("expected 2 attempts, got %d", attempts)
+	}
+	if client.replayMode() != "omit" {
+		t.Errorf("replayMode() = %q after a validated fallback, want omit", client.replayMode())
 	}
 }
 
