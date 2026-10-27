@@ -188,6 +188,40 @@ func TestPatchTool_multiFileDiffIsRejected(t *testing.T) {
 	}
 }
 
+// TestPatchTool_overcountedHunkCannotHideSecondFile: a hunk that declares
+// more lines than it owns used to swallow the next file's header pair, so the
+// multi-file guard never saw the second target. The overrun itself is now an
+// error.
+func TestPatchTool_overcountedHunkCannotHideSecondFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "one.txt")
+	os.WriteFile(path, []byte("a\n"), 0o644)
+
+	patch := "--- a/one.txt\n+++ b/one.txt\n@@ -1,2 +1,2 @@\n-a\n+b\n--- a/two.txt\n+++ b/two.txt\n@@ -1 +1 @@\n-c\n+d\n"
+	_, err := runPatch(t, path, patch)
+	if err == nil {
+		t.Fatal("an over-counted hunk hid a multi-file diff")
+	}
+	if !strings.Contains(err.Error(), "multi-file diffs are not supported") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestPatchTool_overcountedGitHunkCannotHideSecondFile: the raw diff --git
+// sections remain visible even when a hunk's counts swallow the +++ headers.
+func TestPatchTool_overcountedGitHunkCannotHideSecondFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "one.txt")
+	os.WriteFile(path, []byte("a\n"), 0o644)
+
+	patch := "diff --git a/one.txt b/one.txt\n--- a/one.txt\n+++ b/one.txt\n@@ -1,2 +1,2 @@\n-a\n+b\ndiff --git a/two.txt b/two.txt\n--- a/two.txt\n+++ b/two.txt\n@@ -1 +1 @@\n-c\n+d\n"
+	_, err := runPatch(t, path, patch)
+	if err == nil {
+		t.Fatal("an over-counted git hunk hid a multi-file diff")
+	}
+	if !strings.Contains(err.Error(), "multi-file diffs are not supported") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 // TestPatchTool_addedLineStartingWithPlusIsNotAHeader: an added line whose
 // text begins with "++ " produces a "+++ " diff line; it must be treated as
 // hunk content, not as a second file header.

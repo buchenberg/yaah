@@ -59,10 +59,10 @@ func (p *Info) Logs() string {
 	return logTruncatedMarker + string(p.logBuf[p.logPos:]) + string(p.logBuf[:p.logPos])
 }
 
-// LogsTruncated reports whether earlier output was dropped from the buffer.
+// logsTruncated reports whether earlier output was dropped from the buffer.
 // It distinguishes a process that produced nothing (false, empty Logs) from
 // one whose head overflowed (true).
-func (p *Info) LogsTruncated() bool {
+func (p *Info) logsTruncated() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.logDropped

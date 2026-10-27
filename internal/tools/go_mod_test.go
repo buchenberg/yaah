@@ -10,18 +10,17 @@ import (
 
 // goModExec routes a go_mod call to canned output. Every case uses the same
 // fake workspace so the tool's command plumbing (SeparateStreams) is exercised.
-func runGoMod(t *testing.T, args string, respond func(req ExecRequest) (ExecResult, error)) goModResult {
+func runGoMod(t *testing.T, args string, respond func(req ExecRequest) (ExecResult, error)) (goModResult, error) {
 	t.Helper()
 	tool := &GoModTool{WS: &fakeExecWorkspace{respond: respond}}
 	raw, err := tool.Execute(context.Background(), args)
-	if err != nil {
-		t.Fatalf("Execute() error: %v", err)
-	}
 	var got goModResult
-	if err := json.Unmarshal([]byte(raw), &got); err != nil {
-		t.Fatalf("decode result: %v\n%s", err, raw)
+	if raw != "" {
+		if decodeErr := json.Unmarshal([]byte(raw), &got); decodeErr != nil {
+			t.Fatalf("decode result: %v\n%s", decodeErr, raw)
+		}
 	}
-	return got
+	return got, err
 }
 
 func hasArgs(req ExecRequest, want ...string) bool {
@@ -31,11 +30,17 @@ func hasArgs(req ExecRequest, want ...string) bool {
 // TestGoMod_VerifyFailureCarriesStderr pins yaah-8p8: go writes the reason to
 // stderr, and success:false without that text is an unexplained failure.
 func TestGoMod_VerifyFailureCarriesStderr(t *testing.T) {
-	got := runGoMod(t, `{"action":"verify"}`, func(req ExecRequest) (ExecResult, error) {
+	got, err := runGoMod(t, `{"action":"verify"}`, func(req ExecRequest) (ExecResult, error) {
 		return ExecResult{ExitCode: 1, Stderr: "missing go.sum entry for module example.com/x"},
 			errors.New("exit status 1")
 	})
 
+	if err == nil {
+		t.Fatal("a failed verify must return a non-nil error")
+	}
+	if !strings.Contains(err.Error(), "missing go.sum entry") {
+		t.Errorf("error lost the go diagnostic: %v", err)
+	}
 	if got.Success {
 		t.Error("success = true after a failed verify")
 	}
@@ -48,11 +53,17 @@ func TestGoMod_VerifyFailureCarriesStderr(t *testing.T) {
 }
 
 func TestGoMod_AddFailureCarriesStderr(t *testing.T) {
-	got := runGoMod(t, `{"action":"add","module":"example.com/x"}`, func(req ExecRequest) (ExecResult, error) {
+	got, err := runGoMod(t, `{"action":"add","module":"example.com/x"}`, func(req ExecRequest) (ExecResult, error) {
 		return ExecResult{ExitCode: 1, Stderr: "unknown revision example.com/x@latest"},
 			errors.New("exit status 1")
 	})
 
+	if err == nil {
+		t.Fatal("a failed add must return a non-nil error")
+	}
+	if !strings.Contains(err.Error(), "unknown revision") {
+		t.Errorf("error lost the go diagnostic: %v", err)
+	}
 	if got.Success {
 		t.Error("success = true after a failed add")
 	}
@@ -65,7 +76,7 @@ func TestGoMod_AddFailureCarriesStderr(t *testing.T) {
 // go.mod inconsistent; a failed tidy must be reported with its own error and
 // must make the call unsuccessful.
 func TestGoMod_RemoveTidyFailureFlipsSuccess(t *testing.T) {
-	got := runGoMod(t, `{"action":"remove","module":"example.com/x"}`, func(req ExecRequest) (ExecResult, error) {
+	got, err := runGoMod(t, `{"action":"remove","module":"example.com/x"}`, func(req ExecRequest) (ExecResult, error) {
 		switch {
 		case hasArgs(req, "get", "--", "example.com/x@none"):
 			return ExecResult{Stdout: "removed example.com/x\n"}, nil
@@ -78,6 +89,12 @@ func TestGoMod_RemoveTidyFailureFlipsSuccess(t *testing.T) {
 		}
 	})
 
+	if err == nil {
+		t.Fatal("a failed post-remove tidy must return a non-nil error")
+	}
+	if !strings.Contains(err.Error(), "updates to go.mod needed") {
+		t.Errorf("error lost the tidy diagnostic: %v", err)
+	}
 	if got.Success {
 		t.Error("success = true despite a failed post-remove tidy")
 	}
@@ -87,7 +104,7 @@ func TestGoMod_RemoveTidyFailureFlipsSuccess(t *testing.T) {
 }
 
 func TestGoMod_UpgradeTidyFailureFlipsSuccess(t *testing.T) {
-	got := runGoMod(t, `{"action":"upgrade","module":"example.com/x"}`, func(req ExecRequest) (ExecResult, error) {
+	got, err := runGoMod(t, `{"action":"upgrade","module":"example.com/x"}`, func(req ExecRequest) (ExecResult, error) {
 		switch {
 		case hasArgs(req, "get", "-u", "--", "example.com/x"):
 			return ExecResult{Stdout: "upgraded example.com/x\n"}, nil
@@ -100,6 +117,12 @@ func TestGoMod_UpgradeTidyFailureFlipsSuccess(t *testing.T) {
 		}
 	})
 
+	if err == nil {
+		t.Fatal("a failed post-upgrade tidy must return a non-nil error")
+	}
+	if !strings.Contains(err.Error(), "inconsistent vendoring") {
+		t.Errorf("error lost the tidy diagnostic: %v", err)
+	}
 	if got.Success {
 		t.Error("success = true despite a failed post-upgrade tidy")
 	}

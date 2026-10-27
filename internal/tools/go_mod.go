@@ -163,7 +163,23 @@ func (t *GoModTool) Execute(ctx context.Context, args string) (string, error) {
 		result.Summary = "dry_run: no changes were made to go.mod"
 	}
 
-	outBytes, _ := json.MarshalIndent(result, "", "  ")
+	outBytes, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("go_mod: encode result: %w", err)
+	}
+	if !result.Success {
+		// A nil error means the operation succeeded, full stop (tools.go).
+		// The error carries the diagnostic because the agent loop replaces a
+		// failed tool result with the error text.
+		detail := strings.TrimSpace(result.Stderr)
+		if detail == "" {
+			detail = strings.TrimSpace(result.Output)
+		}
+		if detail == "" {
+			detail = "command failed"
+		}
+		return string(outBytes), fmt.Errorf("go_mod: %s failed: %s", params.Action, detail)
+	}
 	return string(outBytes), nil
 }
 

@@ -19,7 +19,7 @@ import (
 )
 
 // multiStepTools is the coverage list the conformance table must satisfy.
-var multiStepTools = []string{"edit", "json_query", "patch", "replace"}
+var multiStepTools = []string{"bisect", "edit", "go_mod", "json_query", "patch", "replace"}
 
 // faultWorkspace delegates to a real workspace but injects a read or write
 // failure for one file name. Tests use it instead of chmod, which is a no-op
@@ -167,6 +167,30 @@ func TestToolConformance_FailingScenarioReturnsError(t *testing.T) {
 				return &JSONQueryTool{}, string(args)
 			},
 			want: "not found",
+		},
+		{
+			toolName: "go_mod",
+			name:     "failed go command is an error with its diagnostic",
+			setup: func(t *testing.T) (Tool, string) {
+				ws := &fakeExecWorkspace{respond: func(req ExecRequest) (ExecResult, error) {
+					return ExecResult{ExitCode: 1, Stderr: "missing go.sum entry for module example.com/x"},
+						errors.New("exit status 1")
+				}}
+				return &GoModTool{WS: ws}, `{"action":"verify"}`
+			},
+			want: "missing go.sum entry",
+		},
+		{
+			toolName: "bisect",
+			name:     "failed mark is an error, not in_progress",
+			setup: func(t *testing.T) (Tool, string) {
+				ws := &fakeExecWorkspace{respond: func(req ExecRequest) (ExecResult, error) {
+					return ExecResult{ExitCode: 1, Stdout: "fatal: no bisect in progress\n"},
+						errors.New("exit status 1")
+				}}
+				return &BisectTool{WS: ws}, `{"action":"good"}`
+			},
+			want: "no bisect in progress",
 		},
 		{
 			toolName: "edit",

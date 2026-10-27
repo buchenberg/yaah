@@ -260,12 +260,12 @@ func TestInfoLogsEmptyVsTruncated(t *testing.T) {
 	if got := p.Logs(); got != "" {
 		t.Errorf("fresh Info.Logs() = %q, want empty", got)
 	}
-	if p.LogsTruncated() {
+	if p.logsTruncated() {
 		t.Error("fresh Info must not report truncation")
 	}
 
 	p.appendLog("")
-	if p.LogsTruncated() {
+	if p.logsTruncated() {
 		t.Error("appending nothing must not report truncation")
 	}
 }
@@ -274,7 +274,7 @@ func TestInfoLogsExactlyAtCapacityIsNotTruncated(t *testing.T) {
 	var p Info
 	p.appendLog(strings.Repeat("a", logBufSize))
 
-	if p.LogsTruncated() {
+	if p.logsTruncated() {
 		t.Error("a buffer filled exactly to capacity did not drop anything")
 	}
 	logs := p.Logs()
@@ -295,8 +295,8 @@ func TestInfoLogsRetainsTail(t *testing.T) {
 	p.appendLog(strings.Repeat("x", logBufSize))
 	p.appendLog("TAIL\n")
 
-	if !p.LogsTruncated() {
-		t.Fatal("overflow must set LogsTruncated")
+	if !p.logsTruncated() {
+		t.Fatal("overflow must set logsTruncated")
 	}
 	logs := p.Logs()
 	if !strings.HasPrefix(logs, logTruncatedMarker) {

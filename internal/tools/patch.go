@@ -57,7 +57,10 @@ func (t *PatchTool) Execute(ctx context.Context, args string) (string, error) {
 
 	// A unified diff carries one target. Reject a multi-file diff rather than
 	// silently applying every hunk to the first file mentioned.
-	headerTargets := patchTargets(patch)
+	headerTargets, err := patchTargets(patch)
+	if err != nil {
+		return "", err
+	}
 	if len(headerTargets) > 1 {
 		return "", fmt.Errorf("patch: multi-file diffs are not supported (found %d targets: %s); apply each file separately",
 			len(headerTargets), strings.Join(headerTargets, ", "))
@@ -95,14 +98,42 @@ func (t *PatchTool) Execute(ctx context.Context, args string) (string, error) {
 	return fmt.Sprintf("Patch applied to %s (%d → %d lines)", target, countLines(content), countLines(applied)), nil
 }
 
-// patchTargets returns the distinct target paths named by the patch's "+++"
-// header lines. Hunk bodies are skipped using their declared line counts, so a
-// hunk line whose added text begins with "++ " is not mistaken for a header.
-// Timestamps after a tab are stripped, and /dev/null (a deletion) is ignored.
-func patchTargets(patch string) []string {
+// patchTargets returns the distinct target paths named by the patch's
+// "diff --git" and "+++ " header lines. Hunk bodies are skipped using their
+// declared line counts, so a hunk line whose added text begins with "++ " is
+// not mistaken for a header. Timestamps after a tab are stripped, /dev/null (a
+// deletion) is ignored, and a/b prefixes are removed.
+//
+// A hunk may over-count its body and swallow the next file's header pair. That
+// makes the counts untrustworthy: the second target would go undetected and
+// the hunks would be applied to the first file. A matching "--- a/x" / "+++ b/x"
+// pair inside a hunk body is therefore reported as a multi-file error rather
+// than guessed at.
+func patchTargets(patch string) ([]string, error) {
 	lines := strings.Split(patch, "\n")
 	var targets []string
 	seen := make(map[string]bool)
+	add := func(header, prefix string) {
+		t := normalizePatchPath(header, prefix)
+		if t == "" || seen[t] {
+			return
+		}
+		seen[t] = true
+		targets = append(targets, t)
+	}
+
+	// A raw "diff --git" line is unambiguous: every hunk body line carries a
+	// ' ', '+', '-' or '\' prefix, so it can never look like a header.
+	// Collecting these first catches multi-file git diffs even when a hunk
+	// over-counts its body and the "+++" headers are swallowed below.
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "diff --git ") {
+			continue
+		}
+		if parts := strings.Fields(line); len(parts) >= 4 {
+			add(parts[3], "b/")
+		}
+	}
 
 	for i := 0; i < len(lines); i++ {
 		line := lines[i]
@@ -113,6 +144,16 @@ func patchTargets(patch string) []string {
 				i = j
 				if body == "" {
 					break
+				}
+				if strings.HasPrefix(body, "--- ") && j+1 < len(lines) && strings.HasPrefix(lines[j+1], "+++ ") {
+					oldPath := normalizePatchPath(body, "a/")
+					newPath := normalizePatchPath(lines[j+1], "b/")
+					// Prefixed paths that agree are a file header, not
+					// plausible hunk content.
+					if oldPath != "" && oldPath == newPath &&
+						(hasDiffPathPrefix(body, "a/") || hasDiffPathPrefix(lines[j+1], "b/")) {
+						return nil, fmt.Errorf("patch: hunk declares more lines than its body (it runs into the header for %q); multi-file diffs are not supported — apply each file separately", newPath)
+					}
 				}
 				switch body[0] {
 				case ' ':
@@ -134,18 +175,34 @@ func patchTargets(patch string) []string {
 		if !strings.HasPrefix(line, "+++ ") {
 			continue
 		}
-		t := strings.TrimSpace(strings.TrimPrefix(line, "+++ "))
-		if i := strings.IndexByte(t, '\t'); i >= 0 {
-			t = t[:i]
-		}
-		t = strings.TrimPrefix(t, "b/")
-		if t == "" || t == "/dev/null" || seen[t] {
-			continue
-		}
-		seen[t] = true
-		targets = append(targets, t)
+		add(line, "b/")
 	}
-	return targets
+	return targets, nil
+}
+
+// normalizePatchPath strips a "--- "/"+++ " marker, a tab-separated timestamp,
+// and the a/ or b/ prefix. It returns "" for an absent or /dev/null path.
+func normalizePatchPath(header, prefix string) string {
+	p := strings.TrimSpace(header)
+	if strings.HasPrefix(p, "+++ ") || strings.HasPrefix(p, "--- ") {
+		p = strings.TrimSpace(p[4:])
+	}
+	if i := strings.IndexByte(p, '\t'); i >= 0 {
+		p = p[:i]
+	}
+	p = strings.TrimPrefix(p, prefix)
+	if p == "" || p == "/dev/null" {
+		return ""
+	}
+	return p
+}
+
+func hasDiffPathPrefix(header, prefix string) bool {
+	p := strings.TrimSpace(header)
+	if strings.HasPrefix(p, "+++ ") || strings.HasPrefix(p, "--- ") {
+		p = strings.TrimSpace(p[4:])
+	}
+	return strings.HasPrefix(p, prefix)
 }
 
 // parseHunkCounts extracts the old/new line counts from a "@@ -a,b +c,d @@"

@@ -126,7 +126,19 @@ func (t *BisectTool) Execute(ctx context.Context, args string) (string, error) {
 		t.checkFound(ctx, result)
 	}
 
-	outBytes, _ := json.MarshalIndent(result, "", "  ")
+	outBytes, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("bisect: encode result: %w", err)
+	}
+	if result.Status == "error" {
+		// A nil error means the operation succeeded, full stop (tools.go).
+		// An aborted bisect is a failure even though the JSON describes it.
+		detail := strings.TrimSpace(result.Stderr)
+		if detail == "" {
+			detail = "bisect action failed"
+		}
+		return string(outBytes), fmt.Errorf("bisect: %s: %s", params.Action, detail)
+	}
 	return string(outBytes), nil
 }
 

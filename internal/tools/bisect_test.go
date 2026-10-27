@@ -57,13 +57,16 @@ func TestBisectAutoRunAbortIsNotInProgress(t *testing.T) {
 		"action": "start", "good_ref": "good-ref", "bad_ref": "bad-ref", "test_cmd": "false",
 	})
 	raw, err := (&BisectTool{WS: ws}).Execute(context.Background(), string(args))
-	if err != nil {
-		t.Fatalf("Execute() error: %v", err)
+	if err == nil {
+		t.Fatal("an aborted auto-run must return a non-nil error")
+	}
+	if !strings.Contains(err.Error(), "aborted") || !strings.Contains(err.Error(), "unable to run the test command") {
+		t.Errorf("error lost the abort reason: %v", err)
 	}
 
 	var got bisectResult
-	if err := json.Unmarshal([]byte(raw), &got); err != nil {
-		t.Fatalf("decode: %v\n%s", err, raw)
+	if decodeErr := json.Unmarshal([]byte(raw), &got); decodeErr != nil {
+		t.Fatalf("decode: %v\n%s", decodeErr, raw)
 	}
 	if got.Status == "in_progress" {
 		t.Error("aborted auto-run still reports in_progress")
@@ -85,12 +88,15 @@ func TestBisectMarkFailureIsNotInProgress(t *testing.T) {
 	}}
 
 	raw, err := (&BisectTool{WS: ws}).Execute(context.Background(), `{"action":"good"}`)
-	if err != nil {
-		t.Fatalf("Execute() error: %v", err)
+	if err == nil {
+		t.Fatal("a failed mark must return a non-nil error")
+	}
+	if !strings.Contains(err.Error(), "no bisect in progress") {
+		t.Errorf("error lost the git reason: %v", err)
 	}
 	var got bisectResult
-	if err := json.Unmarshal([]byte(raw), &got); err != nil {
-		t.Fatalf("decode: %v\n%s", err, raw)
+	if decodeErr := json.Unmarshal([]byte(raw), &got); decodeErr != nil {
+		t.Fatalf("decode: %v\n%s", decodeErr, raw)
 	}
 	if got.Status != "error" {
 		t.Errorf("Status = %q, want error", got.Status)
