@@ -36,7 +36,7 @@ func (t *MemorySearchTool) Schema() json.RawMessage {
 		"type": "object",
 		"properties": {
 			"query": {"type": "string", "description": "The search query (empty to list all)"},
-			"tag": {"type": "string", "description": "Optional tag to filter by (e.g. 'user_info', 'preferences')"},
+			"tag": {"type": "string", "description": "Optional tag to filter by (e.g. 'user_info', 'preferences'). Supplying a tag forces keyword-only (FTS5) matching and withdraws semantic recall; omit it when searching by paraphrase."},
 			"top_k": {"type": "integer", "description": "Maximum number of results (default 10)"},
 			"scope": {"type": "string", "enum": ["global", "session", "all"], "description": "Tier filter. 'global' (default) returns facts that outlive any single session; 'session' returns atoms distilled from conversations, including past ones; 'all' spans both. Session atoms are excluded unless you ask for them."}
 		},

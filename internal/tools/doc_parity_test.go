@@ -168,6 +168,19 @@ func TestGitDoc_MatchesDangerTable(t *testing.T) {
 	}
 }
 
+// TestMemorySearchDoc_TagForcesKeywordOnly pins the disclosure that a tag
+// withdraws semantic recall (yaah-h4e). memory_search's vector path runs only
+// when tag is empty (MemorySearchTool.Execute), so the doc must not present
+// tag as an orthogonal filter. Requiring both words in one sentence keeps a
+// rewrite from retaining the vocabulary while dropping the warning.
+func TestMemorySearchDoc_TagForcesKeywordOnly(t *testing.T) {
+	text := strings.ToLower(prompts.ToolDescription("memory_search"))
+	sentence := regexp.MustCompile(`[^.\n]*\btag\b[^.\n]*\bkeyword\b[^.\n]*|[^.\n]*\bkeyword\b[^.\n]*\btag\b[^.\n]*`)
+	if !sentence.MatchString(text) {
+		t.Fatalf("memory_search.md must state that supplying a tag selects keyword-only (FTS5) matching and withdraws semantic recall; doc: %q", text)
+	}
+}
+
 // TestReadDoc_OffsetLimitUnits pins read.md to line semantics. The
 // schema owns the units — offset is a 1-based line, limit a line
 // count — and the byte-slicing claims this doc used to make were the
