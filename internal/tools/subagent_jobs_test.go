@@ -342,3 +342,24 @@ func TestSubAgentJobs_CancelOutcomes(t *testing.T) {
 		}
 	})
 }
+
+// TestClampWaitTimeout pins the schema's 1-300 window for wait: bounds are
+// advisory to a caller, and an unclamped huge value overflows the Duration
+// multiply into an already-expired context — an instant, lying timed_out.
+func TestClampWaitTimeout(t *testing.T) {
+	if got := clampWaitTimeout(9_223_372_036); got != 300 { // overflows int64 nanoseconds unclamped
+		t.Errorf("clampWaitTimeout(overflow-scale value) = %d, want 300", got)
+	}
+	if got := clampWaitTimeout(301); got != 300 {
+		t.Errorf("clampWaitTimeout(301) = %d, want 300", got)
+	}
+	if got := clampWaitTimeout(300); got != 300 {
+		t.Errorf("clampWaitTimeout(300) = %d, want 300", got)
+	}
+	if got := clampWaitTimeout(1); got != 1 {
+		t.Errorf("clampWaitTimeout(1) = %d, want 1", got)
+	}
+	if got := clampWaitTimeout(0); got != 0 {
+		t.Errorf("clampWaitTimeout(0) = %d, want 0 (the default mapping is executeWait's job)", got)
+	}
+}

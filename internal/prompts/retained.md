@@ -20,7 +20,7 @@ it with the `proposal` tool:
 - `discard` — throw the proposal away and remove its worktree.
 
 `proposal` with `action: "list"` answers with the same JSON envelope as the other
-verbs: `proposals` is a list of summaries (id, files, worktree), and it is an
+verbs: `proposals` is a list of summaries (id, files), and it is an
 explicit empty `[]` when nothing is open — not prose, not an error. Proposals
 belong to the session that sealed them, so another session's proposals are never
 listed, shown, or settleable here. `action: "show"` re-reads one, with its diff. A

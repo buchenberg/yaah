@@ -647,3 +647,40 @@ func TestSchema_BoundsMatchClamp(t *testing.T) {
 		})
 	}
 }
+
+// TestDelegate_ClassifyGenericErrorCarriesPartial pins the yaah-atn path on
+// generic failures: the report lane appends a teardown note to a result that
+// ends with a non-nil error, and classifyRunnerResult's default branch must
+// not swallow it. The agent loop replaces a failed result with the error
+// text, so the note can only survive inside the error.
+func TestDelegate_ClassifyGenericErrorCarriesPartial(t *testing.T) {
+	tool := &DelegateTool{}
+	note := "note: the report dispatch could not discard its isolated scope; it left the worktree at /tmp/wt/scratch"
+
+	got, err := tool.classifyRunnerResult(note, errors.New("max iterations reached"), "reviewer", 30*time.Second, context.Background())
+	if err == nil {
+		t.Fatal("a generic runner error must stay an error")
+	}
+	if got != "" {
+		t.Errorf("result = %q, want empty (the loop discards it anyway)", got)
+	}
+	if !strings.Contains(err.Error(), "max iterations reached") {
+		t.Errorf("error lost the cause: %v", err)
+	}
+	if !strings.Contains(err.Error(), "left the worktree at /tmp/wt/scratch") {
+		t.Errorf("error lost the partial teardown note: %v", err)
+	}
+}
+
+// TestDelegate_ClassifyGenericErrorWithoutPartialStaysBare: nothing to
+// preserve, nothing appended.
+func TestDelegate_ClassifyGenericErrorWithoutPartialStaysBare(t *testing.T) {
+	tool := &DelegateTool{}
+	got, err := tool.classifyRunnerResult("", errors.New("boom"), "reviewer", 30*time.Second, context.Background())
+	if err == nil || err.Error() != "boom" {
+		t.Errorf("err = %v, want the bare cause", err)
+	}
+	if got != "" {
+		t.Errorf("result = %q, want empty", got)
+	}
+}

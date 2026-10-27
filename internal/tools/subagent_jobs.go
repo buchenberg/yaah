@@ -195,10 +195,25 @@ func (t *SubAgentJobsTool) executeCancel(jobID string) (string, error) {
 	return marshalCancel(env)
 }
 
+// clampWaitTimeout enforces the schema's 1–300 second window for the wait
+// action. The 0/default mapping happens in executeWait; this caps the top so
+// a runaway value can neither block past the advertised bound nor overflow
+// time.Duration's int64 seconds into an instantly-expired context.
+func clampWaitTimeout(secs int) int {
+	if secs > 300 {
+		return 300
+	}
+	return secs
+}
+
 func (t *SubAgentJobsTool) executeWait(ctx context.Context, jobID string, timeoutSecs int) (string, error) {
 	if timeoutSecs <= 0 {
 		timeoutSecs = 60
 	}
+	// Enforce the schema's advertised maximum here: bounds are advisory to
+	// a caller, and an unclamped value can overflow the Duration multiply
+	// into an already-expired context — an instant, lying timed_out.
+	timeoutSecs = clampWaitTimeout(timeoutSecs)
 	if ctx == nil {
 		ctx = context.Background()
 	}
