@@ -190,6 +190,12 @@ func TestSkillSearch_KeywordMatchIsUnionedWithSemanticMatches(t *testing.T) {
 			t.Errorf("unioned result lost %q: %q", name, out)
 		}
 	}
+	if !strings.Contains(out, "database-backup [keyword]") {
+		t.Errorf("literal hit must be marked as keyword, not printed on the cosine scale: %q", out)
+	}
+	if strings.Contains(out, "database-backup (") {
+		t.Errorf("literal hit rendered with a synthetic numeric score: %q", out)
+	}
 }
 
 // TestSkillSearch_AllEmbeddingsFailFallsBackToKeyword: when every embedding

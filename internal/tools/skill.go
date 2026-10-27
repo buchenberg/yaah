@@ -256,6 +256,10 @@ func (t *SkillTool) track(op, name string, write func(*memory.DB) error) {
 type skillMatch struct {
 	skill *skills.Skill
 	score float64
+	// literal marks a keyword-derived hit. Its score is a substring weight
+	// (0.8 name/description, 0.5 body), not a cosine similarity, so rendering
+	// must not present it on the embedding scale.
+	literal bool
 }
 
 // skillRelevanceFloor is the minimum cosine similarity for a semantic skill
@@ -266,9 +270,9 @@ type skillMatch struct {
 // The value is calibrated for the cosine scale shared by common embedding
 // servers (nomic/OpenAI-style models score related text around 0.5+ and
 // unrelated text around 0.2–0.4). It is a floor, not a match oracle: literal
-// name/description matches are unioned into the results below regardless of
-// their embedding score, so a server whose scale diverges cannot hide a real
-// match.
+// name/description/body matches are unioned into the results below regardless
+// of their embedding score, so a server whose scale diverges cannot hide a
+// real match.
 const skillRelevanceFloor = 0.35
 
 func skillSearch(ctx context.Context, emb memory.Embedder, query string, found []skills.Skill) string {
@@ -317,15 +321,14 @@ func skillSearch(ctx context.Context, emb memory.Embedder, query string, found [
 		matches = append(matches, skillMatch{skill: &found[i], score: score})
 	}
 
-	// A literal name/description match is a real hit regardless of the
+	// A literal name/description/body match is a real hit regardless of the
 	// embedding score, so union the keyword pass in rather than consulting it
-	// only when nothing cleared the floor. Dedup by skill name, keeping the
-	// higher score.
+	// only when nothing cleared the floor. Dedup by skill name: a skill already
+	// reported from the cosine scale keeps that row, because replacing it with
+	// the synthetic keyword weight would print two different scales as if they
+	// were the same thing.
 	for _, kw := range keywordMatches(query, found, searchText) {
-		if i := skillMatchIndex(matches, kw.skill.Name); i >= 0 {
-			if kw.score > matches[i].score {
-				matches[i].score = kw.score
-			}
+		if skillMatchIndex(matches, kw.skill.Name) >= 0 {
 			continue
 		}
 		matches = append(matches, kw)
@@ -334,10 +337,11 @@ func skillSearch(ctx context.Context, emb memory.Embedder, query string, found [
 	var out string
 	if len(matches) > 0 {
 		sort.Slice(matches, func(i, j int) bool { return matches[i].score > matches[j].score })
-		out = formatSearchResults(matches, true)
+		out = formatSearchResults(matches)
 	} else if scored == 0 {
-		// Nothing was actually scored (every embedding failed), so there is no
-		// honest "best score" to report.
+		// No finite score was produced: every embedding failed, or every one
+		// returned a non-finite cosine. There is no honest "best score" to
+		// report.
 		out = fmt.Sprintf("No skills matched query %q: no skill could be scored.\n", query)
 	} else {
 		out = fmt.Sprintf("No skills matched query %q (best score %.2f, floor %.2f).\n", query, best, skillRelevanceFloor)
@@ -371,9 +375,11 @@ func joinCapped(items []string, max int) string {
 	return fmt.Sprintf("%s; and %d more", strings.Join(items[:max], "; "), len(items)-max)
 }
 
-// keywordMatches returns the literal name/description/body hits. It is shared
-// by keywordSearch and the semantic path's backstop so a below-floor semantic
-// miss can still surface a real keyword match.
+// keywordMatches returns the literal name/description/body hits, marked so
+// they render as keyword results rather than on the cosine scale. It backs
+// keywordSearch (no embedder configured, or the query could not be embedded)
+// and is unioned into every semantic search so a literal match is never hidden
+// by a below-floor embedding score.
 func keywordMatches(query string, found []skills.Skill, searchText func(skills.Skill) string) []skillMatch {
 	q := strings.ToLower(query)
 	matches := make([]skillMatch, 0, len(found))
@@ -389,7 +395,7 @@ func keywordMatches(query string, found []skills.Skill, searchText func(skills.S
 			score = max(score, 0.5)
 		}
 		if score > 0 {
-			matches = append(matches, skillMatch{skill: &found[i], score: score})
+			matches = append(matches, skillMatch{skill: &found[i], score: score, literal: true})
 		}
 	}
 	return matches
@@ -401,10 +407,13 @@ func keywordSearch(query string, found []skills.Skill, searchText func(skills.Sk
 		return fmt.Sprintf("No skills matched query %q.", query)
 	}
 	sort.Slice(matches, func(i, j int) bool { return matches[i].score > matches[j].score })
-	return formatSearchResults(matches, false)
+	return formatSearchResults(matches)
 }
 
-func formatSearchResults(matches []skillMatch, showScore bool) string {
+// formatSearchResults renders matches with the score scale each row actually
+// has: a cosine for semantic hits, and a [keyword] marker (no number) for
+// literal hits, whose score is a substring weight.
+func formatSearchResults(matches []skillMatch) string {
 	topK := len(matches)
 	if topK > 10 {
 		topK = 10
@@ -413,10 +422,10 @@ func formatSearchResults(matches []skillMatch, showScore bool) string {
 	sb.WriteString(fmt.Sprintf("Found %d matching skill(s):\n", len(matches)))
 	for i := 0; i < topK; i++ {
 		m := matches[i]
-		if showScore {
-			sb.WriteString(fmt.Sprintf("  - %s (%.2f): %s\n", m.skill.Name, m.score, m.skill.Description))
+		if m.literal {
+			sb.WriteString(fmt.Sprintf("  - %s [keyword]: %s\n", m.skill.Name, m.skill.Description))
 		} else {
-			sb.WriteString(fmt.Sprintf("  - %s: %s\n", m.skill.Name, m.skill.Description))
+			sb.WriteString(fmt.Sprintf("  - %s (%.2f): %s\n", m.skill.Name, m.score, m.skill.Description))
 		}
 	}
 	return sb.String()

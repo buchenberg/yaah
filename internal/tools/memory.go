@@ -84,28 +84,17 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 	// embedder, a failed embed, and a vector search with no candidates — used
 	// to collapse into one unlabelled FTS result set, so an empty recall could
 	// not be told apart from a semantic path that was down (yaah-17s).
-	path := RetrievalKeyword
-	switch {
-	case params.Query == "":
-		path = RetrievalListing
-		if params.Tag != "" {
-			path += fmt.Sprintf(" — tag %q narrows the listing", params.Tag)
-		}
-	case params.Tag != "":
-		path += " — tag filter selects keyword-only matching"
-	case t.DB.Embedder() == nil:
-		path += " — no embedding model configured"
-	default:
-		vecResults, verr := t.DB.SearchMemoryVectorScopedDiag(ctx, params.Query, params.TopK, scope)
-		switch {
-		case verr != nil:
-			path += " — " + semanticFailureReason(verr)
-		case len(vecResults) == 0:
-			path += " — semantic search returned no candidates"
-		default:
+	hasEmbedder := t.DB.Embedder() != nil
+	attemptVector := params.Query != "" && params.Tag == "" && hasEmbedder
+	var vecResults []memory.VectorResult
+	var vecErr error
+	if attemptVector {
+		vecResults, vecErr = t.DB.SearchMemoryVectorScopedDiag(ctx, params.Query, params.TopK, scope)
+		if vecErr == nil && len(vecResults) > 0 {
 			return formatVectorResults(vecResults), nil
 		}
 	}
+	path := RetrievalLabel(params.Query, params.Tag, hasEmbedder, vecErr, len(vecResults))
 
 	ftsResults, err := t.DB.SearchMemoryScoped(params.Query, params.TopK, params.Tag, scope)
 	if err != nil {
@@ -129,6 +118,30 @@ const (
 	// created_at and runs no FTS match, so calling it (FTS5) would be a lie.
 	RetrievalListing = "Retrieval: listing (newest first)"
 )
+
+// RetrievalLabel renders the one-line path description shared by the
+// memory_search tool and the `yaah memory search` CLI, so the two front-ends
+// cannot drift. hasEmbedder reports whether an embedding model is configured;
+// semanticErr and candidates describe the vector attempt when one ran.
+func RetrievalLabel(query, tag string, hasEmbedder bool, semanticErr error, candidates int) string {
+	switch {
+	case query == "":
+		label := RetrievalListing
+		if tag != "" {
+			label += fmt.Sprintf(" — tag %q narrows the listing", tag)
+		}
+		return label
+	case tag != "":
+		return RetrievalKeyword + " — tag filter selects keyword-only matching"
+	case !hasEmbedder:
+		return RetrievalKeyword + " — no embedding model configured"
+	case semanticErr != nil:
+		return RetrievalKeyword + " — " + semanticFailureReason(semanticErr)
+	case candidates == 0:
+		return RetrievalKeyword + " — semantic search returned no candidates"
+	}
+	return RetrievalSemantic
+}
 
 // semanticFailureReason distinguishes a failed embedding (the semantic path
 // itself is down) from a store/scan failure, so a database problem is never
