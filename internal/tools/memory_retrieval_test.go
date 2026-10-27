@@ -110,7 +110,7 @@ func TestMemorySearchTool_RetrievalPath(t *testing.T) {
 		if err != nil {
 			t.Fatalf("memory_search: %v", err)
 		}
-		if !strings.Contains(out, retrievalKeyword+" — semantic search failed: connection refused") {
+		if !strings.Contains(out, retrievalKeyword+" — semantic search failed (embedding): connection refused") {
 			t.Fatalf("embed failure not surfaced in the path line: %q", out)
 		}
 		if strings.Count(out, "connection refused") != 1 {
@@ -129,7 +129,7 @@ func TestMemorySearchTool_RetrievalPath(t *testing.T) {
 		if err != nil {
 			t.Fatalf("memory_search: %v", err)
 		}
-		if !strings.Contains(out, "semantic search failed: timeout") {
+		if !strings.Contains(out, "semantic search failed (embedding): timeout") {
 			t.Fatalf("degraded path not named on an empty result: %q", out)
 		}
 		if !strings.Contains(out, "No matching memories found.") {
@@ -195,4 +195,60 @@ func TestMemorySearchTool_RetrievalPath(t *testing.T) {
 			t.Fatalf("empty hint missing: %q", out)
 		}
 	})
+
+	t.Run("empty query names the listing path, not FTS5", func(t *testing.T) {
+		db := openScopeTestDB(t)
+		seedRetrievalEntry(t, db, memory.Entry{ID: "g1", Text: "Postgres connection pooling", Scope: memory.ScopeGlobal})
+
+		out, err := (&MemorySearchTool{DB: db}).Execute(ctx, `{"top_k":5}`)
+		if err != nil {
+			t.Fatalf("memory_search: %v", err)
+		}
+		if !strings.HasPrefix(out, retrievalListing) {
+			t.Fatalf("listing path not named: %q", out)
+		}
+		if strings.Contains(out, "(FTS5)") {
+			t.Fatalf("a listing runs no FTS match and must not claim FTS5: %q", out)
+		}
+		if !strings.Contains(out, "g1") {
+			t.Fatalf("listing lost the entry: %q", out)
+		}
+	})
+
+	t.Run("tag-only listing keeps the tag in the label", func(t *testing.T) {
+		db := openScopeTestDB(t)
+		seedRetrievalEntry(t, db, memory.Entry{
+			ID:    "g1",
+			Text:  "Postgres pooling decision",
+			Tags:  `["decision"]`,
+			Scope: memory.ScopeGlobal,
+		})
+
+		out, err := (&MemorySearchTool{DB: db}).Execute(ctx, `{"tag":"decision"}`)
+		if err != nil {
+			t.Fatalf("memory_search: %v", err)
+		}
+		if !strings.HasPrefix(out, retrievalListing) {
+			t.Fatalf("tag-only listing path not named: %q", out)
+		}
+		if !strings.Contains(out, `tag "decision" narrows the listing`) {
+			t.Fatalf("tag-only listing lost the tag mention: %q", out)
+		}
+		if !strings.Contains(out, "g1") {
+			t.Fatalf("tag-only listing lost the entry: %q", out)
+		}
+	})
+}
+
+// TestSemanticFailureReason distinguishes a failed embed (the semantic path is
+// down) from a store failure instead of reporting both as an embedding outage.
+func TestSemanticFailureReason(t *testing.T) {
+	embed := semanticFailureReason(&memory.EmbedError{Err: errors.New("connection refused")})
+	if !strings.Contains(embed, "(embedding): connection refused") {
+		t.Fatalf("embed failure mislabelled: %q", embed)
+	}
+	store := semanticFailureReason(errors.New("disk I/O error"))
+	if !strings.Contains(store, "(store): disk I/O error") {
+		t.Fatalf("store failure mislabelled as embedding: %q", store)
+	}
 }

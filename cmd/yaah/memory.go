@@ -1,6 +1,7 @@
 package yaah
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -48,19 +49,37 @@ with single spaces. Use '--' when the query itself begins with a dash:
 			return err
 		}
 
-		// Try vector search first, fall back to FTS5.
-		if vecResults, vErr := db.SearchMemoryVectorScoped(cmd.Context(), query, 10, scope); vErr == nil && len(vecResults) > 0 {
-			cmd.Printf("Found %d result(s):\n\n", len(vecResults))
-			for _, r := range vecResults {
-				cmd.Printf("  %s  (score: %.2f)\n", Bold(r.Text), r.Score)
-				cmd.Printf("        id: %s\n", Dim(r.ID))
-				if r.Tags != "" && r.Tags != "null" {
-					cmd.Printf("        tags: %s\n", Dim(r.Tags))
+		// Try vector search first, fall back to FTS5. Name the path so a
+		// degraded semantic recall is distinguishable from a true miss
+		// (yaah-17s), matching the agent tool's output.
+		path := "Retrieval: keyword (FTS5)"
+		if db.Embedder() == nil {
+			path += " — no embedding model configured"
+		} else {
+			vecResults, vErr := db.SearchMemoryVectorScopedDiag(cmd.Context(), query, 10, scope)
+			switch {
+			case vErr != nil:
+				var embedErr *memory.EmbedError
+				if errors.As(vErr, &embedErr) {
+					path += " — semantic search failed (embedding): " + vErr.Error()
+				} else {
+					path += " — semantic search failed (store): " + vErr.Error()
 				}
-				cmd.Printf("        %s\n", Dim(fmt.Sprintf("source: %s | scope: %s | created: %s", r.Source, r.Scope,
-					time.Unix(r.CreatedAt, 0).Format("2006-01-02 15:04"))))
+			case len(vecResults) == 0:
+				path += " — semantic search returned no candidates"
+			default:
+				cmd.Printf("Retrieval: semantic (vector)\nFound %d result(s):\n\n", len(vecResults))
+				for _, r := range vecResults {
+					cmd.Printf("  %s  (score: %.2f)\n", Bold(r.Text), r.Score)
+					cmd.Printf("        id: %s\n", Dim(r.ID))
+					if r.Tags != "" && r.Tags != "null" {
+						cmd.Printf("        tags: %s\n", Dim(r.Tags))
+					}
+					cmd.Printf("        %s\n", Dim(fmt.Sprintf("source: %s | scope: %s | created: %s", r.Source, r.Scope,
+						time.Unix(r.CreatedAt, 0).Format("2006-01-02 15:04"))))
+				}
+				return nil
 			}
-			return nil
 		}
 
 		results, err := db.SearchMemoryScoped(query, 10, "", scope)
@@ -68,6 +87,7 @@ with single spaces. Use '--' when the query itself begins with a dash:
 			return fmt.Errorf("search: %w", err)
 		}
 
+		cmd.Printf("%s\n", path)
 		if len(results) == 0 {
 			cmd.Println("No matching memories found.")
 			return nil

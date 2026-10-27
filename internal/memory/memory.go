@@ -846,15 +846,26 @@ type VectorResult struct {
 	Score float32
 }
 
-// EmbedError reports that the vector path could not embed its query. It wraps
-// the embedder's error: SearchMemoryVectorScoped and
-// SearchMemoryVectorScopedDiag callers can errors.As it to tell "the
-// embedding step failed" from a store error while still printing the original
-// cause verbatim.
+// EmbedError reports that the vector path could not embed its query. Only
+// SearchMemoryVectorScopedDiag returns it: SearchMemoryVectorScoped
+// deliberately degrades an embed failure to (nil, nil), so callers that need
+// the reason must use the Diag method. It wraps the embedder's error, so
+// errors.As recovers the original cause while it is still printable verbatim.
 type EmbedError struct{ Err error }
 
-func (e *EmbedError) Error() string { return e.Err.Error() }
-func (e *EmbedError) Unwrap() error { return e.Err }
+func (e *EmbedError) Error() string {
+	if e == nil || e.Err == nil {
+		return "memory: embedding failed"
+	}
+	return e.Err.Error()
+}
+
+func (e *EmbedError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
 
 // SearchMemoryVector embeds the query, scans all rows with non-null
 // embedding, and returns the top-K sorted by cosine similarity

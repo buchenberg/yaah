@@ -8,6 +8,7 @@ package tools
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 
@@ -41,14 +42,16 @@ func skillSearchFixture() []skills.Skill {
 }
 
 func TestSkillSearch_AllBelowFloorIsAMiss(t *testing.T) {
+	// The query must not appear literally in any skill: a literal match is a
+	// real hit via the keyword backstop, even below the semantic floor.
 	emb := vectorEmbedder{vectors: map[string]memory.Embedding{
-		"database":                   {1, 0},
+		"elephants":                  {1, 0},
 		"postgres: database queries": {0.3, 1}, // cosine ≈ 0.29, below the 0.35 floor
 		"css: layout and styling":    {0, 1},
 	}}
 
-	out := skillSearch(context.Background(), emb, "database", skillSearchFixture())
-	if !strings.Contains(out, `No skills matched query "database"`) {
+	out := skillSearch(context.Background(), emb, "elephants", skillSearchFixture())
+	if !strings.Contains(out, `No skills matched query "elephants"`) {
 		t.Fatalf("an all-below-floor search must report a miss: %q", out)
 	}
 	if !strings.Contains(out, "best score 0.29") || !strings.Contains(out, "floor 0.35") {
@@ -123,13 +126,123 @@ func TestSkillSearch_QueryEmbedFailureAndNoKeywordMatch(t *testing.T) {
 	}
 }
 
-func TestSkillSearch_NoSkillsDiscovered(t *testing.T) {
-	tool := &SkillTool{Dirs: []string{t.TempDir()}, Embedder: vectorEmbedder{}}
+func TestSkillExecute_NoSkillsDiscovered(t *testing.T) {
+	// Discovery short-circuit: no skill is found, so Execute answers before
+	// skillSearch runs. The semantic-path zero-candidate case is covered by
+	// TestSkillSearch_NoSkills below.
+	tool := &SkillTool{Dirs: []string{t.TempDir()}}
 	out, err := tool.Execute(context.Background(), `{"action":"search","query":"database"}`)
 	if err != nil {
 		t.Fatalf("skill search: %v", err)
 	}
 	if out != "No skills found." {
 		t.Fatalf("empty discovery = %q, want the explicit no-skills message", out)
+	}
+}
+
+func TestSkillSearch_NoSkills(t *testing.T) {
+	out := skillSearch(context.Background(), vectorEmbedder{}, "database", nil)
+	if out != "No skills found." {
+		t.Fatalf("zero candidates = %q, want the explicit no-skills message", out)
+	}
+}
+
+// TestSkillSearch_KeywordBackstopKeepsLiteralMatch pins the floor's backstop:
+// a skill whose description literally contains the query is a real hit even
+// when the embedding model scores it below the floor, so the floor cannot
+// regress the keyword matcher.
+func TestSkillSearch_KeywordBackstopKeepsLiteralMatch(t *testing.T) {
+	emb := vectorEmbedder{vectors: map[string]memory.Embedding{
+		"database":                   {1, 0},
+		"postgres: database queries": {0, 1}, // cosine 0, below the floor
+		"css: layout and styling":    {0, 1},
+	}}
+
+	out := skillSearch(context.Background(), emb, "database", skillSearchFixture())
+	if !strings.Contains(out, "Found 1 matching skill(s):") || !strings.Contains(out, "postgres") {
+		t.Fatalf("literal keyword match must survive a below-floor semantic score: %q", out)
+	}
+	if strings.Contains(out, "No skills matched") {
+		t.Fatalf("literal keyword match reported as a miss: %q", out)
+	}
+}
+
+// TestSkillSearch_AllEmbeddingsFailFallsBackToKeyword: when every embedding
+// fails there is no honest "best score"; the literal keyword matches still
+// surface and every failure is named.
+func TestSkillSearch_AllEmbeddingsFailFallsBackToKeyword(t *testing.T) {
+	emb := vectorEmbedder{
+		vectors: map[string]memory.Embedding{"database": {1, 0}},
+		errs: map[string]error{
+			"postgres: database queries": errors.New("embed timeout"),
+			"css: layout and styling":    errors.New("embed timeout"),
+		},
+	}
+
+	out := skillSearch(context.Background(), emb, "database", skillSearchFixture())
+	if !strings.Contains(out, "postgres") || !strings.Contains(out, "database queries") {
+		t.Fatalf("literal keyword match lost when all embeddings failed: %q", out)
+	}
+	if !strings.Contains(out, "2 skill(s) could not be embedded:") {
+		t.Fatalf("embed failures not counted: %q", out)
+	}
+	if strings.Contains(out, "best score") {
+		t.Fatalf("an unscored search must not fabricate a best score: %q", out)
+	}
+}
+
+func TestSkillSearch_AllEmbeddingsFailWithoutKeywordMatch(t *testing.T) {
+	emb := vectorEmbedder{
+		vectors: map[string]memory.Embedding{"quantum": {1, 0}},
+		errs: map[string]error{
+			"postgres: database queries": errors.New("embed timeout"),
+			"css: layout and styling":    errors.New("embed timeout"),
+		},
+	}
+
+	out := skillSearch(context.Background(), emb, "quantum", skillSearchFixture())
+	if !strings.Contains(out, "no skill could be scored") {
+		t.Fatalf("all-failed embeddings must be reported as unscored: %q", out)
+	}
+	if strings.Contains(out, "best score 0.00") {
+		t.Fatalf("fabricated best score on an unscored search: %q", out)
+	}
+	if !strings.Contains(out, "2 skill(s) could not be embedded:") {
+		t.Fatalf("embed failures not counted: %q", out)
+	}
+}
+
+// TestSkillSearch_NegativeBestScore: cosine similarity is negative for
+// opposite vectors, so the miss message must report the real best, not 0.00.
+func TestSkillSearch_NegativeBestScore(t *testing.T) {
+	emb := vectorEmbedder{vectors: map[string]memory.Embedding{
+		"quantum":                    {1, 0},
+		"postgres: database queries": {-1, 0},
+		"css: layout and styling":    {-1, 0},
+	}}
+
+	out := skillSearch(context.Background(), emb, "quantum", skillSearchFixture())
+	if !strings.Contains(out, "best score -1.00") {
+		t.Fatalf("negative best score understated: %q", out)
+	}
+}
+
+// TestSkillSearch_NonFiniteScoreIsNotAMatch: an overflowing cosine produces
+// NaN, which `score < floor` would let through. It must be treated as
+// unscored, never ranked as a match.
+func TestSkillSearch_NonFiniteScoreIsNotAMatch(t *testing.T) {
+	inf := float32(math.Inf(1))
+	emb := vectorEmbedder{vectors: map[string]memory.Embedding{
+		"quantum":                    {inf, 0},
+		"postgres: database queries": {inf, 0},
+		"css: layout and styling":    {inf, 0},
+	}}
+
+	out := skillSearch(context.Background(), emb, "quantum", skillSearchFixture())
+	if strings.Contains(out, "Found ") {
+		t.Fatalf("a NaN similarity passed the floor as a match: %q", out)
+	}
+	if !strings.Contains(out, "non-finite similarity") {
+		t.Fatalf("non-finite scores must be surfaced: %q", out)
 	}
 }

@@ -87,7 +87,10 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 	path := retrievalKeyword
 	switch {
 	case params.Query == "":
-		path += " — listing entries without a query"
+		path = retrievalListing
+		if params.Tag != "" {
+			path += fmt.Sprintf(" — tag %q narrows the listing", params.Tag)
+		}
 	case params.Tag != "":
 		path += " — tag filter selects keyword-only matching"
 	case t.DB.Embedder() == nil:
@@ -96,7 +99,7 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 		vecResults, verr := t.DB.SearchMemoryVectorScopedDiag(ctx, params.Query, params.TopK, scope)
 		switch {
 		case verr != nil:
-			path += " — semantic search failed: " + verr.Error()
+			path += " — " + semanticFailureReason(verr)
 		case len(vecResults) == 0:
 			path += " — semantic search returned no candidates"
 		default:
@@ -122,7 +125,21 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 const (
 	retrievalSemantic = "Retrieval: semantic (vector)"
 	retrievalKeyword  = "Retrieval: keyword (FTS5)"
+	// retrievalListing is the no-query branch: SearchMemoryScoped orders by
+	// created_at and runs no FTS match, so calling it (FTS5) would be a lie.
+	retrievalListing = "Retrieval: listing (newest first)"
 )
+
+// semanticFailureReason distinguishes a failed embedding (an *memory.EmbedError,
+// the semantic path itself is down) from a store/scan failure, so a database
+// problem is never reported as an embedding outage.
+func semanticFailureReason(err error) string {
+	var embedErr *memory.EmbedError
+	if errors.As(err, &embedErr) {
+		return "semantic search failed (embedding): " + err.Error()
+	}
+	return "semantic search failed (store): " + err.Error()
+}
 
 // emptyHint explains a miss instead of dead-ending on it. The usual cause is a
 // default (global-only) recall against a store whose knowledge is mostly

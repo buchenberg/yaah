@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"sort"
 	"strings"
 
@@ -260,14 +261,22 @@ type skillMatch struct {
 // skillRelevanceFloor is the minimum cosine similarity for a semantic skill
 // hit. Embedding models place loosely related text around 0.2–0.4, so without
 // a floor every discovered skill is reported as a match and "Found N matching
-// skill(s)" is just the skill count (yaah-92p). The value is deliberately low
-// enough that a genuinely related description still matches; raise it only
-// with test evidence.
+// skill(s)" is just the skill count (yaah-92p).
+//
+// The value is calibrated for the cosine scale shared by common embedding
+// servers (nomic/OpenAI-style models score related text around 0.5+ and
+// unrelated text around 0.2–0.4). It is a floor, not a match oracle: a server
+// whose scale diverges is covered by the keyword backstop below, which keeps
+// a literal name/description match reportable even when the model scores it
+// low.
 const skillRelevanceFloor = 0.35
 
 func skillSearch(ctx context.Context, emb memory.Embedder, query string, found []skills.Skill) string {
 	searchText := func(s skills.Skill) string { return s.Name + ": " + s.Description }
 
+	if len(found) == 0 {
+		return "No skills found."
+	}
 	if emb == nil {
 		return keywordSearch(query, found, searchText)
 	}
@@ -280,41 +289,65 @@ func skillSearch(ctx context.Context, emb memory.Embedder, query string, found [
 	}
 
 	matches := make([]skillMatch, 0, len(found))
-	var embedErrs []error
-	best := 0.0
+	var embedErrs []string
+	best := math.Inf(-1)
+	scored := 0
 	for i := range found {
 		e, err := emb.Embed(ctx, searchText(found[i]))
 		if err != nil {
 			// A failed embedding is not a zero score: surfacing it keeps a
 			// skill out of the report honestly instead of scoring it as a miss.
-			embedErrs = append(embedErrs, fmt.Errorf("%s: %w", found[i].Name, err))
+			embedErrs = append(embedErrs, fmt.Sprintf("%s: %v", found[i].Name, err))
 			continue
 		}
 		score := float64(memory.CosineSimilarity(qEmb, e))
+		if math.IsNaN(score) {
+			// A non-finite score cannot be ranked or thresholded; treat it as
+			// unscored rather than letting NaN slip past the floor.
+			embedErrs = append(embedErrs, found[i].Name+": non-finite similarity")
+			continue
+		}
+		scored++
 		if score > best {
 			best = score
 		}
-		if score < skillRelevanceFloor {
+		if !(score >= skillRelevanceFloor) {
 			continue
 		}
 		matches = append(matches, skillMatch{skill: &found[i], score: score})
 	}
 
-	sort.Slice(matches, func(i, j int) bool { return matches[i].score > matches[j].score })
-
 	var out string
-	if len(matches) == 0 {
-		out = fmt.Sprintf("No skills matched query %q (best score %.2f, floor %.2f).\n", query, best, skillRelevanceFloor)
-	} else {
+	switch {
+	case len(matches) > 0:
+		sort.Slice(matches, func(i, j int) bool { return matches[i].score > matches[j].score })
 		out = formatSearchResults(matches, true)
+	default:
+		if kw := keywordMatches(query, found, searchText); len(kw) > 0 {
+			// The floor must not hide a literal match: a skill whose name or
+			// description contains the query is a real hit even when the model
+			// scores it below the semantic floor.
+			sort.Slice(kw, func(i, j int) bool { return kw[i].score > kw[j].score })
+			out = formatSearchResults(kw, false)
+		} else if scored == 0 {
+			// Nothing was actually scored (every embedding failed), so there is
+			// no honest "best score" to report.
+			out = fmt.Sprintf("No skills matched query %q: no skill could be scored.\n", query)
+		} else {
+			out = fmt.Sprintf("No skills matched query %q (best score %.2f, floor %.2f).\n", query, best, skillRelevanceFloor)
+		}
 	}
+
 	if len(embedErrs) > 0 {
-		out += fmt.Sprintf("%d skill(s) could not be embedded: %v\n", len(embedErrs), embedErrs[0])
+		out += fmt.Sprintf("%d skill(s) could not be embedded: %s\n", len(embedErrs), strings.Join(embedErrs, "; "))
 	}
 	return out
 }
 
-func keywordSearch(query string, found []skills.Skill, searchText func(skills.Skill) string) string {
+// keywordMatches returns the literal name/description/body hits. It is shared
+// by keywordSearch and the semantic path's backstop so a below-floor semantic
+// miss can still surface a real keyword match.
+func keywordMatches(query string, found []skills.Skill, searchText func(skills.Skill) string) []skillMatch {
 	q := strings.ToLower(query)
 	matches := make([]skillMatch, 0, len(found))
 	for i := range found {
@@ -332,6 +365,11 @@ func keywordSearch(query string, found []skills.Skill, searchText func(skills.Sk
 			matches = append(matches, skillMatch{skill: &found[i], score: score})
 		}
 	}
+	return matches
+}
+
+func keywordSearch(query string, found []skills.Skill, searchText func(skills.Skill) string) string {
+	matches := keywordMatches(query, found, searchText)
 	if len(matches) == 0 {
 		return fmt.Sprintf("No skills matched query %q.", query)
 	}

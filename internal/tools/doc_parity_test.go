@@ -171,13 +171,18 @@ func TestGitDoc_MatchesDangerTable(t *testing.T) {
 // TestMemorySearchDoc_TagForcesKeywordOnly pins the disclosure that a tag
 // withdraws semantic recall (yaah-h4e). memory_search's vector path runs only
 // when tag is empty (MemorySearchTool.Execute), so the doc must not present
-// tag as an orthogonal filter. Requiring both words in one sentence keeps a
-// rewrite from retaining the vocabulary while dropping the warning.
+// tag as an orthogonal filter. Requiring the withdrawal claim in the same
+// sentence as "keyword-only" keeps a rewrite from retaining the vocabulary
+// while dropping the warning.
 func TestMemorySearchDoc_TagForcesKeywordOnly(t *testing.T) {
 	text := strings.ToLower(prompts.ToolDescription("memory_search"))
-	sentence := regexp.MustCompile(`[^.\n]*\btag\b[^.\n]*\bkeyword\b[^.\n]*|[^.\n]*\bkeyword\b[^.\n]*\btag\b[^.\n]*`)
-	if !sentence.MatchString(text) {
-		t.Fatalf("memory_search.md must state that supplying a tag selects keyword-only (FTS5) matching and withdraws semantic recall; doc: %q", text)
+	sentence := regexp.MustCompile(`[^.\n]*\bkeyword-only\b[^.\n]*`).FindString(text)
+	if sentence == "" {
+		t.Fatalf("memory_search.md must state that supplying a tag selects keyword-only (FTS5) matching; doc: %q", text)
+	}
+	if !strings.Contains(sentence, "tag") ||
+		(!strings.Contains(sentence, "withdraw") && !strings.Contains(sentence, "drops")) {
+		t.Fatalf("memory_search.md must say the tag withdraws semantic recall in the keyword-only sentence; got %q", sentence)
 	}
 }
 

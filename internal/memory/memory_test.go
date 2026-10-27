@@ -1345,3 +1345,18 @@ func TestDB_DeleteMemory_RemovesRow(t *testing.T) {
 		t.Errorf("second DeleteMemory = %v, want memory-not-found", err)
 	}
 }
+
+// TestEmbedError_NilSafe: the type is exported, so a zero-value or nil
+// EmbedError must not panic when rendered (yaah-17s review).
+func TestEmbedError_NilSafe(t *testing.T) {
+	var nilErr *EmbedError
+	if nilErr.Error() == "" {
+		t.Error("nil EmbedError rendered an empty message")
+	}
+	if nilErr.Unwrap() != nil {
+		t.Error("nil EmbedError unwrapped to a non-nil cause")
+	}
+	if (&EmbedError{}).Error() == "" {
+		t.Error("zero EmbedError rendered an empty message")
+	}
+}
