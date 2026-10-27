@@ -1927,7 +1927,7 @@ func TestServer_compactionCapabilityGated(t *testing.T) {
 			v := sess.view
 			sess.mu.Unlock()
 			turns++
-			v.HandleEvent(&agent.CompactionStartedEvent{BeforeTokens: turns, TargetTokens: turns})
+			v.HandleEvent(&agent.CompactionStartedEvent{BeforeTokens: turns, TargetTokens: turns, Reason: "threshold"})
 			return "ok", false, nil
 		}
 		sess.mu.Unlock()
@@ -1968,7 +1968,7 @@ func TestServer_compactionCapabilityGated(t *testing.T) {
 				if upd.CompactionID != want {
 					t.Fatalf("turn %d card id = %v, want %v (id namespace must not reset per turn)", n, upd.CompactionID, want)
 				}
-				if n == 2 && len(upd.Summary) != 1 || n == 1 && len(upd.Summary) != 1 {
+				if len(upd.Summary) != 1 || upd.Summary[0]["text"] != fmt.Sprintf("compacting (%d→%d tokens, threshold)", turns, turns) {
 					t.Fatalf("turn %d summary = %v, want the readable start line", n, upd.Summary)
 				}
 				lastID = upd.CompactionID
