@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.105.0](https://github.com/buchenberg/yaah/compare/v0.104.3...v0.105.0) (2026-10-27)
+
+
+### Features
+
+* **acp:** ID-addressed compaction updates (compaction_update + compaction_summary_chunk) ([4d9dd5b](https://github.com/buchenberg/yaah/commit/4d9dd5b94d6179d89c95412a9b98fafb486a1029))
+
 ## [0.104.3](https://github.com/buchenberg/yaah/compare/v0.104.2...v0.104.3) (2026-10-26)
 
 
