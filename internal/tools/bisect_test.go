@@ -147,3 +147,28 @@ func TestBisectMarkFailureIsNotInProgress(t *testing.T) {
 		t.Errorf("Stderr = %q, want the git reason", got.Stderr)
 	}
 }
+
+// TestBisectTestCmdOutsideStartIsRefused pins yaah-nxb: the schema only
+// advertises test_cmd for 'start', and doMark used to silently drop it —
+// the model could believe an automated step had run when only a mark did.
+func TestBisectTestCmdOutsideStartIsRefused(t *testing.T) {
+	ws := &fakeExecWorkspace{respond: func(req ExecRequest) (ExecResult, error) {
+		t.Error("no git command may run when test_cmd is refused")
+		return ExecResult{}, nil
+	}}
+
+	raw, err := (&BisectTool{WS: ws}).Execute(context.Background(), `{"action":"good","test_cmd":"go test ./..."}`)
+	if err == nil {
+		t.Fatal("test_cmd outside 'start' must be refused with a non-nil error")
+	}
+	if !strings.Contains(err.Error(), "test_cmd is only used with") {
+		t.Errorf("error does not explain the refusal: %v", err)
+	}
+	var got bisectResult
+	if decodeErr := json.Unmarshal([]byte(raw), &got); decodeErr != nil {
+		t.Fatalf("decode: %v\n%s", decodeErr, raw)
+	}
+	if got.Status != "error" {
+		t.Errorf("Status = %q, want error", got.Status)
+	}
+}

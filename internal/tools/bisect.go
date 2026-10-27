@@ -45,7 +45,7 @@ func (t *BisectTool) Schema() json.RawMessage {
 			},
 			"test_cmd": {
 				"type": "string",
-				"description": "Shell command that exits 0 for good, non-zero for bad. If provided with 'start', auto-bisect runs. Can also be used with 'good'/'bad' to run one step."
+				"description": "Shell command that exits 0 for good, non-zero for bad. If provided with 'start', auto-bisect runs. Only used with 'start'."
 			},
 			"ref": {
 				"type": "string",
@@ -106,12 +106,15 @@ func (t *BisectTool) Execute(ctx context.Context, args string) (string, error) {
 	switch params.Action {
 	case "start":
 		t.doStart(ctx, params, result)
-	case "good":
-		t.doMark(ctx, "good", params.Ref, result)
-	case "bad":
-		t.doMark(ctx, "bad", params.Ref, result)
-	case "skip":
-		t.doMark(ctx, "skip", params.Ref, result)
+	case "good", "bad", "skip":
+		// The schema only advertises test_cmd for 'start'; refusing it
+		// here beats silently dropping it and reporting a plain mark.
+		if params.TestCmd != "" {
+			result.Status = "error"
+			result.Stderr = "bisect: test_cmd is only used with the 'start' action; run the test yourself and mark the commit with good/bad"
+		} else {
+			t.doMark(ctx, params.Action, params.Ref, result)
+		}
 	case "log":
 		t.doLog(ctx, result)
 	case "reset":

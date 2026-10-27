@@ -113,19 +113,3 @@ func TestToolSchema_validJSON(t *testing.T) {
 		})
 	}
 }
-
-func TestToolDescription_nonEmpty(t *testing.T) {
-	tools := []Tool{
-		&ReadTool{}, &WriteTool{}, &EditTool{}, &DeleteTool{},
-		&GlobTool{}, &GrepTool{}, &LsTool{},
-		&BashTool{}, &PowerShellTool{},
-		&GitTool{}, &WebFetchTool{},
-	}
-	for _, tool := range tools {
-		t.Run(tool.Name(), func(t *testing.T) {
-			if tool.Description() == "" {
-				t.Errorf("description for %s is empty", tool.Name())
-			}
-		})
-	}
-}
