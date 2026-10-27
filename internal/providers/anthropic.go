@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -159,24 +160,32 @@ func (c *AnthropicClient) replayFallback(req types.ChatRequest, err error) (stri
 }
 
 // acceptReplayFallback records a successful downgrade so later requests
-// skip the rejected unsigned replay shape.
+// skip the rejected unsigned replay shape. The omit retry succeeding is
+// the evidence that the unsigned block caused the 400; the downgrade lasts
+// for this client (one session) and saves a rejected request per call.
 func (c *AnthropicClient) acceptReplayFallback() {
 	c.unsignedReplayRejected.Store(true)
 }
 
 // looksLikeThinkingReplayRejection restricts the fallback to 400s about
-// replayed thinking. Matching the bare word "thinking" would also catch
-// budget/tool_choice errors and permanently drop the reasoning.
+// replayed thinking. "thinking" must be present, so budget and
+// tool_choice errors cannot drop the reasoning; "signed" is matched as a
+// standalone word so "unsigned"/"designed"/"assigned" do not.
 func looksLikeThinkingReplayRejection(message string) bool {
 	msg := strings.ToLower(message)
-	if strings.Contains(msg, "signature") || strings.Contains(msg, "signed") {
-		return true
-	}
 	if !strings.Contains(msg, "thinking") {
 		return false
 	}
-	return strings.Contains(msg, "block") || strings.Contains(msg, "replay") ||
-		strings.Contains(msg, "passed back")
+	if strings.Contains(msg, "signature") || strings.Contains(msg, "block") ||
+		strings.Contains(msg, "replay") || strings.Contains(msg, "passed back") {
+		return true
+	}
+	for _, field := range strings.FieldsFunc(msg, func(r rune) bool { return !unicode.IsLetter(r) }) {
+		if field == "signed" {
+			return true
+		}
+	}
+	return false
 }
 
 const (
