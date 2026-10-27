@@ -56,9 +56,9 @@ type RetainedRuntime struct {
 	WorktreeBootstrap string
 	// Proposals is the session's registry of open proposals: the dispatch
 	// records a sealed proposal here and the proposal tool settles it from
-	// here. Empty falls back to a process-wide default, which exists for
-	// zero-value construction — the composition root always injects one per
-	// session (yaah-yox).
+	// here. Required when the retained lane is live: runner.NewDelegateTool
+	// creates one per session at construction (yaah-yox), so isolation is a
+	// property of building the runtime rather than of a later wiring step.
 	Proposals *ProposalRegistry
 }
 
@@ -123,20 +123,6 @@ func NewProposalRegistry() *ProposalRegistry {
 	return &ProposalRegistry{byID: make(map[string]*retainedProposal)}
 }
 
-// defaultProposalRegistry backs zero-value construction: a RetainedRuntime or a
-// ProposalTool built without a registry still works. The composition root
-// always injects one per session, so this is a fallback, not the norm.
-var defaultProposalRegistry = NewProposalRegistry()
-
-// registry returns the runtime's proposal registry, falling back to the
-// process-wide default for a zero-value runtime.
-func (rt RetainedRuntime) registry() *ProposalRegistry {
-	if rt.Proposals != nil {
-		return rt.Proposals
-	}
-	return defaultProposalRegistry
-}
-
 // add records a sealed proposal as open.
 func (r *ProposalRegistry) add(p *retainedProposal) {
 	r.mu.Lock()
@@ -163,13 +149,6 @@ func (r *ProposalRegistry) remove(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.byID, id)
-}
-
-// reset clears the registry (tests only).
-func (r *ProposalRegistry) reset() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.byID = make(map[string]*retainedProposal)
 }
 
 // all returns the open proposals, ordered by id so a listing is stable.
@@ -240,14 +219,6 @@ func (r *ProposalRegistry) listEnvelope() string {
 	return string(data)
 }
 
-// resetRetainedProposals clears the process-wide registry (tests only).
-func resetRetainedProposals() { defaultProposalRegistry.reset() }
-
-// listRetainedProposalsSummaries renders the process-wide registry in prose.
-func listRetainedProposalsSummaries() string {
-	return defaultProposalRegistry.summaries()
-}
-
 // startRetainedRun dispatches one sub-agent into an isolated worktree and seals
 // its delta into a proposal, returning the proposal envelope. A body error still
 // yields a sealed (partial) proposal, exactly as the review fork does; only a
@@ -267,6 +238,12 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	}
 	if rt.RootScopeID == "" {
 		return "", fmt.Errorf("delegate: retained mode needs a goatherd root scope to fork from")
+	}
+	// The registry is required, not defaulted: a process-wide fallback would
+	// let one session list, show, or settle another's proposal. The runtime is
+	// built by runner.NewDelegateTool, which mints one per session (yaah-yox).
+	if rt.Proposals == nil {
+		return "", fmt.Errorf("delegate: retained mode needs a proposal registry — runner.NewDelegateTool creates one per session")
 	}
 	parent, ok := mgr.Get(rt.RootScopeID)
 	if !ok {
@@ -331,13 +308,14 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	// scope AND an error), tear the worktree down — the scratch goes with
 	// it — and hand the report straight back.
 	if report {
+		var notes []string
 		if provErr != nil {
 			// A provisioning error's reason is at its front, so it is
 			// head-capped here — the note budget of foldRetainedPartial
 			// tail-keeps, which would keep the wrong half. The report
 			// body itself is bounded by the role's output_limit; only the
 			// caveat gets this tool-side budget.
-			result = retainedNote(result, truncateAt(provErr.Error(), noteBudget))
+			notes = append(notes, truncateAt(provErr.Error(), noteBudget))
 		}
 		// yaah-atn: a report dispatch registers no proposal, so a scratch
 		// that does not come down has no record to be recovered through
@@ -350,9 +328,17 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 			}
 			return true, parent.Discard(scope)
 		}); note != "" {
-			result = retainedNote(result, note)
+			notes = append(notes, note)
 		}
-		return result, bodyErr
+		caveat := strings.Join(notes, "\n\n")
+		if bodyErr != nil {
+			// Carry the caveat out of band: the body is model output that may
+			// legitimately contain "note: " lines, so re-parsing the result to
+			// find the caveat would misattribute one of them. The caller folds
+			// both halves back together with the right bounds.
+			return result, &retainedRunError{cause: bodyErr, note: caveat}
+		}
+		return retainedNote(result, caveat), nil
 	}
 
 	// Scrub the confinement scratch before sealing: the env redirect keeps the
@@ -396,7 +382,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		return marshalProposalEnvelope(env), nil
 	}
 
-	rt.registry().add(&retainedProposal{
+	rt.Proposals.add(&retainedProposal{
 		id:       id,
 		scopeID:  scopeID,
 		workdir:  wt,
@@ -428,25 +414,28 @@ func retainedNote(result, note string) string {
 	return result + "\n\nnote: " + note
 }
 
-// splitRetainedNote reverses retainedNote: it separates a partial result
-// that may carry a "note: " caveat from its body, so a caller can bound the
-// body and re-attach the note without losing it. The bare note text is
-// returned (no "note: " prefix), ready for retainedNote.
+// retainedRunError is a report-lane body failure carrying the lane's caveat
+// out of band. The caveat used to be appended to the result and parsed back out
+// with a "note: " search, but the result is model output: a report that
+// legitimately contains (or opens with) a "note: " line was cut there and the
+// remainder re-labelled as the caveat. An error wrapper keeps the two apart.
 //
-// The marker search is a heuristic: retainedNote appends the caveat at the
-// end, so LastIndex lands on the real caveat even when the report body also
-// contains "note: " lines. A report that *begins* with "note: " is treated
-// as all caveat — mislabelled, but bounded by foldRetainedPartial either
-// way, so the worst case is cosmetic.
-func splitRetainedNote(partial string) (body, note string) {
-	if strings.HasPrefix(partial, "note: ") {
-		return "", strings.TrimSpace(partial[len("note: "):])
-	}
-	if i := strings.LastIndex(partial, "\nnote: "); i >= 0 {
-		return partial[:i], strings.TrimSpace(partial[i+len("\nnote: "):])
-	}
-	return partial, ""
+// Error renders body failure plus caveat so a caller that only sees the error
+// (the background lane delivers result and error separately) still keeps the
+// caveat; Unwrap exposes the cause for errors.Is/As classification.
+type retainedRunError struct {
+	cause error
+	note  string
 }
+
+func (e *retainedRunError) Error() string {
+	if e.note == "" {
+		return e.cause.Error()
+	}
+	return e.cause.Error() + "\n\nnote: " + e.note
+}
+
+func (e *retainedRunError) Unwrap() error { return e.cause }
 
 // Note budgets for the report lane: a provisioning error is head-capped at
 // its call site (its reason is at the front), and a caveat folded into a

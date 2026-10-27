@@ -187,6 +187,10 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 	// without them the tool stays on the direct lane rather than failing each
 	// dispatch.
 	if opts.Retain && opts.ScopeManager != nil && opts.RootScopeID != "" {
+		// One proposal registry per constructed runtime, so isolation is a
+		// property of construction: any composition path that builds the tool
+		// gets its own registry, and startRetainedRun refuses one without it
+		// (yaah-yox). The caller hands this same registry to ProposalTool.
 		tool.Retained = &tools.RetainedRuntime{
 			Runner:            runnerFn,
 			RepoPath:          opts.RetainedRepoPath,
@@ -194,6 +198,7 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 			RootScopeID:       opts.RootScopeID,
 			WorktreeRoot:      opts.RetainedWorktreeRoot,
 			WorktreeBootstrap: opts.RetainedBootstrap,
+			Proposals:         tools.NewProposalRegistry(),
 		}
 	}
 	return tool

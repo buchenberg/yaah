@@ -245,7 +245,17 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 // output the sub-agent produced before stopping.
 func (t *DelegateTool) classifyRunnerResult(result string, err error, role string, timeout time.Duration, runCtx context.Context) (string, error) {
 	if err != nil {
-		partial := result
+		// A report-lane failure carries its caveat (a stranded worktree, a
+		// provisioning problem) out of band, so it never has to be parsed
+		// back out of model output.
+		cause := err
+		note := ""
+		var runErr *retainedRunError
+		if errors.As(err, &runErr) {
+			cause = runErr.cause
+			note = runErr.note
+		}
+		partial := retainedNote(result, note)
 		switch {
 		case errors.Is(err, context.DeadlineExceeded), runCtx.Err() == context.DeadlineExceeded:
 			return structuredTaskResult("timed out", role, timeout, partial), nil
@@ -259,15 +269,13 @@ func (t *DelegateTool) classifyRunnerResult(result string, err error, role strin
 			// orchestrator should see must ride inside the error. The
 			// partial is success-detail content: keep the body's head —
 			// the part that orients — bounded at the tool-result cap, and
-			// always re-attach a retainedNote caveat, itself tail-bounded
-			// because teardown notes end with the worktree path
-			// (yaah-atn). The folded error stays finite; the error's own
-			// diagnostic stays untruncated.
+			// re-attach the caveat, itself tail-bounded because teardown
+			// notes end with the worktree path (yaah-atn). The folded error
+			// stays finite; the error's own diagnostic stays untruncated.
 			if strings.TrimSpace(partial) == "" {
-				return "", err
+				return "", cause
 			}
-			body, note := splitRetainedNote(partial)
-			return "", fmt.Errorf("%w\n%s", err, foldRetainedPartial(body, note))
+			return "", fmt.Errorf("%w\n%s", cause, foldRetainedPartial(result, note))
 		}
 	}
 	return result, nil

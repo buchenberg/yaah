@@ -266,7 +266,6 @@ func TestExecute_BackgroundWithoutManagerErrors(t *testing.T) {
 // job is launched through startRetainedRun and its delivered result is a proposal
 // envelope like any other dispatch's.
 func TestExecute_BackgroundRetainedReturnsProposal(t *testing.T) {
-	resetRetainedProposals()
 
 	mgr := jobs.NewBackgroundJobs()
 	defer mgr.Close()
@@ -382,7 +381,6 @@ func TestExecute_LaneForRoleRouting(t *testing.T) {
 	}
 
 	t.Run("report lane returns the report, no proposal", func(t *testing.T) {
-		resetRetainedProposals()
 		runner := writingRunner(t, "r.txt")
 		rt := newRetainedTestEnv(t, runner)
 		tt := newTool(runner.run(), &rt, func(string) DelegateLane { return LaneReport })
@@ -394,7 +392,7 @@ func TestExecute_LaneForRoleRouting(t *testing.T) {
 		if res != "default" {
 			t.Errorf("report lane must return the runner text, got %q", res)
 		}
-		if got := listRetainedProposalsSummaries(); got != "No open proposals." {
+		if got := rt.Proposals.summaries(); got != "No open proposals." {
 			t.Errorf("report lane must not register a proposal, got %q", got)
 		}
 		wd := runner.workdirFor(t, 0)
@@ -407,7 +405,6 @@ func TestExecute_LaneForRoleRouting(t *testing.T) {
 	})
 
 	t.Run("shared lane bypasses retention", func(t *testing.T) {
-		resetRetainedProposals()
 		runner := &sessionRunner{responses: []runnerResponse{{result: "shared report"}}}
 		rt := newRetainedTestEnv(t, runner)
 		tt := newTool(runner.run(), &rt, func(string) DelegateLane { return LaneShared })
@@ -422,13 +419,12 @@ func TestExecute_LaneForRoleRouting(t *testing.T) {
 		if wd := runner.workdirFor(t, 0); wd != "" {
 			t.Errorf("shared lane must not provision a worktree, got %q", wd)
 		}
-		if got := listRetainedProposalsSummaries(); got != "No open proposals." {
+		if got := rt.Proposals.summaries(); got != "No open proposals." {
 			t.Errorf("shared lane must not register a proposal, got %q", got)
 		}
 	})
 
 	t.Run("nil LaneForRole keeps the proposal lane", func(t *testing.T) {
-		resetRetainedProposals()
 		runner := writingRunner(t, "p.txt")
 		rt := newRetainedTestEnv(t, runner)
 		tt := &DelegateTool{RoleNames: []string{"developer"}, Runner: runner.run(), Retained: &rt}
@@ -649,17 +645,19 @@ func TestSchema_BoundsMatchClamp(t *testing.T) {
 }
 
 // TestDelegate_ClassifyGenericErrorCarriesPartial pins the yaah-atn path on
-// generic failures: the report lane appends a teardown note to a result that
+// generic failures: the report lane attaches a teardown note to a result that
 // ends with a non-nil error, and classifyRunnerResult's default branch must
-// not swallow it. The agent loop replaces a failed result with the error
-// text, so the note can only survive inside the error; the partial body
-// keeps its head, bounded like success detail.
+// not swallow it. The note arrives out of band (retainedRunError), because the
+// body is model output that can contain "note: " lines of its own. The agent
+// loop replaces a failed result with the error text, so the note can only
+// survive inside the error; the partial body keeps its head, bounded like
+// success detail.
 func TestDelegate_ClassifyGenericErrorCarriesPartial(t *testing.T) {
 	tool := &DelegateTool{}
 	partial := strings.Repeat("report body\n", 400) // 4.8 KiB, under the cap
-	note := "note: the report dispatch could not discard its isolated scope; it left the worktree at /tmp/wt/scratch"
+	note := "the report dispatch could not discard its isolated scope; it left the worktree at /tmp/wt/scratch"
 
-	got, err := tool.classifyRunnerResult(partial+note, errors.New("max iterations reached"), "reviewer", 30*time.Second, context.Background())
+	got, err := tool.classifyRunnerResult(partial, &retainedRunError{cause: errors.New("max iterations reached"), note: note}, "reviewer", 30*time.Second, context.Background())
 	if err == nil {
 		t.Fatal("a generic runner error must stay an error")
 	}
@@ -677,17 +675,36 @@ func TestDelegate_ClassifyGenericErrorCarriesPartial(t *testing.T) {
 	}
 }
 
+// TestDelegate_ClassifyGenericErrorDoesNotReinterpretBodyNotes: the caveat
+// travels out of band, so a report that legitimately contains — or opens
+// with — a "note: " line is delivered unchanged instead of being cut there and
+// re-labelled as the caveat.
+func TestDelegate_ClassifyGenericErrorDoesNotReinterpretBodyNotes(t *testing.T) {
+	tool := &DelegateTool{}
+	body := "note: a report may legitimately open with this\n\nfindings\n\nnote: and contain more later"
+
+	_, err := tool.classifyRunnerResult(body, errors.New("max iterations reached"), "reviewer", 30*time.Second, context.Background())
+	if err == nil {
+		t.Fatal("a generic runner error must stay an error")
+	}
+	if !strings.Contains(err.Error(), body) {
+		t.Errorf("the report body was rewritten: %v", err)
+	}
+	if got := strings.Count(err.Error(), "note: "); got != 2 {
+		t.Errorf("note markers = %d, want the body's 2 and no fabricated caveat: %v", got, err)
+	}
+}
+
 // TestDelegate_ClassifyGenericErrorKeepsHeadAndNoteOfOversizedPartial:
 // errors are delivered verbatim by the loop, so the folded partial is
-// bounded — its head keeps the truncation marker, and the teardown note,
-// which retainedNote appends at the END, is re-attached after the bound so a
-// long report cannot eat it.
+// bounded — its head keeps the truncation marker, and the teardown note is
+// re-attached after the bound so a long report cannot eat it.
 func TestDelegate_ClassifyGenericErrorKeepsHeadAndNoteOfOversizedPartial(t *testing.T) {
 	tool := &DelegateTool{}
 	partial := strings.Repeat("report body\n", 2000) // ~24 KiB, past toolResultMaxBytes
-	note := "note: the report dispatch could not discard its isolated scope; it left the worktree at /tmp/wt/scratch"
+	note := "the report dispatch could not discard its isolated scope; it left the worktree at /tmp/wt/scratch"
 
-	_, err := tool.classifyRunnerResult(partial+note, errors.New("max iterations reached"), "reviewer", 30*time.Second, context.Background())
+	_, err := tool.classifyRunnerResult(partial, &retainedRunError{cause: errors.New("max iterations reached"), note: note}, "reviewer", 30*time.Second, context.Background())
 	if err == nil {
 		t.Fatal("a generic runner error must stay an error")
 	}
@@ -712,10 +729,10 @@ func TestDelegate_ClassifyGenericErrorKeepsHeadAndNoteOfOversizedPartial(t *test
 // cannot slip through.
 func TestDelegate_ClassifyGenericErrorBoundsAnOversizedNote(t *testing.T) {
 	tool := &DelegateTool{}
-	note := "note: provisioning failed: " + strings.Repeat("provider diagnostics ", 400) +
+	note := "provisioning failed: " + strings.Repeat("provider diagnostics ", 400) +
 		"it left the worktree at /tmp/wt/scratch"
 
-	_, err := tool.classifyRunnerResult(note, errors.New("max iterations reached"), "reviewer", 30*time.Second, context.Background())
+	_, err := tool.classifyRunnerResult("", &retainedRunError{cause: errors.New("max iterations reached"), note: note}, "reviewer", 30*time.Second, context.Background())
 	if err == nil {
 		t.Fatal("a generic runner error must stay an error")
 	}

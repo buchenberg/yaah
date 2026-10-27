@@ -56,7 +56,6 @@ func writingRunner(t *testing.T, name string) *sessionRunner {
 // wall-clock budget must not report a provider error — the provider was only
 // in flight when the role timeout expired.
 func TestRetained_TimeoutNamesRoleBudget(t *testing.T) {
-	resetRetainedProposals()
 	fx, repo, rootID := newSessionFixtures(t)
 
 	rt := RetainedRuntime{
@@ -68,6 +67,7 @@ func TestRetained_TimeoutNamesRoleBudget(t *testing.T) {
 		ScopeManager: fx.mgr,
 		RootScopeID:  rootID,
 		WorktreeRoot: t.TempDir(),
+		Proposals:    NewProposalRegistry(),
 	}
 
 	res, err := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "developer"}, 50*time.Millisecond, false)
@@ -130,7 +130,6 @@ func TestClassifyRetainedBodyFailure(t *testing.T) {
 // TestRetained_ReturnsProposal: a retained dispatch runs the sub-agent in an
 // isolated worktree and returns a sealed proposal — not a host mutation.
 func TestRetained_ReturnsProposal(t *testing.T) {
-	resetRetainedProposals()
 	runner := writingRunner(t, "out.txt")
 	rt := newRetainedTestEnv(t, runner)
 
@@ -162,7 +161,6 @@ func TestRetained_ReturnsProposal(t *testing.T) {
 // TestRetained_HostUntouchedUntilSettle: the host tree changes only when the
 // proposal is settled — select lands the work.
 func TestRetained_HostUntouchedUntilSettle(t *testing.T) {
-	resetRetainedProposals()
 	rt := newRetainedTestEnv(t, writingRunner(t, "out.txt"))
 
 	res, err := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 50*time.Millisecond, false)
@@ -190,7 +188,6 @@ func TestRetained_HostUntouchedUntilSettle(t *testing.T) {
 // TestRetained_DiscardLeavesHostUntouched: discard throws the proposal away and
 // the host never sees it.
 func TestRetained_DiscardLeavesHostUntouched(t *testing.T) {
-	resetRetainedProposals()
 	rt := newRetainedTestEnv(t, writingRunner(t, "out.txt"))
 
 	res, _ := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 0, false)
@@ -208,7 +205,6 @@ func TestRetained_DiscardLeavesHostUntouched(t *testing.T) {
 // tear the isolated worktree down rather than strand it, and must not touch the
 // host.
 func TestRetained_ReleaseRemovesWorktree(t *testing.T) {
-	resetRetainedProposals()
 	runner := writingRunner(t, "out.txt")
 	rt := newRetainedTestEnv(t, runner)
 
@@ -245,7 +241,6 @@ func TestRetained_ReleaseRemovesWorktree(t *testing.T) {
 // envelope's Notes — with the stranded worktree path — instead of being
 // swallowed while the tool claims a clean settlement.
 func TestRetained_ReleaseTeardownFailureSurfaced(t *testing.T) {
-	resetRetainedProposals()
 	runner := writingRunner(t, "out.txt")
 	rt := newRetainedTestEnv(t, runner)
 
@@ -286,7 +281,6 @@ func TestRetained_ReleaseTeardownFailureSurfaced(t *testing.T) {
 // TestRetained_ParallelIDsUnique: proposals dispatched in the same nanosecond
 // get distinct ids — and therefore distinct worktree paths.
 func TestRetained_ParallelIDsUnique(t *testing.T) {
-	resetRetainedProposals()
 	rt := newRetainedTestEnv(t, writingRunner(t, "out.txt"))
 
 	r1, _ := startRetainedRun(context.Background(), rt, "one", SubAgentParams{Role: "worker"}, 0, false)
@@ -302,7 +296,6 @@ func TestRetained_ParallelIDsUnique(t *testing.T) {
 
 // TestRetained_SettleOnce: a sealed proposal settles exactly once.
 func TestRetained_SettleOnce(t *testing.T) {
-	resetRetainedProposals()
 	rt := newRetainedTestEnv(t, writingRunner(t, "out.txt"))
 
 	res, _ := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 0, false)
@@ -318,7 +311,6 @@ func TestRetained_SettleOnce(t *testing.T) {
 
 // TestProposalTool_Surface: the proposal tool lists, shows, and discards.
 func TestProposalTool_Surface(t *testing.T) {
-	resetRetainedProposals()
 	rt := newRetainedTestEnv(t, writingRunner(t, "out.txt"))
 	res, _ := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 0, false)
 	env := decodeProposalEnvelope(t, res)
@@ -356,7 +348,6 @@ func TestProposalTool_Surface(t *testing.T) {
 // already fans out parallel calls in one turn (each takes a sub-agent slot), so a
 // tool-level multiplier would duplicate that and bypass the concurrency cap.
 func TestRetained_SpeculationSettlesOneAndDiscardsTheRest(t *testing.T) {
-	resetRetainedProposals()
 
 	const attempts = 3
 	runner := &sessionRunner{responses: []runnerResponse{
@@ -489,7 +480,6 @@ func TestRetained_SpeculationSettlesOneAndDiscardsTheRest(t *testing.T) {
 // seals its partial work. The envelope must carry both the partial result and
 // the reason it stopped, or the orchestrator reads truncated work as finished.
 func TestRetained_PartialOutputSurvivesBodyError(t *testing.T) {
-	resetRetainedProposals()
 	r := &sessionRunner{responses: []runnerResponse{{
 		result:         "almost done",
 		waitForContext: true,
@@ -848,7 +838,6 @@ func TestEnsureWorktreeRootExcluded_OutsideRepo(t *testing.T) {
 // report text, no proposal is registered, and the worktree is gone when
 // the call returns — nothing to settle.
 func TestRetained_ReportLaneReturnsPlainResultAndDiscards(t *testing.T) {
-	resetRetainedProposals()
 	runner := writingRunner(t, "out.txt")
 	rt := newRetainedTestEnv(t, runner)
 
@@ -885,7 +874,6 @@ func TestRetained_ReportLaneReturnsPlainResultAndDiscards(t *testing.T) {
 // the worktree and surfaces the error — the delegate layer classifies it
 // the same way it classifies shared-lane failures.
 func TestRetained_ReportLaneBodyErrorPropagates(t *testing.T) {
-	resetRetainedProposals()
 	runner := &sessionRunner{}
 	runner.responses = []runnerResponse{{waitForContext: true}}
 	rt := newRetainedTestEnv(t, runner)
