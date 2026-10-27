@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.105.2](https://github.com/buchenberg/yaah/compare/v0.105.1...v0.105.2) (2026-10-27)
+
+
+### Bug Fixes
+
+* **tools:** session-scoped proposal registry, honest teardown/wait/cancel reporting ([79f7a84](https://github.com/buchenberg/yaah/commit/79f7a8436710e867c6cf557794b56712ed49519a))
+* **tools:** session-scoped proposal registry, honest teardown/wait/cancel reporting ([fa38f6b](https://github.com/buchenberg/yaah/commit/fa38f6b591c438243df4bb3b6c3b76f04ff5e635))
+
 ## [0.105.1](https://github.com/buchenberg/yaah/compare/v0.105.0...v0.105.1) (2026-10-27)
 
 
