@@ -4,27 +4,47 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	croft "github.com/buchenberg/croft"
 	"strings"
 
+	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+	croftadapter "github.com/buchenberg/goatherd-runtime/sandbox/croft"
 	"github.com/buchenberg/yaah/internal/config"
 )
 
-// OpenContainerdWorkspaceSandbox constructs the configured croft sandbox
-// directly from the workspace config (the isolated-workspace plan §1.1). It
-// cannot fail — croft.New does no I/O — so the SandboxOpener signature's
-// error return exists for the test openers, not this one; the nil guard
-// below is the invariant that keeps that honest even if croft's constructor
-// grows a failure mode.
+// OpenContainerdWorkspaceSandbox resolves the container workspace through
+// goatherd-runtime's sandbox registry rather than constructing a backend
+// directly (the isolated-workspace plan §1.1).
+//
+// Going through the seam is the point: the container lane now gets the same
+// registry, the same Sandbox contract, and the same optional capabilities
+// (DeltaApplier, and Changes for effect extraction) as the git-worktree lane,
+// instead of a private construction path that bypasses them. Importing
+// croftadapter is what registers "containerd" — config can name a backend,
+// only an import can provide one.
+//
+// Unlike the old direct croft.New call, this can fail, and the failures are
+// worth having: an image left unset is refused here naming the field rather
+// than surfacing as a daemon error mid-session, and a platform that cannot
+// provide the backend says so. Config validation already refuses
+// workspace.backend: containerd off-Linux, so the unknown-backend case is
+// unreachable in a validly loaded config; it is still reported rather than
+// papered over.
 //
 // The returned sandbox is NOT provisioned: Create remains the caller's
-// explicit lifecycle step, per croft's own lifecycle contract.
-func OpenContainerdWorkspaceSandbox(w config.WorkspaceConfig) (croft.Sandbox, error) {
+// explicit lifecycle step, per the Sandbox contract.
+func OpenContainerdWorkspaceSandbox(w config.WorkspaceConfig) (goatherdsandbox.Sandbox, error) {
 	// Root maps onto Config.Workdir: the containment root every
 	// relative tool path resolves against inside the sandbox.
 	// FIFODir passes through so the client's task/exec stdio FIFOs land in a
 	// directory yaah's uid can write — containerd's default is root-only.
-	sb := croft.New(croft.Config{
+	//
+	// Network is deliberately left unset, which selects the adapter's isolated
+	// default: the container gets its own unshared network namespace, so it is
+	// loopback-only with no egress. That netns — not a paddock — is this lane's
+	// egress boundary, which is why yaah's config surface does not expose it
+	// yet. Sharing the host network would need an explicit config field and a
+	// decision about how it interacts with the egress posture vocabulary.
+	sb, err := goatherdsandbox.OpenSandbox(croftadapter.BackendName, croftadapter.Config{
 		Address:     w.Containerd.Address,
 		Namespace:   w.Containerd.Namespace,
 		Image:       w.Containerd.Image,
@@ -32,8 +52,11 @@ func OpenContainerdWorkspaceSandbox(w config.WorkspaceConfig) (croft.Sandbox, er
 		FIFODir:     w.Containerd.FIFODir,
 		Workdir:     w.Root,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("workspace: open containerd sandbox: %w", err)
+	}
 	if sb == nil {
-		return nil, fmt.Errorf("workspace: croft.New returned no sandbox for config %+v", w.Containerd)
+		return nil, fmt.Errorf("workspace: the registry returned no sandbox for config %+v", w.Containerd)
 	}
 	return sb, nil
 }
@@ -77,7 +100,7 @@ fi`
 // fakes report "nothing was created" for an unstarted sandbox. The sandbox
 // parameter is the seam: wiring passes the session backend; tests pass the
 // in-memory fake.
-func ProbeImageContract(ctx context.Context, sb croft.Sandbox) (err error) {
+func ProbeImageContract(ctx context.Context, sb goatherdsandbox.Sandbox) (err error) {
 	// Destroy must run even when the probe fails, even when the caller's
 	// context expired mid-probe, and even when Create itself failed: an
 	// unprobed-but-running container is the leak this function must never
@@ -90,11 +113,11 @@ func ProbeImageContract(ctx context.Context, sb croft.Sandbox) (err error) {
 		}
 	}()
 
-	if cerr := sb.Create(ctx, croft.SandboxSpec{}); cerr != nil {
+	if cerr := sb.Create(ctx, goatherdsandbox.SandboxSpec{}); cerr != nil {
 		return fmt.Errorf("workspace image probe: create: %w", cerr)
 	}
 
-	res, xerr := sb.Exec(ctx, croft.ExecRequest{
+	res, xerr := sb.Exec(ctx, goatherdsandbox.ExecRequest{
 		Command: "sh",
 		Args:    []string{"-c", imageContractScript},
 	})

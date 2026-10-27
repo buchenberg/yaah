@@ -3,9 +3,6 @@ package tools
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
-	"errors"
-	croft "github.com/buchenberg/croft"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/sandboxfake"
 )
@@ -243,134 +241,59 @@ func TestApplyOut_CopyOutFallback(t *testing.T) {
 	}
 }
 
-func TestApplyOut_GitPatch(t *testing.T) {
-	dir := gitHostRepo(t)
-	run := func(args ...string) string {
-		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@example.com",
-			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@example.com")
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
-		}
-		return string(out)
+// TestApplyOut_CleanSessionIsNoop pins that accepting a session which changed
+// nothing writes nothing to the host.
+//
+// It used to assert a dedicated short-circuit: a captured state carrying a
+// delta base but no patch meant "clean", so ApplyOut returned nil without
+// consulting the diff — and a diffFailingSandbox wrapper proved the branch was
+// really taken rather than quietly passing through a second no-op path. croft's
+// move to containerd snapshot states removed that branch (see yaah-vlwm), so
+// the property now holds the ordinary way: the diff against the baseline comes
+// back empty and the copy-out loop has nothing to iterate.
+//
+// That is a weaker mechanism than the old short-circuit, so this test drives
+// the real bootstrap rather than a canned state: an untouched session must
+// leave the host byte-identical, which is the guarantee a user actually relies
+// on when they accept work that turned out to change nothing.
+func TestApplyOut_CleanSessionIsNoop(t *testing.T) {
+	src := gitHostRepo(t)
+	before, err := os.ReadFile(filepath.Join(src, "readme.txt"))
+	if err != nil {
+		t.Fatalf("read host readme.txt before the session: %v", err)
 	}
 
-	// Change a file, add a binary file, and generate the binary patch.
-	// Staging first mirrors the kernel's delta script: git diff alone
-	// would miss the untracked new file.
-	if err := os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("changed on the branch\n"), 0o644); err != nil {
-		t.Fatal(err)
+	open, _ := cleanOpener()
+	ss, err := StartSessionSandbox(context.Background(), sessionTestConfig(), open, src, nil)
+	if err != nil {
+		t.Fatalf("StartSessionSandbox: %v", err)
 	}
-	bin := []byte{0x00, 0x01, 0x02, 0xff, 0xfe, 0x00, 0x00, 0x7f}
-	if err := os.WriteFile(filepath.Join(dir, "blob.bin"), bin, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	run("add", "-A")
-	patch := run("diff", "--binary", "--cached", "HEAD")
+	defer ss.Destroy(context.Background())
 
-	// Reset the tree, then apply the patch the way ApplyOut's containerd
-	// path does.
-	run("reset", "-q", "--hard", "HEAD")
-	run("clean", "-q", "-fd")
-	if err := applyGitPatch(context.Background(), dir, []byte(patch)); err != nil {
-		t.Fatalf("applyGitPatch: %v", err)
+	// No writes through the workspace: the session is exactly as bootstrapped.
+	// Assert the diff is genuinely empty first, so a later pass cannot be
+	// "nothing changed" for the wrong reason (a diff that failed to see edits).
+	diff, changed, err := ss.DiffSinceBaseline(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("DiffSinceBaseline on an untouched session: %v", err)
 	}
-	if got, err := os.ReadFile(filepath.Join(dir, "readme.txt")); err != nil || string(got) != "changed on the branch\n" {
-		t.Errorf("readme.txt = %q, %v — the patch did not apply", got, err)
-	}
-	if got, err := os.ReadFile(filepath.Join(dir, "blob.bin")); err != nil || !bytes.Equal(got, bin) {
-		t.Errorf("blob.bin = %x, %v — the binary payload did not survive (want %x)", got, err, bin)
-	}
-}
-
-// deltaStubSandbox wraps the fake and answers Capture from a canned state,
-// emulating the containerd backend's delta-carrying captures without a
-// daemon.
-type deltaStubSandbox struct {
-	croft.Sandbox
-	state croft.WorkspaceState
-}
-
-func (d *deltaStubSandbox) Capture(context.Context) (croft.WorkspaceState, error) {
-	return d.state, nil
-}
-
-func TestApplyOut_PrefersBackendDeltaPatch(t *testing.T) {
-	dir := gitHostRepo(t)
-	run := func(args ...string) string {
-		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@example.com",
-			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@example.com")
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
-		}
-		return string(out)
+	if len(changed) != 0 || diff != "" {
+		t.Fatalf("an untouched session must diff clean, got %d paths and diff %q", len(changed), diff)
 	}
 
-	if err := os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("via delta patch\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	patch := run("diff", "--binary", "HEAD")
-	run("reset", "-q", "--hard", "HEAD")
-
-	stub := &deltaStubSandbox{Sandbox: sandboxfake.New(), state: croft.WorkspaceState{
-		Backend: "fake",
-		Data: map[string]any{
-			"delta_base":  "head0",
-			"delta_patch": base64.StdEncoding.EncodeToString([]byte(patch)),
-		},
-	}}
-	ss := &SessionSandbox{
-		sb:       stub,
-		ws:       newSandboxWorkspace(stub, "/workspace"),
-		baseline: &croft.WorkspaceState{Backend: "fake"},
+	if err := ss.ApplyOut(context.Background(), src); err != nil {
+		t.Fatalf("ApplyOut on a clean session = %v, want nil", err)
 	}
 
-	if err := ss.ApplyOut(context.Background(), dir); err != nil {
-		t.Fatalf("ApplyOut: %v", err)
+	after, err := os.ReadFile(filepath.Join(src, "readme.txt"))
+	if err != nil {
+		t.Fatalf("read host readme.txt after apply-out: %v", err)
 	}
-	if got, err := os.ReadFile(filepath.Join(dir, "readme.txt")); err != nil || string(got) != "via delta patch\n" {
-		t.Errorf("readme.txt = %q, %v — the backend's delta patch was not preferred", got, err)
+	if !bytes.Equal(before, after) {
+		t.Errorf("a clean apply-out modified the host: readme.txt %q became %q", before, after)
 	}
-}
-
-// diffFailingSandbox pins the branch a test claims to exercise: its Diff
-// always fails, so a fallback that consults the diff fails the test instead
-// of quietly passing through a second no-op path.
-type diffFailingSandbox struct {
-	croft.Sandbox
-}
-
-func (d *diffFailingSandbox) Diff(context.Context, croft.WorkspaceState, int) (string, []string, error) {
-	return "", nil, errors.New("the copy-out fallback ran: the delta-base branch was not recognised")
-}
-
-func TestApplyOut_CleanDeltaIsNoop(t *testing.T) {
-	dir := gitHostRepo(t)
-	// The fake's Diff on this stub reports nothing and touches nothing,
-	// so without the failing wrapper a missed delta-base match would
-	// still pass — the exact regression this test exists to catch.
-	stub := &deltaStubSandbox{Sandbox: &diffFailingSandbox{Sandbox: sandboxfake.New()}, state: croft.WorkspaceState{
-		Backend: "fake",
-		Data:    map[string]any{"delta_base": "head0"}, // base present, no patch: clean
-	}}
-	ss := &SessionSandbox{
-		sb:       stub,
-		ws:       newSandboxWorkspace(stub, "/workspace"),
-		baseline: &croft.WorkspaceState{Backend: "fake"},
-	}
-
-	if err := ss.ApplyOut(context.Background(), dir); err != nil {
-		t.Fatalf("ApplyOut on a clean capture = %v, want nil", err)
-	}
-	if got, err := os.ReadFile(filepath.Join(dir, "readme.txt")); err != nil || string(got) != "hello\n" {
-		t.Errorf("a clean apply-out touched the host: readme.txt = %q, %v", got, err)
+	if _, err := os.Lstat(filepath.Join(src, "result.txt")); !os.IsNotExist(err) {
+		t.Errorf("a clean apply-out created result.txt on the host (%v)", err)
 	}
 }
 
@@ -505,17 +428,17 @@ func TestBootstrap_RejectsTrackedDeniedFile(t *testing.T) {
 // whether the bootstrap runs the synthetic baseline commit — not what a
 // real container's git would do with one.
 type gitRecordingSandbox struct {
-	croft.Sandbox
+	goatherdsandbox.Sandbox
 	mu       sync.Mutex
 	gitCalls []string
 }
 
-func (g *gitRecordingSandbox) Exec(ctx context.Context, req croft.ExecRequest) (croft.ExecResult, error) {
+func (g *gitRecordingSandbox) Exec(ctx context.Context, req goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
 	if req.Command == "git" {
 		g.mu.Lock()
 		g.gitCalls = append(g.gitCalls, strings.Join(req.Args, " "))
 		g.mu.Unlock()
-		return croft.ExecResult{ExitCode: 0}, nil
+		return goatherdsandbox.ExecResult{ExitCode: 0}, nil
 	}
 	return g.Sandbox.Exec(ctx, req)
 }
@@ -528,14 +451,14 @@ func (g *gitRecordingSandbox) calls() []string {
 
 // recordingOpener hands the probe a hook-wired fake (its shell cannot run
 // the contract script) and the session sandbox the given recorder.
-func recordingOpener(rec croft.Sandbox) SandboxOpener {
+func recordingOpener(rec goatherdsandbox.Sandbox) SandboxOpener {
 	var opened int
-	return func(config.WorkspaceConfig) (croft.Sandbox, error) {
+	return func(config.WorkspaceConfig) (goatherdsandbox.Sandbox, error) {
 		opened++
 		if opened == 1 {
 			sb := sandboxfake.New()
-			sb.ExecHook = func(croft.ExecRequest) (croft.ExecResult, error) {
-				return croft.ExecResult{ExitCode: 0}, nil
+			sb.ExecHook = func(goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
+				return goatherdsandbox.ExecResult{ExitCode: 0}, nil
 			}
 			return sb, nil
 		}

@@ -11,12 +11,17 @@ const (
 	// BackendLocal runs tools on the host filesystem, as yaah always has.
 	// It is the default and the byte-for-byte legacy path.
 	BackendLocal = "local"
-	// BackendContainerd runs tools inside a croft (containerd) sandbox:
-	// a real Linux filesystem boundary per session. The yaah client must
+	// BackendContainerd runs tools inside a containerd sandbox, reached
+	// through goatherd-runtime's sandbox registry as its "containerd"
+	// backend (the sandbox/croft adapter over goatherd-croft): a real
+	// Linux filesystem boundary per session. The yaah client must
 	// run where the daemon runs — natively on Linux, or inside WSL2 (where
 	// GOOS=linux); a Windows/macOS-native yaah cannot select this backend
-	// and config validation refuses it at load. Pointing a non-Linux client
-	// at a remote daemon is not part of this config surface.
+	// and config validation refuses it at load. That refusal is backed at
+	// the seam as well as here: the adapter registers no backend off-Linux,
+	// so opening one fails rather than returning something unusable.
+	// Pointing a non-Linux client at a remote daemon is not part of this
+	// config surface.
 	BackendContainerd = "containerd"
 )
 
@@ -40,7 +45,9 @@ type WorkspaceConfig struct {
 }
 
 // ContainerdWorkspaceConfig is the containerd backend's settings block.
-// The fields map one-to-one onto croft.Config.
+// The fields map one-to-one onto the sandbox/croft adapter's Config, which
+// mirrors goatherd-croft's in turn — the adapter owns that type so this
+// config surface never has to import croft.
 type ContainerdWorkspaceConfig struct {
 	// Address is the containerd socket or endpoint. Empty uses containerd's
 	// own default resolution.

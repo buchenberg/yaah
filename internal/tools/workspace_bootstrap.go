@@ -3,16 +3,17 @@ package tools
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
-	croft "github.com/buchenberg/croft"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
+
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 )
 
 // workspace_bootstrap.go implements the D1 bootstrap (isolated-workspace plan
@@ -160,7 +161,7 @@ func deniedBy(deny []string, p string) string {
 //
 // Known cost, deliberate for D1's correctness-first landing: one backend
 // exec per file. A bundle-based fast path is the anticipated follow-up.
-func copyTreeIn(ctx context.Context, sb croft.Sandbox, src, root string, deny []string, tracked map[string]bool) error {
+func copyTreeIn(ctx context.Context, sb goatherdsandbox.Sandbox, src, root string, deny []string, tracked map[string]bool) error {
 	src = filepath.Clean(src)
 	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -277,7 +278,7 @@ func bootstrapSession(ctx context.Context, ss *SessionSandbox, src string, deny 
 // act on. The identity is fixed for the same reason: no user config needs
 // to exist inside the container.
 func commitContainerBaseline(ctx context.Context, ss *SessionSandbox) error {
-	for _, req := range []croft.ExecRequest{
+	for _, req := range []goatherdsandbox.ExecRequest{
 		{Command: "git", Args: []string{"add", "-A"}, Cwd: ss.ws.root},
 		{Command: "git", Args: []string{
 			"-c", "user.name=yaah", "-c", "user.email=yaah@localhost",
@@ -308,25 +309,39 @@ func (s *SessionSandbox) DiffSinceBaseline(ctx context.Context, maxLines int) (s
 
 // Baseline returns the session's baseline state, or nil when the session
 // started without a bootstrap.
-func (s *SessionSandbox) Baseline() *croft.WorkspaceState { return s.baseline }
+func (s *SessionSandbox) Baseline() *shepherdtrace.WorkspaceState { return s.baseline }
 
 // ApplyOut applies the session's outward delta onto the host working tree —
 // the "apply-out on accept" half of D1. It is the single door changes leave
 // the container through: nothing else writes the host repo in isolated
 // mode.
 //
-// The delta artifact is the backend's, not reconstructed here:
+// The changed paths come from the Sandbox Diff against the session baseline,
+// and each is written out through ReadFile with the same crash safety the
+// host-side tools use. This is backend-agnostic: it is what the in-memory fake
+// has always exercised, and it is what the containerd backend uses now that
+// croft records plain snapshot states.
 //
-//   - A git binary patch (containerd: StateKeyDeltaPatch, base64) is applied
-//     with `git apply --binary`, which carries binary file changes, refuses
-//     a moved host parent loudly instead of guessing, and needs no
-//     parse-and-rewrite of content.
-//   - A present delta base with no patch is a clean capture: nothing to do.
-//   - A backend without delta machinery (the in-memory fake, and any future
-//     backend that records plain tree states) falls back to copying the
-//     changed paths out through the kernel's ReadFile — content-accurate
-//     for files, existence-accurate for deletions, but blind to mode-only
-//     changes.
+// Previously this verb preferred a git binary patch carried in the captured
+// state (croft's StateKeyDeltaPatch), falling back to the copy-out path only
+// for backends without delta machinery. goatherd-croft replaced that git-based
+// state model with containerd snapshot keys in v0.7.0, so no backend produces
+// such a patch any more and the branch was unreachable. It is removed rather
+// than left to rot; see yaah bead yaah-vlwm.
+//
+// Removing it also removes this verb's Capture. That is a resource win, not
+// just a simplification: croft's Capture commits the active layer and pins it
+// under a lease, so capturing here purely to read a patch left a pinned
+// snapshot behind on every accept, with nothing to release it. Diff is
+// read-only and commits nothing.
+//
+// Known fidelity gap, tracked as yaah-vlwm: a path whose *mode* changed but
+// whose content did not produces no Diff entry, so the host keeps the old
+// mode. The git binary patch carried modes. New and modified files are
+// unaffected — copyOut takes their mode from the sandbox entry. Restoring
+// full fidelity means rebuilding the work list from the adapter's typed
+// Changes (which carries Mode, and classifies deletes and whiteouts) with the
+// Diff-based path kept as the fallback for backends without it.
 //
 // The host tree is trusted not to have moved since copy-in. Applying onto a
 // moved parent is settlement's problem (kernel Seal/Settle with
@@ -336,43 +351,7 @@ func (s *SessionSandbox) ApplyOut(ctx context.Context, hostDir string) error {
 	if s.baseline == nil {
 		return errors.New("workspace: apply-out: no session baseline — the sandbox was started without a bootstrap")
 	}
-	cur, err := s.sb.Capture(ctx)
-	if err != nil {
-		return fmt.Errorf("workspace: apply-out: capture: %w", err)
-	}
-	if raw, present := cur.Data[croft.StateKeyDeltaPatch]; present {
-		b64, isStr := raw.(string)
-		if !isStr {
-			// A present-but-undecodable patch must not fall through to
-			// the no-op or copy-out branches: that would report success
-			// while discarding the session's changes.
-			return fmt.Errorf("workspace: apply-out: %s has type %T, want a base64 string — refusing to guess at the backend's delta", croft.StateKeyDeltaPatch, raw)
-		}
-		patch, derr := base64.StdEncoding.DecodeString(b64)
-		if derr != nil {
-			return fmt.Errorf("workspace: apply-out: decode delta patch: %w", derr)
-		}
-		return applyGitPatch(ctx, hostDir, patch)
-	}
-	if _, ok := cur.Data[croft.StateKeyDeltaBase]; ok {
-		// A clean capture: the backend recorded its delta base and found
-		// nothing between it and the current tree.
-		return nil
-	}
 	return s.copyOut(ctx, hostDir)
-}
-
-// applyGitPatch applies a git binary patch in the host working tree.
-func applyGitPatch(ctx context.Context, hostDir string, patch []byte) error {
-	if len(bytes.TrimSpace(patch)) == 0 {
-		return nil
-	}
-	cmd := exec.CommandContext(ctx, "git", "-C", hostDir, "apply", "--binary", "--whitespace=nowarn", "-")
-	cmd.Stdin = bytes.NewReader(patch)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("workspace: apply-out: git apply: %w: %s", err, strings.TrimSpace(string(out)))
-	}
-	return nil
 }
 
 // copyOut is the backend-agnostic fallback: the changed paths come from the

@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	croft "github.com/buchenberg/croft"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -15,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 	"github.com/buchenberg/yaah/internal/sandboxfake"
 )
 
@@ -382,7 +382,7 @@ func newSandboxWS(t *testing.T, sb *sandboxfake.Sandbox) *sandboxWorkspace {
 		sb = sandboxfake.New()
 	}
 	if !sb.Created() {
-		if err := sb.Create(context.Background(), croft.SandboxSpec{Workdir: "/workspace"}); err != nil {
+		if err := sb.Create(context.Background(), goatherdsandbox.SandboxSpec{Workdir: "/workspace"}); err != nil {
 			t.Fatalf("create sandbox: %v", err)
 		}
 	}
@@ -656,8 +656,8 @@ func TestSandboxWorkspace_StatParsesInBandOutput(t *testing.T) {
 	// interpreter always produces parseable output, so pin this with a hook
 	// returning what a broken backend would.
 	badSB := sandboxfake.New()
-	badSB.ExecHook = func(croft.ExecRequest) (croft.ExecResult, error) {
-		return croft.ExecResult{ExitCode: 0, Stdout: "garbage"}, nil
+	badSB.ExecHook = func(goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
+		return goatherdsandbox.ExecResult{ExitCode: 0, Stdout: "garbage"}, nil
 	}
 	if _, err := newSandboxWS(t, badSB).Stat(context.Background(), "/workspace/x"); err == nil {
 		t.Error("unexpected stat output must fail")
@@ -758,8 +758,8 @@ func TestSandboxWorkspace_ExecNonZeroExitIsAnError(t *testing.T) {
 	// supplies the outcome and the assertion stays about the workspace's
 	// error mapping.
 	sb := sandboxfake.New()
-	sb.ExecHook = func(croft.ExecRequest) (croft.ExecResult, error) {
-		return croft.ExecResult{ExitCode: 3, Stdout: "boom"}, nil
+	sb.ExecHook = func(goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
+		return goatherdsandbox.ExecResult{ExitCode: 3, Stdout: "boom"}, nil
 	}
 	ws := newSandboxWS(t, sb)
 
@@ -954,8 +954,8 @@ func TestWalkWorkspaceDoesNotDescendSymlinkRoot(t *testing.T) {
 // from "ran and failed".
 func TestSandboxWorkspace_ExecTransportErrorReportsExitMinusOne(t *testing.T) {
 	sb := sandboxfake.New()
-	sb.ExecHook = func(croft.ExecRequest) (croft.ExecResult, error) {
-		return croft.ExecResult{}, errors.New("container gone")
+	sb.ExecHook = func(goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
+		return goatherdsandbox.ExecResult{}, errors.New("container gone")
 	}
 	ws := newSandboxWS(t, sb)
 
@@ -990,8 +990,8 @@ func TestSandboxWorkspace_ExecDefaultsCwdToRoot(t *testing.T) {
 	sb := sandboxfake.New()
 	// `go` has no userland in the fake; the hook supplies a successful run
 	// so the assertion stays about the default working directory.
-	sb.ExecHook = func(croft.ExecRequest) (croft.ExecResult, error) {
-		return croft.ExecResult{ExitCode: 0}, nil
+	sb.ExecHook = func(goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
+		return goatherdsandbox.ExecResult{ExitCode: 0}, nil
 	}
 	ws := newSandboxWS(t, sb)
 
@@ -1045,7 +1045,7 @@ func TestWorkspaceParity_LocalVsSandbox(t *testing.T) {
 	local := newLocalWorkspace(NewPathValidator(host, false, nil))
 
 	sb := sandboxfake.New()
-	if err := sb.Create(ctx, croft.SandboxSpec{Workdir: "/workspace"}); err != nil {
+	if err := sb.Create(ctx, goatherdsandbox.SandboxSpec{Workdir: "/workspace"}); err != nil {
 		t.Fatalf("create sandbox: %v", err)
 	}
 	if err := sb.Symlink("no-such-target", "/workspace/dangling"); err != nil {

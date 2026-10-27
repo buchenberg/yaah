@@ -27,7 +27,6 @@ package tools
 
 import (
 	"context"
-	croft "github.com/buchenberg/croft"
 	"os"
 	"path/filepath"
 	"strings"
@@ -203,14 +202,30 @@ func TestLive_ActivatedSession(t *testing.T) {
 		t.Fatalf("the delta must name the modify/add/delete: %d files, diff %q", len(files), diff)
 	}
 
-	// The containerd-only property the bootstrap's closing Apply exists
-	// for: a capture after mutation carries the outward binary patch.
+	// The containerd-only property worth pinning against a real daemon: the
+	// state coming back through the seam is a containerd state carrying a real
+	// snapshot key, not an empty shell. This is the adapter's state mapping
+	// under live conditions — the fake can prove the shape, only a daemon can
+	// prove the key is one containerd minted.
+	//
+	// It used to assert that the capture carried croft's outward git binary
+	// patch (StateKeyDeltaPatch), the D1 delta anchor. croft replaced that
+	// git-based state model with containerd snapshot keys in v0.7.0, so no
+	// backend produces such a patch and ApplyOut now copies changed paths out
+	// instead; see yaah bead yaah-vlwm for that change and the mode-fidelity
+	// gap it records.
 	cur, err := ss.sb.Capture(ctx)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
-	if _, ok := cur.Data[croft.StateKeyDeltaPatch].(string); !ok {
-		t.Fatalf("the capture carries no %s — the D1 delta anchor is not in effect against the real backend", croft.StateKeyDeltaPatch)
+	if cur.Backend != "containerd" {
+		t.Fatalf("captured state is tagged backend %q, want \"containerd\" — the adapter's provenance mapping is wrong, and Apply would reject this state", cur.Backend)
+	}
+	if cur.Revision == "" {
+		t.Fatal("captured state carries no snapshot key — the adapter dropped croft's timeline position, so the state cannot be resumed")
+	}
+	if _, derr := cur.Digest(); derr != nil {
+		t.Fatalf("captured state does not digest: %v", derr)
 	}
 
 	// The accept seam, dispatched through the registry exactly as a

@@ -3,10 +3,10 @@ package tools
 import (
 	"context"
 	"errors"
-	croft "github.com/buchenberg/croft"
 	"strings"
 	"testing"
 
+	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/sandboxfake"
 )
@@ -19,11 +19,11 @@ import (
 // operations round-trip real writes.
 func cleanOpener() (SandboxOpener, func() []*sandboxfake.Sandbox) {
 	var opened []*sandboxfake.Sandbox
-	open := func(config.WorkspaceConfig) (croft.Sandbox, error) {
+	open := func(config.WorkspaceConfig) (goatherdsandbox.Sandbox, error) {
 		sb := sandboxfake.New()
 		if len(opened) == 0 {
-			sb.ExecHook = func(croft.ExecRequest) (croft.ExecResult, error) {
-				return croft.ExecResult{ExitCode: 0}, nil
+			sb.ExecHook = func(goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
+				return goatherdsandbox.ExecResult{ExitCode: 0}, nil
 			}
 		}
 		opened = append(opened, sb)
@@ -115,11 +115,11 @@ func TestStartSessionSandbox_ProbeFailureLeavesNoSessionSandbox(t *testing.T) {
 	// The opener fails the D5 contract on the probe sandbox: the session
 	// sandbox must never be opened.
 	opened := 0
-	open := func(config.WorkspaceConfig) (croft.Sandbox, error) {
+	open := func(config.WorkspaceConfig) (goatherdsandbox.Sandbox, error) {
 		opened++
 		sb := sandboxfake.New()
-		sb.ExecHook = func(croft.ExecRequest) (croft.ExecResult, error) {
-			return croft.ExecResult{ExitCode: 1, Stdout: "missing: rg\n"}, nil
+		sb.ExecHook = func(goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
+			return goatherdsandbox.ExecResult{ExitCode: 1, Stdout: "missing: rg\n"}, nil
 		}
 		return sb, nil
 	}
@@ -139,16 +139,16 @@ func TestStartSessionSandbox_CreateFailureDestroys(t *testing.T) {
 	// lifecycle must destroy rather than leak — the sandbox is its own
 	// from the moment the opener returns.
 	preCreated := sandboxfake.New()
-	if err := preCreated.Create(context.Background(), croft.SandboxSpec{}); err != nil {
+	if err := preCreated.Create(context.Background(), goatherdsandbox.SandboxSpec{}); err != nil {
 		t.Fatalf("pre-create: %v", err)
 	}
 	calls := 0
-	open := func(config.WorkspaceConfig) (croft.Sandbox, error) {
+	open := func(config.WorkspaceConfig) (goatherdsandbox.Sandbox, error) {
 		calls++
 		if calls == 1 {
 			sb := sandboxfake.New()
-			sb.ExecHook = func(croft.ExecRequest) (croft.ExecResult, error) {
-				return croft.ExecResult{ExitCode: 0}, nil
+			sb.ExecHook = func(goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
+				return goatherdsandbox.ExecResult{ExitCode: 0}, nil
 			}
 			return sb, nil
 		}
@@ -177,14 +177,14 @@ func TestStartSessionSandbox_OpenerFailure(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			calls := 0
-			open := func(config.WorkspaceConfig) (croft.Sandbox, error) {
+			open := func(config.WorkspaceConfig) (goatherdsandbox.Sandbox, error) {
 				calls++
 				if calls == tt.failCall {
 					return nil, errors.New("daemon unreachable")
 				}
 				sb := sandboxfake.New()
-				sb.ExecHook = func(croft.ExecRequest) (croft.ExecResult, error) {
-					return croft.ExecResult{ExitCode: 0}, nil
+				sb.ExecHook = func(goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
+					return goatherdsandbox.ExecResult{ExitCode: 0}, nil
 				}
 				return sb, nil
 			}

@@ -3,20 +3,21 @@ package tools
 import (
 	"context"
 	"errors"
-	croft "github.com/buchenberg/croft"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
+	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/sandboxfake"
 )
 
 // probeResult is the canned outcome the fake's ExecHook returns for the
 // contract script: the exit code, stdout, and stderr the probe must classify.
-func probeResult(exit int, stdout string) func(croft.ExecRequest) (croft.ExecResult, error) {
-	return func(croft.ExecRequest) (croft.ExecResult, error) {
-		return croft.ExecResult{ExitCode: exit, Stdout: stdout, Stderr: "stderr detail"}, nil
+func probeResult(exit int, stdout string) func(goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
+	return func(goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
+		return goatherdsandbox.ExecResult{ExitCode: exit, Stdout: stdout, Stderr: "stderr detail"}, nil
 	}
 }
 
@@ -87,8 +88,8 @@ func TestProbeImageContract_OperationalFailureHasBothChannels(t *testing.T) {
 
 func TestProbeImageContract_ExecTransportError(t *testing.T) {
 	sb := sandboxfake.New()
-	sb.ExecHook = func(croft.ExecRequest) (croft.ExecResult, error) {
-		return croft.ExecResult{}, context.DeadlineExceeded
+	sb.ExecHook = func(goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
+		return goatherdsandbox.ExecResult{}, context.DeadlineExceeded
 	}
 
 	err := ProbeImageContract(context.Background(), sb)
@@ -107,7 +108,7 @@ func TestProbeImageContract_CreateFailureStillDestroys(t *testing.T) {
 	// path too. The destroy is observable here because it succeeds on a
 	// sandbox that was, in fact, created.
 	sb := sandboxfake.New()
-	if err := sb.Create(context.Background(), croft.SandboxSpec{}); err != nil {
+	if err := sb.Create(context.Background(), goatherdsandbox.SandboxSpec{}); err != nil {
 		t.Fatalf("seed Create: %v", err)
 	}
 	sb.ExecHook = probeResult(0, "")
@@ -149,15 +150,26 @@ var errCreateRefused = errors.New("no image")
 
 // failCreateSandbox fails Create but delegates everything else — the probe
 // must still attempt Destroy through it.
-type failCreateSandbox struct{ croft.Sandbox }
+type failCreateSandbox struct{ goatherdsandbox.Sandbox }
 
-func (*failCreateSandbox) Create(context.Context, croft.SandboxSpec) error {
+func (*failCreateSandbox) Create(context.Context, goatherdsandbox.SandboxSpec) error {
 	return errCreateRefused
 }
 
-// TestOpenContainerdWorkspaceSandbox pins the direct construction: the
-// config surface reaches croft through croft.New (no registry, no
-// self-registration), and the returned sandbox is unprovisioned.
+// TestOpenContainerdWorkspaceSandbox pins the opener's two platform outcomes.
+//
+// On Linux it resolves through goatherd-runtime's sandbox registry — importing
+// the adapter is what registers "containerd", so this also proves the
+// self-registration wiring yaah depends on — and hands back an unprovisioned
+// sandbox, Create still being the caller's explicit lifecycle step.
+//
+// Everywhere else it must refuse. The adapter's implementation is gated to
+// Linux (goatherd-croft does not compile elsewhere and the substrate it drives
+// is Linux-shaped), so no backend registers and the registry reports an
+// unknown backend rather than returning something that cannot work. That is
+// the invariant config validation relies on when it refuses
+// workspace.backend: containerd off-Linux at load: the refusal is real at the
+// seam too, not only in the config layer.
 func TestOpenContainerdWorkspaceSandbox(t *testing.T) {
 	w := config.WorkspaceConfig{
 		Backend: config.BackendContainerd,
@@ -169,6 +181,17 @@ func TestOpenContainerdWorkspaceSandbox(t *testing.T) {
 		},
 	}
 	sb, err := OpenContainerdWorkspaceSandbox(w)
+
+	if runtime.GOOS != "linux" {
+		if err == nil {
+			t.Fatalf("on %s the containerd backend must not open, got %v", runtime.GOOS, sb)
+		}
+		if !strings.Contains(err.Error(), "containerd") {
+			t.Errorf("the refusal must name the backend it could not provide, got: %v", err)
+		}
+		return
+	}
+
 	if err != nil {
 		t.Fatalf("OpenContainerdWorkspaceSandbox: %v", err)
 	}
@@ -223,7 +246,7 @@ func TestOpenContainerdWorkspaceSandbox_Passthrough(t *testing.T) {
 // whose teardown fails can be asserted on without teaching the fake a mode
 // it should not have.
 type destroyFailingSandbox struct {
-	croft.Sandbox
+	goatherdsandbox.Sandbox
 }
 
 func (destroyFailingSandbox) Destroy(context.Context) error {
