@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"strings"
+
 	"github.com/buchenberg/yaah/internal/control"
 )
 
@@ -91,5 +93,43 @@ func TestHandleControlMsg_Continue(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("continue channel never received answer")
+	}
+}
+
+// TestHandleControlMsg_CompactionSummary pins yaah-v378.5: the produced
+// summary is rendered as a DURABLE conversation entry (not ephemeral
+// status), with the trim fallback visible as "no summary produced".
+func TestHandleControlMsg_CompactionSummary(t *testing.T) {
+	ui := New("test")
+	before := len(ui.conversationLog)
+
+	ui.handleControlMsg(&control.CompactionSummary{
+		Summary: "## Goal\n- address review comments\n\n## Done\n- landed the replay knob",
+		Method:  "single",
+		Before:  90000,
+		After:   6000,
+		Window:  200000,
+	})
+
+	if len(ui.conversationLog) <= before {
+		t.Fatal("compaction summary was not added to the conversation log")
+	}
+	joined := ""
+	for _, item := range ui.conversationLog[before:] {
+		joined += item.text + "\n"
+	}
+	if !strings.Contains(joined, "context compacted (single): 90000 → 6000 tokens") {
+		t.Errorf("header missing from rendered entry: %q", joined)
+	}
+	if !strings.Contains(joined, "address review comments") {
+		t.Errorf("summary text missing from rendered entry: %q", joined)
+	}
+
+	// Trim fallback: an empty summary renders the honest "no summary
+	// produced" line instead of nothing.
+	ui.handleControlMsg(&control.CompactionSummary{Method: "trim", Before: 6000, After: 5000, Window: 200000})
+	last := ui.conversationLog[len(ui.conversationLog)-1]
+	if !strings.Contains(last.text, "no summary produced") {
+		t.Errorf("trim fallback rendered %q, want the no-summary notice", last.text)
 	}
 }

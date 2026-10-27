@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -223,5 +224,93 @@ func TestCompactContextChunkedFallbackEmitsDone(t *testing.T) {
 	}
 	if e.Budget <= 0 {
 		t.Fatalf("budget = %v, want the preserve budget carried through", e.Budget)
+	}
+}
+
+// templateEchoResponse is the unfilled summary template — the recorded
+// failure shape of the 2026-10-26 incident (yaah-v378.1): a valid
+// non-empty content string that carries zero information.
+func templateEchoResponse() *types.ChatResponse {
+	return &types.ChatResponse{
+		Choices: []types.Choice{{
+			Message: types.Message{
+				Role:    "assistant",
+				Content: "## Goal\n- (none)\n\n## Progress\n### Done\n- (none)\n### In Progress\n- (none)\n\n## Key Decisions\n- (none)\n\n## Next Steps\n- (none)\n\n## Critical Context\n- (none)\n\n## Relevant Files\n- (none)\n",
+			},
+			FinishReason: "stop",
+		}},
+	}
+}
+
+// TestCompactContextRejectsTemplateEchoSummary pins yaah-v378.1: a summary
+// whose every section is a placeholder must not replace the conversation.
+// Installing it is what turned the 2026-10-26 session into a 173-minute
+// re-orientation loop.
+func TestCompactContextRejectsTemplateEchoSummary(t *testing.T) {
+	p := &compactionRecordingProvider{responses: []*types.ChatResponse{templateEchoResponse()}}
+	cm := compactionTestManager(p)
+
+	before := len(cm.State.Messages)
+	cm.compactContext(context.Background(), 0.25)
+
+	reqs := p.snapshot()
+	if len(reqs) < 2 {
+		t.Fatalf("expected a chunked fallback attempt after the template-echo summary; got %d requests", len(reqs))
+	}
+	if strings.Contains(cm.State.PreviousSummary, "(none)") {
+		t.Errorf("template echo was accepted as a summary: %q", cm.State.PreviousSummary)
+	}
+	if len(cm.State.Messages) >= before {
+		t.Errorf("expected heuristic trim after every summary attempt failed: before=%d after=%d", before, len(cm.State.Messages))
+	}
+	if cm.State.Messages[0].Role != "system" {
+		t.Errorf("system message lost during fallback: role=%q", cm.State.Messages[0].Role)
+	}
+}
+
+// TestCompactContextAcceptsSubstantiveSummary: the validator must not reject
+// a real summary — one substantive bullet anywhere carries it.
+func TestCompactContextAcceptsSubstantiveSummary(t *testing.T) {
+	p := &compactionRecordingProvider{responses: []*types.ChatResponse{
+		{Choices: []types.Choice{{Message: types.Message{
+			Role:    "assistant",
+			Content: "## Goal\n- (none)\n\n## Progress\n### In Progress\n- implementing the reasoning replay knob\n",
+		}}}},
+	}}
+	cm := compactionTestManager(p)
+
+	cm.compactContext(context.Background(), 0.25)
+
+	if cm.State.PreviousSummary == "" {
+		t.Fatal("a substantive summary must be applied, not rejected")
+	}
+	if !strings.Contains(cm.State.PreviousSummary, "reasoning replay knob") {
+		t.Errorf("applied summary lost its substance: %q", cm.State.PreviousSummary)
+	}
+}
+
+// TestCompactContextRejectsTemplateEchoFromChunkedSummarizer: validating only
+// the primary response would leave the yaah-v378.1 shape reachable through
+// the chunked path — every chunk/merge reply echoing the template must fall
+// through to trim, never install.
+func TestCompactContextRejectsTemplateEchoFromChunkedSummarizer(t *testing.T) {
+	echoes := make([]*types.ChatResponse, 12)
+	for i := range echoes {
+		echoes[i] = templateEchoResponse()
+	}
+	p := &compactionRecordingProvider{responses: echoes}
+	cm := compactionTestManager(p)
+
+	before := len(cm.State.Messages)
+	cm.compactContext(context.Background(), 0.25)
+
+	if strings.Contains(cm.State.PreviousSummary, "(none)") {
+		t.Errorf("chunked template echo was installed: %q", cm.State.PreviousSummary)
+	}
+	if len(cm.State.Messages) >= before {
+		t.Errorf("expected heuristic trim after every summary source failed: before=%d after=%d", before, len(cm.State.Messages))
+	}
+	if cm.State.Messages[0].Role != "system" {
+		t.Errorf("system message lost: role=%q", cm.State.Messages[0].Role)
 	}
 }

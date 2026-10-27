@@ -92,7 +92,7 @@ func (s *agentSession) compactContext() {
 	// timeout so an unresponsive provider doesn't block indefinitely.
 	ctx, cancel := context.WithTimeout(context.Background(), compactTimeout)
 	defer cancel()
-	loop.ForceCompact(ctx, 0.0)
+	res := loop.ForceCompact(ctx, 0.0)
 
 	s.mu.Lock()
 	s.messages = loop.State.Messages
@@ -112,10 +112,35 @@ func (s *agentSession) compactContext() {
 		}
 	}
 
-	if newEstimate < estTokens {
-		msg(fmt.Sprintf("compacted: %d/%d tokens (%d%%)", newEstimate, window, newEstimate*100/window))
-	} else {
+	if res.Method == "" {
+		// No pass ran (guards skipped it: too few messages, or the loop
+		// already compacted this turn). Say so once.
 		msg("no messages were compacted (context too small or compaction ineffective)")
+		return
+	}
+
+	// Render the summary in the conversation stream (yaah-v378.5): the
+	// user should be able to read what just replaced their context. The
+	// summary is display-only — it already lives in the system message.
+	out := &control.CompactionSummary{
+		Summary: res.Summary,
+		Method:  res.Method,
+		Before:  estTokens,
+		After:   newEstimate,
+		Window:  window,
+	}
+	if ch != nil {
+		select {
+		case ch <- out:
+		default:
+		}
+		return
+	}
+	block := out.Header()
+	if res.Summary != "" {
+		fmt.Fprintf(os.Stderr, "  %s\n  summary:\n%s\n", block, res.Summary)
+	} else {
+		fmt.Fprintf(os.Stderr, "  %s — no summary produced (summarization failed; old messages trimmed)\n", block)
 	}
 }
 

@@ -76,6 +76,27 @@ func (t *App) handleControlMsg(msg control.Msg) {
 	case *control.Status:
 		t.SetEphemeral(m.Text)
 
+	case *control.CompactionSummary:
+		// A durable conversation entry, not ephemeral status: the user
+		// should be able to read what just replaced their context
+		// (yaah-v378.5). Render-only — the summary is never persisted as
+		// a chat message.
+		t.flushPendingTokens()
+		header := fmt.Sprintf("[%s]%s[-]", t.Theme.Dim, m.Header())
+		if m.Summary == "" {
+			header += " — no summary produced"
+		}
+		t.conversationLog = append(t.conversationLog, convItem{text: header})
+		if m.Summary != "" {
+			// The markdown renderer emits its own color tags; wrapping
+			// this item in tview tags would render them literally.
+			t.conversationLog = append(t.conversationLog, convItem{
+				text:       m.Summary,
+				isMarkdown: true,
+			})
+		}
+		t.markDirty()
+
 	case *control.Error:
 		errText := ""
 		if m.Err != nil {

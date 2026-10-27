@@ -338,8 +338,14 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 
 	startTime := time.Now()
 
+	// Reset the pass outcome: whichever path runs (or fails) records it,
+	// so the manual :compact command renders what actually happened.
+	cm.State.LastCompactionMethod = ""
+	cm.State.LastCompactionSummary = ""
+
+	var span trace.Span
 	if cm.OtelEnabled {
-		_, span := otel.Tracer("yaah").Start(ctx, "compaction",
+		_, span = otel.Tracer("yaah").Start(ctx, "compaction",
 			trace.WithAttributes(
 				attribute.Int("compaction.effective_tokens", effectiveTokens),
 				attribute.Int("compaction.raw_tokens", rawTokens),
@@ -409,11 +415,40 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 
 	beforeEstimate := cm.estimatedTokens()
 	resp, err := compactProvider.Send(ctx, req)
+	summaryRejected := ""
+	if err == nil && resp != nil && len(resp.Choices) > 0 {
+		if ok, vreason := agentctx.ValidateSummary(resp.Choices[0].Message.Content); !ok {
+			// yaah-v378.1: a summary that says nothing — the unfilled
+			// template is the recorded failure shape — must not replace
+			// the conversation. Take the same fallback path as an empty
+			// response, with the reason carried on the warn and the
+			// event so the rejection is auditable.
+			summaryRejected = vreason
+			resp = nil
+		}
+	}
+	if span != nil {
+		accepted := err == nil && resp != nil && len(resp.Choices) > 0 &&
+			resp.Choices[0].Message.Content != "" && summaryRejected == ""
+		span.SetAttributes(
+			attribute.Int("compaction.excerpt_bytes", sb.Len()),
+			attribute.Bool("compaction.accepted", accepted),
+		)
+		if accepted {
+			span.SetAttributes(attribute.String("compaction.summary_prefix",
+				agentctx.BoundedSummaryPrefix(resp.Choices[0].Message.Content)))
+		}
+		if summaryRejected != "" {
+			span.SetAttributes(attribute.String("compaction.reject_reason", summaryRejected))
+		}
+	}
 	if err != nil || resp == nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
 		reason := "empty response"
 		switch {
 		case err != nil:
 			reason = err.Error()
+		case summaryRejected != "":
+			reason = "summary rejected: " + summaryRejected
 		case resp != nil && len(resp.Choices) > 0 && resp.Choices[0].FinishReason != "":
 			reason = "finish_reason=" + resp.Choices[0].FinishReason
 		}
@@ -431,29 +466,42 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 		}
 		if agentctx.PreflightTokens(oldMsgs, nil, factor) > agentctx.MinChunkTokens {
 			if chunkSummary, chunkErr := cm.chunkedCompact(ctx, oldMsgs, compactModel); chunkErr == nil && chunkSummary != "" {
-				cm.applyCompactedSummary(chunkSummary, sysMsg, oldMsgs, keepMsgs, effectiveTokens)
-				afterEstimate := cm.estimatedTokens()
-				savingsPct := 0.0
-				if beforeEstimate > 0 {
-					savingsPct = float64(beforeEstimate-afterEstimate) / float64(beforeEstimate)
+				if ok, vreason := agentctx.ValidateSummary(chunkSummary); ok {
+					cm.applyCompactedSummary(chunkSummary, sysMsg, oldMsgs, keepMsgs, effectiveTokens)
+					cm.State.LastCompactionMethod = "chunked"
+					cm.State.LastCompactionSummary = chunkSummary
+					afterEstimate := cm.estimatedTokens()
+					savingsPct := 0.0
+					if beforeEstimate > 0 {
+						savingsPct = float64(beforeEstimate-afterEstimate) / float64(beforeEstimate)
+					}
+					if cm.Broker != nil {
+						cm.Broker.Publish(&CompactionDoneEvent{
+							BeforeTokens:   beforeEstimate,
+							AfterTokens:    afterEstimate,
+							SavingsPct:     savingsPct,
+							Method:         "chunked",
+							ElapsedSeconds: time.Since(startTime).Seconds(),
+							OldMsgCount:    len(oldMsgs),
+							KeepMsgCount:   len(keepMsgs),
+							Budget:         budget,
+						})
+					}
+					observability.RecordCompaction(ctx, compactReason, time.Since(startTime), beforeEstimate, afterEstimate, savingsPct)
+					return
+				} else {
+					// The chunked summarizer can echo the template too;
+					// validating only the primary response would leave the
+					// yaah-v378.1 shape reachable through this path.
+					reason = "chunked summary rejected: " + vreason
+					slog.Warn("compaction rejected the chunked summary; falling back to heuristic trim",
+						"session_id", cm.SessionID, "reason", vreason)
 				}
-				if cm.Broker != nil {
-					cm.Broker.Publish(&CompactionDoneEvent{
-						BeforeTokens:   beforeEstimate,
-						AfterTokens:    afterEstimate,
-						SavingsPct:     savingsPct,
-						Method:         "chunked",
-						ElapsedSeconds: time.Since(startTime).Seconds(),
-						OldMsgCount:    len(oldMsgs),
-						KeepMsgCount:   len(keepMsgs),
-						Budget:         budget,
-					})
-				}
-				observability.RecordCompaction(ctx, compactReason, time.Since(startTime), beforeEstimate, afterEstimate, savingsPct)
-				return
 			}
 		}
 		cm.trimContext()
+		cm.State.LastCompactionMethod = "trim"
+		cm.State.LastCompactionSummary = ""
 		if cm.Broker != nil {
 			// Terminal event for the compaction card: the LLM
 			// summarization fell back to plain old-message trimming,
@@ -469,7 +517,7 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 				SavingsPct:      trimSavings,
 				Method:          "trim",
 				ElapsedSeconds:  time.Since(startTime).Seconds(),
-				IneffectiveNote: "summarization failed; old messages trimmed",
+				IneffectiveNote: "summarization failed (" + reason + "); old messages trimmed",
 				OldMsgCount:     len(oldMsgs),
 				KeepMsgCount:    len(keepMsgs),
 				Budget:          budget,
@@ -480,6 +528,8 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 
 	summary := resp.Choices[0].Message.Content
 	cm.applyCompactedSummary(summary, sysMsg, oldMsgs, keepMsgs, effectiveTokens)
+	cm.State.LastCompactionMethod = "single"
+	cm.State.LastCompactionSummary = summary
 	afterEstimate := cm.estimatedTokens()
 	savingsPct := 0.0
 	ineffectiveNote := ""

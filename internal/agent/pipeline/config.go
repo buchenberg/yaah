@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -47,6 +48,12 @@ type PipelineConfig struct {
 
 	LoopDetectCount  int
 	LoopDetectWindow int
+
+	// IntentSteerAfter / IntentHaltAfter configure the cross-turn
+	// intent-repetition detector: steer after N consecutive same-plan
+	// turns, halt after N. Zero uses the defaults (4 / 8).
+	IntentSteerAfter int
+	IntentHaltAfter  int
 
 	// EvidenceGuardNudge / EvidenceGuardHalt configure the stale-evidence
 	// guard. Nudge 0 = default (6); negative = disabled; halt 0 = disabled.
@@ -197,6 +204,16 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 		}
 		return &LoopDetectionMiddleware{count: count, window: window}
 	},
+	"intent_loop": func(cfg PipelineConfig) Middleware {
+		steer, halt := cfg.IntentSteerAfter, cfg.IntentHaltAfter
+		if steer <= 0 {
+			steer = config.DefaultIntentSteerAfter
+		}
+		if halt <= 0 {
+			halt = config.DefaultIntentHaltAfter
+		}
+		return NewIntentLoopMiddleware(steer, halt)
+	},
 	"evidence_guard": func(cfg PipelineConfig) Middleware {
 		return NewEvidenceGuardMiddleware(cfg.EvidenceGuardNudge, cfg.EvidenceGuardHalt)
 	},
@@ -280,6 +297,7 @@ var defaultPipelineNames = []string{
 	"inline_limit",
 	"tool_concurrency",
 	"loop_detection",
+	"intent_loop",
 	"evidence_guard",
 	"conflict_detect",
 }

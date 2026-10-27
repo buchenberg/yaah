@@ -183,6 +183,8 @@ type LoopConfig struct {
 	RetryBackoff           time.Duration
 	LoopDetectCount        int
 	LoopDetectWindow       int
+	IntentSteerAfter       int
+	IntentHaltAfter        int
 	EvidenceGuardNudge     int
 	EvidenceGuardHalt      int
 	ApprovalMode           string
@@ -278,6 +280,13 @@ type LoopState struct {
 	CompactionForcedByOverflow bool
 	CompactionBudgetMultiplier float64
 	CompactionSavingsHistory   []float64
+
+	// LastCompactionMethod/Summary record what the most recent pass
+	// produced ("single", "chunked", or "trim", with the summary empty
+	// for trim) so the manual :compact command can render the outcome.
+	// Both reset at the start of each pass.
+	LastCompactionMethod  string
+	LastCompactionSummary string
 
 	// TurnCheckpoints holds the IDs of live turn checkpoints in creation
 	// order. Only populated when turn checkpointing is active.

@@ -26,7 +26,7 @@ func TestConfigAgentConfigParity(t *testing.T) {
 	// Fields in config.Defaults that are handled outside AgentConfig
 	// (provider resolution, approval resolution, prompt assembly, etc.).
 	allowedMissingInAgent := map[string]bool{
-		"SmallModel":            true, // → compact provider resolution
+		"CompactionModel":       true, // → compact provider resolution
 		"Approval":              true, // → WithApprovalMode
 		"MCPApproval":           true, // → WithMCPApproval (LoopBuilder)
 		"Provider":              true, // → provider resolution
@@ -129,6 +129,8 @@ func TestLoopBuilderAgentConfigRoundtrip(t *testing.T) {
 				EstimateFactor:         1.5,
 				LoopDetectCount:        7,
 				LoopDetectWindow:       14,
+				IntentSteerAfter:       5,
+				IntentHaltAfter:        9,
 				MaxToolConcurrency:     4,
 				WrapUpThreshold:        3,
 				MaxInlineToolsPerTurn:  8,
@@ -163,6 +165,8 @@ func TestLoopBuilderAgentConfigRoundtrip(t *testing.T) {
 		{"EstimateFactor", loop.Config.EstimateFactor, 1.5},
 		{"LoopDetectCount", loop.Config.LoopDetectCount, 7},
 		{"LoopDetectWindow", loop.Config.LoopDetectWindow, 14},
+		{"IntentSteerAfter", loop.Config.IntentSteerAfter, 5},
+		{"IntentHaltAfter", loop.Config.IntentHaltAfter, 9},
 		{"MaxToolConcurrency", loop.Config.MaxToolConcurrency, 4},
 		{"WrapUpThreshold", loop.Config.WrapUpThreshold, 3},
 		{"MaxInlineToolsPerTurn", loop.Config.MaxInlineToolsPerTurn, 8},

@@ -10,6 +10,8 @@
 package control
 
 import (
+	"fmt"
+
 	"github.com/buchenberg/yaah/internal/todo"
 )
 
@@ -24,6 +26,28 @@ type Msg interface {
 type Status struct{ Text string }
 
 func (*Status) marker() {}
+
+// CompactionSummary carries the summary a completed compaction produced so
+// surfaces can render it in the conversation stream (yaah-v378.5). It is
+// render-only: the summary already lives in the system message, so it must
+// never be persisted as a chat message. Summary is empty when every
+// summarizer attempt failed and the pass fell back to trimming.
+type CompactionSummary struct {
+	Summary string
+	Method  string // "single", "chunked", or "trim"
+	Before  int
+	After   int
+	Window  int
+}
+
+func (*CompactionSummary) marker() {}
+
+// Header renders the one-line outcome shared by every surface: which path
+// ran and how the token count moved. Surfaces append the summary (or their
+// own no-summary notice) after it.
+func (m *CompactionSummary) Header() string {
+	return fmt.Sprintf("context compacted (%s): %d → %d tokens", m.Method, m.Before, m.After)
+}
 
 // Error carries an error for display.
 type Error struct{ Err error }

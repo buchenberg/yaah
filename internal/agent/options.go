@@ -189,6 +189,8 @@ type AgentConfig struct {
 	QualityGates           map[string][]string
 	LoopDetectCount        int
 	LoopDetectWindow       int
+	IntentSteerAfter       int
+	IntentHaltAfter        int
 	EvidenceGuardNudge     int
 	EvidenceGuardHalt      int
 	MaxToolConcurrency     int
@@ -233,6 +235,8 @@ func WithAgentConfig(cfg AgentConfig) Option {
 		l.Config.QualityGates = cfg.QualityGates
 		l.Config.LoopDetectCount = cfg.LoopDetectCount
 		l.Config.LoopDetectWindow = cfg.LoopDetectWindow
+		l.Config.IntentSteerAfter = cfg.IntentSteerAfter
+		l.Config.IntentHaltAfter = cfg.IntentHaltAfter
 		l.Config.EvidenceGuardNudge = cfg.EvidenceGuardNudge
 		l.Config.EvidenceGuardHalt = cfg.EvidenceGuardHalt
 		l.Config.MaxToolConcurrency = cfg.MaxToolConcurrency

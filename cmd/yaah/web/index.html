@@ -626,6 +626,7 @@ document.addEventListener('alpine:init', () => {
             if (d.context_tokens && d.context_window) this.ctx = Math.min(Math.round(d.context_tokens / d.context_window * 100), 100)
             this.status = 'ready'; this.scroll(); break
           case 'ctrl.status': this.status = d.text; break
+          case 'ctrl.compaction': this.add('system', d.text); this.scroll(); break
           case 'ctrl.error':  this.add('error', d.error); this.scroll(); break
           case 'ctrl.question':
             this.modal = {type:'question', title:d.header||'Question', q:d.question, opts:d.options||[], multi:!!d.multi, name:'', args:'', aid:d.id, err:''}

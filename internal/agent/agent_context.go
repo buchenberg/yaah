@@ -79,6 +79,15 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	l.ctxMgr().compactContext(ctx, threshold)
 }
 
+// CompactionResult reports what a manual compaction pass produced: the
+// summary (empty when every summarizer attempt failed and the pass fell
+// back to trimming) and which path produced it. Callers render it in the
+// conversation stream (yaah-v378.5).
+type CompactionResult struct {
+	Summary string
+	Method  string // "single", "chunked", or "trim"
+}
+
 // ForceCompact runs a single compaction pass on the loop's current messages,
 // bypassing cooldowns and threshold guards so the user's explicit :compact
 // command always runs. It applies defaults first (without creating a broker
@@ -92,7 +101,7 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 // default 25% threshold. Cooldowns and ineffective-compaction counters are
 // cleared before compaction so the guard at the top of compactContext does
 // not skip the pass.
-func (l *Loop) ForceCompact(ctx context.Context, threshold float64) {
+func (l *Loop) ForceCompact(ctx context.Context, threshold float64) CompactionResult {
 	// Temporarily nil out View so applyDefaults does not create a broker
 	// and forwarder goroutine — we never call Run(), so teardown would
 	// never close them, causing a goroutine leak.
@@ -128,6 +137,11 @@ func (l *Loop) ForceCompact(ctx context.Context, threshold float64) {
 	// Flush any debounced writes from the persister so they are not lost.
 	if l.Persister != nil {
 		l.Persister.Flush()
+	}
+
+	return CompactionResult{
+		Summary: cm.State.LastCompactionSummary,
+		Method:  cm.State.LastCompactionMethod,
 	}
 }
 

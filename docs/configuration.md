@@ -21,6 +21,8 @@ providers:
     base_url: https://api.anthropic.com
     api_key: ${ANTHROPIC_API_KEY}
     max_tokens: 8192                   # optional output cap
+    # reasoning_replay: auto           # auto (default) | omit | text — how assistant
+                                       # thinking without a provider signature is replayed
   zai:
     api: anthropic                     # Anthropic-compatible endpoint
     name: ZAI
@@ -44,7 +46,7 @@ agents:
   default:
     provider: deepseek
     model: deepseek-v4-pro
-    small_model: deepseek-v4-flash     # compaction model
+    compaction_model: deepseek-v4-flash # context compaction model
     max_iterations: 50                 # hard loop cap
     max_turns: 0                       # 0 = no soft tool-turn cap
     context_window: 1048576            # 0 = use the model's known window
@@ -82,6 +84,8 @@ agents:
 
     loop_detect_count: 5
     loop_detect_window: 10
+    intent_steer_after: 4              # same-plan turns before the model is steered
+    intent_halt_after: 8               # same-plan turns before the run halts
     evidence_guard_nudge: 6            # 0 = default 6; negative = disabled
     evidence_guard_halt: 0             # 0 = never halt; e.g. 16
     max_retries: 2
@@ -261,7 +265,7 @@ rather than retrying a request that cannot succeed.
 |---|---|---|
 | `provider` | first usable provider | Resolution: explicit value, then a provider prefix in `model`, then the first provider alphabetically |
 | `model` | `deepseek/deepseek-v4-pro` | Model for the main agent |
-| `small_model` | `deepseek/deepseek-v4-flash` | Cheaper model for context compaction |
+| `compaction_model` | `deepseek/deepseek-v4-flash` | Model for context compaction. Unset or unresolvable values fall back to the main model with a warning — summarizing with the main model is slower and produces worse summaries |
 | `max_iterations` | 50 | Safety cap on loop turns |
 | `max_turns` | 0 | Soft cap; tools are stripped at this iteration and a final-report notice tells the model why. `0` = no soft cap (the derive rule applies only to `agents.subagent.default_max_turns`). In ACP, a turn ended by this cap reports `stopReason: max_turn_requests` |
 | `context_window` | 1048576 | Caps the model's resolved window. `0` = use the model's known window, not "disabled" |
@@ -283,6 +287,8 @@ rather than retrying a request that cannot succeed.
 | `max_turn_restores` | 3 | Turn-level restores per run |
 | `loop_detect_count` | 5 | Identical tool-call hashes within the window that trigger a halt |
 | `loop_detect_window` | 10 | Sliding window size for loop detection |
+| `intent_steer_after` | 4 | Consecutive same-plan turns (no workspace progress) before an in-conversation steer |
+| `intent_halt_after` | 8 | Consecutive same-plan turns before the run halts; must be greater than `intent_steer_after` |
 | `evidence_guard_nudge` | 6 | Stale calls before a “no new evidence” steer; negative disables |
 | `evidence_guard_halt` | 0 (off) | Stale calls before halting; 0 = never |
 | `max_retries` | 0 (off) | Retries on transient provider errors |
@@ -376,7 +382,7 @@ and orchestrator-only**: listed middleware are added to the default
 orchestrator pipeline (duplicates collapse). `disabled` removes middleware
 from both the orchestrator and sub-agent pipelines. The default orchestrator
 pipeline is
-`steer → followup → compaction → soft_prune → approval → inline_limit → tool_concurrency → loop_detection → evidence_guard → conflict_detect`.
+`steer → followup → compaction → soft_prune → approval → inline_limit → tool_concurrency → loop_detection → intent_loop → evidence_guard → conflict_detect`.
 
 | Middleware | Default | Purpose |
 |---|---|---|
@@ -387,6 +393,7 @@ pipeline is
 | `approval` | on | Gate dangerous tools |
 | `inline_limit` | on | Cap tool calls dispatched per turn (0 = unlimited) |
 | `loop_detection` | on | Halt identical tool+result loops |
+| `intent_loop` | on | Steer (4 turns) and halt (8 turns) when the assistant re-announces the same plan without changing files — catches the paraphrased, read-only loops `loop_detection` cannot see |
 | `evidence_guard` | on | Steer/halt when repeated calls or unchanged re-reads produce no new evidence |
 | `conflict_detect` | on | Flag files touched by multiple sub-agents |
 | `permission` | off | Path-pattern allow/deny rules (auto-added when parent rules exist for sub-agents) |

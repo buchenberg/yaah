@@ -2,9 +2,11 @@ package config
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -21,8 +23,8 @@ func TestLoad_returnsDefaultsWhenFileMissing(t *testing.T) {
 	if cfg.Agent.Default.Model != "deepseek/deepseek-v4-pro" {
 		t.Errorf("Default.Model = %q, want %q", cfg.Agent.Default.Model, "deepseek/deepseek-v4-pro")
 	}
-	if cfg.Agent.Default.SmallModel != "deepseek/deepseek-v4-flash" {
-		t.Errorf("Default.SmallModel = %q, want %q", cfg.Agent.Default.SmallModel, "deepseek/deepseek-v4-flash")
+	if cfg.Agent.Default.CompactionModel != "deepseek/deepseek-v4-flash" {
+		t.Errorf("Default.CompactionModel = %q, want %q", cfg.Agent.Default.CompactionModel, "deepseek/deepseek-v4-flash")
 	}
 	if cfg.Agent.Default.MaxLoopCycles != 50 {
 		t.Errorf("Default.MaxLoopCycles = %d, want 50", cfg.Agent.Default.MaxLoopCycles)
@@ -49,7 +51,7 @@ providers:
 agents:
   default:
     model: openai/gpt-4o
-    small_model: openai/gpt-4o-mini
+    compaction_model: openai/gpt-4o-mini
     max_iterations: 25
     approval: allow
 `
@@ -156,8 +158,8 @@ providers:
 agents:
   default:
     model: openai/gpt-4o-mini
-  small_model: openai/gpt-4o-mini
-  max_iterations: 50
+    compaction_model: openai/gpt-4o-mini
+    max_iterations: 50
   approval: ask
 `
 	err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(configContent), 0o644)
@@ -361,5 +363,120 @@ agents:
 	got := cfg.Agent.Default.Tools
 	if len(got) != 3 || got[0] != "read" || got[1] != "bash" || got[2] != "write" {
 		t.Errorf("tools = %v, want [read bash write]", got)
+	}
+}
+
+// TestLoad_reasoningReplayValidation: the knob has exactly three values; a
+// typo must fail the load instead of silently degrading to the default at
+// replay time (yaah-v378.6).
+func TestLoad_reasoningReplayValidation(t *testing.T) {
+	valid := []string{"auto", "text", "omit", "Auto", ""}
+	for _, v := range valid {
+		tmp := t.TempDir()
+		t.Setenv("YAAH_HOME", tmp)
+		content := fmt.Sprintf(`
+providers:
+  p:
+    api: anthropic
+    base_url: https://example.com
+    api_key: k
+    reasoning_replay: %q
+`, v)
+		if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(content), 0o644); err != nil {
+			t.Fatalf("WriteFile() error: %v", err)
+		}
+		if _, err := Load(); err != nil {
+			t.Errorf("reasoning_replay %q: Load() error = %v", v, err)
+		}
+	}
+
+	tmp := t.TempDir()
+	t.Setenv("YAAH_HOME", tmp)
+	content := `
+providers:
+  p:
+    api: anthropic
+    base_url: https://example.com
+    api_key: k
+    reasoning_replay: maybe
+`
+	if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "reasoning_replay must be one of") {
+		t.Errorf("invalid reasoning_replay must fail the load, got %v", err)
+	}
+}
+
+// TestResolve_preservesReasoningReplay pins the wiring gap found in review:
+// config.Resolve builds a fresh Provider and must carry every field the
+// provider layer reads, or per-provider knobs silently vanish.
+func TestResolve_preservesReasoningReplay(t *testing.T) {
+	got := Resolve(Provider{ReasoningReplay: "text", APIKey: "$NOT_SET"})
+	if got.ReasoningReplay != "text" {
+		t.Errorf("Resolve dropped reasoning_replay: %q", got.ReasoningReplay)
+	}
+}
+
+// TestLoad_compactionModelParses pins the yaah-v378.4 rename: the key lives
+// under agents.default and must land in Defaults.CompactionModel.
+func TestLoad_compactionModelParses(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("YAAH_HOME", tmp)
+	content := `
+agents:
+  default:
+    model: main/model
+    compaction_model: compact/model
+`
+	if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.Agent.Default.CompactionModel != "compact/model" {
+		t.Errorf("CompactionModel = %q, want compact/model", cfg.Agent.Default.CompactionModel)
+	}
+}
+
+// TestLoad_intentKnobValidation: the intent-loop knobs are validated at load
+// like the other guards' bounds — negative values and a halt at or below the
+// steer fail instead of silently degrading.
+func TestLoad_intentKnobValidation(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{"valid", "intent_steer_after: 4\n    intent_halt_after: 8", ""},
+		{"defaults", "", ""},
+		{"zero halt", "intent_steer_after: 4\n    intent_halt_after: 0", ""},
+		{"negative", "intent_steer_after: -1", "must not be negative"},
+		{"halt below steer", "intent_steer_after: 6\n    intent_halt_after: 6", "must be greater than"},
+		{"halt below DEFAULT steer", "intent_halt_after: 2", "must be greater than"},
+		{"steer above DEFAULT halt", "intent_steer_after: 10", "must be greater than"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			t.Setenv("YAAH_HOME", tmp)
+			content := "agents:\n  default:\n    model: m/m\n    " + tt.body + "\n"
+			if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(content), 0o644); err != nil {
+				t.Fatalf("WriteFile() error: %v", err)
+			}
+			_, err := Load()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Errorf("Load() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("Load() error = %v, want containing %q", err, tt.wantErr)
+			}
+		})
 	}
 }

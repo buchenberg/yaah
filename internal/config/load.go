@@ -21,6 +21,13 @@ type Provider struct {
 	TimeoutSeconds int               `yaml:"timeout,omitempty"`
 	Headers        map[string]string `yaml:"headers,omitempty"` // extra headers sent on every request
 
+	// ReasoningReplay selects how assistant thinking that lacks a
+	// provider signature is replayed: "auto" (default) re-sends it as a
+	// plain text block so the model keeps its chain-of-thought, "omit"
+	// drops it, and "text" re-sends even signed reasoning as text for
+	// endpoints that reject valid thinking replay.
+	ReasoningReplay string `yaml:"reasoning_replay,omitempty"`
+
 	// MaxTokens caps the output tokens for every request this provider
 	// serves when the request does not set its own cap. Anthropic-
 	// compatible reasoning endpoints count thinking tokens against this
@@ -82,17 +89,33 @@ func (p Provider) ThinkingOverride(modelName string) *bool {
 	return nil
 }
 
+// Default intent-repetition thresholds (epic yaah-v378): the model is
+// steered after this many consecutive same-plan turns and the run halts at
+// the second. The pipeline and the load-time validation share these.
+const (
+	DefaultIntentSteerAfter = 4
+	DefaultIntentHaltAfter  = 8
+)
+
 // Defaults hold the default agent model and loop settings.
 type Defaults struct {
-	Provider      string `yaml:"provider"`
-	Model         string `yaml:"model"`
-	SmallModel    string `yaml:"small_model"`
-	MaxLoopCycles int    `yaml:"max_iterations"`
-	MaxToolTurns  int    `yaml:"max_turns"`      // soft cap on tool-using turns; 0 = off
-	ContextWindow int    `yaml:"context_window"` // max context window; resolved window from model is capped by this value
-	Approval      string `yaml:"approval"`
-	MCPApproval   string `yaml:"mcp_approval"`  // approval policy for MCP-served tools: ask (default), allow, deny
-	WorkspaceAsk  bool   `yaml:"workspace_ask"` // prompt before denying out-of-workspace access (with --workspace)
+	Provider string `yaml:"provider"`
+	Model    string `yaml:"model"`
+	// CompactionModel summarizes old context when compaction runs. An
+	// unset value means compaction runs on the main model, which is both
+	// slower and worse at summarizing; a warning fires at resolution.
+	CompactionModel string `yaml:"compaction_model"`
+	// IntentSteerAfter / IntentHaltAfter tune the intent-repetition
+	// detector: steer after N consecutive same-plan turns, halt at N.
+	// Zero uses 4 / 8.
+	IntentSteerAfter int    `yaml:"intent_steer_after"`
+	IntentHaltAfter  int    `yaml:"intent_halt_after"`
+	MaxLoopCycles    int    `yaml:"max_iterations"`
+	MaxToolTurns     int    `yaml:"max_turns"`      // soft cap on tool-using turns; 0 = off
+	ContextWindow    int    `yaml:"context_window"` // max context window; resolved window from model is capped by this value
+	Approval         string `yaml:"approval"`
+	MCPApproval      string `yaml:"mcp_approval"`  // approval policy for MCP-served tools: ask (default), allow, deny
+	WorkspaceAsk     bool   `yaml:"workspace_ask"` // prompt before denying out-of-workspace access (with --workspace)
 	// WorkspaceDenyPatterns are globs denied even inside the workspace
 	// (with --workspace). When unset, a built-in secret-file default
 	// applies (.env, *.pem, private keys). Set explicitly to override,
@@ -423,7 +446,7 @@ func defaultConfig() *Config {
 		Agent: AgentConfig{
 			Default: Defaults{
 				Model:                  "deepseek/deepseek-v4-pro",
-				SmallModel:             "deepseek/deepseek-v4-flash",
+				CompactionModel:        "deepseek/deepseek-v4-flash",
 				MaxLoopCycles:          50,
 				ContextWindow:          1048576,
 				Approval:               "ask",
@@ -474,18 +497,19 @@ func SubstituteEnv(s string) string {
 // in APIKey, BaseURL, and OAuth fields substituted by environment variables.
 func Resolve(p Provider) Provider {
 	return Provider{
-		API:            p.API,
-		Auth:           p.Auth,
-		BaseURL:        SubstituteEnv(p.BaseURL),
-		APIKey:         SubstituteEnv(p.APIKey),
-		Name:           p.Name,
-		Models:         p.Models,
-		TimeoutSeconds: p.TimeoutSeconds,
-		Headers:        p.Headers,
-		MaxTokens:      p.MaxTokens,
-		OAuthClientID:  SubstituteEnv(p.OAuthClientID),
-		OAuthScope:     SubstituteEnv(p.OAuthScope),
-		OAuthDomain:    SubstituteEnv(p.OAuthDomain),
+		API:             p.API,
+		Auth:            p.Auth,
+		BaseURL:         SubstituteEnv(p.BaseURL),
+		APIKey:          SubstituteEnv(p.APIKey),
+		Name:            p.Name,
+		Models:          p.Models,
+		TimeoutSeconds:  p.TimeoutSeconds,
+		Headers:         p.Headers,
+		MaxTokens:       p.MaxTokens,
+		ReasoningReplay: p.ReasoningReplay,
+		OAuthClientID:   SubstituteEnv(p.OAuthClientID),
+		OAuthScope:      SubstituteEnv(p.OAuthScope),
+		OAuthDomain:     SubstituteEnv(p.OAuthDomain),
 	}
 }
 
@@ -545,6 +569,51 @@ func Load() (*Config, error) {
 	if cfg.Hooks.Dir != "" {
 		cfg.Hooks.Dir = expandHomeDir(cfg.Hooks.Dir)
 	}
+
+	// `small_model` was renamed to `compaction_model` (yaah-v378.4);
+	// warn so an upgraded config knows the old key is ignored and
+	// context compaction fell back to the main model.
+	var legacySmallModel struct {
+		Agents struct {
+			Default struct {
+				SmallModel *string `yaml:"small_model"`
+			} `yaml:"default"`
+		} `yaml:"agents"`
+	}
+	if err := yaml.Unmarshal(data, &legacySmallModel); err == nil && legacySmallModel.Agents.Default.SmallModel != nil {
+		fmt.Fprintf(os.Stderr, "warning: config key `agents.default.small_model` was renamed to `compaction_model`; the old key is ignored — compaction uses the default compaction_model unless you set `compaction_model` explicitly\n")
+	}
+
+	// The intent-loop knobs must be coherent: both non-negative (0 =
+	// default) and, when both are set, a halt after the steer.
+	if cfg.Agent.Default.IntentSteerAfter < 0 || cfg.Agent.Default.IntentHaltAfter < 0 {
+		return nil, fmt.Errorf("agents.default.intent_steer_after / intent_halt_after must not be negative")
+	}
+	// Both knobs fall back to the middleware defaults (4 / 8) when unset;
+	// validate the EFFECTIVE pair so neither a low halt nor a high steer can
+	// slip through and be silently clamped later.
+	steer := cfg.Agent.Default.IntentSteerAfter
+	if steer <= 0 {
+		steer = DefaultIntentSteerAfter
+	}
+	halt := cfg.Agent.Default.IntentHaltAfter
+	if halt <= 0 {
+		halt = DefaultIntentHaltAfter
+	}
+	if halt <= steer {
+		return nil, fmt.Errorf("agents.default.intent_halt_after (%d) must be greater than intent_steer_after (%d)", halt, steer)
+	}
+
+	// reasoning_replay must name one of the three strategies; anything
+	// else would silently degrade to the default at replay time.
+	for name, p := range cfg.Providers {
+		switch strings.ToLower(strings.TrimSpace(p.ReasoningReplay)) {
+		case "", "auto", "text", "omit":
+		default:
+			return nil, fmt.Errorf("provider %s: reasoning_replay must be one of auto, text, omit (got %q)", name, p.ReasoningReplay)
+		}
+	}
+
 	if cfg.Agent.Default.ShepherdTracePath != "" {
 		cfg.Agent.Default.ShepherdTracePath = expandHomeDir(cfg.Agent.Default.ShepherdTracePath)
 	}

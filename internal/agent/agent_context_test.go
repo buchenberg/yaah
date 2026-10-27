@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	agentctx "github.com/buchenberg/yaah/internal/agent/context"
+	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -1171,5 +1172,41 @@ func TestProtectReasoningTurns(t *testing.T) {
 				t.Errorf("ProtectReasoningTurns = %d, want %d", got, tt.wantKeepStart)
 			}
 		})
+	}
+}
+
+// TestForceCompact_ReportsSummaryAndMethod pins yaah-v378.5: the manual
+// :compact command renders what the summarizer produced, so ForceCompact
+// must report the summary and the path that produced it. A trim fallback
+// (no summary at all) must be visible as such, never as a stale summary
+// from a previous pass.
+func TestForceCompact_ReportsSummaryAndMethod(t *testing.T) {
+	loop := &Loop{
+		Config: LoopConfig{
+			SystemPrompt:  "test prompt",
+			ContextWindow: 4000,
+			CompactModel:  "test",
+		},
+		Provider:        &fakeProvider{},
+		Registry:        tools.NewRegistry(),
+		CompactProvider: summarizerFake(),
+	}
+	loop.State.Messages = []types.Message{types.SystemMsg("test prompt")}
+	for i := 0; i < 20; i++ {
+		loop.State.Messages = append(loop.State.Messages,
+			types.UserMsg("message "+strings.Repeat("x", 400)),
+			types.AssistantMsg("response "+strings.Repeat("y", 400), nil))
+	}
+
+	res := loop.ForceCompact(context.Background(), 0.0)
+
+	if res.Method != "single" {
+		t.Errorf("Method = %q, want %q", res.Method, "single")
+	}
+	if !strings.Contains(res.Summary, "SUMMARY of earlier conversation") {
+		t.Errorf("Summary = %q, want the produced summary", res.Summary)
+	}
+	if len(loop.State.Messages) >= 41 {
+		t.Errorf("compaction did not reduce the conversation: %d messages", len(loop.State.Messages))
 	}
 }

@@ -149,6 +149,8 @@ func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
 		PermissionRules:          l.Config.PermissionRules,
 		LoopDetectCount:          l.Config.LoopDetectCount,
 		LoopDetectWindow:         l.Config.LoopDetectWindow,
+		IntentSteerAfter:         l.Config.IntentSteerAfter,
+		IntentHaltAfter:          l.Config.IntentHaltAfter,
 		EvidenceGuardNudge:       l.Config.EvidenceGuardNudge,
 		EvidenceGuardHalt:        l.Config.EvidenceGuardHalt,
 		MaxToolConcurrency:       l.Config.MaxToolConcurrency,
@@ -305,6 +307,12 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 
 			step, req, err := l.buildTurnRequest(ctx, iter, messages, pipe, turnSpan)
 			if err != nil {
+				// The turn ends here: end its span so a PrepareStep halt
+				// (intent_loop, middleware errors) does not leak the trace.
+				if turnSpan != nil {
+					observability.RecordError(turnSpan, err)
+					turnSpan.End()
+				}
 				if traceMw != nil {
 					traceMw.FailTurn(ctx, iter, err)
 				}

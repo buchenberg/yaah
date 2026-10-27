@@ -88,7 +88,7 @@ func TestChatRequestToAnthropic_SystemMessages(t *testing.T) {
 		},
 	}
 
-	result := lowerAnthropicRequest(req)
+	result := lowerAnthropicRequest(req, "auto")
 
 	if len(result.System) != 1 {
 		t.Fatalf("expected 1 system block, got %d", len(result.System))
@@ -119,7 +119,7 @@ func TestChatRequestToAnthropic_Conversation(t *testing.T) {
 		},
 	}
 
-	result := lowerAnthropicRequest(req)
+	result := lowerAnthropicRequest(req, "auto")
 
 	if len(result.Messages) != 3 {
 		t.Fatalf("expected 3 messages, got %d", len(result.Messages))
@@ -145,7 +145,7 @@ func TestChatRequestToAnthropic_MergesConsecutiveUser(t *testing.T) {
 		},
 	}
 
-	result := lowerAnthropicRequest(req)
+	result := lowerAnthropicRequest(req, "auto")
 
 	if len(result.Messages) != 1 {
 		t.Fatalf("expected 1 merged message, got %d", len(result.Messages))
@@ -168,7 +168,7 @@ func TestChatRequestToAnthropic_ToolCalls(t *testing.T) {
 		},
 	}
 
-	result := lowerAnthropicRequest(req)
+	result := lowerAnthropicRequest(req, "auto")
 
 	if len(result.Messages) != 3 {
 		t.Fatalf("expected 3 messages (user, assistant, tool_result_user), got %d", len(result.Messages))
@@ -232,7 +232,7 @@ func TestChatRequestToAnthropic_Tools(t *testing.T) {
 		},
 	}
 
-	result := lowerAnthropicRequest(req)
+	result := lowerAnthropicRequest(req, "auto")
 
 	if len(result.Tools) != 1 {
 		t.Fatalf("expected 1 tool, got %d", len(result.Tools))
@@ -268,7 +268,7 @@ func TestChatRequestToAnthropic_ToolSchemaRoundTrip(t *testing.T) {
 			InputSchema map[string]any `json:"input_schema"`
 		} `json:"tools"`
 	}
-	body, err := json.Marshal(lowerAnthropicRequest(req))
+	body, err := json.Marshal(lowerAnthropicRequest(req, "auto"))
 	if err != nil {
 		t.Fatalf("marshal params: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestChatRequestToAnthropic_MaxTokensDefault(t *testing.T) {
 		},
 	}
 
-	result := lowerAnthropicRequest(req)
+	result := lowerAnthropicRequest(req, "auto")
 
 	if result.MaxTokens != 4096 {
 		t.Errorf("expected MaxTokens 4096, got %d", result.MaxTokens)
@@ -318,7 +318,7 @@ func TestChatRequestToAnthropic_MaxTokensExplicit(t *testing.T) {
 		},
 	}
 
-	result := lowerAnthropicRequest(req)
+	result := lowerAnthropicRequest(req, "auto")
 
 	if result.MaxTokens != 8000 {
 		t.Errorf("expected MaxTokens 8000, got %d", result.MaxTokens)
@@ -419,7 +419,7 @@ func TestChatRequestToAnthropic_CacheControlPassthrough(t *testing.T) {
 		},
 	}
 
-	result := lowerAnthropicRequest(req)
+	result := lowerAnthropicRequest(req, "auto")
 
 	if result.System[0].CacheControl.Type != "ephemeral" {
 		t.Errorf("expected cache_control type 'ephemeral' on system block, got %q", result.System[0].CacheControl.Type)
@@ -448,7 +448,7 @@ func TestChatRequestToAnthropic_ReasoningContent(t *testing.T) {
 		},
 	}
 
-	result := lowerAnthropicRequest(req)
+	result := lowerAnthropicRequest(req, "auto")
 
 	blocks := result.Messages[0].Content
 	if len(blocks) != 2 {
@@ -470,8 +470,42 @@ func TestChatRequestToAnthropic_ReasoningContent(t *testing.T) {
 	}
 }
 
-// A thinking block without its signature cannot be replayed: Anthropic rejects
-// an invalid signature, so omit the block rather than send it empty.
+// With the default reasoning_replay=auto, a thinking block without its
+// signature is replayed as a plain TEXT block: it cannot go back as
+// thinking, but dropping it costs the model its chain-of-thought and made
+// reasoning models re-derive state every turn (yaah-v378.6).
+func TestChatRequestToAnthropic_ThinkingWithoutSignatureReplaysAsText(t *testing.T) {
+	req := types.ChatRequest{
+		Model:     "claude-3.5-sonnet",
+		MaxTokens: 1000,
+		Messages: []types.Message{
+			{Role: "assistant", ReasoningContent: "orphaned thinking", Content: "The answer is 42."},
+		},
+	}
+
+	result := lowerAnthropicRequest(req, "auto")
+
+	var sawThinking, sawReasoningAsText bool
+	for _, b := range result.Messages[0].Content {
+		switch blockType(b) {
+		case "thinking":
+			sawThinking = true
+		case "text":
+			if strings.Contains(blockText(b), "orphaned thinking") {
+				sawReasoningAsText = true
+			}
+		}
+	}
+	if sawThinking {
+		t.Fatal("an unsigned thinking block must not be replayed as thinking")
+	}
+	if !sawReasoningAsText {
+		t.Error("unsigned reasoning must be replayed as text under reasoning_replay=auto")
+	}
+}
+
+// reasoning_replay: omit restores the old behavior — unsigned thinking is
+// dropped entirely, neither as thinking nor as text.
 func TestChatRequestToAnthropic_ThinkingWithoutSignatureIsOmitted(t *testing.T) {
 	req := types.ChatRequest{
 		Model:     "claude-3.5-sonnet",
@@ -481,12 +515,49 @@ func TestChatRequestToAnthropic_ThinkingWithoutSignatureIsOmitted(t *testing.T) 
 		},
 	}
 
-	result := lowerAnthropicRequest(req)
+	result := lowerAnthropicRequest(req, "omit")
 
 	for _, b := range result.Messages[0].Content {
 		if blockType(b) == "thinking" {
-			t.Fatal("a thinking block with no signature must not be emitted")
+			t.Fatal("a thinking block with no signature must not be emitted under reasoning_replay=omit")
 		}
+		if strings.Contains(blockText(b), "orphaned thinking") {
+			t.Fatal("a thinking block with no signature must not be replayed as text under reasoning_replay=omit")
+		}
+	}
+}
+
+// reasoning_replay: text downgrades even SIGNED reasoning to a text block,
+// for endpoints that reject valid thinking replay.
+func TestChatRequestToAnthropic_TextStrategyDowngradesSignedThinking(t *testing.T) {
+	req := types.ChatRequest{
+		Model:     "claude-3.5-sonnet",
+		MaxTokens: 1000,
+		Messages: []types.Message{
+			{
+				Role:               "assistant",
+				ReasoningContent:   "Let me think about this...",
+				ReasoningSignature: "sig-abc123",
+				Content:            "The answer is 42.",
+			},
+		},
+	}
+
+	result := lowerAnthropicRequest(req, "text")
+
+	for _, b := range result.Messages[0].Content {
+		if blockType(b) == "thinking" {
+			t.Fatal("reasoning_replay=text must not emit thinking blocks")
+		}
+	}
+	var sawReasoningAsText bool
+	for _, b := range result.Messages[0].Content {
+		if strings.Contains(blockText(b), "Let me think about this...") {
+			sawReasoningAsText = true
+		}
+	}
+	if !sawReasoningAsText {
+		t.Error("reasoning_replay=text must keep the reasoning in context as text")
 	}
 }
 
@@ -500,7 +571,7 @@ func TestChatRequestToAnthropic_TemperaturePassthrough(t *testing.T) {
 		},
 	}
 
-	result := lowerAnthropicRequest(req)
+	result := lowerAnthropicRequest(req, "auto")
 
 	if !result.Temperature.Valid() || result.Temperature.Or(0) != 0.7 {
 		t.Errorf("expected Temperature 0.7, got valid=%v value=%v", result.Temperature.Valid(), result.Temperature.Or(0))
@@ -516,7 +587,7 @@ func TestChatRequestToAnthropic_EmptySystem(t *testing.T) {
 		},
 	}
 
-	result := lowerAnthropicRequest(req)
+	result := lowerAnthropicRequest(req, "auto")
 
 	if len(result.System) != 0 {
 		t.Errorf("expected 0 system blocks, got %d", len(result.System))
@@ -547,7 +618,7 @@ func TestChatRequestToAnthropic_PreservesModel(t *testing.T) {
 		},
 	}
 
-	result := lowerAnthropicRequest(req)
+	result := lowerAnthropicRequest(req, "auto")
 
 	if result.Model != "claude-3-opus" {
 		t.Errorf("expected model 'claude-3-opus', got %q", result.Model)
@@ -567,7 +638,7 @@ func TestChatRequestToAnthropic_ToolResultWithoutUser(t *testing.T) {
 		},
 	}
 
-	result := lowerAnthropicRequest(req)
+	result := lowerAnthropicRequest(req, "auto")
 
 	lastMsg := result.Messages[len(result.Messages)-1]
 	if lastMsg.Role != "user" {
@@ -598,7 +669,7 @@ func TestChatRequestToAnthropic_UserWithToolResults(t *testing.T) {
 		},
 	}
 
-	result := lowerAnthropicRequest(req)
+	result := lowerAnthropicRequest(req, "auto")
 
 	secondUser := result.Messages[2]
 	if secondUser.Role != "user" {
@@ -646,7 +717,7 @@ func TestChatRequestToAnthropic_ToolResultBeforeAssistant(t *testing.T) {
 		},
 	}
 
-	result := lowerAnthropicRequest(req)
+	result := lowerAnthropicRequest(req, "auto")
 
 	// system is hoisted out: user, assistant(tool_use), user(tool_result),
 	// assistant(text), user(text)
@@ -1354,7 +1425,7 @@ func TestAnthropicToolDescription_OmittedWhenEmpty(t *testing.T) {
 		},
 	}
 
-	body, err := json.Marshal(lowerAnthropicRequest(req))
+	body, err := json.Marshal(lowerAnthropicRequest(req, "auto"))
 	if err != nil {
 		t.Fatalf("marshal params: %v", err)
 	}

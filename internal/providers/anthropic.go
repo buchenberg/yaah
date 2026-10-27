@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -35,6 +37,32 @@ type AnthropicClient struct {
 	// there) and 16384 for Anthropic-compatible endpoints (DeepSeek, ZAI,
 	// ...), which bill thinking tokens against max_tokens.
 	DefaultMaxTokens int
+
+	// ReasoningReplay selects how assistant thinking that lacks a
+	// provider signature is replayed: "auto" (the default) re-sends it
+	// as a plain text block so the model keeps its chain-of-thought
+	// across turns, "omit" drops it (the pre-2026-10 behavior, which
+	// made reasoning models re-derive state every turn — yaah-v378.6),
+	// and "text" re-sends even signed reasoning as text for endpoints
+	// that reject valid thinking replay. Normalized via reasoningReplay.
+	ReasoningReplay string
+
+	// unsignedReasoningWarn fires the once-per-client notice about
+	// signature-less reasoning.
+	unsignedReasoningWarn sync.Once
+}
+
+// reasoningReplay normalizes the configured strategy; "" and unknown
+// values mean auto.
+func (c *AnthropicClient) reasoningReplay() string {
+	switch strings.ToLower(strings.TrimSpace(c.ReasoningReplay)) {
+	case "text":
+		return "text"
+	case "omit":
+		return "omit"
+	default:
+		return "auto"
+	}
 }
 
 const (
@@ -132,7 +160,19 @@ func (c *AnthropicClient) lower(req types.ChatRequest) anthropic.MessageNewParam
 	if req.MaxTokens <= 0 {
 		req.MaxTokens = c.EffectiveMaxTokens(req)
 	}
-	return lowerAnthropicRequest(req)
+	if replay := c.reasoningReplay(); replay != "omit" {
+		for _, m := range req.Messages {
+			if m.Role == "assistant" && m.ReasoningContent != "" && m.ReasoningSignature == "" {
+				c.unsignedReasoningWarn.Do(func() {
+					slog.Warn("reasoning: assistant turns carry thinking without a provider signature; " +
+						"replaying it as plain text so the model keeps its chain-of-thought " +
+						"(reasoning_replay=auto). Set reasoning_replay: omit on the provider to drop it.")
+				})
+				break
+			}
+		}
+	}
+	return lowerAnthropicRequest(req, c.reasoningReplay())
 }
 
 // EffectiveMaxTokens reports the output cap lower applies to req: an
@@ -208,7 +248,7 @@ func anthropicTextBlock(text string, cc *types.CacheControl) anthropic.ContentBl
 //     next assistant turn (every tool_use must be answered by tool_result
 //     blocks in the immediately following user message)
 //   - consecutive user messages merge into one multi-block message
-func lowerAnthropicRequest(req types.ChatRequest) anthropic.MessageNewParams {
+func lowerAnthropicRequest(req types.ChatRequest, replay string) anthropic.MessageNewParams {
 	var sysBlocks []anthropic.TextBlockParam
 	var convMessages []types.Message
 
@@ -263,12 +303,23 @@ func lowerAnthropicRequest(req types.ChatRequest) anthropic.MessageNewParams {
 			flushToolResults()
 
 			var blocks []anthropic.ContentBlockParamUnion
-			// A thinking block must carry the provider's opaque signature
-			// verbatim. Fabricating an empty one is rejected with "the
-			// thinking mode must be passed back to the API", so omit the
-			// block entirely when the signature was never captured.
-			if m.ReasoningContent != "" && m.ReasoningSignature != "" {
-				blocks = append(blocks, anthropic.NewThinkingBlock(m.ReasoningSignature, m.ReasoningContent))
+			// A signed thinking block is replayed verbatim — the signature
+			// is opaque and fabricating one is rejected with "the thinking
+			// mode must be passed back to the API". An UNSIGNED thinking
+			// block cannot be replayed as thinking, but dropping it costs
+			// the model its entire chain-of-thought: a reasoning model
+			// that never sees its own conclusions re-derives state every
+			// turn and loops (yaah-v378.6). Replay unsigned reasoning as
+			// plain text unless the provider opts out with
+			// reasoning_replay: omit; reasoning_replay: text also
+			// downgrades signed blocks for endpoints that reject valid
+			// thinking replay.
+			if m.ReasoningContent != "" && (m.ReasoningSignature != "" || replay != "omit") {
+				if m.ReasoningSignature != "" && replay != "text" {
+					blocks = append(blocks, anthropic.NewThinkingBlock(m.ReasoningSignature, m.ReasoningContent))
+				} else {
+					blocks = append(blocks, anthropicTextBlock(m.ReasoningContent, nil))
+				}
 			}
 			if m.Content != "" {
 				blocks = append(blocks, anthropicTextBlock(m.Content, nil))
