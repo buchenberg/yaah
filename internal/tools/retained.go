@@ -332,7 +332,12 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	// it — and hand the report straight back.
 	if report {
 		if provErr != nil {
-			result = retainedNote(result, provErr.Error())
+			// A provisioning error's reason is at its front, so it is
+			// head-capped here — the note budget of foldRetainedPartial
+			// tail-keeps, which would keep the wrong half. Bounding here
+			// also keeps a success-lane result (bodyErr == nil) inside
+			// the tool-result cap this file's tools observe.
+			result = retainedNote(result, truncateAt(provErr.Error(), noteBudget))
 		}
 		// yaah-atn: a report dispatch registers no proposal, so a scratch
 		// that does not come down has no record to be recovered through
@@ -443,16 +448,18 @@ func splitRetainedNote(partial string) (body, note string) {
 	return partial, ""
 }
 
+// Note budgets for the report lane: a provisioning error is head-capped at
+// its call site (its reason is at the front), and a caveat folded into a
+// delegate error is tail-capped by foldRetainedPartial (a teardown note ends
+// with the worktree path it reports).
+const noteBudget = 4096
+
 // foldRetainedPartial projects a failed operation's partial result into an
 // error text. Both halves are bounded, because the loop delivers error text
 // verbatim: the body keeps its head (the part that orients), the caveat
 // keeps its tail (teardown notes end with the worktree path they report).
 func foldRetainedPartial(body, note string) string {
-	const (
-		bodyBudget = toolResultMaxBytes
-		noteBudget = 4096
-	)
-	return retainedNote(truncateAt(body, bodyBudget), keepTail(note, noteBudget))
+	return retainedNote(truncateAt(body, toolResultMaxBytes), keepTail(note, noteBudget))
 }
 
 // worktreeOnDisk reports whether a worktree directory still exists.

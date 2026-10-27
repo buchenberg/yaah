@@ -707,7 +707,9 @@ func TestDelegate_ClassifyGenericErrorKeepsHeadAndNoteOfOversizedPartial(t *test
 
 // TestDelegate_ClassifyGenericErrorBoundsAnOversizedNote: the caveat half is
 // bounded too — retainedNote can attach a full provisioning error — and
-// keepTail keeps its tail, which is where the worktree path lives.
+// keepTail keeps its tail, which is where the worktree path lives. The
+// ceiling pins noteBudget, not the body cap, so widening the caveat budget
+// cannot slip through.
 func TestDelegate_ClassifyGenericErrorBoundsAnOversizedNote(t *testing.T) {
 	tool := &DelegateTool{}
 	note := "note: provisioning failed: " + strings.Repeat("provider diagnostics ", 400) +
@@ -717,8 +719,11 @@ func TestDelegate_ClassifyGenericErrorBoundsAnOversizedNote(t *testing.T) {
 	if err == nil {
 		t.Fatal("a generic runner error must stay an error")
 	}
-	if len(err.Error()) > len("max iterations reached\n")+toolResultMaxBytes+len(noteBudgetMarkers())+16 {
-		t.Errorf("folded error is unbounded: %d bytes", len(err.Error()))
+	// Body is empty here (the whole partial is the caveat), so the error is
+	// the cause, a newline, and "note: " + at most noteBudget tail bytes.
+	ceiling := len("max iterations reached\n") + len("note: ") + noteBudget + len(tailTruncationMarker) + 16
+	if len(err.Error()) > ceiling {
+		t.Errorf("folded error exceeds the note budget: %d bytes, want <= %d", len(err.Error()), ceiling)
 	}
 	if !strings.Contains(err.Error(), "left the worktree at /tmp/wt/scratch") {
 		t.Errorf("note tail-keeping lost the worktree path: %v", err)
@@ -726,12 +731,6 @@ func TestDelegate_ClassifyGenericErrorBoundsAnOversizedNote(t *testing.T) {
 	if !strings.Contains(err.Error(), tailTruncationMarker) {
 		t.Errorf("a cut note must carry the tail truncation marker: %v", err)
 	}
-}
-
-// noteBudgetMarkers upper-bounds both truncation markers a folded error can
-// carry.
-func noteBudgetMarkers() string {
-	return truncationMarker + tailTruncationMarker
 }
 
 // TestDelegate_ClassifyGenericErrorWithoutPartialStaysBare: nothing to
