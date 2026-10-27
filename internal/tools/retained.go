@@ -68,7 +68,16 @@ type proposalEnvelope struct {
 	Files      []string `json:"files,omitempty"`
 	Action     string   `json:"action,omitempty"`
 	Error      string   `json:"error,omitempty"`
-	Next       []string `json:"next,omitempty"`
+	// Retained is the path of the exported delta for a release, proving the
+	// work survived the teardown that follows it.
+	Retained string `json:"retained,omitempty"`
+	// Notes carries caveats that do not invalidate the settlement — e.g. a
+	// failed teardown that stranded the worktree.
+	Notes string `json:"notes,omitempty"`
+	// Outcome is the rendered Outcome{Work,Scope,Record,Notes} block for the
+	// settlement (yaah-lka3: report state, not just a completion word).
+	Outcome string   `json:"outcome,omitempty"`
+	Next    []string `json:"next,omitempty"`
 }
 
 // proposalVerbs is the settlement vocabulary advertised to the orchestrator,
@@ -297,7 +306,28 @@ func settleRetainedProposal(ctx context.Context, id, action string) (string, err
 		return "", fmt.Errorf("proposal: unknown action %q (select, apply, release, discard)", action)
 	}
 
-	env := proposalEnvelope{Status: "settled", ProposalID: id, Action: action}
+	env := proposalEnvelope{
+		Status:     "settled",
+		ProposalID: id,
+		Action:     action,
+		Files:      changesPaths(p.output.Changes()),
+	}
+
+	// Release integrates nothing and leaves the isolated scope — and its
+	// worktree — untouched (the kernel's release is "keep, don't integrate").
+	// Because the sealed delta never reaches the parent, export it to disk
+	// BEFORE Settle consumes the sealed output; if the export fails, the
+	// output is still intact and the release can be retried.
+	if verb == goatherd.SettleRelease {
+		retained, err := exportReleasedDelta(p)
+		if err != nil {
+			// Do NOT tear down on an export failure: the worktree still holds
+			// the delta, so leaving it in place is safer than destroying it.
+			return "", fmt.Errorf("proposal %s: release could not preserve the delta: %w", id, err)
+		}
+		env.Retained = retained
+	}
+
 	if err := p.output.Settle(ctx, verb); err != nil {
 		switch {
 		case errors.Is(err, goatherd.ErrOutputConsumed):
@@ -314,13 +344,15 @@ func settleRetainedProposal(ctx context.Context, id, action string) (string, err
 		}
 	}
 
-	// Release integrates nothing and leaves the isolated scope — and its
-	// worktree — untouched (the kernel's release is "keep, don't integrate"), so
-	// tear the child down here rather than strand the worktree. Select, Apply,
-	// and Discard already end the child scope themselves.
+	// Only after a successful release settle do we tear the child down;
+	// select, apply, and discard already end the child scope themselves.
 	if verb == goatherd.SettleRelease {
-		teardownReleasedProposal(p)
+		if err := teardownReleasedProposal(p); err != nil {
+			env.Notes = fmt.Sprintf("release worktree teardown failed: %v; worktree stranded at %s", err, p.workdir)
+		}
 	}
+
+	env.Outcome = settleOutcome(verb, p, env).String()
 
 	// Consume-once: a settled proposal leaves the registry.
 	retainedProposals.mu.Lock()
@@ -330,21 +362,80 @@ func settleRetainedProposal(ctx context.Context, id, action string) (string, err
 }
 
 // teardownReleasedProposal discards the isolated child scope a released
-// proposal owned, removing its worktree. Best-effort: the record is already
-// settled either way.
-func teardownReleasedProposal(p *retainedProposal) {
+// proposal owned, removing its worktree. It returns an error when the scope
+// could not be discarded, in which case the worktree is left stranded.
+func teardownReleasedProposal(p *retainedProposal) error {
 	if p.mgr == nil {
-		return
+		return nil
 	}
 	parent, ok := p.mgr.Get(p.parentID)
 	if !ok {
-		return
+		return nil
 	}
 	scope, ok := p.mgr.Get(p.scopeID)
 	if !ok {
-		return
+		return nil
 	}
-	_ = parent.Discard(scope)
+	return parent.Discard(scope)
+}
+
+// exportReleasedDelta writes the sealed delta of a released proposal to a
+// retention path next to its worktree, so release is honest about preserving
+// the work before the worktree is torn down. It returns the path written.
+func exportReleasedDelta(p *retainedProposal) (string, error) {
+	if p.output == nil {
+		return "", fmt.Errorf("no sealed output to export")
+	}
+	dir := filepath.Join(filepath.Dir(p.workdir), "releases")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, sanitizeRetainedID(p.id)+".release.patch")
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "release record for proposal %s\n", p.id)
+	if p.result != "" {
+		fmt.Fprintf(&b, "\nresult:\n%s\n", p.result)
+	}
+	if files := changesPaths(p.output.Changes()); len(files) > 0 {
+		fmt.Fprintf(&b, "\nfiles:\n%s\n", strings.Join(files, "\n"))
+	}
+	fmt.Fprintf(&b, "\ndiff:\n%s\n", p.output.Diff())
+
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// settleOutcome renders the four-field Outcome for a settled proposal so the
+// envelope carries "state, not completion" in one place (yaah-lka3).
+func settleOutcome(verb goatherd.SettlementAction, p *retainedProposal, env proposalEnvelope) Outcome {
+	oc := Outcome{
+		Scope:  strings.Join(env.Files, ", "),
+		Record: "proposal " + p.id,
+		Notes:  env.Notes,
+	}
+	switch verb {
+	case goatherd.SettleSelect:
+		oc.Work = "worktree landed"
+	case goatherd.SettleApply:
+		oc.Work = "delta integrated into parent"
+	case goatherd.SettleRelease:
+		oc.Work = "delta exported and worktree torn down"
+		oc.Record = "retained " + env.Retained
+	case goatherd.SettleDiscard:
+		oc.Work = "delta discarded"
+		oc.Record = ""
+	}
+	return oc
+}
+
+// sanitizeRetainedID maps proposal ids to path-safe segment names (ids may
+// contain colons and slashes, which are legal in memory but not on every
+// filesystem).
+func sanitizeRetainedID(id string) string {
+	return strings.NewReplacer(":", "-", "/", "-", "\\", "-").Replace(id)
 }
 
 // settlementVerb maps a proposal verb to the kernel's settlement action.

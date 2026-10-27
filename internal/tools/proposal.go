@@ -10,9 +10,9 @@ import (
 // dispatch (delegate in "retained" mode) runs a sub-agent in an isolated
 // worktree and seals its delta into a proposal; the orchestrator reads it and
 // settles it once — select (fast-forward), apply (three-way, path-disjoint),
-// release (keep the landed work, drop the record), or discard (throw it away and
-// remove its worktree). The verbs mirror Shepherd's run select | apply | release
-// | discard.
+// release (export the delta, then tear the worktree down), or discard (throw it
+// away and remove its worktree). The verbs mirror Shepherd's run select | apply
+// | release | discard.
 type ProposalTool struct{}
 
 func (*ProposalTool) Name() string { return "proposal" }
@@ -28,7 +28,7 @@ func (*ProposalTool) Schema() json.RawMessage {
 			"action": {
 				"type": "string",
 				"enum": ["list", "show", "select", "apply", "release", "discard"],
-				"description": "list: show open proposals; show: one proposal's diff and files; select: fast-forward the proposal onto the working tree — fails closed if the tree moved since the dispatch; apply: three-way merge onto a moved tree, path-disjoint or refused; release: keep the landed work, drop the record; discard: throw the proposal away and remove its worktree"
+				"description": "list: show open proposals; show: one proposal's diff and files; select: fast-forward the proposal onto the working tree — fails closed if the tree moved since the dispatch; apply: three-way merge onto a moved tree, path-disjoint or refused; release: export the delta to a retention path, then tear the worktree down; discard: throw the proposal away and remove its worktree"
 			},
 			"proposal_id": {
 				"type": "string",

@@ -212,7 +212,8 @@ func TestRetained_ReleaseRemovesWorktree(t *testing.T) {
 	env := decodeProposalEnvelope(t, res)
 	wt := runner.workdirFor(t, 0)
 
-	if _, err := settleRetainedProposal(context.Background(), env.ProposalID, "release"); err != nil {
+	settled, err := settleRetainedProposal(context.Background(), env.ProposalID, "release")
+	if err != nil {
 		t.Fatalf("release: %v", err)
 	}
 	if _, err := os.Stat(wt); !os.IsNotExist(err) {
@@ -220,6 +221,58 @@ func TestRetained_ReleaseRemovesWorktree(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(rt.RepoPath, "out.txt")); !os.IsNotExist(err) {
 		t.Errorf("release must not touch the host (stat err=%v)", err)
+	}
+
+	// yaah-0e4: release must report where the sealed delta went — and it must
+	// actually exist there — before the worktree is destroyed.
+	senv := decodeProposalEnvelope(t, settled)
+	if senv.Retained == "" {
+		t.Fatalf("release envelope must carry a retained path, got %#v", senv)
+	}
+	if data, err := os.ReadFile(senv.Retained); err != nil {
+		t.Errorf("retained delta not readable at %s: %v", senv.Retained, err)
+	} else if string(data) == "" {
+		t.Errorf("retained delta at %s is empty", senv.Retained)
+	}
+}
+
+// TestRetained_ReleaseTeardownFailureSurfaced pins yaah-wpf: when the child
+// scope cannot be torn down after a release, the failure must reach the
+// envelope's Notes — with the stranded worktree path — instead of being
+// swallowed while the tool claims a clean settlement.
+func TestRetained_ReleaseTeardownFailureSurfaced(t *testing.T) {
+	resetRetainedProposals()
+	runner := writingRunner(t, "out.txt")
+	rt := newRetainedTestEnv(t, runner)
+
+	res, _ := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 0, false)
+	env := decodeProposalEnvelope(t, res)
+
+	// Discard the child scope out from under the proposal so the release
+	// teardown's parent.Discard(child) deterministically fails.
+	p := retainedProposals.byID[env.ProposalID]
+	parent, ok := p.mgr.Get(p.parentID)
+	if !ok {
+		t.Fatalf("parent scope %s not found", p.parentID)
+	}
+	child, ok := p.mgr.Get(p.scopeID)
+	if !ok {
+		t.Fatalf("child scope %s not found", p.scopeID)
+	}
+	if err := parent.Discard(child); err != nil {
+		t.Fatalf("pre-discard: %v", err)
+	}
+
+	settled, err := settleRetainedProposal(context.Background(), env.ProposalID, "release")
+	if err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	senv := decodeProposalEnvelope(t, settled)
+	if senv.Notes == "" {
+		t.Fatalf("teardown failure must surface in Notes, got %#v", senv)
+	}
+	if senv.Status != "settled" {
+		t.Errorf("release itself settled; status = %q, want settled", senv.Status)
 	}
 }
 
