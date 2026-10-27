@@ -169,8 +169,8 @@ func (c *AnthropicClient) acceptReplayFallback() {
 
 // looksLikeThinkingReplayRejection restricts the fallback to 400s about
 // replayed thinking. Thinking-related wording always qualifies. A bare
-// signature complaint qualifies only when the provider classified the
-// error as invalid_request_error: auth and gateway signature failures use
+// signature complaint qualifies when the provider labels it an invalid
+// request or omits the code (common for gateways): auth failures carry
 // authentication_error (or a non-400 status), while a signature-validating
 // gateway rejecting the replayed block reports invalid_request_error.
 //
@@ -191,7 +191,12 @@ func looksLikeThinkingReplayRejection(code, message string) bool {
 			}
 		}
 	}
-	return strings.Contains(msg, "signature") && code == "invalid_request_error"
+	// A bare signature complaint also qualifies when the provider labels
+	// it an invalid request, or omits a code entirely (common for
+	// gateways). Auth failures carry authentication_error and must not
+	// downgrade replay.
+	code = strings.ToLower(strings.TrimSpace(code))
+	return strings.Contains(msg, "signature") && (code == "" || code == "invalid_request_error")
 }
 
 const (
