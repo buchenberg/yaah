@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.106.2](https://github.com/buchenberg/yaah/compare/v0.106.1...v0.106.2) (2026-10-27)
+
+
+### Bug Fixes
+
+* **tui:** mirror the prompt_caching knob in the pane; correct the sub-agent doc list ([35b1731](https://github.com/buchenberg/yaah/commit/35b173160becd233b5aac014d56a46f738055a4c))
+* **tui:** show the resolved middleware pipeline in the info pane ([f466a3f](https://github.com/buchenberg/yaah/commit/f466a3f4f3c4c3c53667e42c762bb6ad96e22983))
+* **tui:** show the resolved middleware pipeline in the info pane ([e62bddd](https://github.com/buchenberg/yaah/commit/e62bddd30f9418257edbe548f6d936f952d55481))
+
 ## [0.106.1](https://github.com/buchenberg/yaah/compare/v0.106.0...v0.106.1) (2026-10-27)
 
 
