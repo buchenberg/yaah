@@ -443,3 +443,207 @@ func TestExecute_LaneForRoleRouting(t *testing.T) {
 		}
 	})
 }
+
+// capturingRunner records the params Execute forwarded so a test can
+// assert the clamped values that actually reached the runner.
+func capturingRunner(rec *SubAgentParams) TaskRunner {
+	return func(ctx context.Context, prompt string, params SubAgentParams) (string, error) {
+		*rec = params
+		return "ok", nil
+	}
+}
+
+// TestExecute_ClampsNumericParams pins yaah-pgk: JSON Schema bounds are
+// advisory — nothing in the transport validates them — so every numeric
+// delegate param is clamped to the advertised bound before it reaches the
+// runner. An injected payload can otherwise send a negative value or 10^6
+// and neutralize the deadline or iterate forever.
+//
+// 0 is the "unset, use the role's own budget" sentinel for every one of
+// these params, so a clamped-away value must land on 0 rather than being
+// turned into a default: only values actually provided are clamped.
+func TestExecute_ClampsNumericParams(t *testing.T) {
+	tests := []struct {
+		name        string
+		params      string
+		wantIter    int
+		wantTurns   int
+		wantOutput  int
+		wantTimeout int
+	}{
+		// max_turns: schema "minimum": 1, "maximum": 50.
+		{"max_turns over the maximum is capped", `"max_turns":1000000`, 0, 50, 0, 0},
+		{"max_turns at the maximum is honoured", `"max_turns":50`, 0, 50, 0, 0},
+		{"max_turns inside the window is honoured", `"max_turns":7`, 0, 7, 0, 0},
+		{"max_turns negative falls back to the role default", `"max_turns":-3`, 0, 0, 0, 0},
+		{"max_turns absent stays unset", ``, 0, 0, 0, 0},
+
+		// max_iterations: schema "minimum": 1, "maximum": 50.
+		{"max_iterations over the maximum is capped", `"max_iterations":1000000`, 50, 0, 0, 0},
+		{"max_iterations at the maximum is honoured", `"max_iterations":50`, 50, 0, 0, 0},
+		{"max_iterations negative falls back to the role default", `"max_iterations":-2`, 0, 0, 0, 0},
+		{"max_iterations absent stays unset", ``, 0, 0, 0, 0},
+
+		// timeout_seconds: not in the schema (roles own timeouts); the
+		// 600s cap is the documented ceiling in clampTimeoutSeconds.
+		{"timeout_seconds over the maximum is capped", `"timeout_seconds":1000000`, 0, 0, 0, 600},
+		{"timeout_seconds negative falls back to the role default", `"timeout_seconds":-30`, 0, 0, 0, 0},
+
+		// output_limit: schema "minimum": 1024, no maximum.
+		{"output_limit below the minimum is raised to it", `"output_limit":512`, 0, 0, 1024, 0},
+		{"output_limit at the minimum is honoured", `"output_limit":1024`, 0, 0, 1024, 0},
+		{"output_limit above the minimum is honoured", `"output_limit":8192`, 0, 0, 8192, 0},
+		{"output_limit has no advertised maximum so a large value stands", `"output_limit":1048576`, 0, 0, 1048576, 0},
+		{"output_limit negative falls back to the role default", `"output_limit":-1`, 0, 0, 0, 0},
+		{"output_limit absent stays unset", ``, 0, 0, 0, 0},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var got SubAgentParams
+			tt := &DelegateTool{
+				RoleNames: []string{"analyst"},
+				Runner:    capturingRunner(&got),
+			}
+			args := `{"description":"d","prompt":"p","role":"analyst"`
+			if tc.params != "" {
+				args += "," + tc.params
+			}
+			args += "}"
+
+			if _, err := tt.Execute(context.Background(), args); err != nil {
+				t.Fatalf("Execute(%s): %v", args, err)
+			}
+			if got.MaxToolTurns != tc.wantTurns {
+				t.Errorf("runner got max_turns=%d, want %d", got.MaxToolTurns, tc.wantTurns)
+			}
+			if got.MaxLoopCycles != tc.wantIter {
+				t.Errorf("runner got max_iterations=%d, want %d", got.MaxLoopCycles, tc.wantIter)
+			}
+			if got.OutputLimit != tc.wantOutput {
+				t.Errorf("runner got output_limit=%d, want %d", got.OutputLimit, tc.wantOutput)
+			}
+			if got.TimeoutSeconds != tc.wantTimeout {
+				t.Errorf("runner got timeout_seconds=%d, want %d", got.TimeoutSeconds, tc.wantTimeout)
+			}
+		})
+	}
+}
+
+// TestClampMaxToolTurns covers the max_turns window in isolation, including
+// the 0/absent sentinel that must survive unchanged.
+func TestClampMaxToolTurns(t *testing.T) {
+	tests := []struct {
+		name string
+		in   int
+		want int
+	}{
+		{"over the maximum is capped", 1000000, 50},
+		{"one over the maximum is capped", 51, 50},
+		{"at the maximum is honoured", 50, 50},
+		{"inside the window is honoured", 12, 12},
+		{"at the minimum is honoured", 1, 1},
+		{"zero means unset and is preserved", 0, 0},
+		{"negative means unset", -3, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := clampMaxToolTurns(tc.in); got != tc.want {
+				t.Errorf("clampMaxToolTurns(%d) = %d, want %d", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestClampOutputLimit covers the 1024-byte floor. The schema advertises no
+// maximum, so none is enforced here — a bigger cap is the orchestrator's
+// call, not a containment property.
+func TestClampOutputLimit(t *testing.T) {
+	tests := []struct {
+		name string
+		in   int
+		want int
+	}{
+		{"below the minimum is raised to it", 512, 1024},
+		{"one below the minimum is raised to it", 1023, 1024},
+		{"at the minimum is honoured", 1024, 1024},
+		{"above the minimum is honoured", 51200, 51200},
+		{"a very large value stands (no advertised maximum)", 1048576, 1048576},
+		{"zero means unset and is preserved", 0, 0},
+		{"negative means unset", -1024, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := clampOutputLimit(tc.in); got != tc.want {
+				t.Errorf("clampOutputLimit(%d) = %d, want %d", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSchema_BoundsMatchClamp keeps the runtime clamp and the advertised
+// bounds from drifting apart: the clamp is only as honest as the numbers the
+// model was told, and the schema is only as honest as what the runtime does
+// with a value that honours it. Every schema variant is checked, because the
+// fallback literal schema and the generated enum schema are separate
+// declarations.
+func TestSchema_BoundsMatchClamp(t *testing.T) {
+	type bounds struct {
+		min    float64
+		max    float64
+		hasMax bool
+	}
+	want := map[string]bounds{
+		"max_iterations": {min: 1, max: 50, hasMax: true},
+		"max_turns":      {min: 1, max: 50, hasMax: true},
+		"output_limit":   {min: 1024, hasMax: false},
+	}
+
+	schemas := map[string]*DelegateTool{
+		"enum schema":     {RoleNames: []string{"analyst"}},
+		"fallback schema": {},
+	}
+	for name, tool := range schemas {
+		t.Run(name, func(t *testing.T) {
+			var parsed struct {
+				Properties map[string]struct {
+					Minimum *float64 `json:"minimum"`
+					Maximum *float64 `json:"maximum"`
+				} `json:"properties"`
+			}
+			if err := json.Unmarshal(tool.Schema(), &parsed); err != nil {
+				t.Fatalf("invalid schema JSON: %v", err)
+			}
+			for prop, w := range want {
+				p, ok := parsed.Properties[prop]
+				if !ok {
+					t.Fatalf("schema is missing %q", prop)
+				}
+				if p.Minimum == nil || *p.Minimum != w.min {
+					t.Errorf("%s minimum = %v, want %v", prop, p.Minimum, w.min)
+				}
+				if w.hasMax {
+					if p.Maximum == nil || *p.Maximum != w.max {
+						t.Errorf("%s maximum = %v, want %v", prop, p.Maximum, w.max)
+					}
+					continue
+				}
+				if p.Maximum != nil {
+					t.Errorf("%s advertises maximum %v but no clamp enforces it", prop, *p.Maximum)
+				}
+			}
+
+			// The clamp must agree with what the schema promised: over-max is
+			// capped to the maximum, below-min is answered per bound style.
+			if got := clampMaxToolTurns(int(want["max_turns"].max) + 1); float64(got) != want["max_turns"].max {
+				t.Errorf("clampMaxToolTurns above the schema maximum = %d, want %v", got, want["max_turns"].max)
+			}
+			if got := clampMaxLoopCycles(int(want["max_iterations"].max) + 1); float64(got) != want["max_iterations"].max {
+				t.Errorf("clampMaxLoopCycles above the schema maximum = %d, want %v", got, want["max_iterations"].max)
+			}
+			if got := clampOutputLimit(int(want["output_limit"].min) - 1); float64(got) != want["output_limit"].min {
+				t.Errorf("clampOutputLimit below the schema minimum = %d, want %v", got, want["output_limit"].min)
+			}
+		})
+	}
+}

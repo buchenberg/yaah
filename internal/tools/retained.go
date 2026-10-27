@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,6 +54,12 @@ type RetainedRuntime struct {
 	// WorktreeBootstrap runs inside each worktree after creation, for repos
 	// whose build needs gitignored artifacts.
 	WorktreeBootstrap string
+	// Proposals is the session's registry of open proposals: the dispatch
+	// records a sealed proposal here and the proposal tool settles it from
+	// here. Empty falls back to a process-wide default, which exists for
+	// zero-value construction — the composition root always injects one per
+	// session (yaah-yox).
+	Proposals *ProposalRegistry
 }
 
 // proposalEnvelope is the JSON the orchestrator receives from a retained
@@ -103,29 +108,144 @@ type retainedProposal struct {
 // collide.
 var proposalSeq atomic.Uint64
 
-// retainedProposals is the process-wide registry of open proposals. It is
-// process-scoped: a proposal outlives its dispatch call and is settled later by
-// the orchestrator.
-var retainedProposals = struct {
+// ProposalRegistry is one session's registry of open proposals. A proposal
+// outlives the dispatch call that sealed it — the orchestrator settles it later
+// — but it never leaves the session that owns it: under `web` or `acp-serve`,
+// one session's tool must not list, show (which prints the diff), or settle
+// another session's work (yaah-yox).
+type ProposalRegistry struct {
 	mu   sync.Mutex
 	byID map[string]*retainedProposal
-}{byID: make(map[string]*retainedProposal)}
-
-// resetRetainedProposals clears the registry (tests only).
-func resetRetainedProposals() {
-	retainedProposals.mu.Lock()
-	defer retainedProposals.mu.Unlock()
-	retainedProposals.byID = make(map[string]*retainedProposal)
 }
 
-func getRetainedProposal(id string) (*retainedProposal, error) {
-	retainedProposals.mu.Lock()
-	p, ok := retainedProposals.byID[id]
-	retainedProposals.mu.Unlock()
+// NewProposalRegistry returns an empty registry for one session.
+func NewProposalRegistry() *ProposalRegistry {
+	return &ProposalRegistry{byID: make(map[string]*retainedProposal)}
+}
+
+// defaultProposalRegistry backs zero-value construction: a RetainedRuntime or a
+// ProposalTool built without a registry still works. The composition root
+// always injects one per session, so this is a fallback, not the norm.
+var defaultProposalRegistry = NewProposalRegistry()
+
+// registry returns the runtime's proposal registry, falling back to the
+// process-wide default for a zero-value runtime.
+func (rt RetainedRuntime) registry() *ProposalRegistry {
+	if rt.Proposals != nil {
+		return rt.Proposals
+	}
+	return defaultProposalRegistry
+}
+
+// add records a sealed proposal as open.
+func (r *ProposalRegistry) add(p *retainedProposal) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.byID == nil {
+		r.byID = make(map[string]*retainedProposal)
+	}
+	r.byID[p.id] = p
+}
+
+// get returns an open proposal, or an error naming the id it could not find.
+func (r *ProposalRegistry) get(id string) (*retainedProposal, error) {
+	r.mu.Lock()
+	p, ok := r.byID[id]
+	r.mu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("proposal %q not found — it may already have been settled", id)
 	}
 	return p, nil
+}
+
+// remove consumes a settled proposal: settlement is exactly once.
+func (r *ProposalRegistry) remove(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.byID, id)
+}
+
+// reset clears the registry (tests only).
+func (r *ProposalRegistry) reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.byID = make(map[string]*retainedProposal)
+}
+
+// all returns the open proposals, ordered by id so a listing is stable.
+func (r *ProposalRegistry) all() []*retainedProposal {
+	r.mu.Lock()
+	ps := make([]*retainedProposal, 0, len(r.byID))
+	for _, p := range r.byID {
+		ps = append(ps, p)
+	}
+	r.mu.Unlock()
+	sort.Slice(ps, func(i, j int) bool { return ps[i].id < ps[j].id })
+	return ps
+}
+
+// proposalSummary is one entry of the list envelope: the id to settle and the
+// files the proposal changes.
+type proposalSummary struct {
+	ProposalID string   `json:"proposal_id"`
+	Files      []string `json:"files"`
+}
+
+// summaries renders the open proposals as prose, for a human reader.
+func (r *ProposalRegistry) summaries() string {
+	ps := r.all()
+	if len(ps) == 0 {
+		return "No open proposals."
+	}
+
+	var b strings.Builder
+	b.WriteString("Open proposals:\n")
+	for _, p := range ps {
+		var files []string
+		if p.output != nil {
+			files = changesPaths(p.output.Changes())
+		}
+		fmt.Fprintf(&b, "  %s  files=%d", p.id, len(files))
+		if p.runErr != "" {
+			fmt.Fprintf(&b, "  (run error: %s)", p.runErr)
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// listEnvelope is the JSON a `list` action answers with: the same envelope
+// shape the other verbs use, so a caller parses one format. An empty registry
+// still carries "proposals": [], because "nothing is open" must be a parsed
+// fact rather than prose a caller cannot tell from a failed parse (yaah-yox).
+func (r *ProposalRegistry) listEnvelope() string {
+	ps := r.all()
+	list := make([]proposalSummary, 0, len(ps))
+	for _, p := range ps {
+		files := []string{}
+		if p.output != nil {
+			files = append(files, changesPaths(p.output.Changes())...)
+		}
+		list = append(list, proposalSummary{ProposalID: p.id, Files: files})
+	}
+	env := struct {
+		Status    string            `json:"status"`
+		Proposals []proposalSummary `json:"proposals"`
+		Next      []string          `json:"next,omitempty"`
+	}{Status: "open", Proposals: list, Next: proposalVerbs()}
+	data, err := json.Marshal(env)
+	if err != nil {
+		return `{"status":"open","proposals":[]}`
+	}
+	return string(data)
+}
+
+// resetRetainedProposals clears the process-wide registry (tests only).
+func resetRetainedProposals() { defaultProposalRegistry.reset() }
+
+// listRetainedProposalsSummaries renders the process-wide registry in prose.
+func listRetainedProposalsSummaries() string {
+	return defaultProposalRegistry.summaries()
 }
 
 // startRetainedRun dispatches one sub-agent into an isolated worktree and seals
@@ -212,21 +332,20 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	// it — and hand the report straight back.
 	if report {
 		if provErr != nil {
-			result = strings.TrimSpace(result + "\n\nnote: " + provErr.Error())
+			result = retainedNote(result, provErr.Error())
 		}
-		if scope, gok := mgr.Get(scopeID); gok {
-			if derr := parent.Discard(scope); derr != nil {
-				// A report dispatch registers nothing, so a leaked
-				// worktree has no proposal record to clean up through;
-				// at least say so.
-				slog.Warn("retained report: worktree discard failed", "worktree", wt, "err", derr)
+		// yaah-atn: a report dispatch registers no proposal, so a scratch
+		// that does not come down has no record to be recovered through
+		// later. Report it in the result — the same channel provErr uses —
+		// instead of a log line the orchestrator never sees.
+		if note := teardownReportScratch(ctx, rt, wt, func() (bool, error) {
+			scope, gok := mgr.Get(scopeID)
+			if !gok {
+				return false, nil
 			}
-		} else if recovery.IsRegisteredWorktree(ctx, rt.RepoPath, wt) {
-			if derr := goatherdgit.NewWorktreeSandbox(rt.RepoPath, wt).Destroy(context.WithoutCancel(ctx)); derr != nil {
-				slog.Warn("retained report: worktree destroy failed", "worktree", wt, "err", derr)
-			}
-		} else {
-			slog.Warn("retained report: scope missing and worktree unregistered; nothing to tear down", "scope", scopeID, "worktree", wt)
+			return true, parent.Discard(scope)
+		}); note != "" {
+			result = retainedNote(result, note)
 		}
 		return result, bodyErr
 	}
@@ -272,8 +391,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		return marshalProposalEnvelope(env), nil
 	}
 
-	retainedProposals.mu.Lock()
-	retainedProposals.byID[id] = &retainedProposal{
+	rt.registry().add(&retainedProposal{
 		id:       id,
 		scopeID:  scopeID,
 		workdir:  wt,
@@ -282,8 +400,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		runErr:   bodyFailure,
 		parentID: rt.RootScopeID,
 		mgr:      mgr,
-	}
-	retainedProposals.mu.Unlock()
+	})
 
 	env.Status = "proposal"
 	env.Result = trimResult(result)
@@ -292,9 +409,63 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	return marshalProposalEnvelope(env), nil
 }
 
+// retainedNote appends a caveat to a result instead of replacing it: the
+// deliverable stays readable and the caveat travels in the channel the
+// orchestrator actually reads (yaah-atn).
+func retainedNote(result, note string) string {
+	note = strings.TrimSpace(note)
+	if note == "" {
+		return result
+	}
+	if strings.TrimSpace(result) == "" {
+		return "note: " + note
+	}
+	return result + "\n\nnote: " + note
+}
+
+// worktreeOnDisk reports whether a worktree directory still exists.
+func worktreeOnDisk(path string) bool {
+	if path == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// teardownReportScratch tears a report dispatch's scratch down and describes
+// what it could not remove. A report dispatch registers no proposal, so a
+// worktree that does not come down has no record to be recovered through
+// later — the caller receives a note instead (yaah-atn). discard reports
+// (handled, err); handled=false means the scope was already gone.
+func teardownReportScratch(ctx context.Context, rt RetainedRuntime, wt string, discard func() (bool, error)) string {
+	handled, err := discard()
+	if !handled {
+		// The scope went away before we could discard it. A worktree still
+		// registered with the repo can be destroyed directly; one that is not
+		// registered has no owner left to remove it, so it must be reported.
+		if !recovery.IsRegisteredWorktree(ctx, rt.RepoPath, wt) {
+			if !worktreeOnDisk(wt) {
+				return ""
+			}
+			return fmt.Sprintf("the report dispatch could not discard its isolated scope; it left the worktree at %s", wt)
+		}
+		err = goatherdgit.NewWorktreeSandbox(rt.RepoPath, wt).Destroy(context.WithoutCancel(ctx))
+		if err == nil {
+			return ""
+		}
+	}
+	if err == nil {
+		return ""
+	}
+	if worktreeOnDisk(wt) {
+		return fmt.Sprintf("worktree teardown failed: %v; the worktree is still on disk at %s", err, wt)
+	}
+	return fmt.Sprintf("worktree teardown reported an error (%v) but the worktree at %s is gone", err, wt)
+}
+
 // settleRetainedProposal settles one proposal with the given verb, once.
-func settleRetainedProposal(ctx context.Context, id, action string) (string, error) {
-	p, err := getRetainedProposal(id)
+func (r *ProposalRegistry) settleRetainedProposal(ctx context.Context, id, action string) (string, error) {
+	p, err := r.get(id)
 	if err != nil {
 		return "", err
 	}
@@ -355,9 +526,7 @@ func settleRetainedProposal(ctx context.Context, id, action string) (string, err
 	env.Outcome = settleOutcome(verb, p, env).String()
 
 	// Consume-once: a settled proposal leaves the registry.
-	retainedProposals.mu.Lock()
-	delete(retainedProposals.byID, id)
-	retainedProposals.mu.Unlock()
+	r.remove(id)
 	return marshalProposalEnvelope(env), nil
 }
 
@@ -452,36 +621,6 @@ func settlementVerb(action string) (goatherd.SettlementAction, bool) {
 	default:
 		return "", false
 	}
-}
-
-// listRetainedProposalsSummaries renders the open proposals.
-func listRetainedProposalsSummaries() string {
-	retainedProposals.mu.Lock()
-	ps := make([]*retainedProposal, 0, len(retainedProposals.byID))
-	for _, p := range retainedProposals.byID {
-		ps = append(ps, p)
-	}
-	retainedProposals.mu.Unlock()
-
-	if len(ps) == 0 {
-		return "No open proposals."
-	}
-	sort.Slice(ps, func(i, j int) bool { return ps[i].id < ps[j].id })
-
-	var b strings.Builder
-	b.WriteString("Open proposals:\n")
-	for _, p := range ps {
-		var files []string
-		if p.output != nil {
-			files = changesPaths(p.output.Changes())
-		}
-		fmt.Fprintf(&b, "  %s  files=%d", p.id, len(files))
-		if p.runErr != "" {
-			fmt.Fprintf(&b, "  (run error: %s)", p.runErr)
-		}
-		b.WriteString("\n")
-	}
-	return b.String()
 }
 
 // provisionRetainedBranch creates the worktree, forks an isolated child scope

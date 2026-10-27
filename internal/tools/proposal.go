@@ -13,7 +13,22 @@ import (
 // release (export the delta, then tear the worktree down), or discard (throw it
 // away and remove its worktree). The verbs mirror Shepherd's run select | apply
 // | release | discard.
-type ProposalTool struct{}
+type ProposalTool struct {
+	// Proposals is the session's registry of open proposals, injected at
+	// wiring like SupervisorTool.Runs. A session can only ever list, show, or
+	// settle its own proposals (yaah-yox). A nil registry falls back to the
+	// process-wide default, which exists for zero-value construction.
+	Proposals *ProposalRegistry
+}
+
+// registry returns the session's proposal registry, falling back to the
+// process-wide default for a zero-value tool.
+func (t *ProposalTool) registry() *ProposalRegistry {
+	if t.Proposals != nil {
+		return t.Proposals
+	}
+	return defaultProposalRegistry
+}
 
 func (*ProposalTool) Name() string { return "proposal" }
 
@@ -50,12 +65,12 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 
 	switch raw.Action {
 	case "list":
-		return listRetainedProposalsSummaries(), nil
+		return t.registry().listEnvelope(), nil
 	case "show":
 		if raw.ProposalID == "" {
 			return "", fmt.Errorf("proposal: proposal_id required for show")
 		}
-		p, err := getRetainedProposal(raw.ProposalID)
+		p, err := t.registry().get(raw.ProposalID)
 		if err != nil {
 			return "", err
 		}
@@ -75,7 +90,7 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 		if raw.ProposalID == "" {
 			return "", fmt.Errorf("proposal: proposal_id required for %s", raw.Action)
 		}
-		return settleRetainedProposal(ctx, raw.ProposalID, raw.Action)
+		return t.registry().settleRetainedProposal(ctx, raw.ProposalID, raw.Action)
 	default:
 		return "", fmt.Errorf("proposal: unknown action %q (list, show, select, apply, release, discard)", raw.Action)
 	}

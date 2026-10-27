@@ -832,7 +832,14 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			// settles it. There is no reviewer dispatch — the judgement lives on
 			// this side of the boundary, as it does in shepherd's `gate(task,
 			// predicate)`, so no verdict protocol or review round exists.
-			toolReg.Register(&tools.ProposalTool{})
+			//
+			// One registry per session (yaah-yox): the dispatch records a
+			// sealed proposal into it and the proposal tool settles it back
+			// out, so under `web`/`acp-serve` a session can neither see nor
+			// settle another session's proposals.
+			proposals := tools.NewProposalRegistry()
+			taskTool.Retained.Proposals = proposals
+			toolReg.Register(&tools.ProposalTool{Proposals: proposals})
 		} else {
 			belt.Know("proposal")
 		}

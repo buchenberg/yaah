@@ -19,14 +19,21 @@ it with the `proposal` tool:
   claiming success.
 - `discard` — throw the proposal away and remove its worktree.
 
-`proposal` with `action: "list"` shows open proposals; `action: "show"` re-reads
-one. A proposal settles exactly once. Dispatch in parallel freely — each has its
+`proposal` with `action: "list"` answers with the same JSON envelope as the other
+verbs: `proposals` is a list of summaries (id, files, worktree), and it is an
+explicit empty `[]` when nothing is open — not prose, not an error. Proposals
+belong to the session that sealed them, so another session's proposals are never
+listed, shown, or settleable here. `action: "show"` re-reads one, with its diff. A
+proposal settles exactly once. Dispatch in parallel freely — each has its
 own worktree — and settle each once its report is in.
 
 Report roles (`reviewer`, `tester`, `analyst`) are different: their dispatch
 result **is** the deliverable. They run in their own isolated worktree (their
 scratch never touches your tree), but there is no proposal and nothing to
-settle — read the report and move on.
+settle — read the report and move on. A report dispatch tears its worktree down
+before returning; if that teardown fails, the returned report carries a `note:`
+naming the stranded path. Nothing else records it, so treat that note as cleanup
+you owe.
 
 **You commit, not the sub-agent.** A sub-agent works in a `git worktree` whose
 index and object store live in this repository, outside its sandbox, so it cannot
