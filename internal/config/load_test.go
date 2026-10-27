@@ -21,8 +21,8 @@ func TestLoad_returnsDefaultsWhenFileMissing(t *testing.T) {
 	if cfg.Agent.Default.Model != "deepseek/deepseek-v4-pro" {
 		t.Errorf("Default.Model = %q, want %q", cfg.Agent.Default.Model, "deepseek/deepseek-v4-pro")
 	}
-	if cfg.Agent.Default.SmallModel != "deepseek/deepseek-v4-flash" {
-		t.Errorf("Default.SmallModel = %q, want %q", cfg.Agent.Default.SmallModel, "deepseek/deepseek-v4-flash")
+	if cfg.Agent.Default.CompactionModel != "deepseek/deepseek-v4-flash" {
+		t.Errorf("Default.CompactionModel = %q, want %q", cfg.Agent.Default.CompactionModel, "deepseek/deepseek-v4-flash")
 	}
 	if cfg.Agent.Default.MaxLoopCycles != 50 {
 		t.Errorf("Default.MaxLoopCycles = %d, want 50", cfg.Agent.Default.MaxLoopCycles)
@@ -49,7 +49,7 @@ providers:
 agents:
   default:
     model: openai/gpt-4o
-    small_model: openai/gpt-4o-mini
+    compaction_model: openai/gpt-4o-mini
     max_iterations: 25
     approval: allow
 `
@@ -156,7 +156,7 @@ providers:
 agents:
   default:
     model: openai/gpt-4o-mini
-  small_model: openai/gpt-4o-mini
+  compaction_model: openai/gpt-4o-mini
   max_iterations: 50
   approval: ask
 `

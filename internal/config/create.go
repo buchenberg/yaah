@@ -32,7 +32,7 @@ agents:
   default:
     provider: deepseek
     model: deepseek-v4-pro
-    small_model: deepseek-v4-flash
+    compaction_model: deepseek-v4-flash
     max_iterations: 50
     approval: ask               # ask | allow | deny
     # max_turns: 5              # soft cap on tool-using turns; 0 = off

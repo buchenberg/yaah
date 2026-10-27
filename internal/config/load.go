@@ -84,15 +84,18 @@ func (p Provider) ThinkingOverride(modelName string) *bool {
 
 // Defaults hold the default agent model and loop settings.
 type Defaults struct {
-	Provider      string `yaml:"provider"`
-	Model         string `yaml:"model"`
-	SmallModel    string `yaml:"small_model"`
-	MaxLoopCycles int    `yaml:"max_iterations"`
-	MaxToolTurns  int    `yaml:"max_turns"`      // soft cap on tool-using turns; 0 = off
-	ContextWindow int    `yaml:"context_window"` // max context window; resolved window from model is capped by this value
-	Approval      string `yaml:"approval"`
-	MCPApproval   string `yaml:"mcp_approval"`  // approval policy for MCP-served tools: ask (default), allow, deny
-	WorkspaceAsk  bool   `yaml:"workspace_ask"` // prompt before denying out-of-workspace access (with --workspace)
+	Provider string `yaml:"provider"`
+	Model    string `yaml:"model"`
+	// CompactionModel summarizes old context when compaction runs. An
+	// unset value means compaction runs on the main model, which is both
+	// slower and worse at summarizing; a warning fires at resolution.
+	CompactionModel string `yaml:"compaction_model"`
+	MaxLoopCycles   int    `yaml:"max_iterations"`
+	MaxToolTurns    int    `yaml:"max_turns"`      // soft cap on tool-using turns; 0 = off
+	ContextWindow   int    `yaml:"context_window"` // max context window; resolved window from model is capped by this value
+	Approval        string `yaml:"approval"`
+	MCPApproval     string `yaml:"mcp_approval"`  // approval policy for MCP-served tools: ask (default), allow, deny
+	WorkspaceAsk    bool   `yaml:"workspace_ask"` // prompt before denying out-of-workspace access (with --workspace)
 	// WorkspaceDenyPatterns are globs denied even inside the workspace
 	// (with --workspace). When unset, a built-in secret-file default
 	// applies (.env, *.pem, private keys). Set explicitly to override,
@@ -423,7 +426,7 @@ func defaultConfig() *Config {
 		Agent: AgentConfig{
 			Default: Defaults{
 				Model:                  "deepseek/deepseek-v4-pro",
-				SmallModel:             "deepseek/deepseek-v4-flash",
+				CompactionModel:        "deepseek/deepseek-v4-flash",
 				MaxLoopCycles:          50,
 				ContextWindow:          1048576,
 				Approval:               "ask",

@@ -1,6 +1,7 @@
 package yaah
 
 import (
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -150,31 +151,45 @@ func applyThinkingOverrides(client *providers.OpenAIClient, r config.Provider) {
 }
 
 // resolveCompact returns the provider and model to use for context compaction.
-// Uses the configured small_model (no tools, fast summarization) if available,
-// otherwise falls back to the main provider and model.
+// Uses the configured compaction_model (no tools, fast summarization) when
+// set, otherwise falls back to the main provider and model — with a warning,
+// because the main model is slower and worse at summarizing, and a silent
+// fallback looks like compaction working while it degrades.
 func resolveCompact(cfg *config.Config) (agent.Provider, string) {
-	if cfg.Agent.Default.SmallModel != "" {
-		compactProviderName, compactModel := "", ""
-		if parts := strings.SplitN(cfg.Agent.Default.SmallModel, "/", 2); len(parts) == 2 {
-			if _, ok := cfg.Providers[parts[0]]; ok {
-				compactProviderName = parts[0]
-				compactModel = parts[1]
-			} else {
-				compactModel = cfg.Agent.Default.SmallModel
-				compactProviderName = resolveProviderName(cfg)
-			}
+	name := cfg.Agent.Default.CompactionModel
+	if name == "" {
+		slog.Warn("compaction: no compaction_model configured; context compaction will run on the main model")
+		return nil, ""
+	}
+
+	compactProviderName, compactModel := "", ""
+	if parts := strings.SplitN(name, "/", 2); len(parts) == 2 {
+		if _, ok := cfg.Providers[parts[0]]; ok {
+			compactProviderName = parts[0]
+			compactModel = parts[1]
 		} else {
-			compactModel = cfg.Agent.Default.SmallModel
+			compactModel = name
 			compactProviderName = resolveProviderName(cfg)
 		}
-		if compactProviderName != "" {
-			if p, ok := cfg.Providers[compactProviderName]; ok {
-				if prov, ok2 := makeProvider(compactProviderName, p); ok2 {
-					return prov, compactModel
+	} else {
+		compactModel = name
+		compactProviderName = resolveProviderName(cfg)
+	}
+	if compactProviderName != "" {
+		if p, ok := cfg.Providers[compactProviderName]; ok {
+			if prov, ok2 := makeProvider(compactProviderName, p); ok2 {
+				if compactModel == cfg.Agent.Default.Model && compactProviderName == resolveProviderName(cfg) {
+					slog.Warn("compaction: compaction_model equals the main model; "+
+						"set a cheaper compaction_model for faster, more reliable summarization",
+						"model", compactModel)
 				}
+				return prov, compactModel
 			}
 		}
 	}
+	slog.Warn("compaction: compaction_model could not be resolved to a usable provider; "+
+		"context compaction will run on the main model",
+		"compaction_model", name)
 	return nil, ""
 }
 

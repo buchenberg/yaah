@@ -26,7 +26,7 @@ func TestConfigAgentConfigParity(t *testing.T) {
 	// Fields in config.Defaults that are handled outside AgentConfig
 	// (provider resolution, approval resolution, prompt assembly, etc.).
 	allowedMissingInAgent := map[string]bool{
-		"SmallModel":            true, // → compact provider resolution
+		"CompactionModel":       true, // → compact provider resolution
 		"Approval":              true, // → WithApprovalMode
 		"MCPApproval":           true, // → WithMCPApproval (LoopBuilder)
 		"Provider":              true, // → provider resolution
