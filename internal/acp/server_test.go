@@ -1968,7 +1968,7 @@ func TestServer_compactionCapabilityGated(t *testing.T) {
 				if upd.CompactionID != want {
 					t.Fatalf("turn %d card id = %v, want %v (id namespace must not reset per turn)", n, upd.CompactionID, want)
 				}
-				if len(upd.Summary) != 1 || upd.Summary[0]["text"] != fmt.Sprintf("compacting (%d→%d tokens, threshold)", turns, turns) {
+				if len(upd.Summary) != 1 || upd.Summary[0]["text"] != fmt.Sprintf("compacting (%d→%d tokens, threshold)", n, n) {
 					t.Fatalf("turn %d summary = %v, want the readable start line", n, upd.Summary)
 				}
 				lastID = upd.CompactionID

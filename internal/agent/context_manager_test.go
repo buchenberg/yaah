@@ -4,7 +4,9 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/buchenberg/yaah/internal/pubsub"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -145,5 +147,81 @@ func TestCompactContextAnthropicRawGate(t *testing.T) {
 	}
 	if cm.State.PreviousSummary == "" {
 		t.Fatal("compaction did not persist a summary")
+	}
+}
+
+// waitCompactionDone drains the broker stream until a CompactionDoneEvent
+// arrives (start events precede it), failing the test on timeout.
+func waitCompactionDone(t *testing.T, done <-chan Event) *CompactionDoneEvent {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case ev := <-done:
+			if e, ok := ev.(*CompactionDoneEvent); ok {
+				return e
+			}
+		case <-deadline:
+			t.Fatal("no CompactionDoneEvent within deadline")
+			return nil
+		}
+	}
+}
+
+// TestCompactContextTrimFallbackEmitsDone checks the terminal compaction
+// event on the trim fallback: when every summary attempt fails and
+// trimContext is the remaining path, the emitted CompactionDoneEvent
+// must carry the trim method, a real savings fraction, and the
+// preserve budget — a zero SavingsPct alongside positive before/after
+// deltas renders a self-contradictory "compacted 0%" card.
+func TestCompactContextTrimFallbackEmitsDone(t *testing.T) {
+	broker := pubsub.NewBroker[Event]()
+	done := broker.Subscribe("done", 8)
+	p := &compactionRecordingProvider{emptyAll: true}
+	cm := compactionTestManager(p)
+	cm.Broker = broker
+	defer broker.Close()
+
+	cm.compactContext(context.Background(), 0.25)
+
+	e := waitCompactionDone(t, done)
+	if e.Method != "trim" {
+		t.Fatalf("method = %q, want trim", e.Method)
+	}
+	if e.SavingsPct <= 0 {
+		t.Fatalf("savingsPct = %v, want positive after trim (before=%d after=%d)", e.SavingsPct, e.BeforeTokens, e.AfterTokens)
+	}
+	if e.Budget <= 0 {
+		t.Fatalf("budget = %v, want the preserve budget carried through", e.Budget)
+	}
+	if e.IneffectiveNote == "" {
+		t.Fatal("trim fallback must note why summarization was skipped")
+	}
+}
+
+// TestCompactContextChunkedFallbackEmitsDone checks the terminal
+// compaction event on the chunked path (same savings/budget rules as
+// the trim fallback).
+func TestCompactContextChunkedFallbackEmitsDone(t *testing.T) {
+	broker := pubsub.NewBroker[Event]()
+	done := broker.Subscribe("done", 8)
+	// Empty primary summary forces the chunked fallback, whose merge
+	// succeeds and produces a summary.
+	p := &compactionRecordingProvider{responses: []*types.ChatResponse{thoughtOnlyResponse()}}
+	cm := compactionTestManager(p)
+	cm.Broker = broker
+	defer broker.Close()
+
+	cm.compactContext(context.Background(), 0.25)
+
+	e := waitCompactionDone(t, done)
+	if e.Method != "chunked" {
+		t.Fatalf("method = %q, want chunked", e.Method)
+	}
+	if e.SavingsPct <= 0 {
+		t.Fatalf("savingsPct = %v, want positive after chunked compaction", e.SavingsPct)
+	}
+	if e.Budget <= 0 {
+		t.Fatalf("budget = %v, want the preserve budget carried through", e.Budget)
 	}
 }
