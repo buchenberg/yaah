@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -31,30 +32,59 @@ func (c *AnthropicClient) SendStream(ctx context.Context, req types.ChatRequest)
 		defer close(chunks)
 		defer close(errs)
 
-		stream := c.client.Messages.NewStreaming(ctx, c.lower(req), c.requestOpts(ctx)...)
-		defer stream.Close()
-
-		st := &anthropicStreamState{}
-		for stream.Next() {
-			chunk, err := translateAnthropicEvent(stream.Current(), st)
-			if err != nil {
-				errs <- err
+		mode := c.replayMode()
+		emitted := false
+		for attempt := 0; ; attempt++ {
+			stream := c.client.Messages.NewStreaming(ctx, c.lowerWithMode(req, mode), c.requestOpts(ctx)...)
+			err := pumpAnthropicStream(ctx, stream, chunks, &emitted)
+			stream.Close()
+			if err == nil {
+				if mode != c.replayMode() {
+					c.acceptReplayFallback()
+				}
 				return
 			}
-			if chunk != nil {
-				select {
-				case chunks <- *chunk:
-				case <-ctx.Done():
-					return
+			// A signature-validating gateway behind a compatible URL
+			// rejects the unsigned replay shape before emitting any
+			// event; drop unsigned thinking and retry once. Output has
+			// already reached the caller otherwise, so a retry would
+			// duplicate it.
+			if attempt == 0 && !emitted {
+				if retryMode, ok := c.replayFallback(req, err); ok {
+					mode = retryMode
+					continue
 				}
 			}
-		}
-		if err := stream.Err(); err != nil {
 			errs <- anthropicAPIError(err)
+			return
 		}
 	}()
 
 	return chunks, errs
+}
+
+// pumpAnthropicStream translates one stream's events into chunks. It
+// returns nil when the stream ended cleanly or the context ended, and the
+// terminating error otherwise. emitted is set once any chunk has been
+// delivered, which marks the request as accepted by the endpoint.
+func pumpAnthropicStream(ctx context.Context, stream *ssestream.Stream[anthropic.MessageStreamEventUnion], chunks chan<- StreamChunk, emitted *bool) error {
+	st := &anthropicStreamState{}
+	for stream.Next() {
+		chunk, err := translateAnthropicEvent(stream.Current(), st)
+		if err != nil {
+			return err
+		}
+		if chunk == nil {
+			continue
+		}
+		*emitted = true
+		select {
+		case chunks <- *chunk:
+		case <-ctx.Done():
+			return nil
+		}
+	}
+	return stream.Err()
 }
 
 // translateAnthropicEvent converts one SDK stream event into a StreamChunk.

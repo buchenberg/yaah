@@ -8,9 +8,12 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -38,18 +41,34 @@ type AnthropicClient struct {
 	// ...), which bill thinking tokens against max_tokens.
 	DefaultMaxTokens int
 
-	// ReasoningReplay selects how assistant thinking that lacks a
-	// provider signature is replayed: "auto" (the default) re-sends it
-	// as a plain text block so the model keeps its chain-of-thought
-	// across turns, "omit" drops it (the pre-2026-10 behavior, which
-	// made reasoning models re-derive state every turn — yaah-v378.6),
-	// and "text" re-sends even signed reasoning as text for endpoints
-	// that reject valid thinking replay. Normalized via reasoningReplay.
+	// ReasoningReplay selects how assistant reasoning is replayed:
+	//
+	//   - "auto" (the default) re-sends signed thinking verbatim and
+	//     unsigned thinking as a thinking block with an empty signature.
+	//     Anthropic-compatible endpoints (DeepSeek, ZAI, Xiaomi) accept
+	//     unsigned blocks; re-sending them as TEXT made reasoning models
+	//     answer in reasoning voice — they echoed their chain-of-thought
+	//     into the visible answer and repeated plans (yaah-63wu). The
+	//     native Anthropic API validates signatures, so auto omits
+	//     unsigned blocks there.
+	//   - "omit" drops unsigned thinking (the pre-2026-10 behavior, which
+	//     made reasoning models re-derive state every turn — yaah-v378.6).
+	//   - "text" re-sends all reasoning, signed included, as plain text for
+	//     endpoints that reject valid thinking replay. Reasoning models
+	//     often echo replayed text back into the answer, so prefer omit.
+	//
+	// Normalized via reasoningReplay.
 	ReasoningReplay string
 
 	// unsignedReasoningWarn fires the once-per-client notice about
 	// signature-less reasoning.
 	unsignedReasoningWarn sync.Once
+
+	// unsignedReplayRejected records that the endpoint answered 400 to a
+	// request carrying an unsigned thinking block. Auto then omits
+	// unsigned thinking for the rest of the client's life instead of
+	// retrying the rejected shape on every call.
+	unsignedReplayRejected atomic.Bool
 }
 
 // reasoningReplay normalizes the configured strategy; "" and unknown
@@ -63,6 +82,121 @@ func (c *AnthropicClient) reasoningReplay() string {
 	default:
 		return "auto"
 	}
+}
+
+// replayMode resolves reasoning_replay for this endpoint. "auto" relies on
+// the endpoint accepting an unsigned thinking block; the native Anthropic
+// API validates signatures, so there auto degrades to "omit" (signed
+// blocks are still replayed verbatim).
+func (c *AnthropicClient) replayMode() string {
+	switch c.reasoningReplay() {
+	case "text":
+		return "text"
+	case "omit":
+		return "omit"
+	}
+	if c.nativeAnthropicEndpoint() || c.unsignedReplayRejected.Load() {
+		return "omit"
+	}
+	return "auto"
+}
+
+// nativeAnthropicEndpoint reports whether this client targets the native
+// Anthropic API. An empty base URL also counts as native: the SDK then
+// falls back to its default host.
+//
+// The match is exact on purpose. OutputTokenCeiling/fallbackMaxTokens use a
+// looser substring test because they err toward the conservative native
+// cap, but a false positive here silently drops the model's reasoning.
+// Misclassifying a signature-validating gateway as compatible instead
+// surfaces as one 400, which replayFallback converts into a retry.
+func (c *AnthropicClient) nativeAnthropicEndpoint() bool {
+	raw := strings.TrimSpace(c.baseURL)
+	if raw == "" {
+		return true
+	}
+	host := ""
+	if u, err := url.Parse(raw); err == nil {
+		host = u.Hostname()
+	}
+	if host == "" {
+		// No scheme (some configs omit it): the first path segment is
+		// the host.
+		host = strings.SplitN(raw, "/", 2)[0]
+	}
+	return strings.EqualFold(host, "api.anthropic.com")
+}
+
+// hasUnsignedThinking reports whether any assistant turn carries reasoning
+// without a provider signature.
+func hasUnsignedThinking(messages []types.Message) bool {
+	for _, m := range messages {
+		if m.Role == "assistant" && m.ReasoningContent != "" && m.ReasoningSignature == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// replayFallback reports whether err is the endpoint rejecting the unsigned
+// thinking block this request carried, and which replay mode to retry with.
+// Auto assumes an Anthropic-compatible endpoint accepts a thinking block
+// with an empty signature, but a signature-validating gateway behind a
+// third-party URL answers 400. The caller retries once with the returned
+// mode and records success via acceptReplayFallback, so the sticky
+// downgrade is only committed when the retry actually proves it right.
+func (c *AnthropicClient) replayFallback(req types.ChatRequest, err error) (string, bool) {
+	if c.replayMode() != "auto" || !hasUnsignedThinking(req.Messages) {
+		return "", false
+	}
+	var apiErr *APIError
+	if !errors.As(anthropicAPIError(err), &apiErr) || apiErr.StatusCode != http.StatusBadRequest {
+		return "", false
+	}
+	if !looksLikeThinkingReplayRejection(apiErr.Code, apiErr.Message) {
+		return "", false
+	}
+	return "omit", true
+}
+
+// acceptReplayFallback records a successful downgrade so later requests
+// skip the rejected unsigned replay shape. The omit retry succeeding is
+// the evidence that the unsigned block caused the 400; the downgrade lasts
+// for this client (one session) and saves a rejected request per call.
+func (c *AnthropicClient) acceptReplayFallback() {
+	c.unsignedReplayRejected.Store(true)
+}
+
+// looksLikeThinkingReplayRejection restricts the fallback to 400s about
+// replayed thinking. Thinking-related wording always qualifies. A bare
+// signature complaint qualifies when the provider labels it an invalid
+// request or omits the code (common for gateways): auth failures carry
+// authentication_error (or a non-400 status), while a signature-validating
+// gateway rejecting the replayed block reports invalid_request_error.
+//
+// "signed" is matched as a standalone word so "unsigned"/"designed"/
+// "assigned" do not, and "thinking" plus block/replay wording is required
+// for non-signature matches so budget and tool_choice errors cannot drop
+// the reasoning.
+func looksLikeThinkingReplayRejection(code, message string) bool {
+	msg := strings.ToLower(message)
+	if strings.Contains(msg, "thinking") {
+		if strings.Contains(msg, "signature") || strings.Contains(msg, "block") ||
+			strings.Contains(msg, "replay") || strings.Contains(msg, "passed back") {
+			return true
+		}
+		for _, field := range strings.FieldsFunc(msg, func(r rune) bool { return !unicode.IsLetter(r) }) {
+			if field == "signed" {
+				return true
+			}
+		}
+	}
+	// A bare signature complaint also qualifies when the provider labels
+	// it an invalid request, or omits a code entirely (common for
+	// gateways). Auth failures carry authentication_error and must not
+	// downgrade replay.
+	code = strings.ToLower(strings.TrimSpace(code))
+	return strings.Contains(msg, "signature") && (code == "" || code == "invalid_request_error")
 }
 
 const (
@@ -146,9 +280,21 @@ func (c *AnthropicClient) requestOpts(ctx context.Context) []option.RequestOptio
 // Send translates a ChatRequest to the Anthropic Messages API and returns
 // the response.
 func (c *AnthropicClient) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
-	msg, err := c.client.Messages.New(ctx, c.lower(req), c.requestOpts(ctx)...)
+	mode := c.replayMode()
+	msg, err := c.client.Messages.New(ctx, c.lowerWithMode(req, mode), c.requestOpts(ctx)...)
 	if err != nil {
-		return nil, anthropicAPIError(err)
+		// A signature-validating gateway behind a compatible URL rejects
+		// the unsigned replay shape; drop unsigned thinking and retry once.
+		if retryMode, ok := c.replayFallback(req, err); ok {
+			mode = retryMode
+			msg, err = c.client.Messages.New(ctx, c.lowerWithMode(req, mode), c.requestOpts(ctx)...)
+			if err == nil && mode != c.replayMode() {
+				c.acceptReplayFallback()
+			}
+		}
+		if err != nil {
+			return nil, anthropicAPIError(err)
+		}
 	}
 	return raiseAnthropicResponse(*msg), nil
 }
@@ -157,22 +303,25 @@ func (c *AnthropicClient) Send(ctx context.Context, req types.ChatRequest) (*typ
 // translating the request. Per-request values always win so callers
 // (for example context compaction) can keep their own explicit budget.
 func (c *AnthropicClient) lower(req types.ChatRequest) anthropic.MessageNewParams {
+	return c.lowerWithMode(req, c.replayMode())
+}
+
+// lowerWithMode applies the output cap and translates the request under an
+// explicit replay mode. Send/SendStream pass "omit" directly for the single
+// fallback retry, before the sticky downgrade is committed.
+func (c *AnthropicClient) lowerWithMode(req types.ChatRequest, mode string) anthropic.MessageNewParams {
 	if req.MaxTokens <= 0 {
 		req.MaxTokens = c.EffectiveMaxTokens(req)
 	}
-	if replay := c.reasoningReplay(); replay != "omit" {
-		for _, m := range req.Messages {
-			if m.Role == "assistant" && m.ReasoningContent != "" && m.ReasoningSignature == "" {
-				c.unsignedReasoningWarn.Do(func() {
-					slog.Warn("reasoning: assistant turns carry thinking without a provider signature; " +
-						"replaying it as plain text so the model keeps its chain-of-thought " +
-						"(reasoning_replay=auto). Set reasoning_replay: omit on the provider to drop it.")
-				})
-				break
-			}
-		}
+	if mode == "omit" && hasUnsignedThinking(req.Messages) {
+		c.unsignedReasoningWarn.Do(func() {
+			slog.Warn("reasoning: unsigned thinking cannot be replayed on this endpoint " +
+				"(reasoning_replay=omit, the native Anthropic API which validates signatures, or an " +
+				"endpoint that rejected the unsigned block); the model will re-derive context " +
+				"instead of seeing its own chain-of-thought.")
+		})
 	}
-	return lowerAnthropicRequest(req, c.reasoningReplay())
+	return lowerAnthropicRequest(req, mode)
 }
 
 // EffectiveMaxTokens reports the output cap lower applies to req: an
@@ -306,19 +455,22 @@ func lowerAnthropicRequest(req types.ChatRequest, replay string) anthropic.Messa
 			// A signed thinking block is replayed verbatim — the signature
 			// is opaque and fabricating one is rejected with "the thinking
 			// mode must be passed back to the API". An UNSIGNED thinking
-			// block cannot be replayed as thinking, but dropping it costs
-			// the model its entire chain-of-thought: a reasoning model
-			// that never sees its own conclusions re-derives state every
-			// turn and loops (yaah-v378.6). Replay unsigned reasoning as
-			// plain text unless the provider opts out with
-			// reasoning_replay: omit; reasoning_replay: text also
-			// downgrades signed blocks for endpoints that reject valid
-			// thinking replay.
+			// block cannot go back to the native API, but Anthropic-
+			// compatible endpoints accept it with an empty signature.
+			// Replaying it as plain TEXT taught the model that its
+			// chain-of-thought was visible assistant output: it answered
+			// in reasoning voice, echoed the thinking verbatim into the
+			// content, and repeated plans (yaah-63wu). Auto therefore
+			// replays unsigned reasoning as a thinking block; dropping it
+			// costs the model its conclusions and makes it re-derive state
+			// every turn (yaah-v378.6), so omit stays an explicit opt-out.
+			// reasoning_replay: text downgrades signed blocks too, for
+			// endpoints that reject valid thinking replay.
 			if m.ReasoningContent != "" && (m.ReasoningSignature != "" || replay != "omit") {
-				if m.ReasoningSignature != "" && replay != "text" {
-					blocks = append(blocks, anthropic.NewThinkingBlock(m.ReasoningSignature, m.ReasoningContent))
-				} else {
+				if replay == "text" {
 					blocks = append(blocks, anthropicTextBlock(m.ReasoningContent, nil))
+				} else {
+					blocks = append(blocks, anthropic.NewThinkingBlock(m.ReasoningSignature, m.ReasoningContent))
 				}
 			}
 			if m.Content != "" {
