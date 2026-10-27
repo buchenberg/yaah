@@ -228,3 +228,20 @@ func TestGoMod_DryRunRemoveRealFailureIsNotDressedUp(t *testing.T) {
 		t.Errorf("error lost the go diagnostic: %v", err)
 	}
 }
+
+// TestGoMod_DryRunUpgradeScopedToModule: a single-module upgrade preview
+// queries that module's current version, not the full module graph.
+func TestGoMod_DryRunUpgradeScopedToModule(t *testing.T) {
+	got, err := runGoMod(t, `{"action":"upgrade","module":"example.com/x","dry_run":true}`, func(req ExecRequest) (ExecResult, error) {
+		if !hasArgs(req, "list", "-m", "example.com/x") {
+			t.Errorf("dry_run upgrade must scope the query to the module, got %v", req.Args)
+		}
+		return ExecResult{Stdout: "example.com/x v1.1.0"}, nil
+	})
+	if err != nil {
+		t.Fatalf("dry_run upgrade: %v", err)
+	}
+	if !strings.Contains(got.Output, "would run: go get -u -- example.com/x") {
+		t.Errorf("preview lost the module-scoped command: %q", got.Output)
+	}
+}

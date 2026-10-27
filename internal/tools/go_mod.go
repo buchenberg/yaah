@@ -355,7 +355,7 @@ func (t *GoModTool) runUpgrade(ctx context.Context, params goModParams, result *
 		// real upgrade resolves is decided by that run's module graph, so
 		// the preview says so instead of inventing a result. The query
 		// strips any @ref; the rendered command mirrors the real run.
-		query := ""
+		query := params.Module
 		if query != "" {
 			query = strings.SplitN(query, "@", 2)[0]
 		}
