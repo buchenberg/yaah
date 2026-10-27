@@ -80,6 +80,10 @@ type diffResult struct {
 	ExitCode     int            `json:"exit_code"`
 }
 
+// diffRawMaxBytes caps the raw diff embedded in the JSON result. The cap is
+// applied through the shared truncation helper in result.go.
+const diffRawMaxBytes = 20480
+
 func (t *DiffTool) Execute(ctx context.Context, args string) (string, error) {
 	var params diffParams
 	if err := json.Unmarshal([]byte(args), &params); err != nil {
@@ -89,6 +93,9 @@ func (t *DiffTool) Execute(ctx context.Context, args string) (string, error) {
 	mode := params.Mode
 	if mode == "" {
 		mode = "git"
+	}
+	if mode != "git" && mode != "unified" {
+		return "", fmt.Errorf("diff: invalid mode %q; valid values: git, unified", params.Mode)
 	}
 	contextLines := params.ContextLines
 	if contextLines <= 0 {
@@ -137,23 +144,72 @@ func (t *DiffTool) Execute(ctx context.Context, args string) (string, error) {
 	result.Files, result.Insertions, result.Deletions = parseDiffStats(res.Stdout)
 	result.FilesChanged = len(result.Files)
 
-	// Truncate raw diff at 20KB
-	if len(result.RawDiff) > 20480 {
-		result.RawDiff = result.RawDiff[:20480] + "\n... (truncated)"
-	}
+	// Truncate the raw diff through the shared policy (single owner in
+	// result.go), preserving the JSON shape.
+	result.RawDiff = truncateAt(result.RawDiff, diffRawMaxBytes)
 
 	outJSON, _ := json.MarshalIndent(result, "", "  ")
 	return string(outJSON), nil
 }
 
-// parseDiffStats scans unified diff output and counts per-file insertions/deletions.
+// parseDiffStats scans unified diff output and counts per-file insertions and
+// deletions. Hunk bodies are consumed using their declared line counts, so a
+// content line that begins with a space ("+ " / "- ") is counted as the real
+// change it is rather than mistaken for a file header.
 func parseDiffStats(diff string) ([]diffFileStat, int, int) {
 	var files []diffFileStat
 	var totalIns, totalDel int
 	var currentFile *diffFileStat
 
+	inHunk := false
+	oldLeft, newLeft := 0, 0
+
 	for _, line := range strings.Split(diff, "\n") {
+		if inHunk {
+			if line == "" {
+				inHunk = false
+				continue
+			}
+			kind := line[0]
+			switch kind {
+			case ' ':
+				oldLeft--
+				newLeft--
+			case '-':
+				oldLeft--
+			case '+':
+				newLeft--
+			case '\\':
+				// "\ No newline at end of file" consumes no counts.
+			default:
+				// Not a valid hunk line: treat the hunk as finished and let
+				// the header cases below inspect this line.
+				inHunk = false
+			}
+			if inHunk {
+				switch kind {
+				case '+':
+					if currentFile != nil {
+						currentFile.Insertions++
+						totalIns++
+					}
+				case '-':
+					if currentFile != nil {
+						currentFile.Deletions++
+						totalDel++
+					}
+				}
+				if oldLeft <= 0 && newLeft <= 0 {
+					inHunk = false
+				}
+				continue
+			}
+		}
+
 		switch {
+		case strings.HasPrefix(line, "@@"):
+			oldLeft, newLeft = parseHunkCounts(line)
+			inHunk = oldLeft > 0 || newLeft > 0
 		case strings.HasPrefix(line, "diff --git"):
 			if currentFile != nil {
 				files = append(files, *currentFile)
@@ -165,12 +221,13 @@ func parseDiffStats(diff string) ([]diffFileStat, int, int) {
 				currentFile.Path = strings.TrimPrefix(parts[3], "b/")
 			}
 		case strings.HasPrefix(line, "--- "):
-			if currentFile != nil && currentFile.Path == "" {
+			if currentFile != nil {
 				path := strings.TrimPrefix(line, "--- ")
 				path = strings.TrimPrefix(path, "a/")
-				currentFile.Path = path
 				if path == "/dev/null" {
 					currentFile.IsNew = true
+				} else if currentFile.Path == "" || currentFile.IsNew {
+					currentFile.Path = path
 				}
 			}
 		case strings.HasPrefix(line, "+++ "):
@@ -179,19 +236,9 @@ func parseDiffStats(diff string) ([]diffFileStat, int, int) {
 				path = strings.TrimPrefix(path, "b/")
 				if path == "/dev/null" {
 					currentFile.IsDeleted = true
-				} else if currentFile.Path == "" {
+				} else if currentFile.Path == "" || currentFile.IsNew {
 					currentFile.Path = path
 				}
-			}
-		case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++ ") && !strings.HasPrefix(line, "+ "):
-			if currentFile != nil {
-				currentFile.Insertions++
-				totalIns++
-			}
-		case strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "--- ") && !strings.HasPrefix(line, "- "):
-			if currentFile != nil {
-				currentFile.Deletions++
-				totalDel++
 			}
 		}
 	}

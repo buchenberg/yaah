@@ -112,6 +112,19 @@ func (t *QuestionTool) Execute(ctx context.Context, args string) (string, error)
 		answers = defaultQuestionHandler(entries)
 	}
 
+	// A shorter answer list means the input ended (EOF, closed stdin, a
+	// cancelled prompt, a pipe that ran dry) before the remaining questions
+	// reached a human. Reporting that as a successful call let the model
+	// proceed on a guess, so name the questions that were never answered.
+	if len(answers) < len(entries) {
+		var missing []string
+		for _, e := range entries[len(answers):] {
+			missing = append(missing, e.Header)
+		}
+		return "", fmt.Errorf("question: %d of %d question(s) unanswered (%s); the input ended before a human answered",
+			len(entries)-len(answers), len(entries), strings.Join(missing, ", "))
+	}
+
 	return strings.Join(answers, "\n"), nil
 }
 

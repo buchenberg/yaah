@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,6 +13,11 @@ import (
 // logBufSize caps the retained log output per process.
 const logBufSize = 200 * 1024 // 200 KB
 
+// logTruncatedMarker prefixes a log whose oldest output was dropped. The
+// retained tail is the diagnostically useful part (a server/build's most
+// recent output), so overflow drops the head, not the tail.
+const logTruncatedMarker = "...[earlier output dropped]...\n"
+
 // Info holds state for a single tracked background process.
 type Info struct {
 	ID          string
@@ -21,7 +25,10 @@ type Info struct {
 	Description string
 	StartedAt   time.Time
 	status      string // "running", "finished", "stopped", "error"
-	logs        strings.Builder
+	logBuf      []byte // ring buffer of logBufSize bytes, allocated on first output
+	logPos      int    // next write position in logBuf
+	logLen      int    // valid bytes in logBuf (<= logBufSize)
+	logDropped  bool   // at least one old byte was overwritten
 	cmd         *exec.Cmd
 	mu          sync.Mutex
 }
@@ -35,25 +42,71 @@ func (p *Info) Status() string {
 	return p.status
 }
 
-// Logs returns a copy of the process output buffer.
+// Logs returns the retained process output. When the buffer overflowed, the
+// oldest output is gone and the result starts with logTruncatedMarker; the
+// newest output is always retained.
 func (p *Info) Logs() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.logs.String()
+	if p.logLen == 0 {
+		return ""
+	}
+	if !p.logDropped {
+		// Without an overwrite the buffer is linear, even if a write ended
+		// exactly at the cap (logPos == 0).
+		return string(p.logBuf[:p.logLen])
+	}
+	return logTruncatedMarker + string(p.logBuf[p.logPos:]) + string(p.logBuf[:p.logPos])
 }
 
-// appendLog appends text to the log buffer, capping at logBufSize.
-func (p *Info) appendLog(s string) {
+// LogsTruncated reports whether earlier output was dropped from the buffer.
+// It distinguishes a process that produced nothing (false, empty Logs) from
+// one whose head overflowed (true).
+func (p *Info) LogsTruncated() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	remaining := logBufSize - p.logs.Len()
-	if remaining <= 0 {
+	return p.logDropped
+}
+
+// appendLog appends text to the ring buffer, retaining the newest logBufSize
+// bytes. Overflow drops the oldest output rather than the tail.
+func (p *Info) appendLog(s string) {
+	if s == "" {
 		return
 	}
-	if len(s) > remaining {
-		s = s[:remaining]
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.appendLogLocked(s)
+}
+
+// appendLogLocked is appendLog for callers that already hold p.mu.
+func (p *Info) appendLogLocked(s string) {
+	if s == "" {
+		return
 	}
-	p.logs.WriteString(s)
+	if p.logBuf == nil {
+		p.logBuf = make([]byte, logBufSize)
+	}
+	if len(s) >= logBufSize {
+		dropped := p.logLen > 0 || len(s) > logBufSize
+		copy(p.logBuf, s[len(s)-logBufSize:])
+		p.logPos = 0
+		p.logLen = logBufSize
+		p.logDropped = p.logDropped || dropped
+		return
+	}
+	for len(s) > 0 {
+		n := copy(p.logBuf[p.logPos:], s)
+		if p.logLen == logBufSize {
+			p.logDropped = true
+		}
+		p.logPos = (p.logPos + n) % logBufSize
+		p.logLen += n
+		if p.logLen > logBufSize {
+			p.logLen = logBufSize
+		}
+		s = s[n:]
+	}
 }
 
 // Manager tracks all background processes.
@@ -151,9 +204,10 @@ func (m *Manager) Start(command, description string) (*Info, error) {
 		if info.status == "running" {
 			if err != nil {
 				info.status = "error"
-				// Write directly to logs since we already hold info.mu
-				// (appendLog would deadlock — sync.Mutex is not reentrant).
-				info.logs.WriteString(fmt.Sprintf("exit error: %v\n", err))
+				// Write directly to the ring buffer since we already hold
+				// info.mu (appendLog would deadlock — sync.Mutex is not
+				// reentrant).
+				info.appendLogLocked(fmt.Sprintf("exit error: %v\n", err))
 			} else {
 				info.status = "finished"
 			}

@@ -10,9 +10,7 @@ import (
 
 // Shared constants used across multiple tools.
 
-const toolResultMaxLen = 8192
 const bashDefaultTimeout = 30 * time.Second
-const bashMaxOutput = 1 << 20 // 1 MiB
 
 // expandHomeDir replaces a leading ~/ or ~ with the user's home directory.
 func expandHomeDir(path string) string {
@@ -45,14 +43,6 @@ func resolvePathWithPV(pv *PathValidator, input string) (string, error) {
 		return ".", nil
 	}
 	return expandHomeDir(input), nil
-}
-
-// truncateOutput caps a command's output to bashMaxOutput with a truncation marker.
-func truncateOutput(b []byte) []byte {
-	if len(b) <= bashMaxOutput {
-		return b
-	}
-	return append(b[:bashMaxOutput], []byte("\n...[output truncated]...")...)
 }
 
 // rgAvailable checks if ripgrep is on PATH.

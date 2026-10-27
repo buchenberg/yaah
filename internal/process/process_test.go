@@ -2,6 +2,7 @@ package process
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -249,5 +250,79 @@ func TestManagerNextProcessIDConcurrent(t *testing.T) {
 	}
 	if len(seen) != n {
 		t.Fatalf("got %d unique ids, want %d", len(seen), n)
+	}
+}
+
+// ---------- Log buffer ----------
+
+func TestInfoLogsEmptyVsTruncated(t *testing.T) {
+	var p Info
+	if got := p.Logs(); got != "" {
+		t.Errorf("fresh Info.Logs() = %q, want empty", got)
+	}
+	if p.LogsTruncated() {
+		t.Error("fresh Info must not report truncation")
+	}
+
+	p.appendLog("")
+	if p.LogsTruncated() {
+		t.Error("appending nothing must not report truncation")
+	}
+}
+
+func TestInfoLogsExactlyAtCapacityIsNotTruncated(t *testing.T) {
+	var p Info
+	p.appendLog(strings.Repeat("a", logBufSize))
+
+	if p.LogsTruncated() {
+		t.Error("a buffer filled exactly to capacity did not drop anything")
+	}
+	logs := p.Logs()
+	if strings.HasPrefix(logs, logTruncatedMarker) {
+		t.Error("exact-capacity log must not carry the truncation marker")
+	}
+	if len(logs) != logBufSize {
+		t.Errorf("retained %d bytes, want %d", len(logs), logBufSize)
+	}
+}
+
+// TestInfoLogsRetainsTail pins yaah-adt: overflow must discard the oldest
+// output, keep the newest, and mark the loss — silently returning a stale
+// prefix as if complete hid the diagnostic tail.
+func TestInfoLogsRetainsTail(t *testing.T) {
+	var p Info
+	p.appendLog("HEAD\n")
+	p.appendLog(strings.Repeat("x", logBufSize))
+	p.appendLog("TAIL\n")
+
+	if !p.LogsTruncated() {
+		t.Fatal("overflow must set LogsTruncated")
+	}
+	logs := p.Logs()
+	if !strings.HasPrefix(logs, logTruncatedMarker) {
+		t.Errorf("truncated log missing marker: %q", logs[:60])
+	}
+	if !strings.HasSuffix(logs, "TAIL\n") {
+		t.Error("newest output was dropped")
+	}
+	if strings.Contains(logs, "HEAD") {
+		t.Error("oldest output was retained")
+	}
+	if max := logBufSize + len(logTruncatedMarker); len(logs) > max {
+		t.Errorf("retained %d bytes, want at most %d", len(logs), max)
+	}
+}
+
+func TestInfoLogsHandlesWrapAcrossAppends(t *testing.T) {
+	var p Info
+	p.appendLog(strings.Repeat("a", logBufSize-3))
+	p.appendLog("bbbbbb") // 3 bytes fill the buffer, 3 overwrite the oldest.
+
+	logs := p.Logs()
+	if !strings.HasPrefix(logs, logTruncatedMarker) {
+		t.Error("wrap must mark the log truncated")
+	}
+	if !strings.HasSuffix(logs, "bbb") {
+		t.Errorf("wrap lost the newest bytes: tail %q", logs[len(logs)-10:])
 	}
 }

@@ -105,20 +105,20 @@ func (t *JSONQueryTool) Execute(ctx context.Context, args string) (string, error
 }
 
 func (t *JSONQueryTool) doRead(root any, path string) (string, error) {
-	if path == "" {
-		result, _ := json.MarshalIndent(root, "", "  ")
-		result = truncateBytes(result, toolResultMaxLen)
-		return string(result), nil
+	target := root
+	if path != "" {
+		val, err := resolveJSONPath(root, path)
+		if err != nil {
+			return "", err
+		}
+		target = val
 	}
 
-	val, err := resolveJSONPath(root, path)
+	result, err := json.MarshalIndent(target, "", "  ")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("json_query: encode value: %w", err)
 	}
-
-	result, _ := json.MarshalIndent(val, "", "  ")
-	result = truncateBytes(result, toolResultMaxLen)
-	return string(result), nil
+	return truncateResult(string(result)), nil
 }
 
 func (t *JSONQueryTool) doWrite(ctx context.Context, ws Workspace, filePath string, data []byte, root any, path, setValue string) (string, error) {
@@ -136,14 +136,22 @@ func (t *JSONQueryTool) doWrite(ctx context.Context, ws Workspace, filePath stri
 		return "", fmt.Errorf("json_query: %w", err)
 	}
 
-	newData, _ := json.MarshalIndent(root, "", "  ")
+	newData, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("json_query: encode JSON: %w", err)
+	}
 	newData = append(newData, '\n')
 
 	if err := ws.WriteFile(ctx, filePath, newData, 0o644); err != nil {
 		return "", fmt.Errorf("json_query: write file: %w", err)
 	}
 
-	return fmt.Sprintf("Set %s to %v", path, setValue), nil
+	var report multiResult
+	report.donef("Set %s to %s", path, setValue)
+	if string(newData) != string(data) {
+		report.donef("note: rewrote the whole file with 2-space indentation and sorted object keys")
+	}
+	return report.Report(fmt.Sprintf("json_query: wrote %s", filePath))
 }
 
 func (t *JSONQueryTool) doDelete(ctx context.Context, ws Workspace, filePath string, data []byte, root any, path string) (string, error) {
@@ -151,18 +159,26 @@ func (t *JSONQueryTool) doDelete(ctx context.Context, ws Workspace, filePath str
 		return "", fmt.Errorf("json_query: path is required for delete")
 	}
 
-	if err := deleteJSONPath(root, path); err != nil {
+	newRoot, err := deleteJSONPath(root, path)
+	if err != nil {
 		return "", fmt.Errorf("json_query: %w", err)
 	}
 
-	newData, _ := json.MarshalIndent(root, "", "  ")
+	newData, err := json.MarshalIndent(newRoot, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("json_query: encode JSON: %w", err)
+	}
 	newData = append(newData, '\n')
 
 	if err := ws.WriteFile(ctx, filePath, newData, 0o644); err != nil {
 		return "", fmt.Errorf("json_query: write file: %w", err)
 	}
 
-	return fmt.Sprintf("Deleted %s", path), nil
+	var report multiResult
+	if string(newData) != string(data) {
+		report.donef("note: rewrote the whole file with 2-space indentation and sorted object keys")
+	}
+	return report.Report(fmt.Sprintf("Deleted %s", path))
 }
 
 // resolveJSONPath traverses a parsed JSON structure using a dot-notation path.
@@ -208,7 +224,8 @@ func resolveJSONPath(root any, path string) (any, error) {
 	return current, nil
 }
 
-// setJSONPath sets a value in a parsed JSON structure at the given path.
+// setJSONPath sets a value in a parsed JSON structure at the given path. The
+// path's containers must already exist; this function does not create keys.
 func setJSONPath(root any, path string, value any) error {
 	parts := splitPath(path)
 	if len(parts) == 0 {
@@ -279,68 +296,79 @@ func setJSONPath(root any, path string, value any) error {
 	return nil
 }
 
-// deleteJSONPath removes a key from a parsed JSON structure at the given path.
-func deleteJSONPath(root any, path string) error {
+// deleteJSONPath removes the value at path and returns the (possibly new)
+// root. Deleting an element of the root array changes the slice header, so the
+// caller must marshal the returned value rather than the original root.
+func deleteJSONPath(root any, path string) (any, error) {
 	parts := splitPath(path)
 	if len(parts) == 0 {
-		return fmt.Errorf("delete: empty path")
+		return nil, fmt.Errorf("delete: empty path")
 	}
+	return deleteJSONPathParts(root, parts)
+}
 
-	if len(parts) == 1 {
-		switch v := root.(type) {
-		case map[string]any:
-			delete(v, parts[0])
-			return nil
-		case []any:
-			idx, err := strconv.Atoi(parts[0])
-			if err != nil {
-				return fmt.Errorf("json_query: expected array index, got %q", parts[0])
-			}
-			if idx < 0 || idx >= len(v) {
-				return fmt.Errorf("json_query: index %d out of bounds (length %d)", idx, len(v))
-			}
-			// replace with zero value — can't shrink array
-			v[idx] = nil
-			return nil
-		default:
-			return fmt.Errorf("json_query: cannot delete from %T", root)
-		}
-	}
+func deleteJSONPathParts(node any, parts []string) (any, error) {
+	part := parts[0]
 
-	// Navigate to parent.
-	current := root
-	for i := 0; i < len(parts)-1; i++ {
-		part := parts[i]
-		switch v := current.(type) {
-		case map[string]any:
-			child, ok := v[part]
+	switch v := node.(type) {
+	case map[string]any:
+		key, idx := splitBracketPart(part)
+		if idx >= 0 {
+			arr, ok := v[key].([]any)
 			if !ok {
-				return fmt.Errorf("json_query: key %q not found", part)
+				return nil, fmt.Errorf("json_query: %s is not an array", key)
 			}
-			current = child
-		case []any:
-			idx, err := strconv.Atoi(part)
+			if idx < 0 || idx >= len(arr) {
+				return nil, fmt.Errorf("json_query: index %d out of bounds (length %d)", idx, len(arr))
+			}
+			if len(parts) == 1 {
+				v[key] = append(arr[:idx], arr[idx+1:]...)
+				return v, nil
+			}
+			child, err := deleteJSONPathParts(arr[idx], parts[1:])
 			if err != nil {
-				return fmt.Errorf("json_query: expected array index, got %q", part)
+				return nil, err
 			}
-			if idx < 0 || idx >= len(v) {
-				return fmt.Errorf("json_query: index %d out of bounds", idx)
-			}
-			current = v[idx]
-		default:
-			return fmt.Errorf("json_query: cannot traverse into %T", current)
+			arr[idx] = child
+			return v, nil
 		}
-	}
 
-	final := parts[len(parts)-1]
-	if m, ok := current.(map[string]any); ok {
-		if _, exists := m[final]; !exists {
-			return fmt.Errorf("json_query: key %q not found", final)
+		child, ok := v[key]
+		if !ok {
+			return nil, fmt.Errorf("json_query: key %q not found", key)
 		}
-		delete(m, final)
-		return nil
+		if len(parts) == 1 {
+			delete(v, key)
+			return v, nil
+		}
+		newChild, err := deleteJSONPathParts(child, parts[1:])
+		if err != nil {
+			return nil, err
+		}
+		v[key] = newChild
+		return v, nil
+
+	case []any:
+		idx, err := strconv.Atoi(part)
+		if err != nil {
+			return nil, fmt.Errorf("json_query: expected array index, got %q", part)
+		}
+		if idx < 0 || idx >= len(v) {
+			return nil, fmt.Errorf("json_query: index %d out of bounds (length %d)", idx, len(v))
+		}
+		if len(parts) == 1 {
+			return append(v[:idx], v[idx+1:]...), nil
+		}
+		newChild, err := deleteJSONPathParts(v[idx], parts[1:])
+		if err != nil {
+			return nil, err
+		}
+		v[idx] = newChild
+		return v, nil
+
+	default:
+		return nil, fmt.Errorf("json_query: cannot delete from %T", node)
 	}
-	return fmt.Errorf("json_query: cannot delete from %T at %s", current, final)
 }
 
 func splitPath(path string) []string {
@@ -394,11 +422,4 @@ func pathPrefix(parts []string, upTo int) string {
 		sb.WriteString(parts[i])
 	}
 	return sb.String()
-}
-
-func truncateBytes(b []byte, max int) []byte {
-	if len(b) <= max {
-		return b
-	}
-	return append(b[:max], []byte("\n...[truncated]...")...)
 }

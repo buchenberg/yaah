@@ -74,31 +74,34 @@ func (t *WebFetchTool) Execute(ctx context.Context, args string) (string, error)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("webfetch: HTTP %d", resp.StatusCode)
-	}
-
 	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(webFetchMaxBody)))
 	if err != nil {
 		return "", fmt.Errorf("webfetch: read body: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		// A 403/404 body usually explains itself (auth message, API error
+		// JSON, route listing). Returning the status alone hides that and
+		// makes wrong-URL and WAF-blocked indistinguishable.
+		detail := strings.TrimSpace(truncateResult(string(body)))
+		if detail == "" {
+			return "", fmt.Errorf("webfetch: HTTP %s (empty response body)", resp.Status)
+		}
+		return "", fmt.Errorf("webfetch: HTTP %s\n%s", resp.Status, detail)
 	}
 
 	contentType := resp.Header.Get("Content-Type")
 
 	switch params.Format {
 	case "html":
-		return string(body), nil
+		return truncateResult(string(body)), nil
 	case "text":
-		return htmlToText(string(body)), nil
+		return truncateResult(htmlToText(string(body))), nil
 	default:
 		if strings.Contains(contentType, "text/html") {
-			return htmlToText(string(body)), nil
+			return truncateResult(htmlToText(string(body))), nil
 		}
-		result := string(body)
-		if len(result) > toolResultMaxLen {
-			result = result[:toolResultMaxLen] + "\n...[truncated]..."
-		}
-		return result, nil
+		return truncateResult(string(body)), nil
 	}
 }
 
@@ -129,12 +132,7 @@ func htmlToText(html string) string {
 	}
 
 	result := multiNewlineRe.ReplaceAllString(buf.String(), "\n\n")
-	result = strings.TrimSpace(result)
-
-	if len(result) > toolResultMaxLen {
-		result = result[:toolResultMaxLen] + "\n...[truncated]..."
-	}
-	return result
+	return strings.TrimSpace(result)
 }
 
 func decodeHTMLEntities(s string) string {

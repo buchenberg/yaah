@@ -150,3 +150,80 @@ func TestPatchTool_missingFileErrors(t *testing.T) {
 		t.Fatal("patch on a missing file should error")
 	}
 }
+
+// TestPatchTool_hunklessInputLeavesFileUntouched pins yaah-lod: input with no
+// @@ hunks is not a patch, and must never replace the target with the patch
+// text.
+func TestPatchTool_hunklessInputLeavesFileUntouched(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file.txt")
+	original := "real content\n"
+	os.WriteFile(path, []byte(original), 0o644)
+
+	_, err := runPatch(t, path, "diff --stat\n file.txt | 2 +-\n+not a patch\n")
+	if err == nil {
+		t.Fatal("hunkless input must be rejected")
+	}
+	if !strings.Contains(err.Error(), "no @@ hunks") {
+		t.Errorf("error should say the patch has no hunks, got %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != original {
+		t.Errorf("file was modified by hunkless input: %q", data)
+	}
+}
+
+// TestPatchTool_multiFileDiffIsRejected: applying every hunk to the first
+// target would silently corrupt it, so a multi-file diff is an error.
+func TestPatchTool_multiFileDiffIsRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a.txt")
+	os.WriteFile(path, []byte("x\n"), 0o644)
+
+	patch := "--- a/a.txt\n+++ b/a.txt\n--- a/b.txt\n+++ b/b.txt\n@@ -1 +1 @@\n-x\n+y\n"
+	_, err := runPatch(t, path, patch)
+	if err == nil {
+		t.Fatal("multi-file diff must be rejected")
+	}
+	if !strings.Contains(err.Error(), "multi-file diffs are not supported") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestPatchTool_addedLineStartingWithPlusIsNotAHeader: an added line whose
+// text begins with "++ " produces a "+++ " diff line; it must be treated as
+// hunk content, not as a second file header.
+func TestPatchTool_addedLineStartingWithPlusIsNotAHeader(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file.txt")
+	os.WriteFile(path, []byte("a\n"), 0o644)
+
+	patch := "@@ -1 +1,2 @@\n a\n+++ hello\n"
+	if _, err := runPatch(t, path, patch); err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if want := "a\n++ hello\n"; string(data) != want {
+		t.Errorf("content = %q, want %q", data, want)
+	}
+}
+
+// TestPatchTool_reportsEveryFailedHunk: a multi-hunk patch reports all failing
+// hunks, not just the first, and writes nothing.
+func TestPatchTool_reportsEveryFailedHunk(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file.txt")
+	original := "alpha\nbeta\ngamma\n"
+	os.WriteFile(path, []byte(original), 0o644)
+
+	patch := "@@ -1,2 +1,2 @@\n missing-one\n-x\n+y\n@@ -3,2 +3,2 @@\n missing-two\n-a\n+b\n"
+	_, err := runPatch(t, path, patch)
+	if err == nil {
+		t.Fatal("both hunks should fail")
+	}
+	for _, want := range []string{"hunk 1", "hunk 2"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not mention %s: %v", want, err)
+		}
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != original {
+		t.Errorf("failed multi-hunk patch modified the file: %q", data)
+	}
+}

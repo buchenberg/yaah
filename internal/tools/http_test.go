@@ -354,3 +354,22 @@ func TestHTTPTool_NameDescriptionSchema(t *testing.T) {
 		t.Error("Schema() missing properties")
 	}
 }
+
+// TestFormatHTTPResponse_StatusIsNotDuplicated pins yaah-7s3j: resp.Status
+// already contains the code, so the rendered first line must be "HTTP 200 OK",
+// not "HTTP 200 200 OK".
+func TestFormatHTTPResponse_StatusIsNotDuplicated(t *testing.T) {
+	resp := &http.Response{
+		StatusCode: 200,
+		Status:     "200 OK",
+		Header:     http.Header{},
+	}
+	out := formatHTTPResponse(resp, []byte("body"))
+	firstLine := strings.SplitN(out, "\n", 2)[0]
+	if firstLine != "HTTP 200 OK" {
+		t.Errorf("status line = %q, want %q", firstLine, "HTTP 200 OK")
+	}
+	if strings.Count(firstLine, "200") != 1 {
+		t.Errorf("status code repeated: %q", firstLine)
+	}
+}

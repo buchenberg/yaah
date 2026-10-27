@@ -59,6 +59,16 @@
 // No leafTools entry is needed — the runtime-wired instance replaces
 // the default one. Existing examples: MemorySearchTool, BackgroundProcessTool,
 // TodoWriteTool, SkillTool, DelegateTool.
+//
+// # Result honesty
+//
+// A nil error from Execute means the operation succeeded. Never report a
+// failure as prose inside a successful result: a partially applied operation
+// returns a non-nil error. Multi-step tools accumulate successes and failures
+// with multiResult (result.go), which renders every failure first, never
+// truncates failure detail, and returns a non-nil error when any step failed.
+// Truncation caps live in result.go and nowhere else; the agent loop's outer
+// cap may cut success detail, but error payloads are passed through intact.
 package tools
 
 import (
@@ -118,7 +128,8 @@ type Tool interface {
 
 	// Execute runs the tool with the given JSON-encoded arguments.
 	// The context is used for cancellation and timeouts.
-	// Returns the result as a string (or an error if something went wrong).
+	// A nil error means the operation succeeded; failures — including a
+	// partially applied multi-step operation — must return a non-nil error.
 	Execute(ctx context.Context, args string) (string, error)
 }
 

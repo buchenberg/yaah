@@ -44,6 +44,16 @@ func TestTodoWriteTool_Execute(t *testing.T) {
 			args:    `{"todos": 42}`,
 			wantErr: true,
 		},
+		{
+			name:    "invalid status is rejected",
+			args:    `{"todos":[{"content":"task","status":"done"}]}`,
+			wantErr: true,
+		},
+		{
+			name:    "invalid priority is rejected",
+			args:    `{"todos":[{"content":"task","status":"pending","priority":"urgent"}]}`,
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {

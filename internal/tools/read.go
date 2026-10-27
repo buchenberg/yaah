@@ -74,18 +74,31 @@ func (t *ReadTool) Execute(ctx context.Context, args string) (string, error) {
 
 	if params.Offset > 0 || params.Limit > 0 {
 		lines := strings.Split(string(data), "\n")
+		// Split produces a phantom empty line for a trailing newline; drop it
+		// so line counts and the "is there more?" decision match the file.
+		if n := len(lines); n > 0 && lines[n-1] == "" {
+			lines = lines[:n-1]
+		}
 		if params.Offset < 1 {
 			params.Offset = 1
 		}
 		start := params.Offset - 1
-		if start > len(lines) {
-			return "", nil
+		if start >= len(lines) {
+			if len(lines) == 0 && params.Offset == 1 {
+				return "", nil
+			}
+			return "", fmt.Errorf("read: offset %d is past end of file (%d lines)", params.Offset, len(lines))
 		}
+
 		end := len(lines)
 		if params.Limit > 0 && start+params.Limit < end {
 			end = start + params.Limit
 		}
-		return strings.Join(lines[start:end], "\n"), nil
+		result := strings.Join(lines[start:end], "\n")
+		if end < len(lines) {
+			result += truncationMarker
+		}
+		return result, nil
 	}
 
 	return string(data), nil

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -35,8 +36,65 @@ func TestReadTool_respectsOffsetAndLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error: %v", err)
 	}
-	if result != "line2\nline3" {
-		t.Errorf("expected 'line2\\nline3', got %q", result)
+	if !strings.HasPrefix(result, "line2\nline3") {
+		t.Errorf("expected 'line2\\nline3' prefix, got %q", result)
+	}
+	if !strings.HasSuffix(result, truncationMarker) {
+		t.Errorf("a limit-shortened read must be marked truncated, got %q", result)
+	}
+}
+
+func TestReadTool_offsetPastEOFIsExplicit(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "lines.txt")
+	os.WriteFile(path, []byte("line1\nline2\nline3\nline4\nline5\n"), 0o644)
+
+	rt := &ReadTool{}
+	args, _ := json.Marshal(map[string]any{"filePath": path, "offset": 99})
+	_, err := rt.Execute(context.Background(), string(args))
+	if err == nil {
+		t.Fatal("an offset past EOF must be an error, not empty content")
+	}
+	for _, want := range []string{"offset 99", "past end of file", "5 lines"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+}
+
+func TestReadTool_limitCoveringAllLinesHasNoMarker(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "lines.txt")
+	os.WriteFile(path, []byte("line1\nline2\nline3\nline4\nline5\n"), 0o644)
+
+	rt := &ReadTool{}
+	args, _ := json.Marshal(map[string]any{"filePath": path, "offset": 1, "limit": 5})
+	result, err := rt.Execute(context.Background(), string(args))
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	if strings.Contains(result, truncationMarker) {
+		t.Errorf("limit covering the whole file must not be marked truncated: %q", result)
+	}
+	if result != "line1\nline2\nline3\nline4\nline5" {
+		t.Errorf("unexpected content: %q", result)
+	}
+}
+
+func TestReadTool_emptyFileOffset(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "empty.txt")
+	os.WriteFile(path, nil, 0o644)
+
+	rt := &ReadTool{}
+	args, _ := json.Marshal(map[string]any{"filePath": path, "offset": 1})
+	result, err := rt.Execute(context.Background(), string(args))
+	if err != nil || result != "" {
+		t.Errorf("offset 1 on an empty file = (%q, %v), want (\"\", nil)", result, err)
+	}
+
+	args, _ = json.Marshal(map[string]any{"filePath": path, "offset": 2})
+	if _, err := rt.Execute(context.Background(), string(args)); err == nil {
+		t.Error("offset 2 on an empty file must be an error")
 	}
 }
 

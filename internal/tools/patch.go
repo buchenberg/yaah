@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/prompts"
@@ -54,14 +55,15 @@ func (t *PatchTool) Execute(ctx context.Context, args string) (string, error) {
 	target := params.FilePath
 	patch := params.Patch
 
-	// Parse the patch for file path if not explicitly provided.
-	if target == "" {
-		for _, line := range strings.Split(patch, "\n") {
-			if strings.HasPrefix(line, "+++ b/") {
-				target = strings.TrimSpace(strings.TrimPrefix(line, "+++ b/"))
-				break
-			}
-		}
+	// A unified diff carries one target. Reject a multi-file diff rather than
+	// silently applying every hunk to the first file mentioned.
+	headerTargets := patchTargets(patch)
+	if len(headerTargets) > 1 {
+		return "", fmt.Errorf("patch: multi-file diffs are not supported (found %d targets: %s); apply each file separately",
+			len(headerTargets), strings.Join(headerTargets, ", "))
+	}
+	if target == "" && len(headerTargets) == 1 {
+		target = headerTargets[0]
 	}
 	if target == "" {
 		return "", fmt.Errorf("patch: could not determine file path from patch headers; provide filePath parameter")
@@ -79,9 +81,11 @@ func (t *PatchTool) Execute(ctx context.Context, args string) (string, error) {
 	}
 	content := string(data)
 
-	applied, err := applyUnifiedDiff(content, patch)
-	if err != nil {
-		return "", fmt.Errorf("patch: %w", err)
+	applied, report := applyUnifiedDiff(content, patch)
+	if report.failedCount() > 0 {
+		// The target is left byte-identical: a patch is all-or-nothing.
+		_, reportErr := report.Report(fmt.Sprintf("patch: %d hunk(s) failed; %s left unchanged:", report.failedCount(), target))
+		return "", reportErr
 	}
 
 	if err := ws.WriteFile(ctx, target, []byte(applied), 0o644); err != nil {
@@ -91,9 +95,90 @@ func (t *PatchTool) Execute(ctx context.Context, args string) (string, error) {
 	return fmt.Sprintf("Patch applied to %s (%d → %d lines)", target, countLines(content), countLines(applied)), nil
 }
 
+// patchTargets returns the distinct target paths named by the patch's "+++"
+// header lines. Hunk bodies are skipped using their declared line counts, so a
+// hunk line whose added text begins with "++ " is not mistaken for a header.
+// Timestamps after a tab are stripped, and /dev/null (a deletion) is ignored.
+func patchTargets(patch string) []string {
+	lines := strings.Split(patch, "\n")
+	var targets []string
+	seen := make(map[string]bool)
+
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		if strings.HasPrefix(line, "@@") {
+			oldLeft, newLeft := parseHunkCounts(line)
+			for j := i + 1; j < len(lines) && (oldLeft > 0 || newLeft > 0); j++ {
+				body := lines[j]
+				i = j
+				if body == "" {
+					break
+				}
+				switch body[0] {
+				case ' ':
+					oldLeft--
+					newLeft--
+				case '-':
+					oldLeft--
+				case '+':
+					newLeft--
+				case '\\':
+					// "\ No newline at end of file" consumes no lines.
+				default:
+					oldLeft, newLeft = 0, 0
+				}
+			}
+			continue
+		}
+
+		if !strings.HasPrefix(line, "+++ ") {
+			continue
+		}
+		t := strings.TrimSpace(strings.TrimPrefix(line, "+++ "))
+		if i := strings.IndexByte(t, '\t'); i >= 0 {
+			t = t[:i]
+		}
+		t = strings.TrimPrefix(t, "b/")
+		if t == "" || t == "/dev/null" || seen[t] {
+			continue
+		}
+		seen[t] = true
+		targets = append(targets, t)
+	}
+	return targets
+}
+
+// parseHunkCounts extracts the old/new line counts from a "@@ -a,b +c,d @@"
+// header. A missing count means one line, matching unified diff syntax.
+func parseHunkCounts(header string) (oldN, newN int) {
+	oldN, newN = 1, 1
+	for _, field := range strings.Fields(header) {
+		switch {
+		case strings.HasPrefix(field, "-") && len(field) > 1:
+			oldN = hunkCount(field[1:])
+		case strings.HasPrefix(field, "+") && len(field) > 1:
+			newN = hunkCount(field[1:])
+		}
+	}
+	return oldN, newN
+}
+
+func hunkCount(s string) int {
+	if i := strings.IndexByte(s, ','); i >= 0 {
+		s = s[i+1:]
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
 // applyUnifiedDiff parses a unified diff and applies hunks sequentially.
-// Returns the patched content or an error if any hunk fails to apply.
-func applyUnifiedDiff(content, patch string) (string, error) {
+// It returns the patched content and a multiResult recording every hunk that
+// failed. The content is only written by the caller when no hunk failed, so a
+// failed patch leaves the target byte-identical.
+func applyUnifiedDiff(content, patch string) (string, *multiResult) {
 	lines := strings.Split(content, "\n")
 	patchLines := strings.Split(patch, "\n")
 
@@ -120,31 +205,28 @@ func applyUnifiedDiff(content, patch string) (string, error) {
 		hunks = append(hunks, *h)
 	}
 
+	report := &multiResult{}
 	if len(hunks) == 0 {
-		var result []string
-		for _, pl := range patchLines {
-			if strings.HasPrefix(pl, "+") {
-				result = append(result, pl[1:])
-			} else if !strings.HasPrefix(pl, "-") && !strings.HasPrefix(pl, "@@") && !strings.HasPrefix(pl, "---") && !strings.HasPrefix(pl, "+++") {
-				result = append(result, pl)
-			}
-		}
-		return strings.Join(result, "\n"), nil
+		// Never guess: a context diff, a truncated paste or a diffstat has no
+		// hunks, and the old "fallback" built the new file out of the patch
+		// text, silently replacing the target with the patch itself.
+		report.failf("no @@ hunks found; the patch argument must be inline unified diff text (a .patch file path is not read)")
+		return content, report
 	}
 
-	for _, hk := range hunks {
+	for i, hk := range hunks {
 		applied := false
 		var newlines []string
-		i := 0
-		for i < len(lines) {
-			if matchHunk(lines, i, hk) {
+		pos := 0
+		for pos < len(lines) {
+			if matchHunk(lines, pos, hk) {
 				for _, op := range hk.ops {
 					switch op.kind {
 					case ' ':
-						newlines = append(newlines, lines[i])
-						i++
+						newlines = append(newlines, lines[pos])
+						pos++
 					case '-':
-						i++
+						pos++
 					case '+':
 						newlines = append(newlines, op.text)
 					}
@@ -152,19 +234,24 @@ func applyUnifiedDiff(content, patch string) (string, error) {
 				applied = true
 				break
 			}
-			newlines = append(newlines, lines[i])
-			i++
+			newlines = append(newlines, lines[pos])
+			pos++
 		}
 		if !applied {
-			return "", fmt.Errorf("patch: hunk failed to apply near:\n%s", formatHunk(hk))
+			report.failf("hunk %d failed to apply near:\n%s", i+1, strings.TrimRight(formatHunk(hk), "\n"))
+			continue
 		}
-		for i < len(lines) {
-			newlines = append(newlines, lines[i])
-			i++
+		for pos < len(lines) {
+			newlines = append(newlines, lines[pos])
+			pos++
 		}
 		lines = newlines
 	}
-	return strings.Join(lines, "\n"), nil
+
+	if report.failedCount() > 0 {
+		return content, report
+	}
+	return strings.Join(lines, "\n"), report
 }
 
 type hunkOp struct {

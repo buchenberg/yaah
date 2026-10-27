@@ -11,9 +11,6 @@ import (
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
-// lsMaxResultLen caps directory listing output.
-const lsMaxResultLen = 8192
-
 // LsTool lists directory contents with depth control.
 type LsTool struct {
 	PV *PathValidator
@@ -77,8 +74,8 @@ func (t *LsTool) Execute(ctx context.Context, args string) (string, error) {
 	if result == "" {
 		return "(empty directory)", nil
 	}
-	if len(result) > lsMaxResultLen {
-		result = result[:lsMaxResultLen] + "\n...[truncated]..."
+	if len(result) > toolResultMaxBytes {
+		result = truncateResult(result)
 	}
 	return strings.TrimRight(result, "\n"), nil
 }

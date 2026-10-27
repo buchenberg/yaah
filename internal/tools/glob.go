@@ -13,9 +13,6 @@ import (
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
-// globMaxResultLen caps the total glob output length.
-const globMaxResultLen = 8192
-
 // GlobTool finds files matching a glob pattern.
 type GlobTool struct {
 	PV *PathValidator
@@ -99,10 +96,7 @@ func (t *GlobTool) globRipgrep(ctx context.Context, pattern, path string) (strin
 	sort.Strings(lines)
 
 	result = strings.Join(lines, "\n")
-	if len(result) > globMaxResultLen {
-		result = result[:globMaxResultLen] + "\n...[truncated]..."
-	}
-	return result, nil
+	return truncateResult(result), nil
 }
 
 func (t *GlobTool) globNative(ctx context.Context, pattern, path string) (string, error) {
@@ -162,8 +156,12 @@ func (t *GlobTool) globNative(ctx context.Context, pattern, path string) (string
 	sort.Strings(matches)
 
 	result := strings.Join(matches, "\n")
-	if len(result) > globMaxResultLen {
-		result = result[:globMaxResultLen] + fmt.Sprintf("\n...[truncated: %d files total]...", len(matches))
+	if len(result) > toolResultMaxBytes {
+		result = truncateResult(result)
+		// Keep the total count: the old marker carried it, and "how many
+		// files matched" is not success detail the cap should hide.
+		result = strings.TrimSuffix(result, truncationMarker) +
+			fmt.Sprintf("\n...[truncated: %d files total]...", len(matches))
 	}
 	return result, nil
 }
