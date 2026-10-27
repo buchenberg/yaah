@@ -222,6 +222,64 @@ func TestPatchTool_overcountedGitHunkCannotHideSecondFile(t *testing.T) {
 	}
 }
 
+// TestParseHunkCounts_countOmitted: "@@ -5 +5 @@" means one line on each
+// side, not five. The number before the comma (or the only number) is a start
+// line, never a count.
+func TestParseHunkCounts_countOmitted(t *testing.T) {
+	tests := []struct {
+		header string
+		oldN   int
+		newN   int
+	}{
+		{"@@ -5 +5 @@", 1, 1},
+		{"@@ -5,2 +7 @@", 2, 1},
+		{"@@ -5 +7,3 @@", 1, 3},
+		{"@@ -0,0 +1,2 @@", 0, 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.header, func(t *testing.T) {
+			oldN, newN := parseHunkCounts(tt.header)
+			if oldN != tt.oldN || newN != tt.newN {
+				t.Errorf("parseHunkCounts(%q) = (%d,%d), want (%d,%d)", tt.header, oldN, newN, tt.oldN, tt.newN)
+			}
+		})
+	}
+}
+
+// TestPatchTool_countOmittedHeaderApplies: a valid hunk with omitted counts
+// still applies one line per side.
+func TestPatchTool_countOmittedHeaderApplies(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "one.txt")
+	os.WriteFile(path, []byte("1\n2\n3\n4\na\n"), 0o644)
+
+	patch := "--- a/one.txt\n+++ b/one.txt\n@@ -5 +5 @@\n-a\n+b\n"
+	if _, err := runPatch(t, path, patch); err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if want := "1\n2\n3\n4\nb\n"; string(data) != want {
+		t.Errorf("content = %q, want %q", data, want)
+	}
+}
+
+// TestPatchTool_countOmittedHeaderDoesNotOverskip: reading an omitted count as
+// a line number over-skips the body, swallows the next file's header pair, and
+// lets the next hunk start past the bogus end, so the overlap guard stays
+// silent and a multi-file patch reaches the first file.
+func TestPatchTool_countOmittedHeaderDoesNotOverskip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "one.txt")
+	os.WriteFile(path, []byte("1\n2\n3\n4\na\n"), 0o644)
+
+	patch := "--- a/one.txt\n+++ b/one.txt\n@@ -5 +5 @@\n-a\n+b\n--- a/two.txt\n+++ b/two.txt\n@@ -20 +20 @@\n-c\n+d\n"
+	_, err := runPatch(t, path, patch)
+	if err == nil {
+		t.Fatal("a count-omitted over-count hid a multi-file diff")
+	}
+	if !strings.Contains(err.Error(), "multi-file diffs are not supported") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 // TestPatchTool_pathWithSpaces: git does not quote spaces, so splitting the
 // "diff --git" line on whitespace invents a bogus second target.
 func TestPatchTool_pathWithSpaces(t *testing.T) {

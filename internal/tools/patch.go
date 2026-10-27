@@ -242,10 +242,13 @@ func parseHunkCounts(header string) (oldN, newN int) {
 }
 
 func hunkCount(s string) int {
-	if i := strings.IndexByte(s, ','); i >= 0 {
-		s = s[i+1:]
+	i := strings.IndexByte(s, ',')
+	if i < 0 {
+		// "@@ -5 +5 @@" omits the count, which means one line. The number
+		// before the comma is a start line, not a count.
+		return 1
 	}
-	n, err := strconv.Atoi(s)
+	n, err := strconv.Atoi(s[i+1:])
 	if err != nil || n < 0 {
 		return 0
 	}
