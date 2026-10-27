@@ -14,9 +14,6 @@ import (
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
-// grepMaxResultLen caps the total grep output length.
-const grepMaxResultLen = 8192
-
 // GrepTool searches file contents using ripgrep with a Go-native fallback.
 type GrepTool struct {
 	PV *PathValidator
@@ -100,10 +97,7 @@ func (t *GrepTool) execRipgrep(ctx context.Context, pattern, path, include strin
 		return "No matches found.", nil
 	}
 	result = string(truncateOutput([]byte(result)))
-	if len(result) > grepMaxResultLen {
-		result = result[:grepMaxResultLen] + "\n...[truncated]..."
-	}
-	return result, nil
+	return truncateResult(result), nil
 }
 
 func (t *GrepTool) grepNative(ctx context.Context, pattern, path, include string) (string, error) {
@@ -161,7 +155,7 @@ func (t *GrepTool) grepNative(ctx context.Context, pattern, path, include string
 			if re.Match(scanner.Bytes()) {
 				matchCount++
 				fmt.Fprintf(&buf, "%s:%d:%s\n", p, lineNum, scanner.Text())
-				if buf.Len() > grepMaxResultLen {
+				if buf.Len() > toolResultMaxBytes {
 					return nil
 				}
 			}
@@ -179,10 +173,7 @@ func (t *GrepTool) grepNative(ctx context.Context, pattern, path, include string
 
 	result := buf.String()
 	result = strings.TrimSpace(result)
-	if len(result) > grepMaxResultLen {
-		result = result[:grepMaxResultLen] + "\n...[truncated]..."
-	}
-	return result, nil
+	return truncateResult(result), nil
 }
 
 // globToRegex converts a simplified glob pattern to a regex.

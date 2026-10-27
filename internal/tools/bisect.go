@@ -78,7 +78,22 @@ type bisectResult struct {
 var (
 	bisectRemainingRe = regexp.MustCompile(`Bisecting: (\d+) revision`)
 	bisectFoundRe     = regexp.MustCompile(`([0-9a-f]{7,}) is the first bad commit`)
+	// git bisect log renders the result as "# first bad commit: [abc1234]
+	// subject", not the "<sha> is the first bad commit" line printed by
+	// git bisect run. Both forms are real output and must be parsed.
+	bisectLogFoundRe = regexp.MustCompile(`# first bad commit: \[([0-9a-f]{7,})\]`)
 )
+
+// bisectFoundCommit extracts the first-bad-commit hash from either git bisect
+// output form, or "" when the bisect has not concluded.
+func bisectFoundCommit(output string) string {
+	for _, re := range []*regexp.Regexp{bisectFoundRe, bisectLogFoundRe} {
+		if m := re.FindStringSubmatch(output); len(m) >= 2 {
+			return m[1]
+		}
+	}
+	return ""
+}
 
 func (t *BisectTool) Execute(ctx context.Context, args string) (string, error) {
 	var params bisectParams
@@ -105,12 +120,25 @@ func (t *BisectTool) Execute(ctx context.Context, args string) (string, error) {
 		return "", fmt.Errorf("bisect: unknown action %q", params.Action)
 	}
 
-	// After any action, check if we've found the commit
-	if result.BadCommit == "" {
+	// After any action, check if we've found the commit. Skip after an abort
+	// or reset: the bisect is no longer live.
+	if result.BadCommit == "" && result.Status != "error" && result.Status != "reset" {
 		t.checkFound(ctx, result)
 	}
 
-	outBytes, _ := json.MarshalIndent(result, "", "  ")
+	outBytes, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("bisect: encode result: %w", err)
+	}
+	if result.Status == "error" {
+		// A nil error means the operation succeeded, full stop (tools.go).
+		// An aborted bisect is a failure even though the JSON describes it.
+		detail := strings.TrimSpace(result.Stderr)
+		if detail == "" {
+			detail = "bisect action failed"
+		}
+		return string(outBytes), fmt.Errorf("bisect: %s: %s", params.Action, detail)
+	}
 	return string(outBytes), nil
 }
 
@@ -154,11 +182,15 @@ func (t *BisectTool) doStart(ctx context.Context, params bisectParams, result *b
 		runOut, runErr := t.runBisectTest(ctx, params.TestCmd)
 		result.Log += runOut
 		if runErr != nil {
-			result.Stderr = runErr.Error() + "\n" + runOut
+			// git bisect run aborts the whole bisect on exit 126/127 (and
+			// other fatal wrappers). Leaving status "in_progress" invites
+			// the model to keep marking a dead bisect.
+			result.Status = "error"
+			result.Stderr = fmt.Sprintf("bisect run aborted: %v\n%s", runErr, runOut)
+			return
 		}
-		// Parse for the found commit
-		if m := bisectFoundRe.FindStringSubmatch(runOut); len(m) >= 2 {
-			result.BadCommit = m[1]
+		if commit := bisectFoundCommit(runOut); commit != "" {
+			result.BadCommit = commit
 			result.Status = "found"
 		}
 		t.checkFound(ctx, result)
@@ -173,17 +205,17 @@ func (t *BisectTool) doMark(ctx context.Context, mark string, ref string, result
 	out, err := t.runGitCmd(ctx, cmdArgs...)
 	result.Log = out
 	if err != nil {
-		result.Stderr = err.Error()
+		result.Status = "error"
+		result.Stderr = fmt.Sprintf("bisect %s failed: %v\n%s", mark, err, out)
+		return
 	}
 	t.parseRemaining(out, result)
 
 	// If test_cmd was stored elsewhere... We can't do auto-run without re-reading state.
 	// For manual mode, just return the new state.
-	if strings.Contains(out, "first bad commit") {
-		if m := bisectFoundRe.FindStringSubmatch(out); len(m) >= 2 {
-			result.BadCommit = m[1]
-			result.Status = "found"
-		}
+	if commit := bisectFoundCommit(out); commit != "" {
+		result.BadCommit = commit
+		result.Status = "found"
 	}
 }
 
@@ -191,7 +223,9 @@ func (t *BisectTool) doLog(ctx context.Context, result *bisectResult) {
 	out, err := t.runGitCmd(ctx, "bisect", "log")
 	result.Log = out
 	if err != nil {
-		result.Stderr = err.Error()
+		result.Status = "error"
+		result.Stderr = fmt.Sprintf("bisect log failed: %v\n%s", err, out)
+		return
 	}
 	// Count steps
 	result.StepsCompleted = strings.Count(out, "# bad: ")
@@ -200,10 +234,12 @@ func (t *BisectTool) doLog(ctx context.Context, result *bisectResult) {
 func (t *BisectTool) doReset(ctx context.Context, result *bisectResult) {
 	out, err := t.runGitCmd(ctx, "bisect", "reset")
 	result.Log = out
-	result.Status = "reset"
 	if err != nil {
-		result.Stderr = err.Error()
+		result.Status = "error"
+		result.Stderr = fmt.Sprintf("bisect reset failed: %v\n%s", err, out)
+		return
 	}
+	result.Status = "reset"
 }
 
 func (t *BisectTool) parseRemaining(output string, result *bisectResult) {
@@ -226,13 +262,14 @@ func (t *BisectTool) checkFound(ctx context.Context, result *bisectResult) {
 	if result.Status == "found" {
 		return
 	}
-	// Check bisect log for "first bad commit"
+	// Check bisect log for the concluded bisect. git bisect log uses the
+	// "# first bad commit: [sha]" form; bisect run output uses the other.
 	out, err := t.runGitCmd(ctx, "bisect", "log")
 	if err != nil {
 		return
 	}
-	if m := bisectFoundRe.FindStringSubmatch(out); len(m) >= 2 {
-		result.BadCommit = m[1]
+	if commit := bisectFoundCommit(out); commit != "" {
+		result.BadCommit = commit
 		result.Status = "found"
 	}
 }

@@ -16,6 +16,11 @@ const defaultTruncateMaxLines = agentctx.DefaultTruncateMaxLines
 
 func cleanTruncatedDir(dir string) { agentctx.CleanTruncatedDir(dir) }
 
+// truncateToolResult applies the loop's outer context-safety cap to a
+// SUCCESSFUL tool result. Tool-level truncation and the never-truncate-errors
+// invariant live in internal/tools/result.go: tools put failure detail first,
+// so this cap can only ever cut success detail. Errors never reach this
+// function — agent_dispatch delivers them verbatim.
 func (l *Loop) truncateToolResult(result string) string {
 	maxLines := l.ctxMgr().ToolResultMaxLines
 	if maxLines <= 0 {

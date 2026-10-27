@@ -51,7 +51,7 @@ func (t *BackgroundProcessTool) Execute(ctx context.Context, args string) (strin
 		}
 		info, err := t.Manager.Start(params.Command, params.Description)
 		if err != nil {
-			return fmt.Sprintf("Failed to start process: %v", err), nil
+			return "", fmt.Errorf("background_process: start %q: %w", params.Command, err)
 		}
 		return fmt.Sprintf("Started process %s: %s", info.ID, info.Command), nil
 
@@ -90,7 +90,6 @@ func (t *BackgroundProcessTool) Execute(ctx context.Context, args string) (strin
 			return "(no output yet)", nil
 		}
 		return logs, nil
-
 	case "stop":
 		if params.ID == "" {
 			return "", fmt.Errorf("background_process: id is required for stop")

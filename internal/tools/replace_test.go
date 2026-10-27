@@ -3,8 +3,11 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -133,4 +136,41 @@ func TestReplaceTool_isDangerous(t *testing.T) {
 	if !rt.IsDangerous(`{}`) {
 		t.Error("ReplaceTool should be dangerous")
 	}
+}
+
+// TestReplaceTool_partialFailureIsAnError pins the replace half of the result
+// contract (yaah-cox): a per-file write failure makes the whole call an error,
+// the failure line is rendered before the success detail, and a report far
+// larger than the cap cannot push it out.
+func TestReplaceTool_partialFailureIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 200; i++ {
+		writeFileAt(t, filepath.Join(dir, fmt.Sprintf("ok-%03d.txt", i)), "foo\n")
+	}
+	failPath := filepath.Join(dir, "broken.txt")
+	writeFileAt(t, failPath, "foo\n")
+
+	ws := &faultWorkspace{
+		Workspace: newLocalWorkspace(nil),
+		failBase:  "broken.txt",
+		writeErr:  errors.New("injected write failure"),
+	}
+	args, _ := json.Marshal(map[string]any{
+		"pattern": "foo", "replacement": "bar", "path": dir,
+	})
+
+	result, err := (&ReplaceTool{WS: ws}).Execute(context.Background(), string(args))
+	if err == nil {
+		t.Fatalf("partial application returned a nil error (result %q)", result)
+	}
+	if !strings.Contains(err.Error(), "injected write failure") {
+		t.Fatalf("error lost the per-file failure: %v", err)
+	}
+	if strings.Index(err.Error(), "injected write failure") > strings.Index(err.Error(), "ok-000.txt") {
+		t.Error("failure detail must come before success detail so truncation cannot eat it")
+	}
+
+	// The successful files were still rewritten; the failed one was not.
+	assertFileContent(t, filepath.Join(dir, "ok-000.txt"), "bar\n")
+	assertFileContent(t, failPath, "foo\n")
 }

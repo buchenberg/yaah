@@ -173,3 +173,81 @@ func TestJSONQuery_arrayIndex(t *testing.T) {
 		t.Errorf("expected 'beta', got %q", result)
 	}
 }
+
+// TestJSONQuery_deleteArrayElementSplices pins yaah-d3d: deleting an array
+// element removes it (the array shrinks) instead of leaving a null slot.
+func TestJSONQuery_deleteArrayElementSplices(t *testing.T) {
+	tmp := t.TempDir()
+	f := writeJSONFile(t, tmp, "cfg.json", `{"items":["alpha","beta","gamma"]}`)
+
+	jq := &JSONQueryTool{}
+	args, _ := json.Marshal(map[string]any{
+		"file": f, "path": "items[1]", "action": "delete",
+	})
+	result, err := jq.Execute(context.Background(), string(args))
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	if !contains(result, "Deleted items[1]") {
+		t.Errorf("expected delete confirmation, got %q", result)
+	}
+
+	var got struct {
+		Items []string `json:"items"`
+	}
+	data, _ := os.ReadFile(f)
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("re-read JSON: %v", err)
+	}
+	if len(got.Items) != 2 || got.Items[0] != "alpha" || got.Items[1] != "gamma" {
+		t.Errorf("items = %v, want [alpha gamma]", got.Items)
+	}
+}
+
+// TestJSONQuery_deleteNestedArrayElementSplices covers the same rule through
+// an object path, which the old delete path could not reach at all.
+func TestJSONQuery_deleteNestedArrayElementSplices(t *testing.T) {
+	tmp := t.TempDir()
+	f := writeJSONFile(t, tmp, "cfg.json", `{"store":{"books":["a","b","c"]}}`)
+
+	jq := &JSONQueryTool{}
+	args, _ := json.Marshal(map[string]any{
+		"file": f, "path": "store.books[0]", "action": "delete",
+	})
+	if _, err := jq.Execute(context.Background(), string(args)); err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+
+	var got struct {
+		Store struct {
+			Books []string `json:"books"`
+		} `json:"store"`
+	}
+	data, _ := os.ReadFile(f)
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("re-read JSON: %v", err)
+	}
+	if len(got.Store.Books) != 2 || got.Store.Books[0] != "b" || got.Store.Books[1] != "c" {
+		t.Errorf("books = %v, want [b c]", got.Store.Books)
+	}
+}
+
+// TestJSONQuery_writeDisclosesReformat pins yaah-y3j: a write rewrites the
+// whole document, and the result says so instead of leaving the model to
+// discover an unexpected diff later.
+func TestJSONQuery_writeDisclosesReformat(t *testing.T) {
+	tmp := t.TempDir()
+	f := writeJSONFile(t, tmp, "cfg.json", `{"z":1,"name":"old"}`)
+
+	jq := &JSONQueryTool{}
+	args, _ := json.Marshal(map[string]any{
+		"file": f, "path": "name", "set": `"new"`,
+	})
+	result, err := jq.Execute(context.Background(), string(args))
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	if !contains(result, "rewrote the whole file") {
+		t.Errorf("result must disclose the full-file reformat, got %q", result)
+	}
+}

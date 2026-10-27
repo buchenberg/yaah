@@ -167,8 +167,13 @@ func (t *HTTPTool) Execute(ctx context.Context, args string) (string, error) {
 func formatHTTPResponse(resp *http.Response, body []byte) string {
 	var buf bytes.Buffer
 
-	// Status line.
-	buf.WriteString(fmt.Sprintf("HTTP %d %s\n", resp.StatusCode, resp.Status))
+	// Status line. resp.Status already includes the code ("200 OK"), so
+	// prefixing the numeric code again produced "HTTP 200 200 OK".
+	status := resp.Status
+	if status == "" {
+		status = strings.TrimSpace(fmt.Sprintf("%d %s", resp.StatusCode, http.StatusText(resp.StatusCode)))
+	}
+	buf.WriteString("HTTP " + status + "\n")
 
 	// Sorted headers (skip Transfer-Encoding, it's noise).
 	keys := make([]string, 0, len(resp.Header))
@@ -187,11 +192,7 @@ func formatHTTPResponse(resp *http.Response, body []byte) string {
 
 	// Blank line separator, then body.
 	buf.WriteByte('\n')
-	result := body
-	if len(result) > toolResultMaxLen {
-		result = append(result[:toolResultMaxLen], []byte("\n...[body truncated]...")...)
-	}
-	buf.Write(result)
+	buf.WriteString(truncateResult(string(body)))
 
 	return strings.TrimSpace(buf.String())
 }

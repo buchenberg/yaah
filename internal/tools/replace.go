@@ -8,13 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 
 	"github.com/buchenberg/yaah/internal/prompts"
 )
-
-// replaceMaxResultLen caps the per-file result message length.
-const replaceMaxResultLen = 4096
 
 // ReplaceTool performs regex find-and-replace across multiple files.
 // It walks a directory tree, filters by include glob, and applies the
@@ -91,14 +87,7 @@ func (t *ReplaceTool) Execute(ctx context.Context, args string) (string, error) 
 		}
 	}
 
-	type fileResult struct {
-		Path    string
-		Count   int
-		Changed bool
-		Err     error
-	}
-
-	var results []fileResult
+	var report multiResult
 	totalFiles := 0
 	totalMatches := 0
 	totalChanged := 0
@@ -128,7 +117,7 @@ func (t *ReplaceTool) Execute(ctx context.Context, args string) (string, error) 
 
 		data, readErr := ws.ReadFile(ctx, p)
 		if readErr != nil {
-			results = append(results, fileResult{Path: p, Err: readErr})
+			report.failf("%s: read: %v", p, readErr)
 			return nil
 		}
 
@@ -141,7 +130,7 @@ func (t *ReplaceTool) Execute(ctx context.Context, args string) (string, error) 
 		matchCount := countMatches(re, content)
 
 		if params.DryRun {
-			results = append(results, fileResult{Path: p, Count: matchCount})
+			report.donef("%s: %d match(es)", p, matchCount)
 			totalFiles++
 			totalMatches += matchCount
 			return nil
@@ -154,11 +143,11 @@ func (t *ReplaceTool) Execute(ctx context.Context, args string) (string, error) 
 			mode = st.Mode()
 		}
 		if err := ws.WriteFile(ctx, p, []byte(newContent), mode); err != nil {
-			results = append(results, fileResult{Path: p, Count: matchCount, Err: err})
+			report.failf("%s: write: %v", p, err)
 			return nil
 		}
 
-		results = append(results, fileResult{Path: p, Count: matchCount, Changed: true})
+		report.donef("%s: %d match(es)", p, matchCount)
 		totalFiles++
 		totalMatches += matchCount
 		totalChanged++
@@ -173,26 +162,12 @@ func (t *ReplaceTool) Execute(ctx context.Context, args string) (string, error) 
 		return "", fmt.Errorf("replace: %w", ctx.Err())
 	}
 
-	var sb strings.Builder
 	if params.DryRun {
-		sb.WriteString(fmt.Sprintf("DRY RUN — %d file(s) with %d match(es):\n", totalFiles, totalMatches))
-	} else {
-		sb.WriteString(fmt.Sprintf("Replaced %d match(es) across %d file(s):\n", totalMatches, totalChanged))
+		headline := fmt.Sprintf("DRY RUN — %d file(s) with %d match(es):", totalFiles, totalMatches)
+		return report.Report(headline)
 	}
-
-	for _, r := range results {
-		if r.Err != nil {
-			sb.WriteString(fmt.Sprintf("  %s: %v\n", r.Path, r.Err))
-		} else {
-			sb.WriteString(fmt.Sprintf("  %s: %d match(es)\n", r.Path, r.Count))
-		}
-	}
-
-	msg := sb.String()
-	if len(msg) > replaceMaxResultLen {
-		msg = msg[:replaceMaxResultLen] + "\n...[truncated]..."
-	}
-	return strings.TrimRight(msg, "\n"), nil
+	headline := fmt.Sprintf("Replaced %d match(es) across %d file(s):", totalMatches, totalChanged)
+	return report.Report(headline)
 }
 
 func countMatches(re *regexp.Regexp, content string) int {

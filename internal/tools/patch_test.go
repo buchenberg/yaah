@@ -150,3 +150,206 @@ func TestPatchTool_missingFileErrors(t *testing.T) {
 		t.Fatal("patch on a missing file should error")
 	}
 }
+
+// TestPatchTool_hunklessInputLeavesFileUntouched pins yaah-lod: input with no
+// @@ hunks is not a patch, and must never replace the target with the patch
+// text.
+func TestPatchTool_hunklessInputLeavesFileUntouched(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file.txt")
+	original := "real content\n"
+	os.WriteFile(path, []byte(original), 0o644)
+
+	_, err := runPatch(t, path, "diff --stat\n file.txt | 2 +-\n+not a patch\n")
+	if err == nil {
+		t.Fatal("hunkless input must be rejected")
+	}
+	if !strings.Contains(err.Error(), "no @@ hunks") {
+		t.Errorf("error should say the patch has no hunks, got %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != original {
+		t.Errorf("file was modified by hunkless input: %q", data)
+	}
+}
+
+// TestPatchTool_multiFileDiffIsRejected: applying every hunk to the first
+// target would silently corrupt it, so a multi-file diff is an error.
+func TestPatchTool_multiFileDiffIsRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a.txt")
+	os.WriteFile(path, []byte("x\n"), 0o644)
+
+	patch := "--- a/a.txt\n+++ b/a.txt\n--- a/b.txt\n+++ b/b.txt\n@@ -1 +1 @@\n-x\n+y\n"
+	_, err := runPatch(t, path, patch)
+	if err == nil {
+		t.Fatal("multi-file diff must be rejected")
+	}
+	if !strings.Contains(err.Error(), "multi-file diffs are not supported") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestPatchTool_overcountedHunkCannotHideSecondFile: a hunk that declares
+// more lines than it owns used to swallow the next file's header pair, so the
+// multi-file guard never saw the second target. The overrun itself is now an
+// error.
+func TestPatchTool_overcountedHunkCannotHideSecondFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "one.txt")
+	os.WriteFile(path, []byte("a\n"), 0o644)
+
+	patch := "--- a/one.txt\n+++ b/one.txt\n@@ -1,2 +1,2 @@\n-a\n+b\n--- a/two.txt\n+++ b/two.txt\n@@ -1 +1 @@\n-c\n+d\n"
+	_, err := runPatch(t, path, patch)
+	if err == nil {
+		t.Fatal("an over-counted hunk hid a multi-file diff")
+	}
+	if !strings.Contains(err.Error(), "multi-file diffs are not supported") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestPatchTool_overcountedGitHunkCannotHideSecondFile: the raw diff --git
+// sections remain visible even when a hunk's counts swallow the +++ headers.
+func TestPatchTool_overcountedGitHunkCannotHideSecondFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "one.txt")
+	os.WriteFile(path, []byte("a\n"), 0o644)
+
+	patch := "diff --git a/one.txt b/one.txt\n--- a/one.txt\n+++ b/one.txt\n@@ -1,2 +1,2 @@\n-a\n+b\ndiff --git a/two.txt b/two.txt\n--- a/two.txt\n+++ b/two.txt\n@@ -1 +1 @@\n-c\n+d\n"
+	_, err := runPatch(t, path, patch)
+	if err == nil {
+		t.Fatal("an over-counted git hunk hid a multi-file diff")
+	}
+	if !strings.Contains(err.Error(), "multi-file diffs are not supported") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestParseHunkCounts_countOmitted: "@@ -5 +5 @@" means one line on each
+// side, not five. The number before the comma (or the only number) is a start
+// line, never a count.
+func TestParseHunkCounts_countOmitted(t *testing.T) {
+	tests := []struct {
+		header string
+		oldN   int
+		newN   int
+	}{
+		{"@@ -5 +5 @@", 1, 1},
+		{"@@ -5,2 +7 @@", 2, 1},
+		{"@@ -5 +7,3 @@", 1, 3},
+		{"@@ -0,0 +1,2 @@", 0, 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.header, func(t *testing.T) {
+			oldN, newN := parseHunkCounts(tt.header)
+			if oldN != tt.oldN || newN != tt.newN {
+				t.Errorf("parseHunkCounts(%q) = (%d,%d), want (%d,%d)", tt.header, oldN, newN, tt.oldN, tt.newN)
+			}
+		})
+	}
+}
+
+// TestPatchTool_countOmittedHeaderApplies: a valid hunk with omitted counts
+// still applies one line per side.
+func TestPatchTool_countOmittedHeaderApplies(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "one.txt")
+	os.WriteFile(path, []byte("1\n2\n3\n4\na\n"), 0o644)
+
+	patch := "--- a/one.txt\n+++ b/one.txt\n@@ -5 +5 @@\n-a\n+b\n"
+	if _, err := runPatch(t, path, patch); err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if want := "1\n2\n3\n4\nb\n"; string(data) != want {
+		t.Errorf("content = %q, want %q", data, want)
+	}
+}
+
+// TestPatchTool_countOmittedHeaderDoesNotOverskip: reading an omitted count as
+// a line number over-skips the body, swallows the next file's header pair, and
+// lets the next hunk start past the bogus end, so the overlap guard stays
+// silent and a multi-file patch reaches the first file.
+func TestPatchTool_countOmittedHeaderDoesNotOverskip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "one.txt")
+	os.WriteFile(path, []byte("1\n2\n3\n4\na\n"), 0o644)
+
+	patch := "--- a/one.txt\n+++ b/one.txt\n@@ -5 +5 @@\n-a\n+b\n--- a/two.txt\n+++ b/two.txt\n@@ -20 +20 @@\n-c\n+d\n"
+	_, err := runPatch(t, path, patch)
+	if err == nil {
+		t.Fatal("a count-omitted over-count hid a multi-file diff")
+	}
+	if !strings.Contains(err.Error(), "multi-file diffs are not supported") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestPatchTool_pathWithSpaces: git does not quote spaces, so splitting the
+// "diff --git" line on whitespace invents a bogus second target.
+func TestPatchTool_pathWithSpaces(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "my file.txt")
+	os.WriteFile(path, []byte("a\n"), 0o644)
+
+	patch := "diff --git a/my file.txt b/my file.txt\n--- a/my file.txt\n+++ b/my file.txt\n@@ -1 +1 @@\n-a\n+b\n"
+	if _, err := runPatch(t, path, patch); err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != "b\n" {
+		t.Errorf("content = %q, want %q", data, "b\n")
+	}
+}
+
+// TestPatchTool_headerLikeHunkContent: a hunk that removes "-- a/old" and adds
+// "++ b/new" renders as a "--- a/..." / "+++ b/..." pair. It is content, not a
+// file header, and must not be rejected.
+func TestPatchTool_headerLikeHunkContent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "f.txt")
+	os.WriteFile(path, []byte("before\n-- a/old\nafter\n"), 0o644)
+
+	patch := "@@ -2 +2 @@\n--- a/old\n+++ b/new\n"
+	if _, err := runPatch(t, path, patch); err != nil {
+		t.Fatalf("header-like hunk content was rejected: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if want := "before\n++ b/new\nafter\n"; string(data) != want {
+		t.Errorf("content = %q, want %q", data, want)
+	}
+}
+
+// TestPatchTool_addedLineStartingWithPlusIsNotAHeader: an added line whose
+// text begins with "++ " produces a "+++ " diff line; it must be treated as
+// hunk content, not as a second file header.
+func TestPatchTool_addedLineStartingWithPlusIsNotAHeader(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file.txt")
+	os.WriteFile(path, []byte("a\n"), 0o644)
+
+	patch := "@@ -1 +1,2 @@\n a\n+++ hello\n"
+	if _, err := runPatch(t, path, patch); err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if want := "a\n++ hello\n"; string(data) != want {
+		t.Errorf("content = %q, want %q", data, want)
+	}
+}
+
+// TestPatchTool_reportsEveryFailedHunk: a multi-hunk patch reports all failing
+// hunks, not just the first, and writes nothing.
+func TestPatchTool_reportsEveryFailedHunk(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file.txt")
+	original := "alpha\nbeta\ngamma\n"
+	os.WriteFile(path, []byte(original), 0o644)
+
+	patch := "@@ -1,2 +1,2 @@\n missing-one\n-x\n+y\n@@ -3,2 +3,2 @@\n missing-two\n-a\n+b\n"
+	_, err := runPatch(t, path, patch)
+	if err == nil {
+		t.Fatal("both hunks should fail")
+	}
+	for _, want := range []string{"hunk 1", "hunk 2"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not mention %s: %v", want, err)
+		}
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != original {
+		t.Errorf("failed multi-hunk patch modified the file: %q", data)
+	}
+}
