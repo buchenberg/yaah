@@ -55,6 +55,23 @@ func truncateResult(s string) string {
 	return truncateAt(s, toolResultMaxBytes)
 }
 
+// keepTail keeps the last max bytes of s, prefixing truncationMarker when it
+// cuts. The report lane appends its teardown note at the END of a partial
+// result, so when a partial has to travel inside an error the tail is the
+// part an orchestrator must not lose. The bound mirrors toolResultMaxBytes —
+// what this payload would have hit on the success channel — because the loop
+// delivers error text verbatim.
+func keepTail(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	cut := len(s) - max
+	for cut < len(s) && !utf8.RuneStart(s[cut]) {
+		cut++
+	}
+	return strings.TrimPrefix(truncationMarker, "\n") + "\n" + s[cut:]
+}
+
 // truncateOutput caps raw command output at commandOutputMaxBytes on a UTF-8
 // rune boundary and appends truncationMarker when it cuts.
 func truncateOutput(b []byte) []byte {

@@ -678,6 +678,30 @@ func TestDelegate_ClassifyGenericErrorCarriesPartial(t *testing.T) {
 	}
 }
 
+// TestDelegate_ClassifyGenericErrorKeepsTailOfOversizedPartial: errors are
+// delivered verbatim by the loop, so the folded partial is bounded — but the
+// teardown note lives at the END of the partial, so the bound keeps the tail,
+// not the head.
+func TestDelegate_ClassifyGenericErrorKeepsTailOfOversizedPartial(t *testing.T) {
+	tool := &DelegateTool{}
+	partial := strings.Repeat("report body\n", 2000) // ~24 KiB, past toolResultMaxBytes
+	note := "note: the report dispatch could not discard its isolated scope; it left the worktree at /tmp/wt/scratch"
+
+	_, err := tool.classifyRunnerResult(partial+note, errors.New("max iterations reached"), "reviewer", 30*time.Second, context.Background())
+	if err == nil {
+		t.Fatal("a generic runner error must stay an error")
+	}
+	if len(err.Error()) > len("max iterations reached\n")+toolResultMaxBytes+len(truncationMarker)+len(note)+16 {
+		t.Errorf("folded error is unbounded: %d bytes", len(err.Error()))
+	}
+	if !strings.Contains(err.Error(), "left the worktree at /tmp/wt/scratch") {
+		t.Errorf("tail-keeping lost the teardown note: %v", err)
+	}
+	if !strings.Contains(err.Error(), truncationMarker) {
+		t.Errorf("a cut partial must carry the truncation marker: %v", err)
+	}
+}
+
 // TestDelegate_ClassifyGenericErrorWithoutPartialStaysBare: nothing to
 // preserve, nothing appended.
 func TestDelegate_ClassifyGenericErrorWithoutPartialStaysBare(t *testing.T) {

@@ -255,17 +255,16 @@ func (t *DelegateTool) classifyRunnerResult(result string, err error, role strin
 			return structuredTaskResult("cancelled", role, timeout, partial), nil
 		default:
 			// A non-nil error makes the agent loop replace the result with
-			// the error text, so a partial the orchestrator should see —
-			// most critically a report lane's teardown note naming a
-			// stranded worktree (yaah-atn) — must ride inside the error.
-			// result.go's invariant 2 keeps error detail untruncated and
-			// reserves size policy to the loop's outer cap, so the whole
-			// partial travels: retainedNote appends the note at the end,
-			// and a head-first cap would eat it.
+			// the error text delivered verbatim, so a partial the
+			// orchestrator should see — most critically a report lane's
+			// teardown note naming a stranded worktree (yaah-atn) — must
+			// ride inside the error. The note is appended at the end, so
+			// keep the tail; the bound is the success cap this payload
+			// would have hit on its own channel.
 			if strings.TrimSpace(partial) == "" {
 				return "", err
 			}
-			return "", fmt.Errorf("%w\n%s", err, partial)
+			return "", fmt.Errorf("%w\n%s", err, keepTail(partial, toolResultMaxBytes))
 		}
 	}
 	return result, nil
