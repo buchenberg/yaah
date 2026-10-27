@@ -114,13 +114,10 @@ func (t *SubAgentJobsTool) executeCancel(jobID string) (string, error) {
 	if !t.Jobs.Cancel(jobID) {
 		return "", fmt.Errorf("subagent_jobs: unknown job_id %q", jobID)
 	}
-	// Read back the status after cancellation for a clean response.
+	// Read back the status after cancellation. A cancellation request only
+	// signals the job; it may still be running until the runner observes it.
+	// Report the true status — StillRunning carries the "not done yet" fact.
 	st, _ := t.Jobs.Status(jobID)
-	if st.Status == jobs.BGStatusRunning {
-		// The job hasn't observed cancellation yet; report it as
-		// cancelled with the running status.
-		st.Status = jobs.BGStatusCancelled
-	}
 	data, _ := json.Marshal(st)
 	return string(data), nil
 }
@@ -138,8 +135,17 @@ func (t *SubAgentJobsTool) executeWait(_ context.Context, jobID string, timeoutS
 	if !ok {
 		return "", fmt.Errorf("subagent_jobs: unknown job_id %q", jobID)
 	}
-	if st.Status == jobs.BGStatusRunning {
-		st.Status = "timed_out"
+	if st.StillRunning {
+		// The wait call hit its deadline before the job finished. Report both
+		// facts: the job is still running AND this call timed out. The status
+		// string is left truthful (still_running) rather than rewritten to a
+		// fabricated terminal value.
+		out := struct {
+			jobs.BackgroundJobStatus
+			TimedOut bool `json:"timed_out"`
+		}{st, true}
+		data, _ := json.Marshal(out)
+		return string(data), nil
 	}
 	data, _ := json.Marshal(st)
 	return string(data), nil

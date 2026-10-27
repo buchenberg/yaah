@@ -30,8 +30,12 @@ type BackgroundJobStatus struct {
 	Description string `json:"description"`
 	Model       string `json:"model,omitempty"`
 	Status      string `json:"status"`
-	DurationMs  int64  `json:"duration_ms,omitempty"`
-	Error       string `json:"error,omitempty"`
+	// StillRunning is true when the job has not reached a terminal state.
+	// It lets lifecycle callers distinguish "wait timed out, job still
+	// running" from a terminal status — status alone cannot do that.
+	StillRunning bool   `json:"still_running,omitempty"`
+	DurationMs   int64  `json:"duration_ms,omitempty"`
+	Error        string `json:"error,omitempty"`
 }
 
 // backgroundJob is the live, mutable tracking record for one background
@@ -68,12 +72,13 @@ func (j *backgroundJob) snapshot() BackgroundJobStatus {
 		dur = time.Since(j.startedAt)
 	}
 	s := BackgroundJobStatus{
-		ID:          j.id,
-		Role:        j.role,
-		Description: j.description,
-		Model:       j.model,
-		Status:      st,
-		DurationMs:  dur.Milliseconds(),
+		ID:           j.id,
+		Role:         j.role,
+		Description:  j.description,
+		Model:        j.model,
+		Status:       st,
+		StillRunning: !j.finished,
+		DurationMs:   dur.Milliseconds(),
 	}
 	if j.finished && j.err != nil {
 		s.Error = j.err.Error()

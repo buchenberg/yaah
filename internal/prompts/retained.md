@@ -13,7 +13,10 @@ it with the `proposal` tool:
   if the tree moved since the dispatch.
 - `apply` — three-way merge onto a moved tree; it lands only when the two change
   sets are path-disjoint, and refuses otherwise.
-- `release` — keep whatever already landed, drop the record.
+- `release` — keep the proposal's change without integrating it: the sealed
+  delta is exported to a retention path (reported in `retained`) and the
+  worktree is torn down. If the export fails, the release fails instead of
+  claiming success.
 - `discard` — throw the proposal away and remove its worktree.
 
 `proposal` with `action: "list"` shows open proposals; `action: "show"` re-reads
