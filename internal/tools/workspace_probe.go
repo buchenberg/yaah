@@ -33,8 +33,6 @@ import (
 // The returned sandbox is NOT provisioned: Create remains the caller's
 // explicit lifecycle step, per the Sandbox contract.
 func OpenContainerdWorkspaceSandbox(w config.WorkspaceConfig) (goatherdsandbox.Sandbox, error) {
-	// Root maps onto Config.Workdir: the containment root every
-	// relative tool path resolves against inside the sandbox.
 	// FIFODir passes through so the client's task/exec stdio FIFOs land in a
 	// directory yaah's uid can write — containerd's default is root-only.
 	//
@@ -44,14 +42,7 @@ func OpenContainerdWorkspaceSandbox(w config.WorkspaceConfig) (goatherdsandbox.S
 	// egress boundary, which is why yaah's config surface does not expose it
 	// yet. Sharing the host network would need an explicit config field and a
 	// decision about how it interacts with the egress posture vocabulary.
-	sb, err := goatherdsandbox.OpenSandbox(croftadapter.BackendName, croftadapter.Config{
-		Address:     w.Containerd.Address,
-		Namespace:   w.Containerd.Namespace,
-		Image:       w.Containerd.Image,
-		Snapshotter: w.Containerd.Snapshotter,
-		FIFODir:     w.Containerd.FIFODir,
-		Workdir:     w.Root,
-	})
+	sb, err := goatherdsandbox.OpenSandbox(croftadapter.BackendName, containerdAdapterConfig(w))
 	if err != nil {
 		return nil, fmt.Errorf("workspace: open containerd sandbox: %w", err)
 	}
@@ -59,6 +50,29 @@ func OpenContainerdWorkspaceSandbox(w config.WorkspaceConfig) (goatherdsandbox.S
 		return nil, fmt.Errorf("workspace: the registry returned no sandbox for config %+v", w.Containerd)
 	}
 	return sb, nil
+}
+
+// containerdAdapterConfig maps yaah's workspace config onto the adapter's
+// Config.
+//
+// It is its own function so the mapping is testable on every platform. The
+// adapter registers no backend off-Linux, so a test that resolves one through
+// the registry can only run on Linux — but the Config type is platform-neutral,
+// and a field silently dropped between yaah's config surface and the backend is
+// exactly the regression worth catching everywhere. Testing the mapping
+// directly also retires the reflection the old passthrough test needed to read
+// an unexported struct field out of a resolved backend.
+func containerdAdapterConfig(w config.WorkspaceConfig) croftadapter.Config {
+	return croftadapter.Config{
+		Address:     w.Containerd.Address,
+		Namespace:   w.Containerd.Namespace,
+		Image:       w.Containerd.Image,
+		Snapshotter: w.Containerd.Snapshotter,
+		FIFODir:     w.Containerd.FIFODir,
+		// Root maps onto Workdir: the containment root every relative tool
+		// path resolves against inside the sandbox.
+		Workdir: w.Root,
+	}
 }
 
 // imageContractScript verifies the D5 image contract in one exec:

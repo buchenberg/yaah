@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+	croftadapter "github.com/buchenberg/goatherd-runtime/sandbox/croft"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/sandboxfake"
 )
@@ -200,12 +201,22 @@ func TestOpenContainerdWorkspaceSandbox(t *testing.T) {
 	}
 }
 
-// TestOpenContainerdWorkspaceSandbox_Passthrough pins that every containerd
-// field the config surface exposes — FIFODir included — reaches the backend
-// the registry resolves. The adapter keeps its Config unexported, so the test
-// reads the field reflectively rather than through an accessor the adapter
-// would have to grow just for this.
-func TestOpenContainerdWorkspaceSandbox_Passthrough(t *testing.T) {
+// TestContainerdAdapterConfig_Passthrough pins that every containerd field
+// yaah's config surface exposes — FIFODir included — reaches the adapter's
+// Config, and that Root lands on Workdir.
+//
+// It tests the mapping function rather than a backend resolved through the
+// registry, so it runs on every platform: the adapter registers no backend
+// off-Linux, but its Config type is platform-neutral, and a field silently
+// dropped between yaah's config surface and the backend is worth catching
+// everywhere. This also retires the reflection the previous version needed to
+// read an unexported field out of a resolved backend — the adapter's Config is
+// exported and comparable, so DeepEqual asserts the whole struct at once and
+// would also catch a field being set that should not be.
+//
+// Registry resolution itself, including its refusal off-Linux, is covered by
+// TestOpenContainerdWorkspaceSandbox.
+func TestContainerdAdapterConfig_Passthrough(t *testing.T) {
 	w := config.WorkspaceConfig{
 		Backend: config.BackendContainerd,
 		Root:    "/sandbox",
@@ -217,28 +228,16 @@ func TestOpenContainerdWorkspaceSandbox_Passthrough(t *testing.T) {
 			FIFODir:     "/var/tmp/yaah-fifo",
 		},
 	}
-	sb, err := OpenContainerdWorkspaceSandbox(w)
-	if err != nil {
-		t.Fatalf("OpenContainerdWorkspaceSandbox: %v", err)
+	want := croftadapter.Config{
+		Address:     "/run/containerd/containerd.sock",
+		Namespace:   "prod",
+		Image:       "example/dev:latest",
+		Snapshotter: "overlayfs",
+		FIFODir:     "/var/tmp/yaah-fifo",
+		Workdir:     "/sandbox",
 	}
-
-	// The registry hands back the concrete adapter as the Sandbox interface;
-	// dig out its unexported cfg one field at a time.
-	cfg := reflect.ValueOf(sb).Elem().FieldByName("cfg")
-	if !cfg.IsValid() {
-		t.Fatalf("backend %T carries no cfg field; update the test to its layout", sb)
-	}
-	for field, want := range map[string]string{
-		"Address":     w.Containerd.Address,
-		"Namespace":   w.Containerd.Namespace,
-		"Image":       w.Containerd.Image,
-		"Snapshotter": w.Containerd.Snapshotter,
-		"FIFODir":     w.Containerd.FIFODir,
-		"Workdir":     w.Root,
-	} {
-		if got := cfg.FieldByName(field).String(); got != want {
-			t.Errorf("cfg.%s = %q, want %q", field, got, want)
-		}
+	if got := containerdAdapterConfig(w); !reflect.DeepEqual(got, want) {
+		t.Errorf("containerdAdapterConfig() =\n\t%+v\nwant\n\t%+v", got, want)
 	}
 }
 
