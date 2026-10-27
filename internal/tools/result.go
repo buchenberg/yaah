@@ -25,6 +25,13 @@ import (
 // safety; it is not a licence for tools to invent their own limits. Tools
 // return at most toolResultMaxBytes of success detail, which is below the
 // loop cap, and errors are passed through untruncated.
+//
+// Boundary case: when an operation fails after producing a partial result —
+// the report lane's retainedNote caveat naming a stranded worktree is the
+// reason — the partial travels inside the error text, because the loop
+// delivers error text verbatim and discards the result. The partial is
+// success-detail content: it is bounded like success detail (truncateAt at
+// toolResultMaxBytes), while the error's own diagnostic stays untruncated.
 const (
 	// toolResultMaxBytes caps the success detail a single tool call returns.
 	toolResultMaxBytes = 8192
@@ -53,23 +60,6 @@ func truncateAt(s string, max int) string {
 // appends truncationMarker when it cuts.
 func truncateResult(s string) string {
 	return truncateAt(s, toolResultMaxBytes)
-}
-
-// keepTail keeps the last max bytes of s, prefixing truncationMarker when it
-// cuts. The report lane appends its teardown note at the END of a partial
-// result, so when a partial has to travel inside an error the tail is the
-// part an orchestrator must not lose. The bound mirrors toolResultMaxBytes —
-// what this payload would have hit on the success channel — because the loop
-// delivers error text verbatim.
-func keepTail(s string, max int) string {
-	if max <= 0 || len(s) <= max {
-		return s
-	}
-	cut := len(s) - max
-	for cut < len(s) && !utf8.RuneStart(s[cut]) {
-		cut++
-	}
-	return strings.TrimPrefix(truncationMarker, "\n") + "\n" + s[cut:]
 }
 
 // truncateOutput caps raw command output at commandOutputMaxBytes on a UTF-8

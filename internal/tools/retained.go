@@ -423,6 +423,20 @@ func retainedNote(result, note string) string {
 	return result + "\n\nnote: " + note
 }
 
+// splitRetainedNote reverses retainedNote: it separates a partial result
+// that may carry a "note: " caveat from its body, so a caller can bound the
+// body and re-attach the note without losing it. The bare note text is
+// returned (no "note: " prefix), ready for retainedNote.
+func splitRetainedNote(partial string) (body, note string) {
+	if strings.HasPrefix(partial, "note: ") {
+		return "", strings.TrimSpace(partial[len("note: "):])
+	}
+	if i := strings.LastIndex(partial, "\nnote: "); i >= 0 {
+		return partial[:i], strings.TrimSpace(partial[i+len("\nnote: "):])
+	}
+	return partial, ""
+}
+
 // worktreeOnDisk reports whether a worktree directory still exists.
 func worktreeOnDisk(path string) bool {
 	if path == "" {
