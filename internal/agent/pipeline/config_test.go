@@ -269,6 +269,12 @@ func TestResolvedPipelineNames_Additive(t *testing.T) {
 		}
 	})
 
+	t.Run("defaults include the intent-loop guard", func(t *testing.T) {
+		if !slices.Contains(ResolvedPipelineNames(nil, nil), "intent_loop") {
+			t.Error("intent_loop missing from the default pipeline; the TUI info pane and docs claim it runs")
+		}
+	})
+
 	t.Run("enabled extends defaults", func(t *testing.T) {
 		got := ResolvedPipelineNames([]string{"shepherd_trace"}, nil)
 		if !slices.Contains(got, "shepherd_trace") {
