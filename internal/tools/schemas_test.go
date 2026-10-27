@@ -11,43 +11,20 @@ import (
 )
 
 func TestAllToolSchemas_AreValidJSON(t *testing.T) {
-	// Leaf tools from the built-in registry, plus the tools the wiring
-	// registers directly.
-	all := []Tool{
-		&ApplyOutTool{},
-		&BackgroundProcessTool{},
-		&ListSubAgentsTool{},
-		&MemoryAddTool{},
-		&MemoryDeleteTool{},
-		&MemorySearchTool{},
-		&MemorySessionSearchTool{},
-		&MemoryUpdateTool{},
-		&PlanTool{},
-		&ProposalTool{},
-		&RoleTool{},
-		&SubAgentJobsTool{},
-		&SupervisorTool{},
-		&DelegateTool{},
-		&TodoWriteTool{},
-	}
-	// NewLeafTool reaches every leaf tool, including the shell this platform
-	// does not register (NewRegistry omits it, which would silently skip a
-	// schema).
-	for name := range leafTools {
-		all = append(all, NewLeafTool(name))
-	}
-
-	for _, tool := range all {
+	// allBuiltinTools covers the leaf registry and every runtime-wired
+	// tool, including ones cmd/yaah registers conditionally.
+	for _, tool := range allBuiltinTools() {
 		if tool == nil {
 			continue
 		}
-		var v any
-		if err := json.Unmarshal(tool.Schema(), &v); err != nil {
-			t.Errorf("%s: schema is not valid JSON: %v", tool.Name(), err)
-			continue
-		}
-		if m, ok := v.(map[string]any); !ok || m["type"] != "object" {
-			t.Errorf("%s: schema must be a JSON object with type=object", tool.Name())
-		}
+		t.Run(tool.Name(), func(t *testing.T) {
+			var v any
+			if err := json.Unmarshal(tool.Schema(), &v); err != nil {
+				t.Errorf("schema for %s is not valid JSON: %v", tool.Name(), err)
+			}
+			if m, ok := v.(map[string]any); !ok || m["type"] != "object" {
+				t.Errorf("%s: schema must be a JSON object with type=object", tool.Name())
+			}
+		})
 	}
 }
