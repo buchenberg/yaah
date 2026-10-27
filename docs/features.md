@@ -262,7 +262,8 @@ Every turn runs through a configurable middleware pipeline. The orchestrator
 registers the built-in middleware and enables a default set (see the table);
 `middleware.enabled` is additive and `middleware.disabled` removes names.
 Sub-agent loops use a curated pipeline (`tool_concurrency`, `shepherd_trace`,
-plus `permission`, `steer`, and `supervisor_guard` where applicable). The full
+and `evidence_guard`, plus `permission`, `steer`, and `supervisor_guard` where
+applicable). The full
 table, the default order, and enable/disable rules live in
 [configuration.md](./configuration.md#middleware).
 
