@@ -21,8 +21,12 @@ providers:
     base_url: https://api.anthropic.com
     api_key: ${ANTHROPIC_API_KEY}
     max_tokens: 8192                   # optional output cap
-    # reasoning_replay: auto           # auto (default) | omit | text — how assistant
-                                       # thinking without a provider signature is replayed
+    # reasoning_replay: auto           # auto (default) | omit | text — auto replays
+                                       # unsigned thinking as a thinking block on
+                                       # Anthropic-compatible endpoints and omits it on
+                                       # api.anthropic.com (which validates signatures);
+                                       # text can make reasoning models echo their
+                                       # chain-of-thought into the visible answer
   zai:
     api: anthropic                     # Anthropic-compatible endpoint
     name: ZAI

@@ -470,11 +470,13 @@ func TestChatRequestToAnthropic_ReasoningContent(t *testing.T) {
 	}
 }
 
-// With the default reasoning_replay=auto, a thinking block without its
-// signature is replayed as a plain TEXT block: it cannot go back as
-// thinking, but dropping it costs the model its chain-of-thought and made
-// reasoning models re-derive state every turn (yaah-v378.6).
-func TestChatRequestToAnthropic_ThinkingWithoutSignatureReplaysAsText(t *testing.T) {
+// With reasoning_replay=auto, a thinking block without its provider
+// signature is replayed as a thinking block with an empty signature:
+// Anthropic-compatible endpoints accept it, and dropping the reasoning
+// costs the model its chain-of-thought (yaah-v378.6). Replaying it as
+// plain TEXT instead taught the model that its reasoning was visible
+// output — it echoed the thinking into the answer (yaah-63wu).
+func TestChatRequestToAnthropic_ThinkingWithoutSignatureReplaysAsThinking(t *testing.T) {
 	req := types.ChatRequest{
 		Model:     "claude-3.5-sonnet",
 		MaxTokens: 1000,
@@ -485,22 +487,80 @@ func TestChatRequestToAnthropic_ThinkingWithoutSignatureReplaysAsText(t *testing
 
 	result := lowerAnthropicRequest(req, "auto")
 
-	var sawThinking, sawReasoningAsText bool
-	for _, b := range result.Messages[0].Content {
-		switch blockType(b) {
-		case "thinking":
-			sawThinking = true
-		case "text":
-			if strings.Contains(blockText(b), "orphaned thinking") {
-				sawReasoningAsText = true
-			}
+	blocks := result.Messages[0].Content
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks (thinking + text), got %d", len(blocks))
+	}
+	if blockType(blocks[0]) != "thinking" {
+		t.Fatalf("expected first block type 'thinking', got %q", blockType(blocks[0]))
+	}
+	if got := blocks[0].OfThinking.Signature; got != "" {
+		t.Errorf("unsigned thinking block signature = %q, want empty", got)
+	}
+	if got := blockThinking(blocks[0]); got != "orphaned thinking" {
+		t.Errorf("thinking block text = %q, want %q", got, "orphaned thinking")
+	}
+	for _, b := range blocks[1:] {
+		if strings.Contains(blockText(b), "orphaned thinking") {
+			t.Error("reasoning must not be duplicated into visible text under reasoning_replay=auto")
 		}
 	}
-	if sawThinking {
-		t.Fatal("an unsigned thinking block must not be replayed as thinking")
+}
+
+// reasoning_replay=auto is endpoint-aware: the native Anthropic API
+// validates signatures, so unsigned thinking is omitted there, while
+// Anthropic-compatible endpoints get the thinking block back.
+func TestAnthropicClient_ReplayModeIsEndpointAware(t *testing.T) {
+	cases := []struct {
+		name    string
+		baseURL string
+		replay  string
+		want    string
+	}{
+		{"compatible endpoint uses auto", "https://token-plan-sgp.xiaomimimo.com/anthropic", "", "auto"},
+		{"compatible endpoint without scheme", "api.deepseek.com/anthropic", "", "auto"},
+		{"native endpoint degrades to omit", "https://api.anthropic.com", "", "omit"},
+		{"native endpoint with trailing slash", "https://api.anthropic.com/", "", "omit"},
+		{"empty base URL means native", "", "", "omit"},
+		{"explicit text wins", "https://api.deepseek.com/anthropic", "text", "text"},
+		{"explicit omit wins", "https://api.deepseek.com/anthropic", "omit", "omit"},
 	}
-	if !sawReasoningAsText {
-		t.Error("unsigned reasoning must be replayed as text under reasoning_replay=auto")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := NewAnthropicClient(tc.baseURL, "sk-test", 30)
+			c.ReasoningReplay = tc.replay
+			if got := c.replayMode(); got != tc.want {
+				t.Errorf("replayMode() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The lowered request reflects the endpoint-aware mode: a compatible
+// endpoint replays unsigned thinking as a thinking block, while the
+// native API drops it and keeps only the visible text.
+func TestAnthropicClient_LowerReplaysUnsignedThinkingByEndpoint(t *testing.T) {
+	req := types.ChatRequest{
+		Model:     "m",
+		MaxTokens: 100,
+		Messages: []types.Message{
+			{Role: "assistant", ReasoningContent: "orphaned thinking", Content: "The answer is 42."},
+		},
+	}
+
+	compat := NewAnthropicClient("https://api.deepseek.com/anthropic", "sk-test", 30)
+	blocks := compat.lower(req).Messages[0].Content
+	if len(blocks) != 2 || blockType(blocks[0]) != "thinking" {
+		t.Fatalf("compatible endpoint must replay unsigned thinking as thinking, got %v blocks", len(blocks))
+	}
+
+	native := NewAnthropicClient("https://api.anthropic.com", "sk-test", 30)
+	blocks = native.lower(req).Messages[0].Content
+	if len(blocks) != 1 || blockType(blocks[0]) != "text" {
+		t.Fatalf("native endpoint must drop unsigned thinking and keep the answer, got %d blocks", len(blocks))
+	}
+	if strings.Contains(blockText(blocks[0]), "orphaned thinking") {
+		t.Error("native endpoint must not fold reasoning into visible text")
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -38,13 +39,23 @@ type AnthropicClient struct {
 	// ...), which bill thinking tokens against max_tokens.
 	DefaultMaxTokens int
 
-	// ReasoningReplay selects how assistant thinking that lacks a
-	// provider signature is replayed: "auto" (the default) re-sends it
-	// as a plain text block so the model keeps its chain-of-thought
-	// across turns, "omit" drops it (the pre-2026-10 behavior, which
-	// made reasoning models re-derive state every turn — yaah-v378.6),
-	// and "text" re-sends even signed reasoning as text for endpoints
-	// that reject valid thinking replay. Normalized via reasoningReplay.
+	// ReasoningReplay selects how assistant reasoning is replayed:
+	//
+	//   - "auto" (the default) re-sends signed thinking verbatim and
+	//     unsigned thinking as a thinking block with an empty signature.
+	//     Anthropic-compatible endpoints (DeepSeek, ZAI, Xiaomi) accept
+	//     unsigned blocks; re-sending them as TEXT made reasoning models
+	//     answer in reasoning voice — they echoed their chain-of-thought
+	//     into the visible answer and repeated plans (yaah-63wu). The
+	//     native Anthropic API validates signatures, so auto omits
+	//     unsigned blocks there.
+	//   - "omit" drops unsigned thinking (the pre-2026-10 behavior, which
+	//     made reasoning models re-derive state every turn — yaah-v378.6).
+	//   - "text" re-sends all reasoning, signed included, as plain text for
+	//     endpoints that reject valid thinking replay. Reasoning models
+	//     often echo replayed text back into the answer, so prefer omit.
+	//
+	// Normalized via reasoningReplay.
 	ReasoningReplay string
 
 	// unsignedReasoningWarn fires the once-per-client notice about
@@ -63,6 +74,43 @@ func (c *AnthropicClient) reasoningReplay() string {
 	default:
 		return "auto"
 	}
+}
+
+// replayMode resolves reasoning_replay for this endpoint. "auto" relies on
+// the endpoint accepting an unsigned thinking block; the native Anthropic
+// API validates signatures, so there auto degrades to "omit" (signed
+// blocks are still replayed verbatim).
+func (c *AnthropicClient) replayMode() string {
+	switch c.reasoningReplay() {
+	case "text":
+		return "text"
+	case "omit":
+		return "omit"
+	}
+	if c.nativeAnthropicEndpoint() {
+		return "omit"
+	}
+	return "auto"
+}
+
+// nativeAnthropicEndpoint reports whether this client talks to
+// api.anthropic.com. An empty or unparseable base URL also counts as
+// native: the SDK then falls back to the default Anthropic host.
+func (c *AnthropicClient) nativeAnthropicEndpoint() bool {
+	raw := strings.TrimSpace(c.baseURL)
+	if raw == "" {
+		return true
+	}
+	host := ""
+	if u, err := url.Parse(raw); err == nil {
+		host = u.Hostname()
+	}
+	if host == "" {
+		// No scheme (some configs omit it): the first path segment is
+		// the host.
+		host = strings.SplitN(raw, "/", 2)[0]
+	}
+	return strings.EqualFold(host, "api.anthropic.com")
 }
 
 const (
@@ -160,19 +208,20 @@ func (c *AnthropicClient) lower(req types.ChatRequest) anthropic.MessageNewParam
 	if req.MaxTokens <= 0 {
 		req.MaxTokens = c.EffectiveMaxTokens(req)
 	}
-	if replay := c.reasoningReplay(); replay != "omit" {
+	mode := c.replayMode()
+	if mode == "omit" {
 		for _, m := range req.Messages {
 			if m.Role == "assistant" && m.ReasoningContent != "" && m.ReasoningSignature == "" {
 				c.unsignedReasoningWarn.Do(func() {
-					slog.Warn("reasoning: assistant turns carry thinking without a provider signature; " +
-						"replaying it as plain text so the model keeps its chain-of-thought " +
-						"(reasoning_replay=auto). Set reasoning_replay: omit on the provider to drop it.")
+					slog.Warn("reasoning: dropping assistant thinking that has no provider signature " +
+						"(reasoning_replay=omit, or the native Anthropic API which validates signatures); " +
+						"the model will re-derive context instead of seeing its own chain-of-thought.")
 				})
 				break
 			}
 		}
 	}
-	return lowerAnthropicRequest(req, c.reasoningReplay())
+	return lowerAnthropicRequest(req, mode)
 }
 
 // EffectiveMaxTokens reports the output cap lower applies to req: an
@@ -306,19 +355,22 @@ func lowerAnthropicRequest(req types.ChatRequest, replay string) anthropic.Messa
 			// A signed thinking block is replayed verbatim — the signature
 			// is opaque and fabricating one is rejected with "the thinking
 			// mode must be passed back to the API". An UNSIGNED thinking
-			// block cannot be replayed as thinking, but dropping it costs
-			// the model its entire chain-of-thought: a reasoning model
-			// that never sees its own conclusions re-derives state every
-			// turn and loops (yaah-v378.6). Replay unsigned reasoning as
-			// plain text unless the provider opts out with
-			// reasoning_replay: omit; reasoning_replay: text also
-			// downgrades signed blocks for endpoints that reject valid
-			// thinking replay.
+			// block cannot go back to the native API, but Anthropic-
+			// compatible endpoints accept it with an empty signature.
+			// Replaying it as plain TEXT taught the model that its
+			// chain-of-thought was visible assistant output: it answered
+			// in reasoning voice, echoed the thinking verbatim into the
+			// content, and repeated plans (yaah-63wu). Auto therefore
+			// replays unsigned reasoning as a thinking block; dropping it
+			// costs the model its conclusions and makes it re-derive state
+			// every turn (yaah-v378.6), so omit stays an explicit opt-out.
+			// reasoning_replay: text downgrades signed blocks too, for
+			// endpoints that reject valid thinking replay.
 			if m.ReasoningContent != "" && (m.ReasoningSignature != "" || replay != "omit") {
-				if m.ReasoningSignature != "" && replay != "text" {
-					blocks = append(blocks, anthropic.NewThinkingBlock(m.ReasoningSignature, m.ReasoningContent))
-				} else {
+				if replay == "text" {
 					blocks = append(blocks, anthropicTextBlock(m.ReasoningContent, nil))
+				} else {
+					blocks = append(blocks, anthropic.NewThinkingBlock(m.ReasoningSignature, m.ReasoningContent))
 				}
 			}
 			if m.Content != "" {
