@@ -109,6 +109,12 @@ func TestToolDocs_NameEverySchemaProperty(t *testing.T) {
 			if _, ok := propertyDocGaps[name+"/"+prop]; ok {
 				continue
 			}
+			// Word-boundary match: a common property name (path, pattern)
+			// is satisfied by prose that merely uses the word. The check's
+			// contract is "the doc names the property at least once", not
+			// "the doc documents it thoroughly" — a stronger guarantee
+			// would need structured docs, which the repo's no-codegen rule
+			// rules out for now.
 			re, err := regexp.Compile(`\b` + regexp.QuoteMeta(prop) + `\b`)
 			if err != nil {
 				t.Fatalf("compile pattern for %s.%s: %v", name, prop, err)
@@ -145,6 +151,19 @@ func TestGitDoc_MatchesDangerTable(t *testing.T) {
 		}
 		if slices.Contains(wrong, action) {
 			t.Errorf("git.md lists %q under %s but the danger table says dangerous=%v", action, listLabel(!dangerous), dangerous)
+		}
+	}
+	// Reverse direction: an action the doc lists but the code table does
+	// not know is drift in the other direction.
+	known := allowedGitActionsNames()
+	for _, action := range safe {
+		if !slices.Contains(known, action) {
+			t.Errorf("git.md lists %q as read-only, but allowedGitActions has no such action", action)
+		}
+	}
+	for _, action := range mutating {
+		if !slices.Contains(known, action) {
+			t.Errorf("git.md lists %q as mutating, but allowedGitActions has no such action", action)
 		}
 	}
 }

@@ -193,3 +193,38 @@ func TestGoMod_DryRunUpgradeListsCurrentVersions(t *testing.T) {
 		t.Errorf("preview does not state current versions and the resolution caveat: %q", got.Output)
 	}
 }
+
+// TestGoMod_DryRunRemoveNotRequired pins yaah-k9x follow-up: "not a known
+// dependency" is the preview's answer, not a failure.
+func TestGoMod_DryRunRemoveNotRequired(t *testing.T) {
+	got, err := runGoMod(t, `{"action":"remove","module":"example.com/x","dry_run":true}`, func(req ExecRequest) (ExecResult, error) {
+		return ExecResult{ExitCode: 1, Stderr: "go: example.com/x: not a known dependency"}, errors.New("exit status 1")
+	})
+	if err != nil {
+		t.Fatalf("not-required must be a successful preview: %v", err)
+	}
+	if !got.Success {
+		t.Error("not-required preview must be success:true")
+	}
+	if !strings.Contains(got.Output, "not currently required") {
+		t.Errorf("preview lost the not-required answer: %q", got.Output)
+	}
+}
+
+// TestGoMod_DryRunRemoveRealFailureIsNotDressedUp: a go list failure that is
+// not the not-required answer must fail with the diagnostic, not claim the
+// module is absent.
+func TestGoMod_DryRunRemoveRealFailureIsNotDressedUp(t *testing.T) {
+	got, err := runGoMod(t, `{"action":"remove","module":"example.com/x","dry_run":true}`, func(req ExecRequest) (ExecResult, error) {
+		return ExecResult{ExitCode: 1, Stderr: "go: cannot find main module"}, errors.New("exit status 1")
+	})
+	if err == nil {
+		t.Fatal("a real go list failure must return a non-nil error")
+	}
+	if got.Success {
+		t.Error("success = true after a failed preview query")
+	}
+	if !strings.Contains(err.Error(), "cannot find main module") {
+		t.Errorf("error lost the go diagnostic: %v", err)
+	}
+}

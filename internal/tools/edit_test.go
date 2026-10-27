@@ -427,3 +427,33 @@ func TestEditTool_multiEditWritesNewStringVerbatim(t *testing.T) {
 		t.Errorf("result must say newString was written verbatim, got %q", msg)
 	}
 }
+
+// TestEditTool_fuzzyMultiMatchWithoutVerbatimTextIsRefused pins the guard
+// tryFuzzyMatch's multi-match path needs: when several normalized candidates
+// exist it returns the original oldStr as a sentinel even though it never
+// occurs verbatim. The edit must fail loudly, not silently write the file
+// back unchanged and report success.
+func TestEditTool_fuzzyMultiMatchWithoutVerbatimTextIsRefused(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "file.txt")
+	content := "a\nx  y\nb\nx  y\nc\n" // two double-spaced candidates; "x y" occurs verbatim zero times
+	os.WriteFile(path, []byte(content), 0o644)
+
+	et := &EditTool{}
+	args, _ := json.Marshal(map[string]any{
+		"filePath":  path,
+		"oldString": "x y", // single-spaced: whitespace-collapsed strategy finds two
+		"newString": "z",
+	})
+	_, err := et.Execute(context.Background(), string(args))
+	if err == nil {
+		t.Fatal("a fuzzy multi-match with no verbatim occurrence must be refused")
+	}
+	if !strings.Contains(err.Error(), "none match the file verbatim") {
+		t.Errorf("error does not explain the refusal: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != content {
+		t.Errorf("a refused edit must not touch the file; got %q", data)
+	}
+}

@@ -121,12 +121,17 @@ func (t *EditTool) executeSingleEdit(ctx context.Context, ws Workspace, filePath
 		}
 	}
 
-	// Fuzzy matching picks a candidate location by similarity; the mapped-
-	// back string is what would actually be replaced. Refresh count from
-	// it so the generic uniqueness check below sees reality — that check
-	// (and only that check) is the guard against editing the wrong spot.
+	// Fuzzy matching picks a candidate by similarity; the mapped-back
+	// string is what would actually be replaced. When several candidates
+	// exist, tryFuzzyMatch returns the original oldStr as a sentinel even
+	// though it may never occur verbatim — the count refresh below turns
+	// that into the zero case, and the generic uniqueness check
+	// (count > 1) is the real guard against editing the wrong spot.
 	if usedFuzzy {
 		count = strings.Count(content, matched)
+		if count == 0 {
+			return "", fmt.Errorf("edit: fuzzy match found normalized candidates but none match the file verbatim; provide more context or exact text (oldString: %q)", oldStr)
+		}
 	}
 
 	if !replaceAll {
