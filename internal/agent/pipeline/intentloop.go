@@ -46,11 +46,6 @@ func (e IntentLoopError) Is(target error) bool {
 }
 
 const (
-	// Defaults agreed 2026-10-27: the recorded loops ran 12+ turns, so a
-	// steer at four gives the model room to correct itself first.
-	defaultIntentSteerAfter = 4
-	defaultIntentHaltAfter  = 8
-
 	// intentPreambleWords bounds the normalized signature to the opening
 	// plan statement; long tails (new tool output quoted back) dilute
 	// similarity.

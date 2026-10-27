@@ -89,6 +89,14 @@ func (p Provider) ThinkingOverride(modelName string) *bool {
 	return nil
 }
 
+// Default intent-repetition thresholds (epic yaah-v378): the model is
+// steered after this many consecutive same-plan turns and the run halts at
+// the second. The pipeline and the load-time validation share these.
+const (
+	DefaultIntentSteerAfter = 4
+	DefaultIntentHaltAfter  = 8
+)
+
 // Defaults hold the default agent model and loop settings.
 type Defaults struct {
 	Provider string `yaml:"provider"`
@@ -586,11 +594,11 @@ func Load() (*Config, error) {
 	// slip through and be silently clamped later.
 	steer := cfg.Agent.Default.IntentSteerAfter
 	if steer <= 0 {
-		steer = 4 // defaultIntentSteerAfter in internal/agent/pipeline
+		steer = DefaultIntentSteerAfter
 	}
 	halt := cfg.Agent.Default.IntentHaltAfter
 	if halt <= 0 {
-		halt = 8 // defaultIntentHaltAfter in internal/agent/pipeline
+		halt = DefaultIntentHaltAfter
 	}
 	if halt <= steer {
 		return nil, fmt.Errorf("agents.default.intent_halt_after (%d) must be greater than intent_steer_after (%d)", halt, steer)

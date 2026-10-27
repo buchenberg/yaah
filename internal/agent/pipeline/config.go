@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -206,10 +207,10 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 	"intent_loop": func(cfg PipelineConfig) Middleware {
 		steer, halt := cfg.IntentSteerAfter, cfg.IntentHaltAfter
 		if steer <= 0 {
-			steer = defaultIntentSteerAfter
+			steer = config.DefaultIntentSteerAfter
 		}
 		if halt <= 0 {
-			halt = defaultIntentHaltAfter
+			halt = config.DefaultIntentHaltAfter
 		}
 		return NewIntentLoopMiddleware(steer, halt)
 	},
