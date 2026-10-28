@@ -339,10 +339,13 @@ var safeGitFlagPrefixes = []string{
 var branchReadOnlyFlags = map[string]bool{
 	"--all": true, "-a": true,
 	"--remotes": true, "-r": true,
-	// -l is --list for `git branch` (verified against `git branch -h` on
-	// git 2.55); --create-reflog has no short form, so it is gated by its
-	// long name in branchMutatingFlags only.
-	"--list": true, "-l": true,
+	// -l is refused rather than guessed at: it is --list for `git branch`
+	// since git 2.16 (builtin/branch.c moved the -l short form there), but
+	// through git 2.15 it is --create-reflog's short form, where
+	// `git branch -l <name>` created a branch. --list itself is safe on
+	// every git: older ones reject it outright and none mutate through it.
+	// Use --list.
+	"--list":         true,
 	"--show-current": true,
 	"--contains":     true, "--no-contains": true,
 	"--merged": true, "--no-merged": true,
@@ -358,7 +361,12 @@ var branchReadOnlyFlags = map[string]bool{
 
 // branchReadOnlyValueFlags are the read-only options that consume the next
 // token when written without '=' (--contains <ref>), so classifyBranchFlag can
-// tell an option's value from a bare branch name.
+// tell an option's value from a bare branch name. Callers must apply that skip
+// only to a token that is not flag-like (no leading '-'): git's value
+// consumption is not uniform across options (see --abbrev below), so a dash
+// token after a value option is classified on its own. The worst case is a
+// false refusal of an exotic value like `--sort -refname` (write the attached
+// `--sort=-refname` form), never a mutation passing as read-only.
 var branchReadOnlyValueFlags = map[string]bool{
 	"--contains": true, "--no-contains": true, "--merged": true,
 	"--no-merged": true, "--points-at": true, "--sort": true,
@@ -445,10 +453,15 @@ func branchCallDangerous(flags, paths []string) bool {
 	listing := false
 	expectValue := false
 	for _, flag := range flags {
-		if expectValue {
+		// A value is taken only when the next token is not flag-like (see
+		// branchReadOnlyValueFlags): a dash token after a value option is
+		// classified on its own, so `--merged -D <name>` cannot ride
+		// through as a value on a git whose parser disagrees with ours.
+		if expectValue && !strings.HasPrefix(flag, "-") {
 			expectValue = false
 			continue
 		}
+		expectValue = false
 		kind, takesValue := classifyBranchFlag(flag)
 		if kind != branchFlagReadOnly {
 			return true
@@ -474,11 +487,14 @@ func validateActionFlags(action string, flags []string, dangerous bool) ([]strin
 	safe := make([]string, 0, len(flags))
 	expectValue := false
 	for _, flag := range flags {
-		if expectValue {
+		// Same value rule as branchCallDangerous: only a non-flag-like
+		// token is swallowed as an option value.
+		if expectValue && !strings.HasPrefix(flag, "-") {
 			expectValue = false
 			safe = append(safe, flag)
 			continue
 		}
+		expectValue = false
 		kind, takesValue := classifyBranchFlag(flag)
 		if kind == branchFlagUnknown {
 			return nil, fmt.Errorf("git: flag %q is not a known branch option — read-only listing flags are whitelisted and mutating options are approval-gated, so an unrecognized option is refused", flag)
