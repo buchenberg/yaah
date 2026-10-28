@@ -237,7 +237,11 @@ and host-dependent — `containment: off`/`advisory`, `mode: shared`, and any
 host without a usable jail run the advisory or host path instead — with a
 per-platform containment table in the
 [README](../README.md#confinement-and-egress); full semantics are
-in [configuration.md](./configuration.md#retained-worktrees-and-turn-checkpoints).
+in [configuration.md](./configuration.md#sub-agent-dispatch-lane-and-confinement),
+and the row-by-row statement of what isolation does and does not govern —
+filesystem versus egress — is the
+[isolation vs egress matrix](./configuration.md#the-isolation-vs-egress-matrix).
+Isolation is a workspace property, not "no network".
 
 ## Isolated workspace
 

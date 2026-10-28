@@ -674,6 +674,59 @@ Two limits to know about:
   world-writable tmpfs.
 - **Git index writes in a linked worktree** are refused, as above.
 
+### The isolation vs egress matrix
+
+**Isolation is a filesystem and workspace property. It is not "no network."**
+Every mode below scopes *where files and processes live*; egress is a separate
+axis with separate controls, and no workspace mode turns the network off. This
+subsection is the one authoritative statement of the split — other docs point
+here rather than restating it.
+
+| Where the work runs | Filesystem boundary | Egress of the processes it starts | Egress of `http` / `webfetch` |
+|---|---|---|---|
+| Orchestrator / root session (local) | path containment only: `--workspace`, `agents.default.workspace_deny_patterns` | none — unconfined, no jail | the URL guard (below) |
+| `mode: shared` dispatch | the host tree, same as the root | none — and a restrictive `network` is **refused**, because there is no workdir to jail | the URL guard |
+| Retained dispatch (`proposal` / `report` lane, worktree) | worktree-only writable root under `containment`; advisory where no jail exists | `agents.subagent.network`: `allow_all` (default), `deny_all`, or `broker` + `network_hosts` | the URL guard — and a *restrictive* posture **omits** both tools, because they would bypass the jail |
+| Isolated session (`workspace.backend: containerd`), and every dispatch inside it | the container | the container's own posture; `agents.subagent.network` is neither applied nor refused | the URL guard — the request is still made by the yaah process, **outside** the container, so the container neither protects nor blocks these two tools |
+
+**What the URL guard blocks (`http`, `webfetch`; always on, in every lane).**
+Both tools validate the URL before any request and share one guarded HTTP
+client, so the policy holds in the host, retained and isolated lanes alike:
+
+| Range | Examples |
+|---|---|
+| Loopback | `127.0.0.0/8`, `::1/128`, the names `localhost` and `*.localhost` |
+| This host | `0.0.0.0/8` |
+| RFC-1918 private | `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` |
+| Link-local / cloud metadata | `169.254.0.0/16` (e.g. `169.254.169.254`) |
+| IPv6 link-local and ULA | `fe80::/10`, `fc00::/7` |
+
+Non-`http`/`https` schemes (`file:`, `ftp:`) are refused outright. The three
+legs are: the pre-flight check, a redirect policy that re-validates every hop
+(10 redirects, then refused), and a dial-time check of the IP actually
+connected to — which is what closes the DNS-rebinding TOCTOU between the name
+validated and the address opened. A host that cannot be resolved **fails
+closed**. `blockedCIDRs` in `internal/tools/urlguard.go` is the authoritative
+list; the table above summarizes it and must not be read as finer-grained than
+the code.
+
+**What the guard is not.** It is not a firewall and it governs no child process.
+`bash`/`powershell` (`curl`, `npm i`, `go get`), `git` fetch/push, the Go tool
+chain (`go_mod`, `go_test`, `staticcheck`), and MCP servers are reached through
+processes the jail — not the guard — governs, which is exactly why the retained
+lane omits `http`/`webfetch` instead of trusting the guard there. Nor does
+anything here reach traffic that is not a tool call: model requests (including
+embeddings used by `memory_search`) and the update check are made by the yaah
+process itself, so **`deny_all` does not make a dispatch silent** — the
+sub-agent still talks to its provider. Finally, the retained-lane bootstrap
+(`retained_worktree_bootstrap`) runs unconfined, before the body, and therefore
+has full egress — that is where authenticated inputs are prepared on purpose.
+
+The practical reading: `--workspace .` or a container backend confines *files*;
+`agents.subagent.network` governs *jailed child processes*; the URL guard bounds
+*the two tools that fetch URLs in this process*; and none of the three is a
+complete network policy for the session.
+
 Each dispatch records the resolved placement on the sub-agent's trace
 (`yaah.subagent.confinement.v1`: requested vs resolved, backend, enforcement
 tier, `enforced`, writable root), so an advisory run is never misread as jailed

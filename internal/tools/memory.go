@@ -489,10 +489,19 @@ func (t *MemoryUpdateTool) Execute(ctx context.Context, args string) (string, er
 		return "", fmt.Errorf("memory_update: invalid arguments: %w", err)
 	}
 
-	// If a scope is configured, verify the target atom belongs to that scope
-	// before allowing the update. This prevents the consolidator from rewriting
-	// global or other-session atoms.
-	if t.Scope != "" {
+	// Ownership guard. Each restriction applies on its own trigger and neither
+	// is nested inside the other: a narrowed writer must not lose the session
+	// check just because it left its scope unset. That asymmetry — the write
+	// path guarding by session only when a scope was configured, while promotion
+	// guarded by session always — is what let a scoped-to-nothing updater rewrite
+	// another session's atom.
+	//
+	//   - Scope: the atom must live in that tier (the consolidator's session
+	//     tier, so it cannot rewrite global facts).
+	//   - SessionID: the atom must belong to that session, or to no session at
+	//     all. An unlinked atom was written by this session's own registry or by
+	//     the CLI, so it is not somebody else's working context.
+	if t.Scope != "" || t.SessionID != "" {
 		entry, err := t.DB.GetMemory(params.ID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -500,15 +509,15 @@ func (t *MemoryUpdateTool) Execute(ctx context.Context, args string) (string, er
 			}
 			return "", fmt.Errorf("memory_update: %w", err)
 		}
-		normScope, err := memory.NormalizeScope(t.Scope)
-		if err != nil {
-			return "", fmt.Errorf("memory_update: %w", err)
+		if t.Scope != "" {
+			normScope, err := memory.NormalizeScope(t.Scope)
+			if err != nil {
+				return "", fmt.Errorf("memory_update: %w", err)
+			}
+			if entry.Scope != normScope {
+				return "", fmt.Errorf("memory_update: entry %s has scope %s, expected %s", params.ID, entry.Scope, normScope)
+			}
 		}
-		if entry.Scope != normScope {
-			return "", fmt.Errorf("memory_update: entry %s has scope %s, expected %s", params.ID, entry.Scope, normScope)
-		}
-		// If we have a session ID, also verify the entry belongs to that session
-		// (prevents updating another session's session-scoped atoms).
 		if t.SessionID != "" && entry.SessionID != "" && entry.SessionID != t.SessionID {
 			return "", fmt.Errorf("memory_update: entry %s belongs to session %s, expected %s", params.ID, entry.SessionID, t.SessionID)
 		}

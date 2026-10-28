@@ -15,15 +15,22 @@ import (
 var ssrfGuardEnabled = true
 
 // blockedCIDRs are network ranges that must not be reachable via the
-// webfetch or http tools. Covers loopback, RFC-1918 private, link-local
-// (cloud metadata), and IPv6 equivalents.
+// webfetch or http tools. Covers loopback, "this network", RFC-1918
+// private, link-local (cloud metadata), and IPv6 equivalents.
 var blockedCIDRs = func() []*net.IPNet {
 	cidrs := []string{
+		// 0.0.0.0/8 is "this network" (RFC 1122 §3.2.1.3). Linux routes
+		// every address in it over the loopback interface, so 0.0.0.0
+		// and 0.0.0.1 are loopback doors that 127.0.0.0/8 alone does
+		// not close (bead yaah-6mb).
+		"0.0.0.0/8",
 		"127.0.0.0/8",
 		"10.0.0.0/8",
 		"172.16.0.0/12",
 		"192.168.0.0/16",
 		"169.254.0.0/16",
+		// ::/128 is the unspecified address — the 0.0.0.0 of IPv6.
+		"::/128",
 		"::1/128",
 		"fe80::/10",
 		"fc00::/7",
@@ -42,8 +49,8 @@ var blockedCIDRs = func() []*net.IPNet {
 const maxRedirects = 10
 
 // validateURL checks that a URL does not target a blocked network
-// range (loopback, private, link-local/cloud-metadata). Returns an
-// error if the URL is unsafe. DNS failures fail CLOSED: an
+// range (loopback, "this network", private, link-local/cloud-metadata).
+// Returns an error if the URL is unsafe. DNS failures fail CLOSED: an
 // unresolvable host is denied rather than passed to the fetcher.
 func validateURL(rawURL string) error {
 	if !ssrfGuardEnabled {
@@ -88,13 +95,58 @@ func validateURL(rawURL string) error {
 	return nil
 }
 
+// isBlockedIP reports whether ip is a destination the tools must not
+// reach. A nil IP is blocked: every caller got here from a resolver, so
+// "no address" means the picture is not clear enough to allow.
+//
+// Every spelling of the same destination is checked, not just the one the
+// caller handed over (see ipForms). Matching only the literal form the
+// guard was given is how an IPv4 blocklist gets bypassed by an IPv6
+// spelling of the same address.
 func isBlockedIP(ip net.IP) bool {
-	for _, n := range blockedCIDRs {
-		if n.Contains(ip) {
-			return true
+	if ip == nil {
+		return true
+	}
+	for _, form := range ipForms(ip) {
+		for _, n := range blockedCIDRs {
+			if n.Contains(form) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// ipForms returns the representations of ip that name the same destination.
+// net.IP.To4 converts the 4-byte and IPv4-mapped (::ffff:a.b.c.d) forms, so
+// those are covered by adding it. The deprecated IPv4-compatible form
+// (::a.b.c.d, RFC 4291 §2.5.5.1) is not converted by To4, yet it still
+// embeds an IPv4 destination, so it is extracted here explicitly — that is
+// what stops ::ffff:0.0.0.0 and ::0.0.0.0 from slipping past the 0.0.0.0/8
+// block.
+func ipForms(ip net.IP) []net.IP {
+	forms := make([]net.IP, 1, 2)
+	forms[0] = ip
+	if v4 := ip.To4(); v4 != nil {
+		if len(v4) != len(ip) {
+			forms = append(forms, v4)
+		}
+		return forms
+	}
+	if len(ip) == net.IPv6len && isZeroBytes(ip[:12]) {
+		forms = append(forms, net.IPv4(ip[12], ip[13], ip[14], ip[15]).To4())
+	}
+	return forms
+}
+
+// isZeroBytes reports whether every byte of b is zero.
+func isZeroBytes(b []byte) bool {
+	for _, v := range b {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // newGuardedHTTPClient builds the shared client for tool-issued

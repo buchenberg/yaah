@@ -238,6 +238,12 @@ Windows; on Linux the network can be governed with it as well:
   boundary and every dispatch inherits it. See
   [isolated-workspace-testing.md](./docs/isolated-workspace-testing.md).
 
+Isolation is a filesystem/workspace property, not "no network": the canonical
+row-by-row statement of what each mode governs — the jail posture for the
+processes it starts, the always-on URL guard for `http`/`webfetch`, and what
+neither covers — is the
+[isolation vs egress matrix](./docs/configuration.md#the-isolation-vs-egress-matrix).
+
 ### Containment across platforms
 
 The containment family is one contract with per-platform mechanisms
