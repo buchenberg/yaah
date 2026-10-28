@@ -187,8 +187,16 @@ func TestOpenContainerdWorkspaceSandbox(t *testing.T) {
 		if err == nil {
 			t.Fatalf("on %s the containerd backend must not open, got %v", runtime.GOOS, sb)
 		}
-		if !strings.Contains(err.Error(), "containerd") {
-			t.Errorf("the refusal must name the backend it could not provide, got: %v", err)
+		// Assert the cause, not the message. OpenContainerdWorkspaceSandbox
+		// wraps every failure as "workspace: open containerd sandbox: %w", so
+		// the string "containerd" appears in any error from it — a substring
+		// check would pass on a config failure, a bad address, anything, and
+		// prove nothing about why the open was refused. The registry's typed
+		// error is what distinguishes "this platform provides no such backend"
+		// from every other way this can fail.
+		var unknown *goatherdsandbox.UnknownSandboxBackendError
+		if !errors.As(err, &unknown) {
+			t.Errorf("off-Linux the refusal must come from the registry reporting an unknown backend, got %T: %v", err, err)
 		}
 		return
 	}
