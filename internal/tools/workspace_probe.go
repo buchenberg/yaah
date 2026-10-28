@@ -25,12 +25,13 @@ import (
 // Diff, and wiring those up is future work, not something this change does.
 //
 // It is not parity with the git-worktree lane, and claiming that would be
-// wrong: that lane constructs its backend directly (goatherdgit.NewWorktree-
-// Sandbox at internal/gitsandbox, internal/tools/retained.go,
-// internal/agent/runner, internal/agent/recovery, cmd/yaah/shepherd.go) and
-// never touches the registry. This is currently the only OpenSandbox call in
-// yaah. Importing croftadapter is what registers "containerd" — config can
-// name a backend, only an import can provide one.
+// wrong: that lane constructs its backend directly and never touches the
+// registry — goatherdgit.NewLocalGitSandbox in internal/gitsandbox, and
+// goatherdgit.NewWorktreeSandbox in internal/tools/retained.go,
+// internal/agent/runner, internal/agent/recovery and cmd/yaah/shepherd.go.
+// This is currently the only OpenSandbox call in yaah. Importing croftadapter
+// is what registers "containerd" — config can name a backend, only an import
+// can provide one.
 //
 // Unlike the old direct croft.New call, this can fail, and the failures are
 // worth having: an image left unset is refused here naming the field rather

@@ -324,6 +324,84 @@ func TestApplyOut_CarriesModeChanges(t *testing.T) {
 	}
 }
 
+// TestApplyOut_NeverImposesASymlinkModeOnTheHost pins a security boundary in
+// copy-out: when the sandbox cannot report a file's mode, nothing is imposed on
+// the host.
+//
+// The hazard is concrete. copyOut used to fall back to os.Lstat(host) when the
+// sandbox Stat failed, and Lstat on a symlink reports the *link's* mode — 0777
+// on POSIX — while atomicWriteFile replaces that path with a regular file. For
+// a dangling symlink atomicWriteFile's own os.Stat fails as well, so it keeps
+// the caller's perm and 0777 lands on a regular file: world-writable and
+// world-executable on the host. A chmod added later made it worse by applying
+// the same guess even where atomicWriteFile would have re-derived a safe mode.
+//
+// Both are gone — the fallback is removed and the chmod runs only on a mode
+// that came from the sandbox — and this test is what keeps them gone.
+func TestApplyOut_NeverImposesASymlinkModeOnTheHost(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a symlink reporting 0777 via Lstat is a POSIX property; Windows has no equivalent mode")
+	}
+
+	src := gitHostRepo(t)
+	open, fakes := cleanOpener()
+	ss, err := StartSessionSandbox(context.Background(), sessionTestConfig(), open, src, nil)
+	if err != nil {
+		t.Fatalf("StartSessionSandbox: %v", err)
+	}
+	defer ss.Destroy(context.Background())
+
+	ws := ss.Workspace()
+	readme, _ := ws.ResolvePath("readme.txt")
+	if err := ws.WriteFile(context.Background(), readme, []byte("from the session\n"), 0o644); err != nil {
+		t.Fatalf("write in the sandbox: %v", err)
+	}
+
+	// Replace the host path with a dangling symlink. Lstat reports 0777 and
+	// Stat fails, so neither copyOut nor atomicWriteFile can derive a real mode
+	// — this is the exact combination that used to yield a world-writable file.
+	hostReadme := filepath.Join(src, "readme.txt")
+	if err := os.Remove(hostReadme); err != nil {
+		t.Fatalf("remove the host file: %v", err)
+	}
+	if err := os.Symlink("no-such-target", hostReadme); err != nil {
+		t.Fatalf("create the dangling symlink: %v", err)
+	}
+	link, lerr := os.Lstat(hostReadme)
+	if lerr != nil {
+		t.Fatalf("lstat the fixture symlink: %v", lerr)
+	}
+	if link.Mode().Perm() != 0o777 {
+		t.Fatalf("the fixture needs a 0777 symlink to be a meaningful hazard, got %v", link.Mode().Perm())
+	}
+
+	// Make the in-band stat fail, so copy-out has no authoritative mode. A
+	// nonzero exit is how sandboxWorkspace.stat reports failure.
+	for _, sb := range fakes() {
+		sb.ExecHook = func(goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
+			return goatherdsandbox.ExecResult{ExitCode: 1, Stderr: "stat unavailable"}, nil
+		}
+	}
+
+	if err := ss.ApplyOut(context.Background(), src); err != nil {
+		t.Fatalf("ApplyOut: %v", err)
+	}
+
+	got, err := os.Lstat(hostReadme)
+	if err != nil {
+		t.Fatalf("stat the result: %v", err)
+	}
+	if got.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("the symlink should have been replaced by a regular file")
+	}
+	if got.Mode().Perm()&0o022 != 0 {
+		t.Errorf("host file is %v — group- or world-writable. A symlink's 0777 Lstat mode was imposed on a regular file", got.Mode().Perm())
+	}
+	if body, rerr := os.ReadFile(hostReadme); rerr != nil || string(body) != "from the session\n" {
+		t.Errorf("content = %q, %v — want the session's bytes", body, rerr)
+	}
+}
+
 // TestApplyOut_CleanSessionIsNoop pins that accepting a session which changed
 // nothing writes nothing to the host.
 //

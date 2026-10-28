@@ -402,14 +402,34 @@ func (s *SessionSandbox) copyOut(ctx context.Context, hostDir string) error {
 		data, rerr := s.sb.ReadFile(ctx, sbPath)
 		switch {
 		case rerr == nil:
+			// perm is authoritative only when it came from the sandbox, which is
+			// the only place that knows what the session's file should look
+			// like. The 0o644 default is what atomicWriteFile applies to a
+			// genuinely new file; for a path that already exists on the host it
+			// re-derives and preserves that file's own mode, so the default is
+			// never imposed over an existing one.
 			perm := fs.FileMode(0o644)
+			modeFromSandbox := false
 			if info, serr := s.ws.Stat(ctx, sbPath); serr == nil {
 				perm = info.Mode().Perm()
-			} else if hinfo, herr := os.Lstat(host); herr == nil {
-				// No sandbox stat available: fall back to the mode of the
-				// host file being replaced.
-				perm = hinfo.Mode().Perm()
+				modeFromSandbox = true
 			}
+			// There is deliberately no "fall back to the host file's mode"
+			// branch here, though one used to exist. It read os.Lstat(host),
+			// and Lstat on a symlink reports the *link's* mode — 0777 on POSIX
+			// — while atomicWriteFile replaces that path with a regular file.
+			// For a dangling symlink atomicWriteFile's own os.Stat fails, so it
+			// keeps the caller's perm and 0777 lands on a regular file:
+			// world-writable and world-executable on the host. That was true
+			// before this verb grew a chmod, and gating the chmod below only
+			// closed half of it.
+			//
+			// Dropping the fallback costs nothing. A host path that exists as a
+			// regular file gets its mode preserved by atomicWriteFile's own
+			// Stat regardless of what is passed in; a path that does not exist
+			// makes Lstat fail too, leaving the same 0o644. The only case where
+			// the branch ever changed the outcome was a symlink, which is
+			// exactly the case that was unsafe.
 			if werr := atomicWriteFile(host, data, perm); werr != nil {
 				return fmt.Errorf("workspace: apply-out: write %s: %w", rel, werr)
 			}
@@ -427,8 +447,19 @@ func (s *SessionSandbox) copyOut(ctx context.Context, hostDir string) error {
 			// list (croft's Changes reports it as a modify carrying the new
 			// mode), so the path reaches this branch and only the write
 			// discarded the mode.
-			if cerr := os.Chmod(host, perm); cerr != nil {
-				return fmt.Errorf("workspace: apply-out: chmod %s: %w", rel, cerr)
+			//
+			// Gated on modeFromSandbox, and the gate is a security boundary
+			// rather than tidiness: chmodding a mode we did not get from the
+			// sandbox would impose a guess on a host file. A 0o644 guess over a
+			// host file the user had at 0o600 would loosen it to
+			// world-readable, which is the same class of mistake as the 0777
+			// case above in the other direction. When the sandbox cannot tell
+			// us the mode, we do not know it, so we impose nothing and let the
+			// write's own preservation behaviour stand.
+			if modeFromSandbox {
+				if cerr := os.Chmod(host, perm); cerr != nil {
+					return fmt.Errorf("workspace: apply-out: chmod %s: %w", rel, cerr)
+				}
 			}
 		case errors.Is(rerr, fs.ErrNotExist):
 			// The path is gone in the sandbox, whatever it was on the host.
