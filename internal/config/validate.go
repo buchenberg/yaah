@@ -296,24 +296,30 @@ func validateWorkspace(w *WorkspaceConfig, goos string) []string {
 			w.Backend, BackendLocal, BackendContainerd))
 	}
 
-	if w.Backend != BackendContainerd {
+	if w.Backend == BackendContainerd {
+		// The containerd backend needs a containerd daemon, which does not run
+		// off-Linux. WSL2 qualifies exactly when yaah itself runs inside it
+		// (GOOS=linux); a Windows-native yaah.exe cannot select this backend,
+		// so the refusal keys on the client's platform, not on daemon presence.
+		// Refuse at load, not at the first tool call mid-task.
+		if goos != "linux" {
+			errs = append(errs, fmt.Sprintf(
+				"workspace.backend %q requires a Linux containerd daemon; %s cannot run one (native Linux or WSL2 required)",
+				BackendContainerd, goos))
+		}
+
+		// A sandbox with no base filesystem has nothing to run.
+		if w.Containerd.Image == "" {
+			errs = append(errs, "workspace.containerd.image is required when workspace.backend is containerd")
+		}
+	} else if w.Containerd.Image == "" {
+		// A local session ignores the stanza unless an image is set. When one
+		// is, report-lane dispatches get per-dispatch container worlds
+		// (yaah-ihfh.3), so the settings those containers would consume are
+		// validated too. The platform rule is not applied: the session itself
+		// runs on the host, and the dispatch lane is simply unavailable
+		// off-Linux.
 		return errs
-	}
-
-	// The containerd backend needs a containerd daemon, which does not run
-	// off-Linux. WSL2 qualifies exactly when yaah itself runs inside it
-	// (GOOS=linux); a Windows-native yaah.exe cannot select this backend,
-	// so the refusal keys on the client's platform, not on daemon presence.
-	// Refuse at load, not at the first tool call mid-task.
-	if goos != "linux" {
-		errs = append(errs, fmt.Sprintf(
-			"workspace.backend %q requires a Linux containerd daemon; %s cannot run one (native Linux or WSL2 required)",
-			BackendContainerd, goos))
-	}
-
-	// A sandbox with no base filesystem has nothing to run.
-	if w.Containerd.Image == "" {
-		errs = append(errs, "workspace.containerd.image is required when workspace.backend is containerd")
 	}
 
 	// An empty fifo_dir survives load only when the yaah home did not
@@ -343,7 +349,7 @@ func validateWorkspace(w *WorkspaceConfig, goos string) []string {
 	// workspace surface exists to avoid exactly that — and a relative root
 	// cannot resolve in-band.
 	if w.Root == "" {
-		errs = append(errs, "workspace.root is required when workspace.backend is containerd (default: /workspace)")
+		errs = append(errs, "workspace.root is required when a container sandbox is configured (default: /workspace)")
 	} else {
 		// Clean first: the sandbox collapses aliases such as "//" or "/a/.."
 		// when it resolves the workdir, so the rule must judge the value the

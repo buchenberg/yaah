@@ -29,7 +29,7 @@ for the jail; it does not compose with one.
 
 | Session | World per dispatch | Authority | Settlement |
 |---|---|---|---|
-| local (default) | linked git worktree (`ForkIsolated`) | Landlock / winacl around the dispatch's shell children | sealed proposal |
+| local (default) | linked git worktree (`ForkIsolated`); report lanes may use a per-dispatch container when `workspace.containerd.image` is set on Linux | Landlock / winacl around the dispatch's shell children; the container boundary for a container world | sealed proposal (worktree); none (report) |
 | containerd | the session's one container (shared) | the container boundary | none (`Retain` off) |
 
 The reference's grain is one world per **run**. yaah's run is a dispatch, so
@@ -148,18 +148,42 @@ choice is part of the implementation, not a later optimisation: at
 
 ## Blockers and acceptance
 
+### Report-lane slice — shipped
+
+A host session can now give a **report** dispatch its own container world. The
+lane reuses the `workspace.containerd` stanza (image, namespace, address,
+snapshotter, `fifo_dir`) and the session container's copy-in contract: the
+repository is copied in at dispatch time, the body runs with the sandbox
+workspace as its substrate, and the scope and container are torn down
+afterwards. Nothing is sealed, so croft's sequence-keyed capture cannot reach a
+settlement.
+
+- Offered only in a host session (no session container) on Linux with
+  `workspace.containerd.image` set.
+- `world: auto` prefers the container for report lanes; a **preflight** failure
+  (open, probe, create, bootstrap) steps down to the worktree with
+  `Degraded=true` and a reason naming the failure.
+- `world: container` fails closed on the same failure — a dispatch is never
+  transparently re-run in another world.
+- The resolution is recorded as `yaah.subagent.world.v1`, and a degraded report
+  carries the warning in its result. **In-run** failures still fail the dispatch.
+- Proposal lanes are unchanged: `world: container` refuses and `auto` degrades
+  to the worktree, because a container cannot seal until `croft-dlb`.
+
+### Retained container worlds — gated on `croft-dlb`
+
 `croft-dlb` is the gate for **retained** container worlds. `Capture` currently
 returns a sequence-keyed revision (`croft-seq-N`), so identical content
 captures differently and settlement's content-equality checks cannot hold.
 
 Until it lands:
 
-- `world: auto` resolves `container` → `worktree` with a recorded warning;
-- `world: container` fails closed;
-- non-retained lanes may use a container world once the execution path ships,
-  because they never seal.
+- `world: auto` resolves `container` → `worktree` for a **proposal** dispatch,
+  with a recorded warning;
+- `world: container` fails closed for a proposal dispatch;
+- report lanes already use a container world (above), because they never seal.
 
-Acceptance for flipping `container` to available:
+Acceptance for flipping `container` to available for **retained** dispatches:
 
 1. `Capture` is content-stable (identical content ⇒ identical digest).
 2. A dispatch container can be seeded, sealed, and settled `select` / `apply`.

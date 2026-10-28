@@ -83,11 +83,37 @@ type RetainedRuntime struct {
 	Grants        []config.GrantConfig
 	GrantsForRole func(role string) []config.GrantConfig
 
-	// ContainerWorlds reports whether this build implements per-dispatch
-	// container worlds (yaah-ihfh.3). False until the lane ships; a build
-	// that offers no container world degrades silently to the worktree,
-	// while an explicitly requested container fails closed.
+	// ContainerWorlds reports whether this session can attempt a per-dispatch
+	// container world (yaah-ihfh.3). It is true only in a host session whose
+	// config names a container image; a session that offers no container world
+	// degrades silently to the worktree, while an explicitly requested
+	// container fails closed.
 	ContainerWorlds bool
+
+	// DispatchWorlds is the setup a per-dispatch container needs: the same
+	// workspace.containerd stanza the session container uses, the backend
+	// opener, and the resolved copy-in deny list. Nil when this session cannot
+	// offer one, in which case a report dispatch runs in the worktree world.
+	DispatchWorlds *DispatchWorlds
+}
+
+// DispatchWorlds carries what a per-dispatch container world needs. The
+// composition root builds it from the session's workspace config, so the
+// dispatch container and the session container share one image contract and one
+// set of connection settings rather than drifting apart.
+type DispatchWorlds struct {
+	// Config is the workspace stanza (image, namespace, address, snapshotter,
+	// fifo_dir, root).
+	Config config.WorkspaceConfig
+	// Opener constructs the sandbox. Wiring passes
+	// OpenContainerdWorkspaceSandbox; tests pass a fake, so no test needs a
+	// containerd daemon.
+	Opener SandboxOpener
+	// Deny is agents.default.workspace_deny_patterns with its defaults
+	// already resolved. It is passed through rather than recomputed: the two
+	// substrates must copy the same files in, or a secret readable in one
+	// world would be absent from the other.
+	Deny []string
 }
 
 // proposalEnvelope is the JSON the orchestrator receives from a retained
@@ -296,13 +322,6 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		rt.RepoPath = wd
 	}
 
-	// The basis: the parent's workspace at dispatch. The proposal's delta is
-	// everything the sub-agent changes relative to it.
-	forkPoint, err := parent.CaptureWorkspace(ctx)
-	if err != nil {
-		return "", fmt.Errorf("delegate: capture basis: %w", err)
-	}
-
 	// Resolve the dispatch world before anything is provisioned. A refusal
 	// here fails the dispatch; a degradation is recorded and carried into the
 	// envelope. The world is decided once, before the body starts: switching
@@ -310,6 +329,35 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	worldRes, werr := resolveDispatchWorld(rt, subParams.Role, report)
 	if werr != nil {
 		return "", fmt.Errorf("delegate: %w", werr)
+	}
+
+	// A container world never seals, so it is legal only on the report lane.
+	// resolveDispatchWorld already refuses a retained container; this is the
+	// belt-and-braces check that keeps a future resolver change from
+	// dispatching a proposal into a world it cannot settle.
+	if worldRes.Resolved == subagent.WorldContainer {
+		if !report {
+			return "", fmt.Errorf("delegate: a container dispatch world is report-lane only — a proposal must seal, which croft-dlb gates")
+		}
+		ss, perr := openDispatchWorld(ctx, rt)
+		if perr == nil {
+			return runDispatchContainer(ctx, rt, parent, prompt, subParams, timeout, worldRes, ss)
+		}
+		// Preflight failed before any work exists: auto may step down to the
+		// worktree (recording the degradation); an explicit container fails
+		// closed. Nothing was provisioned, so the world can still change.
+		worldRes, werr = dispatchWorldPreflightFailure(worldRes, perr)
+		if werr != nil {
+			return "", werr
+		}
+	}
+
+	// The basis: the parent's workspace at dispatch. The proposal's delta is
+	// everything the sub-agent changes relative to it. A container report
+	// dispatch never needs it — it returns above, before the copy-in.
+	forkPoint, err := parent.CaptureWorkspace(ctx)
+	if err != nil {
+		return "", fmt.Errorf("delegate: capture basis: %w", err)
 	}
 
 	id := fmt.Sprintf("proposal:%d:%d", time.Now().UnixNano(), proposalSeq.Add(1))
@@ -469,13 +517,15 @@ func resolveDispatchWorld(rt RetainedRuntime, role string, report bool) (subagen
 	}
 
 	av := subagent.WorldAvailability{
-		// Per-dispatch container worlds are not implemented yet
-		// (yaah-ihfh.3, gated on croft-dlb). ContainerOffered stays tied to
-		// the build capability so a shipped lane can report a host failure as
-		// a degradation instead of falling back silently.
-		Container:        false,
+		// A per-dispatch container is created only where the session wired the
+		// setup: a host session with workspace.containerd.image on Linux.
+		// ContainerRetains stays false — sealing a container is croft-dlb's
+		// gate — so a proposal dispatch still refuses one and auto still
+		// degrades to the worktree with the reason below.
+		Container:        rt.ContainerWorlds,
 		ContainerOffered: rt.ContainerWorlds,
-		ContainerReason:  "per-dispatch container worlds are not implemented yet (yaah-ihfh.3, blocked on croft-dlb)",
+		ContainerRetains: false,
+		ContainerReason:  "per-dispatch container worlds need workspace.containerd.image on a Linux host (proposal lanes stay gated on croft-dlb)",
 		Worktree:         true,
 		Jail:             jailAvailable(),
 	}

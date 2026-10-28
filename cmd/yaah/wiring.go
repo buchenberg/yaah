@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -722,6 +723,22 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	}
 	egressBroker = broker
 
+	// Per-dispatch container worlds (yaah-ihfh.3): a host session can give a
+	// REPORT dispatch its own container when a container image is configured,
+	// reusing the same workspace.containerd stanza the session container uses.
+	// The worktree stays every other dispatch's world — a proposal must seal,
+	// and a container cannot do that until croft-dlb — and a container session
+	// already runs every dispatch inside its one container. Off-Linux there is
+	// no containerd adapter, so nothing is offered and auto keeps the worktree.
+	var dispatchWorlds *tools.DispatchWorlds
+	if sessionSandbox == nil && runtime.GOOS == "linux" && cfg.Workspace.Containerd.Image != "" {
+		dispatchWorlds = &tools.DispatchWorlds{
+			Config: cfg.Workspace,
+			Opener: tools.OpenContainerdWorkspaceSandbox,
+			Deny:   deny,
+		}
+	}
+
 	taskTool := runner.NewDelegateTool(runner.DelegateToolOpts{
 		Provider:              provider,
 		ProviderName:          providerName,
@@ -761,6 +778,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		RetainedRepoPath:     cfg.Agent.Default.RetainedRepoPath,
 		RetainedWorktreeRoot: cfg.Agent.Default.RetainedWorktreeRoot,
 		RetainedBootstrap:    cfg.Agent.Default.RetainedWorktreeBootstrap,
+		DispatchWorlds:       dispatchWorlds,
 	})
 
 	// RoleResolver provides a live role-name lookup so the delegate

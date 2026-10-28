@@ -189,6 +189,40 @@ func TestValidate_workspace(t *testing.T) {
 			ws:   WorkspaceConfig{},
 		},
 		{
+			// A local session that names an image offers per-dispatch
+			// container worlds to report lanes (yaah-ihfh.3), so the
+			// settings those containers consume are validated too.
+			name: "local session with a container image validates the sandbox scope",
+			ws: WorkspaceConfig{
+				Backend:    BackendLocal,
+				Root:       "/",
+				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest", FIFODir: fifo},
+			},
+			goos:    "linux",
+			wantErr: `would scope the whole container`,
+		},
+		{
+			name: "local session with a valid container image is valid",
+			ws: WorkspaceConfig{
+				Backend:    BackendLocal,
+				Root:       "/workspace",
+				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest", FIFODir: fifo},
+			},
+			goos: "linux",
+		},
+		{
+			// The platform rule stays the session container's: a local
+			// session itself runs on the host, and the dispatch lane is
+			// simply unavailable off-Linux.
+			name: "local session with a container image is valid off linux",
+			ws: WorkspaceConfig{
+				Backend:    BackendLocal,
+				Root:       "/workspace",
+				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest", FIFODir: fifo},
+			},
+			goos: "windows",
+		},
+		{
 			name:    "unknown backend is refused with the valid options",
 			ws:      WorkspaceConfig{Backend: "podman"},
 			wantErr: `workspace.backend "podman" is invalid (must be local or containerd)`,

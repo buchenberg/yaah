@@ -133,6 +133,13 @@ type DelegateToolOpts struct {
 	// SubAgentNetworkPolicy). The zero value means allow_all — the config
 	// default; the composition root passes an explicit policy either way.
 	SubNetwork confinement.NetworkPolicy
+
+	// DispatchWorlds is the per-dispatch container setup (yaah-ihfh.3). Non-nil
+	// only in a host session that can offer a container world: the retained
+	// runtime then creates one per report dispatch, and the runner runs the
+	// sub-agent's tools inside it. Nil leaves every dispatch on the worktree
+	// (or the session's own substrate).
+	DispatchWorlds *tools.DispatchWorlds
 }
 
 // NewDelegateTool builds the planner's DelegateTool: it resolves the advertised
@@ -215,11 +222,11 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 				}
 				return nil
 			},
-			// False until the per-dispatch container lane ships
-			// (yaah-ihfh.3). Flipping it on makes world: auto prefer a
-			// container and record a degradation when the host cannot
-			// provide one.
-			ContainerWorlds: false,
+			// A per-dispatch container world is offerable only where the
+			// composition root wired its setup; the ladder then decides per
+			// lane what may actually use it (yaah-ihfh.3).
+			ContainerWorlds: opts.DispatchWorlds != nil,
+			DispatchWorlds:  opts.DispatchWorlds,
 		}
 	}
 	return tool
@@ -417,6 +424,14 @@ type taskRunnerOpts struct {
 // structurally without relying on middleware alone. Depth is hardcoded to 1.
 func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 	return func(ctx context.Context, prompt string, params tools.SubAgentParams) (string, error) {
+		// A per-dispatch world overrides the session's substrate for this
+		// dispatch only (yaah-ihfh.3). The shadow copy keeps the captured
+		// closure state immutable, so a container dispatch cannot leak its
+		// workspace into the next one. The workspace and the host path
+		// validator are mutually exclusive by construction: the workspace is
+		// the substrate, and a validator rooted on the host would gate paths
+		// in a tree this dispatch never sees.
+		opts := dispatchOpts(opts, ctx)
 		role := subagent.SubAgentRole(params.Role)
 		profile := subagent.RoleProfileFor(role)
 
@@ -704,6 +719,20 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 
 		return result, runErr
 	}
+}
+
+// dispatchOpts returns the runtime options for one dispatch. A per-dispatch
+// container world travels in the context (the retained lane owns the sandbox,
+// the runner owns the registry), and it replaces the session's substrate for
+// this dispatch: the workspace becomes the tools' world and the host path
+// validator is dropped, because the two substrates must never race for a tool.
+// Without one the captured options pass through unchanged.
+func dispatchOpts(opts taskRunnerOpts, ctx context.Context) taskRunnerOpts {
+	if ws := tools.DispatchWorkspace(ctx); ws != nil {
+		opts.workspace = ws
+		opts.pathValidator = nil
+	}
+	return opts
 }
 
 // buildSubAgentSysPrompt assembles the full system prompt for a sub-agent

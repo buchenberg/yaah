@@ -336,7 +336,7 @@ Sub-agents use their own curated pipeline and per-role directives.
 | `output_limit` | 51200 | Byte cap on sub-agent reports; 0 = built-in 50 KiB cap |
 | `json_mode` | false | Force structured JSON output |
 | `mode` | `retained` | Dispatch lane — `retained` (isolated worktree + proposal) or `shared` (direct to host) |
-| `world` | `auto` | Dispatch world — `auto` (per-dispatch container when available, else worktree, recording any degradation), `worktree` (never container), `container` (fails closed if unavailable). Orthogonal to `mode`. See [shepherd-parity.md](./shepherd-parity.md#dispatch-worlds) |
+| `world` | `auto` | Dispatch world — `auto` (per-dispatch container for report-lane dispatches when `workspace.containerd.image` is set on Linux, else the worktree, recording any degradation), `worktree` (never container), `container` (report lanes only; fails closed if unavailable). Proposal-lane container worlds remain gated on croft-dlb. Orthogonal to `mode`. See [shepherd-parity.md](./shepherd-parity.md#dispatch-worlds) |
 | `roles.<name>.world` | — | Per-role world override (`auto` / `worktree` / `container`); empty inherits `agents.subagent.world` |
 | `grants` | `[]` | Per-dispatch write authority — a list of `{path, access}` roots relative to the dispatch world. `readwrite` roots are writable, `readonly` roots are declared but denied writes; roots must be disjoint. Empty = the whole world (legacy) |
 | `roles.<name>.grants` | — | Per-role grant set; empty inherits `agents.subagent.grants` |
@@ -424,12 +424,22 @@ everything runs on the host filesystem, as it always has.
 | Field | Default | Description |
 |---|---|---|
 | `backend` | `local` | `local` runs tools on the host; `containerd` runs them inside a per-session containerd sandbox |
-| `root` | `/workspace` | Containment root inside the sandbox. Must be absolute and not `/` when `containerd` is in effect (config validation refuses otherwise) |
+| `root` | `/workspace` | Containment root inside the sandbox. Must be absolute and not `/` when a container sandbox is in effect (`backend: containerd`, or `containerd.image` set in a local session) — config validation refuses otherwise |
 | `containerd.address` | containerd's own default | containerd socket or endpoint; supports `${ENV_VAR}` substitution |
 | `containerd.namespace` | `default` | containerd namespace for the session's containers |
-| `containerd.image` | (required for `containerd`) | Base image. Must satisfy the tool contract (sh, GNU stat/find, git, rg, base64, Go toolchain) — verified at startup |
+| `containerd.image` | (required for `containerd`) | Base image. Must satisfy the tool contract (sh, GNU stat/find, git, rg, base64, Go toolchain) — verified at startup. In a `local` session, setting it also enables per-dispatch container worlds for report-lane sub-agents (see below) |
 | `containerd.snapshotter` | `overlayfs` | containerd snapshotter plugin |
 | `containerd.fifo_dir` | `<yaah home>/containerd-fifo` | Directory the containerd *client* creates the task/exec stdio FIFOs in. containerd's own default (`/run/containerd/fifo`) is root-only, so the yaah default keeps unprivileged sessions working; must be absolute. Avoids a predictable name under the shared temp dir, which another local user could pre-create |
+
+The `containerd` stanza is also the per-dispatch container's config: in a
+`local` session (where `backend` stays `local`), setting `containerd.image`
+lets a **report-lane** sub-agent dispatch run in its own container instead of a
+worktree. The container is created from the repository at dispatch time,
+destroyed afterwards, and never seals — proposal-lane container worlds stay
+gated on `croft-dlb` (see [shepherd-parity.md](./shepherd-parity.md)). A
+preflight failure (open, probe, create, bootstrap) degrades `world: auto` to the
+worktree with a recorded warning; `world: container` fails closed. This path is
+Linux-only, like the `containerd` backend itself.
 
 The `containerd` backend requires a Linux containerd daemon: config
 validation refuses it at load on any other platform. The daemon's socket is

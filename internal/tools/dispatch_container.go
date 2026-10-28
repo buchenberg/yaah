@@ -1,0 +1,155 @@
+package tools
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	goatherd "github.com/buchenberg/goatherd-runtime"
+	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/buchenberg/yaah/internal/jobs"
+)
+
+// dispatch_container.go implements the report lane's per-dispatch container
+// world (yaah-ihfh.3). A report dispatch never seals, so it can use a container
+// even while croft's capture is sequence-keyed (croft-dlb): the world is created,
+// used, and destroyed, and nothing it produces is settled. A proposal dispatch
+// still resolves to the worktree, because a container world it cannot seal would
+// have no proposal to hand back.
+
+const (
+	// dispatchWorldStartTimeout bounds a per-dispatch container's preflight:
+	// the image-contract probe (its own throwaway sandbox), Create, and the
+	// copy-in bootstrap. It matches the session container's bound, large
+	// enough for a first-run image pull but finite so a wedged daemon cannot
+	// hang a dispatch forever.
+	dispatchWorldStartTimeout = 15 * time.Minute
+
+	// dispatchWorldDestroyTimeout bounds the container's teardown so a
+	// finished (or failed) dispatch cannot hang on a wedged daemon on its way
+	// out. It matches the session sandbox's teardown bound.
+	dispatchWorldDestroyTimeout = 30 * time.Second
+)
+
+// dispatchWorldPreflightFailure decides what a failed container preflight means
+// for the dispatch. An explicit `container` request fails closed: the operator
+// asked for a world this host could not provide, and running elsewhere would
+// silently disobey the config. `auto` steps down to the worktree, recording the
+// failure as a degradation so the envelope and the trace say the dispatch ran
+// in a different world than the ladder chose.
+//
+// It is pure, so the decision is testable without a daemon or a repository.
+func dispatchWorldPreflightFailure(res subagent.WorldResolution, cause error) (subagent.WorldResolution, error) {
+	if res.Requested == subagent.WorldContainer {
+		return res, fmt.Errorf("delegate: per-dispatch container world: %w", cause)
+	}
+	res.Resolved = subagent.WorldWorktree
+	res.Degraded = true
+	res.Reason = "per-dispatch container world unavailable: " + truncateAt(cause.Error(), noteBudget)
+	return res, nil
+}
+
+// openDispatchWorld runs the container preflight for one dispatch: probe the
+// image contract, create the sandbox, and copy the host tree in. It returns a
+// live sandbox on success; every failure path destroys whatever was opened
+// (StartSessionSandbox owns that contract).
+//
+// The host repository is the copy-in source, exactly as the session container
+// seeds from the session's working tree.
+func openDispatchWorld(ctx context.Context, rt RetainedRuntime) (*SessionSandbox, error) {
+	dw := rt.DispatchWorlds
+	if dw == nil || dw.Opener == nil {
+		return nil, fmt.Errorf("no per-dispatch container setup is wired for this session")
+	}
+	if rt.RepoPath == "" {
+		return nil, fmt.Errorf("no repository to seed the dispatch container from")
+	}
+	startCtx, cancel := context.WithTimeout(ctx, dispatchWorldStartTimeout)
+	defer cancel()
+	return StartSessionSandbox(startCtx, dw.Config, dw.Opener, rt.RepoPath, dw.Deny)
+}
+
+// runDispatchContainer runs one report dispatch inside its own container world.
+// The child scope is pure-causal (no worktree sandbox): the container is the
+// substrate, and it is owned by this call rather than by the scope — attaching
+// it to the scope would demand a capture contract croft cannot satisfy yet
+// (croft-dlb).
+//
+// The body runs with the sandbox's workspace in its context so the runner builds
+// the sub-agent's registry against the container; teardown discards the scope
+// and destroys the container however the body ends. Teardown problems travel as
+// a report caveat rather than a log line: a report registers no proposal, so the
+// result is the only channel the orchestrator reads.
+func runDispatchContainer(
+	ctx context.Context,
+	rt RetainedRuntime,
+	parent *goatherd.Scope,
+	prompt string,
+	subParams jobs.SubAgentParams,
+	timeout time.Duration,
+	res subagent.WorldResolution,
+	sandbox *SessionSandbox,
+) (result string, runErr error) {
+	id := fmt.Sprintf("proposal:%d:%d", time.Now().UnixNano(), proposalSeq.Add(1))
+	scope, err := rt.ScopeManager.Fork(rt.RootScopeID, id, nil)
+	if err != nil {
+		ferr := fmt.Errorf("delegate: fork container dispatch scope: %w", err)
+		if note := teardownDispatchWorld(ctx, nil, nil, sandbox); note != "" {
+			ferr = fmt.Errorf("%w; %s", ferr, note)
+		}
+		return "", ferr
+	}
+	recordWorldFact(ctx, rt.ScopeManager, scope.ID(), res)
+
+	// Deferred so no return path — a body error, a supervisor halt, a panic —
+	// leaves the container running. Both steps are bounded and cancel-free:
+	// the dispatch's context is usually over by the time this runs, and a
+	// teardown that honoured it would leak the very thing it exists to remove.
+	defer func() {
+		note := teardownDispatchWorld(ctx, parent, scope, sandbox)
+		if note == "" {
+			return
+		}
+		if runErr != nil {
+			runErr = &retainedRunError{cause: runErr, note: note}
+			return
+		}
+		result = retainedNote(result, note)
+	}()
+
+	sp := subParams
+	sp.Workdir = sandbox.Workspace().WorkDir()
+
+	runCtx := ctx
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	runCtx = WithDispatchWorkspace(runCtx, sandbox.Workspace())
+
+	return rt.Runner(runCtx, prompt, sp)
+}
+
+// teardownDispatchWorld discards the dispatch's pure-causal scope and destroys
+// its container. It returns a caveat naming what it could not remove, or "".
+func teardownDispatchWorld(ctx context.Context, parent, scope *goatherd.Scope, sandbox *SessionSandbox) string {
+	var notes []string
+	if parent != nil && scope != nil {
+		if err := parent.Discard(scope); err != nil {
+			notes = append(notes, "dispatch scope discard failed: "+err.Error())
+		}
+	}
+	if sandbox != nil {
+		destroyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), dispatchWorldDestroyTimeout)
+		defer cancel()
+		if err := sandbox.Destroy(destroyCtx); err != nil {
+			notes = append(notes, "dispatch container teardown failed: "+err.Error())
+		}
+	}
+	if len(notes) == 0 {
+		return ""
+	}
+	return strings.Join(notes, "; ")
+}
