@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.108.1](https://github.com/buchenberg/yaah/compare/v0.108.0...v0.108.1) (2026-10-28)
+
+
+### Bug Fixes
+
+* **providers:** stop sending cache_control to providers that reject it ([5a44d54](https://github.com/buchenberg/yaah/commit/5a44d54349bd526742293d0dbc91322f423af583))
+* **providers:** stop sending cache_control to providers that reject it ([5b96626](https://github.com/buchenberg/yaah/commit/5b96626f6d98b63eecbb47ca79ed60b410c0054f))
+
 ## [0.108.0](https://github.com/buchenberg/yaah/compare/v0.107.2...v0.108.0) (2026-10-28)
 
 
