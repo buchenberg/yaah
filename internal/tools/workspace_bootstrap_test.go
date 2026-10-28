@@ -336,8 +336,15 @@ func TestApplyOut_CarriesModeChanges(t *testing.T) {
 // world-executable on the host. A chmod added later made it worse by applying
 // the same guess even where atomicWriteFile would have re-derived a safe mode.
 //
-// Both are gone — the fallback is removed and the chmod runs only on a mode
-// that came from the sandbox — and this test is what keeps them gone.
+// Both are gone: the fallback is removed, and the chmod runs only on a mode
+// that came from the sandbox. This test pins the *fallback* half — with a
+// dangling symlink the old code yielded 0777 here. It deliberately does not
+// claim to pin the gate: once the fallback is gone, perm is the 0o644 default
+// either way, so the chmod is a no-op on this fixture and removing the gate
+// would not fail this test.
+// TestApplyOut_DoesNotLoosenAPrivateHostFile covers the gate, in the direction
+// that matters more — imposing a guessed default over a file the user had kept
+// private.
 func TestApplyOut_NeverImposesASymlinkModeOnTheHost(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("a symlink reporting 0777 via Lstat is a POSIX property; Windows has no equivalent mode")
@@ -410,6 +417,83 @@ func TestApplyOut_NeverImposesASymlinkModeOnTheHost(t *testing.T) {
 	}
 	if body, rerr := os.ReadFile(hostReadme); rerr != nil || string(body) != "from the session\n" {
 		t.Errorf("content = %q, %v — want the session's bytes", body, rerr)
+	}
+}
+
+// TestApplyOut_DoesNotLoosenAPrivateHostFile pins the other half of the
+// modeFromSandbox gate, and the direction that matters more.
+//
+// When the sandbox cannot report a file's mode, copy-out does not know it — so
+// it must impose nothing. An ungated chmod would apply the 0o644 default over a
+// host file the user had kept at 0o600, silently loosening a private file to
+// world-readable on accept. atomicWriteFile would have preserved 0o600 on its
+// own; the chmod is what overwrites that.
+//
+// The sibling symlink test cannot catch this: there the host path is a dangling
+// symlink, so atomicWriteFile's Stat fails and the default is written with or
+// without the chmod. Here the host file is a regular 0o600 file, so the two
+// behaviours differ exactly — gated keeps 0o600, ungated yields 0o644.
+func TestApplyOut_DoesNotLoosenAPrivateHostFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows cannot represent permission bits, so 0600 vs 0644 is not observable")
+	}
+
+	src := gitHostRepo(t)
+	hostSecret := filepath.Join(src, "secret.txt")
+	if err := os.WriteFile(hostSecret, []byte("private\n"), 0o600); err != nil {
+		t.Fatalf("write the private host file: %v", err)
+	}
+	// Explicit, because WriteFile's perm is subject to umask and the whole test
+	// turns on the starting mode being exact. Git stores only the executable
+	// bit, so committing does not disturb the 0600 in the working tree.
+	if err := os.Chmod(hostSecret, 0o600); err != nil {
+		t.Fatalf("chmod the fixture: %v", err)
+	}
+	// Commit it. Leaving it untracked makes the source dirty, which sends the
+	// bootstrap down its in-container baseline-commit path — and the fake has
+	// no git, so the session would fail to start for a reason unrelated to
+	// what this test is about.
+	gitRun(t, src, "add", "secret.txt")
+	gitRun(t, src, "commit", "-q", "-m", "add a private file")
+
+	if info, err := os.Stat(hostSecret); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("the fixture needs a 0600 host file to be meaningful, got %v (%v)", info, err)
+	}
+
+	open, fakes := cleanOpener()
+	ss, err := StartSessionSandbox(context.Background(), sessionTestConfig(), open, src, nil)
+	if err != nil {
+		t.Fatalf("StartSessionSandbox: %v", err)
+	}
+	defer ss.Destroy(context.Background())
+
+	ws := ss.Workspace()
+	secret, _ := ws.ResolvePath("secret.txt")
+	// Edit the content so the path lands in the diff. The mode written here is
+	// irrelevant: the sandbox Stat is about to fail, so copy-out never reads it.
+	if err := ws.WriteFile(context.Background(), secret, []byte("edited in the session\n"), 0o600); err != nil {
+		t.Fatalf("write in the sandbox: %v", err)
+	}
+
+	for _, sb := range fakes() {
+		sb.ExecHook = func(goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
+			return goatherdsandbox.ExecResult{ExitCode: 1, Stderr: "stat unavailable"}, nil
+		}
+	}
+
+	if err := ss.ApplyOut(context.Background(), src); err != nil {
+		t.Fatalf("ApplyOut: %v", err)
+	}
+
+	got, err := os.Stat(hostSecret)
+	if err != nil {
+		t.Fatalf("stat the result: %v", err)
+	}
+	if got.Mode().Perm() != 0o600 {
+		t.Errorf("host secret.txt is %v, want 0600 — copy-out imposed the 0644 default it guessed, loosening a private file to world-readable", got.Mode().Perm())
+	}
+	if body, rerr := os.ReadFile(hostSecret); rerr != nil || string(body) != "edited in the session\n" {
+		t.Errorf("content = %q, %v — want the session's edit", body, rerr)
 	}
 }
 
