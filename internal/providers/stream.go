@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -35,6 +36,58 @@ type StreamDelta struct {
 	ReasoningContent   string           `json:"reasoning_content,omitempty"`
 	ReasoningSignature string           `json:"reasoning_signature,omitempty"`
 	ToolCalls          []types.ToolCall `json:"tool_calls,omitempty"`
+
+	// contentShapeErr records an unreadable content shape so SendStream can
+	// report it once per stream; the delta degrades to empty content rather
+	// than failing the chunk, keeping its tool calls. Never serialized.
+	contentShapeErr error
+}
+
+// UnmarshalJSON decodes a delta that may carry content in either wire shape:
+// the OpenAI plain string, or an array of typed blocks as zai/GLM streams it.
+// Thinking blocks land in ReasoningContent and text blocks in Content;
+// tool_calls and the signature fields pass through unchanged. A content shape
+// that is neither degrades the delta to empty content — its tool calls
+// survive, matching the response path — and the shape is recorded for
+// SendStream's once-per-stream warning instead of dropped silently.
+//
+// reasoning_content goes through the same normalizer: some endpoints send
+// typed blocks there too, and a shape this decoder cannot read must cost the
+// delta only its reasoning, never its visible content or tool calls.
+func (d *StreamDelta) UnmarshalJSON(data []byte) error {
+	var w struct {
+		Role               string           `json:"role"`
+		Content            json.RawMessage  `json:"content"`
+		ReasoningContent   json.RawMessage  `json:"reasoning_content"`
+		ReasoningSignature string           `json:"reasoning_signature"`
+		ToolCalls          []types.ToolCall `json:"tool_calls"`
+	}
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
+	}
+	text, thinking, err := decodeContentValue(w.Content)
+	if err != nil {
+		// Degrade instead of failing the chunk: an unreadable content shape
+		// costs the delta its content and reasoning, never its tool calls —
+		// the same contract as the response path. The shape is recorded so
+		// SendStream can report it once per stream.
+		text, thinking = "", ""
+		d.contentShapeErr = err
+	}
+	reasoning, rThinking, rErr := decodeContentValue(w.ReasoningContent)
+	if rErr != nil {
+		// Degrade instead of failing the chunk: dropping the whole delta is
+		// how the visible content in the same chunk gets lost.
+		reasoning, rThinking = "", ""
+	}
+	d.Role = w.Role
+	d.Content = text
+	// reasoning_content and content-embedded thinking can carry the same
+	// reasoning twice; mergeReasoning drops the duplicate.
+	d.ReasoningContent = mergeReasoning(reasoning+rThinking, thinking)
+	d.ReasoningSignature = w.ReasoningSignature
+	d.ToolCalls = w.ToolCalls
+	return nil
 }
 
 // SendStream sends a streaming chat request and returns a channel of chunks.
@@ -52,7 +105,7 @@ func (c *OpenAIClient) SendStream(ctx context.Context, req types.ChatRequest) (<
 		defer close(chunks)
 		defer close(errs)
 
-		body, err := json.Marshal(lowerRequest(req, c.resolveThinkingMode(req.Model), c.CopilotMode, !c.thinkingExplicit(req.Model)))
+		body, err := json.Marshal(lowerRequest(req, c.lowerOptions(req.Model)))
 		if err != nil {
 			errs <- fmt.Errorf("marshal request: %w", err)
 			return
@@ -94,16 +147,44 @@ func (c *OpenAIClient) SendStream(ctx context.Context, req types.ChatRequest) (<
 
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
+		loggedUndecodable := false
+		loggedContentShape := false
 		for scanner.Scan() {
 			line := scanner.Bytes()
 			chunk, done, err := parseSSEChunk(line)
 			if err != nil {
+				// A chunk that does not decode is otherwise invisible: the
+				// turn keeps streaming and simply loses whatever it carried
+				// (typically all of the reasoning). Warn once per stream so a
+				// wire-shape change stays diagnosable without flooding the log.
+				if !loggedUndecodable {
+					loggedUndecodable = true
+					// Only the error and the size are logged: the line itself is
+					// model output, which must not land in a log file.
+					slog.Warn("provider stream: dropping undecodable chunk; further occurrences in this turn are silent",
+						"model", req.Model, "error", err, "bytes", len(line))
+				}
 				continue // skip malformed lines
 			}
 			if done {
 				return
 			}
 			if chunk != nil {
+				// An unreadable content shape degrades the delta to empty
+				// content (see StreamDelta.UnmarshalJSON) but must not be
+				// silent: the same once-per-stream rule as undecodable chunks.
+				if !loggedContentShape {
+					for _, choice := range chunk.Choices {
+						if choice.Delta.contentShapeErr != nil {
+							loggedContentShape = true
+							// Only the error is logged: the payload is model
+							// output, which must not land in a log file.
+							slog.Warn("provider stream: unreadable delta content shape; the delta's content was dropped, its tool calls kept. further occurrences in this turn are silent",
+								"model", req.Model, "error", choice.Delta.contentShapeErr)
+							break
+						}
+					}
+				}
 				select {
 				case chunks <- *chunk:
 				case <-ctx.Done():
