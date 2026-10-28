@@ -25,7 +25,7 @@ import (
 // the same code path works on the host and inside an isolated substrate. What
 // stays outside the Workspace is only the *dependency* view: import resolution
 // and gc export data belong to the toolchain, not to the project (see
-// formatterFor and doInfo).
+// formatGoSource and doInfo).
 type GoRefactorTool struct {
 	PV *PathValidator
 	WS Workspace

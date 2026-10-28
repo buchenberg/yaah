@@ -339,6 +339,9 @@ var safeGitFlagPrefixes = []string{
 var branchReadOnlyFlags = map[string]bool{
 	"--all": true, "-a": true,
 	"--remotes": true, "-r": true,
+	// -l is --list for `git branch` (verified against `git branch -h` on
+	// git 2.55); --create-reflog has no short form, so it is gated by its
+	// long name in branchMutatingFlags only.
 	"--list": true, "-l": true,
 	"--show-current": true,
 	"--contains":     true, "--no-contains": true,
@@ -359,7 +362,12 @@ var branchReadOnlyFlags = map[string]bool{
 var branchReadOnlyValueFlags = map[string]bool{
 	"--contains": true, "--no-contains": true, "--merged": true,
 	"--no-merged": true, "--points-at": true, "--sort": true,
-	"--format": true, "--abbrev": true,
+	"--format": true,
+	// --abbrev is deliberately absent: it takes an OPTIONAL argument, so
+	// git does not consume a separate next token. Treating one as its
+	// value let `git branch --abbrev -D <name>` pass as read-only while
+	// git parsed -D as a delete and removed the branch. Only the
+	// `--abbrev=<n>` form is read-only (branchReadOnlyFlagPrefixes).
 }
 
 var branchReadOnlyFlagPrefixes = []string{

@@ -113,6 +113,8 @@ func TestGitTool_branchDangerIsArgumentAware(t *testing.T) {
 		{"all", `{"action":"branch","flags":["-a"]}`, false},
 		{"remote listing", `{"action":"branch","flags":["-r"]}`, false},
 		{"list", `{"action":"branch","flags":["--list"]}`, false},
+		{"short list flag", `{"action":"branch","flags":["-l"]}`, false},
+		{"short list with pattern", `{"action":"branch","flags":["-l"],"paths":["feat*"]}`, false},
 		{"contains with value", `{"action":"branch","flags":["--contains","x"]}`, false},
 		{"contains value via paths", `{"action":"branch","flags":["--contains"],"paths":["main"]}`, false},
 		{"contains equals form", `{"action":"branch","flags":["--contains=main"]}`, false},
@@ -136,6 +138,10 @@ func TestGitTool_branchDangerIsArgumentAware(t *testing.T) {
 		{"create via paths", `{"action":"branch","paths":["feature"]}`, true},
 		{"unknown long flag", `{"action":"branch","flags":["--output=/tmp/pwned"]}`, true},
 		{"unknown short flag", `{"action":"branch","flags":["-Z"]}`, true},
+		// --abbrev takes an optional argument, so a separate -D is a real
+		// delete to git, not the option's value (review 612).
+		{"abbrev does not consume a following delete", `{"action":"branch","flags":["--abbrev","-D"],"paths":["victim"]}`, true},
+		{"abbrev equals form stays read-only", `{"action":"branch","flags":["--abbrev=7","--list"]}`, false},
 		{"bare name in flags", `{"action":"branch","flags":["feature"]}`, true},
 	}
 	for _, tt := range tests {
