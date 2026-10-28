@@ -126,6 +126,7 @@ func TestGitTool_branchDangerIsArgumentAware(t *testing.T) {
 		{"merged does not swallow a following delete", `{"action":"branch","flags":["--merged","-D"],"paths":["victim"]}`, true},
 		{"points-at does not swallow a following delete", `{"action":"branch","flags":["--points-at","-D"],"paths":["victim"]}`, true},
 		{"flag-like value is classified, not swallowed", `{"action":"branch","flags":["--sort","-refname"]}`, true},
+		{"attached dash value stays read-only", `{"action":"branch","flags":["--sort=-committerdate"]}`, false},
 		{"show-current", `{"action":"branch","flags":["--show-current"]}`, false},
 		{"list pattern", `{"action":"branch","flags":["--list"],"paths":["feat*"]}`, false},
 		{"delete forced", `{"action":"branch","flags":["-D","feature"]}`, true},
@@ -207,6 +208,7 @@ func TestValidateActionFlags_branch(t *testing.T) {
 		{name: "short -l refused (version-dependent meaning)", flags: []string{"-l"}, wantErr: true},
 		{name: "delete riding a value flag is classified, not swallowed", flags: []string{"--merged", "-D"}, want: []string{"--merged", "-D"}},
 		{name: "flag-like value refused as unknown option", flags: []string{"--contains", "-Z"}, wantErr: true},
+		{name: "attached dash value accepted", flags: []string{"--sort=-committerdate"}, want: []string{"--sort=-committerdate"}},
 		// Branch names travel in `paths`, so a mutating option arrives bare:
 		// -D and -m take no value flag, only positional refs.
 		{name: "delete forced", flags: []string{"-D"}, want: []string{"-D"}},

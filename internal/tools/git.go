@@ -361,12 +361,8 @@ var branchReadOnlyFlags = map[string]bool{
 
 // branchReadOnlyValueFlags are the read-only options that consume the next
 // token when written without '=' (--contains <ref>), so classifyBranchFlag can
-// tell an option's value from a bare branch name. Callers must apply that skip
-// only to a token that is not flag-like (no leading '-'): git's value
-// consumption is not uniform across options (see --abbrev below), so a dash
-// token after a value option is classified on its own. The worst case is a
-// false refusal of an exotic value like `--sort -refname` (write the attached
-// `--sort=-refname` form), never a mutation passing as read-only.
+// tell an option's value from a bare branch name. The value-skip rule itself
+// lives in scanBranchFlags, shared by the approval gate and the Execute check.
 var branchReadOnlyValueFlags = map[string]bool{
 	"--contains": true, "--no-contains": true, "--merged": true,
 	"--no-merged": true, "--points-at": true, "--sort": true,
@@ -444,35 +440,66 @@ func classifyBranchFlag(flag string) (branchFlagKind, bool) {
 	return branchFlagUnknown, false
 }
 
+// branchFlagScan is the result of the shared `git branch` option walk.
+type branchFlagScan struct {
+	mutating bool     // saw a mutating option
+	listing  bool     // saw a read-only listing option
+	safe     []string // every token, values paired with their options
+}
+
+// scanBranchFlags walks flags under the branch grammar. The approval gate
+// (branchCallDangerous) and the Execute argument check (validateActionFlags)
+// classify the same option list and must not diverge — a grammar change
+// applied to only one of them could let a mutation clear the gate while the
+// validator sees it differently — so the walk lives here once. An unknown
+// token is returned as an error and the caller decides what it means:
+// assumed mutating at the gate, a refusal at the check.
+//
+// A value is taken only when the next token is not flag-like (no leading
+// '-'): git's value consumption is not uniform across options (see the
+// --abbrev note on branchMutatingValueFlags), so a dash token after a value
+// option is classified on its own. The worst case is a false refusal of an
+// exotic value like `--sort -committerdate` (write the attached
+// `--sort=-committerdate` form), never a mutation passing as read-only.
+func scanBranchFlags(flags []string) (branchFlagScan, error) {
+	scan := branchFlagScan{safe: make([]string, 0, len(flags))}
+	expectValue := false
+	for _, flag := range flags {
+		if expectValue && !strings.HasPrefix(flag, "-") {
+			expectValue = false
+			scan.safe = append(scan.safe, flag)
+			continue
+		}
+		expectValue = false
+		kind, takesValue := classifyBranchFlag(flag)
+		switch kind {
+		case branchFlagUnknown:
+			return scan, fmt.Errorf("git: flag %q is not a known branch option — read-only listing flags are whitelisted and mutating options are approval-gated, so an unrecognized option is refused", flag)
+		case branchFlagMutating:
+			scan.mutating = true
+		case branchFlagReadOnly:
+			scan.listing = true
+		}
+		expectValue = takesValue
+		scan.safe = append(scan.safe, flag)
+	}
+	return scan, nil
+}
+
 // branchCallDangerous reports whether a `branch` call mutates refs. Every
 // option that is not a known read-only listing option is a mutation signal,
 // and an unrecognized option is assumed mutating — a whitelist hole is worse
 // than an extra approval prompt. Positional arguments are branch names, so they
 // are read-only only alongside a listing option.
 func branchCallDangerous(flags, paths []string) bool {
-	listing := false
-	expectValue := false
-	for _, flag := range flags {
-		// A value is taken only when the next token is not flag-like (see
-		// branchReadOnlyValueFlags): a dash token after a value option is
-		// classified on its own, so `--merged -D <name>` cannot ride
-		// through as a value on a git whose parser disagrees with ours.
-		if expectValue && !strings.HasPrefix(flag, "-") {
-			expectValue = false
-			continue
-		}
-		expectValue = false
-		kind, takesValue := classifyBranchFlag(flag)
-		if kind != branchFlagReadOnly {
-			return true
-		}
-		listing = true
-		expectValue = takesValue
+	scan, err := scanBranchFlags(flags)
+	if err != nil || scan.mutating {
+		return true
 	}
 	if len(paths) == 0 {
 		return false
 	}
-	return !listing
+	return !scan.listing
 }
 
 // validateActionFlags routes branch to its own tables and every other action
@@ -484,25 +511,11 @@ func validateActionFlags(action string, flags []string, dangerous bool) ([]strin
 	if len(flags) == 0 {
 		return nil, nil
 	}
-	safe := make([]string, 0, len(flags))
-	expectValue := false
-	for _, flag := range flags {
-		// Same value rule as branchCallDangerous: only a non-flag-like
-		// token is swallowed as an option value.
-		if expectValue && !strings.HasPrefix(flag, "-") {
-			expectValue = false
-			safe = append(safe, flag)
-			continue
-		}
-		expectValue = false
-		kind, takesValue := classifyBranchFlag(flag)
-		if kind == branchFlagUnknown {
-			return nil, fmt.Errorf("git: flag %q is not a known branch option — read-only listing flags are whitelisted and mutating options are approval-gated, so an unrecognized option is refused", flag)
-		}
-		expectValue = takesValue
-		safe = append(safe, flag)
+	scan, err := scanBranchFlags(flags)
+	if err != nil {
+		return nil, err
 	}
-	return safe, nil
+	return scan.safe, nil
 }
 
 // validateFlags checks flags against the safe whitelist. Dangerous commands
