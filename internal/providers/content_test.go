@@ -216,6 +216,8 @@ func TestDecodeContentValue_shapes(t *testing.T) {
 		{name: "thinking inline text", raw: `[{"type":"thinking","text":"why"}]`, wantReasoning: "why"},
 		{name: "unknown block type ignored", raw: `[{"type":"image"},{"type":"text","text":"x"}]`, wantText: "x"},
 		{name: "unknown text-bearing block recovered", raw: `[{"type":"citation","text":"cited"},{"type":"text","text":"x"}]`, wantText: "citedx"},
+		{name: "nested summary recovered into visible", raw: `[{"type":"summary","content":[{"type":"text","text":"a"}]},{"type":"summary","thinking":[{"type":"text","text":"b"}]}]`, wantText: "ab"},
+		{name: "content-nested reasoning recovered into reasoning", raw: `[{"type":"analysis","content":[{"type":"text","text":"h"}]}]`, wantReasoning: "h"},
 		{name: "object shape", raw: `{"type":"text"}`, wantErr: true},
 		{name: "number shape", raw: `42`, wantErr: true},
 	}

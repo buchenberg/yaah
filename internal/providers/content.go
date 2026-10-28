@@ -62,12 +62,20 @@ func decodeContentValue(raw json.RawMessage) (text, thinking string, err error) 
 				// recognized-reasoning set: endpoints that name their reasoning
 				// differently are routed here so hidden text cannot be replayed
 				// into history as the assistant's visible words (review 616).
-				// "summary" is deliberately not in the set: some endpoints use it
-				// for a visible block, so it stays on the recovery path below.
+				// "summary" is deliberately not in the set: some endpoints use
+				// it for a visible block, so it has its own case below.
 				if len(b.Thinking) == 0 {
 					// Some endpoints inline the thinking text instead of
-					// nesting text blocks.
-					reasoning.WriteString(b.Text)
+					// nesting text blocks; others nest under content.
+					if b.Text != "" {
+						reasoning.WriteString(b.Text)
+						continue
+					}
+					inner, _, err := decodeContentValue(b.Content)
+					if err != nil {
+						return "", "", err
+					}
+					reasoning.WriteString(inner)
 					continue
 				}
 				inner, _, err := decodeContentValue(b.Thinking)
@@ -75,6 +83,26 @@ func decodeContentValue(raw json.RawMessage) (text, thinking string, err error) 
 					return "", "", err
 				}
 				reasoning.WriteString(inner)
+			case "summary":
+				// "summary" is not unambiguously reasoning — some endpoints use
+				// it for a visible block — so it is recovered into the visible
+				// channel. Handled explicitly instead of left to the default:
+				// this wire nests text one level deeper, and the generic recovery
+				// reads only inlined text, which would drop a nested summary
+				// silently (review 616).
+				if b.Text != "" {
+					visible.WriteString(b.Text)
+					continue
+				}
+				nested := b.Content
+				if len(nested) == 0 {
+					nested = b.Thinking
+				}
+				inner, _, err := decodeContentValue(nested)
+				if err != nil {
+					return "", "", err
+				}
+				visible.WriteString(inner)
 			case "text":
 				if b.Text != "" {
 					visible.WriteString(b.Text)
