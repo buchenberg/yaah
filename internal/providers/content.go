@@ -56,12 +56,14 @@ func decodeContentValue(raw json.RawMessage) (text, thinking string, err error) 
 		var visible, reasoning strings.Builder
 		for _, b := range blocks {
 			switch b.Type {
-			case "thinking", "reasoning", "thought", "analysis", "summary":
+			case "thinking", "reasoning", "thought", "analysis":
 				// A reasoning block's payload is nested text blocks rather than
 				// inlined text. The type names beyond "thinking" are a
 				// recognized-reasoning set: endpoints that name their reasoning
 				// differently are routed here so hidden text cannot be replayed
 				// into history as the assistant's visible words (review 616).
+				// "summary" is deliberately not in the set: some endpoints use it
+				// for a visible block, so it stays on the recovery path below.
 				if len(b.Thinking) == 0 {
 					// Some endpoints inline the thinking text instead of
 					// nesting text blocks.

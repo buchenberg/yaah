@@ -54,6 +54,11 @@ func TestStreamDelta_contentShapes(t *testing.T) {
 			wantContent: "citedx",
 		},
 		{
+			name:        "summary blocks stay visible",
+			line:        `data: {"id":"c1","choices":[{"index":0,"delta":{"content":[{"type":"summary","text":"shown"}]}}]}`,
+			wantContent: "shown",
+		},
+		{
 			name:          "string reasoning_content alongside string content",
 			line:          `data: {"id":"c1","choices":[{"index":0,"delta":{"reasoning_content":"because","content":"ok"}}]}`,
 			wantContent:   "ok",

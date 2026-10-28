@@ -148,6 +148,7 @@ func (c *OpenAIClient) SendStream(ctx context.Context, req types.ChatRequest) (<
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
 		loggedUndecodable := false
+		loggedContentShape := false
 		for scanner.Scan() {
 			line := scanner.Bytes()
 			chunk, done, err := parseSSEChunk(line)
@@ -169,6 +170,21 @@ func (c *OpenAIClient) SendStream(ctx context.Context, req types.ChatRequest) (<
 				return
 			}
 			if chunk != nil {
+				// An unreadable content shape degrades the delta to empty
+				// content (see StreamDelta.UnmarshalJSON) but must not be
+				// silent: the same once-per-stream rule as undecodable chunks.
+				if !loggedContentShape {
+					for _, choice := range chunk.Choices {
+						if choice.Delta.contentShapeErr != nil {
+							loggedContentShape = true
+							// Only the error is logged: the payload is model
+							// output, which must not land in a log file.
+							slog.Warn("provider stream: unreadable delta content shape; the delta's content was dropped, its tool calls kept. further occurrences in this turn are silent",
+								"model", req.Model, "error", choice.Delta.contentShapeErr)
+							break
+						}
+					}
+				}
 				select {
 				case chunks <- *chunk:
 				case <-ctx.Done():
