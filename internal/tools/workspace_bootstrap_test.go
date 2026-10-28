@@ -357,9 +357,15 @@ func TestApplyOut_NeverImposesASymlinkModeOnTheHost(t *testing.T) {
 		t.Fatalf("write in the sandbox: %v", err)
 	}
 
-	// Replace the host path with a dangling symlink. Lstat reports 0777 and
-	// Stat fails, so neither copyOut nor atomicWriteFile can derive a real mode
-	// — this is the exact combination that used to yield a world-writable file.
+	// Replace the host path with a dangling symlink. Lstat reports the link's
+	// own mode and Stat fails, so neither copyOut nor atomicWriteFile can derive
+	// a real mode — the exact combination that used to impose a guess on the
+	// host.
+	//
+	// The link's mode is read rather than assumed: Linux reports 0777, macOS
+	// reports 0755. Both are wrong to impose, but only Linux's is
+	// world-writable, so the test asserts the general property (the link's mode
+	// is never what lands) and the world-writable symptom on top.
 	hostReadme := filepath.Join(src, "readme.txt")
 	if err := os.Remove(hostReadme); err != nil {
 		t.Fatalf("remove the host file: %v", err)
@@ -371,9 +377,11 @@ func TestApplyOut_NeverImposesASymlinkModeOnTheHost(t *testing.T) {
 	if lerr != nil {
 		t.Fatalf("lstat the fixture symlink: %v", lerr)
 	}
-	if link.Mode().Perm() != 0o777 {
-		t.Fatalf("the fixture needs a 0777 symlink to be a meaningful hazard, got %v", link.Mode().Perm())
+	linkMode := link.Mode().Perm()
+	if linkMode == 0o644 {
+		t.Fatalf("the fixture symlink's mode is %v, the same as the safe default — the test could not tell a guessed mode from a correct one", linkMode)
 	}
+	t.Logf("this platform reports a symlink as %v", linkMode)
 
 	// Make the in-band stat fail, so copy-out has no authoritative mode. A
 	// nonzero exit is how sandboxWorkspace.stat reports failure.
@@ -394,8 +402,11 @@ func TestApplyOut_NeverImposesASymlinkModeOnTheHost(t *testing.T) {
 	if got.Mode()&os.ModeSymlink != 0 {
 		t.Fatal("the symlink should have been replaced by a regular file")
 	}
+	if got.Mode().Perm() == linkMode {
+		t.Errorf("host file is %v — the symlink's own Lstat mode was imposed on a regular file, so copy-out guessed a mode it did not know", got.Mode().Perm())
+	}
 	if got.Mode().Perm()&0o022 != 0 {
-		t.Errorf("host file is %v — group- or world-writable. A symlink's 0777 Lstat mode was imposed on a regular file", got.Mode().Perm())
+		t.Errorf("host file is %v — group- or world-writable", got.Mode().Perm())
 	}
 	if body, rerr := os.ReadFile(hostReadme); rerr != nil || string(body) != "from the session\n" {
 		t.Errorf("content = %q, %v — want the session's bytes", body, rerr)
