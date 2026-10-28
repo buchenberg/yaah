@@ -15,12 +15,22 @@ import (
 // goatherd-runtime's sandbox registry rather than constructing a backend
 // directly (the isolated-workspace plan §1.1).
 //
-// Going through the seam is the point: the container lane now gets the same
-// registry, the same Sandbox contract, and the same optional capabilities
-// (DeltaApplier, and Changes for effect extraction) as the git-worktree lane,
-// instead of a private construction path that bypasses them. Importing
-// croftadapter is what registers "containerd" — config can name a backend,
-// only an import can provide one.
+// What going through the seam buys is the shared Sandbox contract and type
+// vocabulary: the container lane now speaks goatherdsandbox.ExecRequest,
+// shepherdtrace.WorkspaceState and the rest, so the runtime semantics that
+// live behind that seam — capture digests, DeltaApplier, settlement, recovery
+// — are reachable from it rather than structurally out of reach. The adapter
+// also exposes optional capabilities this lane does not consume yet
+// (DeltaApplier, and Changes for effect extraction); ApplyOut still works from
+// Diff, and wiring those up is future work, not something this change does.
+//
+// It is not parity with the git-worktree lane, and claiming that would be
+// wrong: that lane constructs its backend directly (goatherdgit.NewWorktree-
+// Sandbox at internal/gitsandbox, internal/tools/retained.go,
+// internal/agent/runner, internal/agent/recovery, cmd/yaah/shepherd.go) and
+// never touches the registry. This is currently the only OpenSandbox call in
+// yaah. Importing croftadapter is what registers "containerd" — config can
+// name a backend, only an import can provide one.
 //
 // Unlike the old direct croft.New call, this can fail, and the failures are
 // worth having: an image left unset is refused here naming the field rather

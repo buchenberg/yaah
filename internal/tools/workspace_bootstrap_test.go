@@ -241,6 +241,77 @@ func TestApplyOut_CopyOutFallback(t *testing.T) {
 	}
 }
 
+// TestApplyOut_CarriesModeChanges pins the mode half of apply-out fidelity,
+// which nothing else asserted.
+//
+// Two cases, because they take different paths through the write:
+//
+//   - A mode change to a file that already exists on the host. This is the one
+//     that silently regressed when the git-binary-patch path was removed:
+//     atomicWriteFile preserves an existing file's mode by design, so without
+//     copyOut's explicit chmod the host kept the old mode and the session's
+//     chmod vanished on accept. The content is deliberately identical, so a
+//     pass cannot be explained by a content write happening to set the mode.
+//   - A new executable. The doc has always claimed "a new executable arrives
+//     executable"; this is where that claim is actually checked.
+//
+// setuid/setgid/sticky are not asserted: perm is masked with .Perm(), so they
+// do not cross back to the host. That is a deliberate open question tracked as
+// yaah-vlwm, not coverage missing by accident.
+func TestApplyOut_CarriesModeChanges(t *testing.T) {
+	src := gitHostRepo(t)
+	hostReadme := filepath.Join(src, "readme.txt")
+	before, err := os.Stat(hostReadme)
+	if err != nil {
+		t.Fatalf("stat host readme.txt: %v", err)
+	}
+	if before.Mode().Perm() != 0o644 {
+		t.Fatalf("the fixture's readme.txt is %v, want 0644 — the mode-change case needs a known starting mode", before.Mode().Perm())
+	}
+
+	open, _ := cleanOpener()
+	ss, err := StartSessionSandbox(context.Background(), sessionTestConfig(), open, src, nil)
+	if err != nil {
+		t.Fatalf("StartSessionSandbox: %v", err)
+	}
+	defer ss.Destroy(context.Background())
+
+	ws := ss.Workspace()
+	readme, _ := ws.ResolvePath("readme.txt")
+	script, _ := ws.ResolvePath("bin/deploy.sh")
+
+	// Same bytes, new mode: a mode-only change.
+	if err := ws.WriteFile(context.Background(), readme, []byte("hello\n"), 0o755); err != nil {
+		t.Fatalf("chmod-equivalent write: %v", err)
+	}
+	if err := ws.WriteFile(context.Background(), script, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write new executable: %v", err)
+	}
+
+	if err := ss.ApplyOut(context.Background(), src); err != nil {
+		t.Fatalf("ApplyOut: %v", err)
+	}
+
+	got, err := os.Stat(hostReadme)
+	if err != nil {
+		t.Fatalf("stat host readme.txt after apply-out: %v", err)
+	}
+	if got.Mode().Perm() != 0o755 {
+		t.Errorf("host readme.txt mode = %v, want 0755 — a mode-only change made in the session was dropped on accept", got.Mode().Perm())
+	}
+	if body, rerr := os.ReadFile(hostReadme); rerr != nil || string(body) != "hello\n" {
+		t.Errorf("host readme.txt content = %q, %v — want the unchanged %q", body, rerr, "hello\n")
+	}
+
+	gotScript, err := os.Stat(filepath.Join(src, "bin", "deploy.sh"))
+	if err != nil {
+		t.Fatalf("stat the new executable after apply-out: %v", err)
+	}
+	if gotScript.Mode().Perm() != 0o755 {
+		t.Errorf("new file mode = %v, want 0755 — a new executable must arrive executable", gotScript.Mode().Perm())
+	}
+}
+
 // TestApplyOut_CleanSessionIsNoop pins that accepting a session which changed
 // nothing writes nothing to the host.
 //

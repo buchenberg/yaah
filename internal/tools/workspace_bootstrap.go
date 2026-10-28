@@ -335,13 +335,20 @@ func (s *SessionSandbox) Baseline() *shepherdtrace.WorkspaceState { return s.bas
 // snapshot behind on every accept, with nothing to release it. Diff is
 // read-only and commits nothing.
 //
-// Known fidelity gap, tracked as yaah-vlwm: a path whose *mode* changed but
-// whose content did not produces no Diff entry, so the host keeps the old
-// mode. The git binary patch carried modes. New and modified files are
-// unaffected — copyOut takes their mode from the sandbox entry. Restoring
-// full fidelity means rebuilding the work list from the adapter's typed
-// Changes (which carries Mode, and classifies deletes and whiteouts) with the
-// Diff-based path kept as the fallback for backends without it.
+// Mode fidelity: a `chmod` made inside the session does survive accept, but
+// only because copyOut chmods after writing — see the comment there. It is
+// worth recording why, because the obvious diagnosis is wrong. A mode-only
+// change *does* appear in Diff's path list: verified against a real containerd
+// daemon, croft's Changes classifies it as a modify carrying the new mode, and
+// the adapter derives Diff's file list from Changes. The loss happened one step
+// later, in atomicWriteFile, which preserves an existing file's mode by design.
+// So the fix belongs at the write, not in how the work list is built.
+//
+// Still narrowed, and tracked as yaah-vlwm: perm is taken with .Perm(), so
+// setuid/setgid/sticky bits do not cross back to the host even though the
+// sandbox's Stat reconstructs them and copy-in carries them in. Whether they
+// should is a policy question about propagating privilege bits from a weaker
+// boundary to a stronger one, not a bug to fix silently.
 //
 // The host tree is trusted not to have moved since copy-in. Applying onto a
 // moved parent is settlement's problem (kernel Seal/Settle with
@@ -354,15 +361,26 @@ func (s *SessionSandbox) ApplyOut(ctx context.Context, hostDir string) error {
 	return s.copyOut(ctx, hostDir)
 }
 
-// copyOut is the backend-agnostic fallback: the changed paths come from the
-// kernel's Diff against the baseline, and each is written out with the same
-// crash safety the host-side tools use. A changed path is classified by
-// reading and statting it in the sandbox: readable content is written out
+// copyOut applies the session's changes to the host tree: the changed paths
+// come from the Sandbox Diff against the baseline, and each is written out with
+// the same crash safety the host-side tools use. A changed path is classified
+// by reading and statting it in the sandbox: readable content is written out
 // (its mode taken from the sandbox entry when one is reachable, so a new
 // executable arrives executable), a missing path is deleted on the host, a
 // directory is ensured to exist — and every other read failure propagates:
-// a transport error must fail apply-out, not pass as a directory. This path
-// remains blind to mode-only changes.
+// a transport error must fail apply-out, not pass as a directory.
+//
+// This is backend-agnostic, which is why it is now the only apply-out path
+// rather than a fallback: it is what the in-memory fake has always exercised,
+// and it serves the containerd backend now that croft records plain snapshot
+// states instead of a git binary patch.
+//
+// It is not blind to mode-only changes, contrary to what this comment used to
+// claim. A chmod with unchanged content does appear in Diff's path list —
+// croft's Changes reports it as a modify carrying the new mode, verified
+// against a real daemon — and the explicit chmod below makes it land. What
+// still does not cross is setuid/setgid/sticky, because perm is masked with
+// .Perm(); that is a deliberate open question, not an oversight (yaah-vlwm).
 func (s *SessionSandbox) copyOut(ctx context.Context, hostDir string) error {
 	_, changed, err := s.sb.Diff(ctx, *s.baseline, 0)
 	if err != nil {
@@ -394,6 +412,23 @@ func (s *SessionSandbox) copyOut(ctx context.Context, hostDir string) error {
 			}
 			if werr := atomicWriteFile(host, data, perm); werr != nil {
 				return fmt.Errorf("workspace: apply-out: write %s: %w", rel, werr)
+			}
+			// atomicWriteFile preserves an existing file's mode by design —
+			// correct for a host-side tool editing a file, where changing the
+			// content must not change the mode. Copy-out is the opposite case:
+			// the sandbox is the authority, because the host file is being
+			// replaced by the session's version of it. Without this chmod a
+			// `chmod +x` made inside the container is silently dropped on
+			// accept, since the path already exists on the host from the
+			// copy-in. That is the mode-fidelity loss recorded as yaah-vlwm.
+			//
+			// The diff is not where it is lost: verified against a real
+			// containerd daemon, a mode-only change does appear in Diff's path
+			// list (croft's Changes reports it as a modify carrying the new
+			// mode), so the path reaches this branch and only the write
+			// discarded the mode.
+			if cerr := os.Chmod(host, perm); cerr != nil {
+				return fmt.Errorf("workspace: apply-out: chmod %s: %w", rel, cerr)
 			}
 		case errors.Is(rerr, fs.ErrNotExist):
 			// The path is gone in the sandbox, whatever it was on the host.
