@@ -234,3 +234,43 @@ func TestValidateMultipleErrors(t *testing.T) {
 		t.Fatalf("expected at least 3 errors, got %d: %v", len(ve.Errors), ve.Errors)
 	}
 }
+
+func TestValidateSubAgentGrants(t *testing.T) {
+	valid := []GrantConfig{
+		{Path: "src", Access: "readwrite"},
+		{Path: "docs", Access: "readonly"},
+	}
+	cfg := defaultConfig()
+	cfg.Agent.SubAgent.Grants = valid
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("disjoint grants should be valid: %v", err)
+	}
+
+	bad := map[string][]GrantConfig{
+		"absolute":    {{Path: "/etc", Access: "readwrite"}},
+		"root":        {{Path: ".", Access: "readwrite"}},
+		"escape":      {{Path: "../outside", Access: "readwrite"}},
+		"access":      {{Path: "src", Access: "write"}},
+		"overlap":     {{Path: "src", Access: "readwrite"}, {Path: "src/internal", Access: "readonly"}},
+		"same":        {{Path: "src", Access: "readwrite"}, {Path: "src", Access: "readonly"}},
+		"trailing":    {{Path: "src/", Access: "readwrite"}},
+		"empty route": {{Path: "", Access: "readwrite"}},
+	}
+	for name, grants := range bad {
+		t.Run(name, func(t *testing.T) {
+			cfg := defaultConfig()
+			cfg.Agent.SubAgent.Grants = grants
+			if err := Validate(cfg); err == nil {
+				t.Fatalf("grants %+v should be rejected", grants)
+			}
+		})
+	}
+
+	cfg = defaultConfig()
+	cfg.Agent.SubAgent.Roles = map[string]RoleConfig{
+		"developer": {Grants: []GrantConfig{{Path: "src", Access: "readwrite"}, {Path: "src/x", Access: "readonly"}}},
+	}
+	if err := Validate(cfg); err == nil || !strings.Contains(err.Error(), "roles.developer.grants") {
+		t.Fatalf("per-role overlap must be rejected with the key named, got %v", err)
+	}
+}

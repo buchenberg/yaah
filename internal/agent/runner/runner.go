@@ -208,6 +208,13 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 			},
 			Containment: opts.SubCfg.Containment,
 			Network:     opts.SubCfg.Network,
+			Grants:      opts.SubCfg.Grants,
+			GrantsForRole: func(role string) []config.GrantConfig {
+				if rc, ok := opts.SubCfg.Roles[role]; ok {
+					return rc.Grants
+				}
+				return nil
+			},
 			// False until the per-dispatch container lane ships
 			// (yaah-ihfh.3). Flipping it on makes world: auto prefer a
 			// container and record a degradation when the host cannot
@@ -416,7 +423,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// A tool-less profile is valid — some roles (e.g. grump) are
 		// designed to respond without calling any tools.
 
-		subReg, subConf, rerr := buildSubAgentRegistry(opts, profile, remainingDepth, params.Workdir)
+		subReg, subConf, rerr := buildSubAgentRegistry(opts, profile, role, remainingDepth, params.Workdir)
 		if rerr != nil {
 			return "", fmt.Errorf("sub-agent %s: %w", role, rerr)
 		}
@@ -1135,7 +1142,7 @@ func subAgentUnavailableTools(opts taskRunnerOpts, profile subagent.RoleProfile,
 	return unavailable
 }
 
-func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, remainingDepth int, workdir string) (*tools.Registry, *subAgentConfinement, error) {
+func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, role subagent.SubAgentRole, remainingDepth int, workdir string) (*tools.Registry, *subAgentConfinement, error) {
 	resolveTimeout := subAgentTimeoutResolver(opts.subCfg)
 	registerTask := func(reg *tools.Registry) {
 		reg.Register(&tools.DelegateTool{
@@ -1231,7 +1238,7 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 		// lane has a bound world to jail against. The orchestrator's workspace
 		// and a workdir-less (shared-host) sub-agent keep running unconfined.
 		if workdir != "" {
-			ws, rec, cerr := resolveSubAgentConfinement(pv, opts.subCfg, workdir, opts.subNetwork)
+			ws, rec, cerr := resolveSubAgentConfinement(pv, opts.subCfg, role, workdir, opts.subNetwork)
 			if cerr != nil {
 				return nil, nil, cerr
 			}
@@ -1626,7 +1633,7 @@ func (c *subAgentConfinement) payload() map[string]any {
 // "paddock" (alias "jail") fails closed. The writable root is the worktree — the
 // sub-agent's bound world — so the kernel boundary and the run's own boundary
 // agree.
-func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConfig, workdir string, network confinement.NetworkPolicy) (tools.Workspace, *subAgentConfinement, error) {
+func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConfig, role subagent.SubAgentRole, workdir string, network confinement.NetworkPolicy) (tools.Workspace, *subAgentConfinement, error) {
 	requested := strings.TrimSpace(cfg.Containment)
 	placement := containmentPlacement(requested)
 
@@ -1656,7 +1663,31 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 		return nil, nil, nil
 	}
 
+	// Resolve the declared grants against this dispatch's world. An empty set
+	// keeps the legacy single root. A restrictive set is only honest where the
+	// jail can enforce it: advisory placement would silently grant the whole
+	// world, so it refuses instead.
+	grantSet := cfg.Grants
+	if rc, ok := cfg.Roles[string(role)]; ok && len(rc.Grants) > 0 {
+		grantSet = rc.Grants
+	}
+	grants, gerr := tools.ResolveGrants(grantSet, workdir)
+	if gerr != nil {
+		return nil, nil, gerr
+	}
+	if grants.Restrictive() {
+		if placement == containment.PlacementAdvisory {
+			return nil, nil, fmt.Errorf("grants: restrictive grants need a jail; containment is %q", requested)
+		}
+		if !available && placement != containment.PlacementPaddock {
+			return nil, nil, fmt.Errorf("grants: restrictive grants need a syscall jail, which this host cannot establish")
+		}
+	}
+
 	rec, confine := confinementRecord(requested, placement, available, backend, workdir, network)
+	if grants.Restrictive() && rec != nil {
+		rec.Writable = strings.Join(grants.Writable, ",")
+	}
 	if !confine {
 		// "auto" degrades visibly to advisory: the host path *is* advisory.
 		return nil, rec, nil
@@ -1665,7 +1696,7 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 	// The write jail, with the configured egress posture. A restrictive posture
 	// the host cannot enforce fails closed inside the backend, so it is surfaced
 	// rather than silently downgraded.
-	ws := tools.NewConfinedLocalWorkspace(pv, backend, placement, network)
+	ws := tools.NewConfinedLocalWorkspace(pv, backend, placement, network).WithWritableRoots(grants.Writable)
 
 	// Redirect housekeeping writes into the worktree (the one writable root):
 	// HOME, TMPDIR, and the build caches. The scratch is scrubbed before the

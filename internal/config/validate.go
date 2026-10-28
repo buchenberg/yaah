@@ -184,7 +184,9 @@ func Validate(cfg *Config) error {
 			"agents.subagent.world %q is not one of: auto, worktree, container",
 			cfg.Agent.SubAgent.World))
 	}
+	errs = append(errs, validateGrantSet("agents.subagent.grants", cfg.Agent.SubAgent.Grants)...)
 	for role, rc := range cfg.Agent.SubAgent.Roles {
+		errs = append(errs, validateGrantSet("agents.subagent.roles."+role+".grants", rc.Grants)...)
 		switch strings.ToLower(strings.TrimSpace(rc.World)) {
 		case "", "auto", "worktree", "container":
 		default:
@@ -355,5 +357,45 @@ func validateWorkspace(w *WorkspaceConfig, goos string) []string {
 		}
 	}
 
+	return errs
+}
+
+// validateGrantSet checks one declared grant set: world-relative, clean,
+// disjoint roots with a known access mode. Disjointness is enforced here
+// because the jail's writable-root rules are additive — a read-only root
+// nested inside a read-write root would be silently writable.
+func validateGrantSet(key string, grants []GrantConfig) []string {
+	var errs []string
+	type norm struct {
+		path string
+		idx  int
+	}
+	var seen []norm
+
+	for i, g := range grants {
+		raw := strings.TrimSpace(g.Path)
+		rel := strings.ReplaceAll(raw, "\\", "/")
+		clean := path.Clean(rel)
+		switch {
+		case raw == "":
+			errs = append(errs, fmt.Sprintf("%s[%d].path is required", key, i))
+			continue
+		case path.IsAbs(clean), rel != clean, clean == ".", clean == "..", strings.HasPrefix(clean, "../"):
+			errs = append(errs, fmt.Sprintf("%s[%d].path %q must be a clean world-relative path", key, i, raw))
+			continue
+		}
+
+		access := strings.ToLower(strings.TrimSpace(g.Access))
+		if access != "readonly" && access != "readwrite" {
+			errs = append(errs, fmt.Sprintf("%s[%d].access %q is not one of: readonly, readwrite", key, i, g.Access))
+		}
+
+		for _, prev := range seen {
+			if clean == prev.path || strings.HasPrefix(clean, prev.path+"/") || strings.HasPrefix(prev.path, clean+"/") {
+				errs = append(errs, fmt.Sprintf("%s[%d].path %q overlaps %s[%d].path %q — roots must be disjoint", key, i, clean, key, prev.idx, prev.path))
+			}
+		}
+		seen = append(seen, norm{path: clean, idx: i})
+	}
 	return errs
 }

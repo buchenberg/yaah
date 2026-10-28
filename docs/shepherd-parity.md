@@ -186,6 +186,21 @@ gets its own container world; a report or shared dispatch gets one only where
 it adds value (report: yes; shared: no, by definition). The session world is
 never the dispatch world.
 
+### D10 — grants are world-relative (yaah-ihfh.2)
+
+Authority is declared in config, never by tool registration: `agents.subagent.grants` (and per-role overrides) is a list of `{path, access}` roots relative
+to the dispatch world. Roots must be disjoint — the jail's writable-root rules
+are additive, so a read-only root nested in a read-write one would be silently
+writable. Read-write roots lower to `ConfinementSpec.WritableRoots`; read-only
+roots are declared but never listed, so writes under them are refused. An
+advisory placement cannot enforce a restrictive set: it refuses rather than
+granting the whole world.
+
+Roots outside the dispatch world (the motivating case was a read-only parent
+repo) are deliberately deferred: they would change the world seeding and
+validator contract, and read-only git already works inside a worktree without
+a grant.
+
 ## Ledger
 
 Pinned inputs (drift guard: `internal/parity`):
@@ -198,6 +213,7 @@ Pinned inputs (drift guard: `internal/parity`):
 | runtime | `goatherd-runtime v0.20.0` |
 | container world | `goatherd-runtime/sandbox/croft v0.1.3` / `goatherd-croft v0.8.0` |
 | containment | landlock, winacl; seatbelt pending upstream |
+| grants | world-relative RW/RO roots, disjoint (config, not tools) |
 
 Remaining divergences are tracked only in `yaah-ihfh` and its children. A
 divergence not named there is a bug in this ledger.

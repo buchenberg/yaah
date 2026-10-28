@@ -123,6 +123,11 @@ agents:
                                        # comes from each role's `output` field
     world: auto                        # auto | worktree | container
                                        # (see shepherd-parity.md)
+    # grants:                            # narrow the dispatch world's writes
+    #   - path: src                      # world-relative, disjoint roots
+    #     access: readwrite
+    #   - path: docs
+    #     access: readonly
     containment: auto                  # auto | off | paddock
     network: allow_all                 # allow_all | deny_all | broker
     network_hosts: []                  # broker allowlist; empty = admit nothing
@@ -333,6 +338,8 @@ Sub-agents use their own curated pipeline and per-role directives.
 | `mode` | `retained` | Dispatch lane — `retained` (isolated worktree + proposal) or `shared` (direct to host) |
 | `world` | `auto` | Dispatch world — `auto` (per-dispatch container when available, else worktree, recording any degradation), `worktree` (never container), `container` (fails closed if unavailable). Orthogonal to `mode`. See [shepherd-parity.md](./shepherd-parity.md#dispatch-worlds) |
 | `roles.<name>.world` | — | Per-role world override (`auto` / `worktree` / `container`); empty inherits `agents.subagent.world` |
+| `grants` | `[]` | Per-dispatch write authority — a list of `{path, access}` roots relative to the dispatch world. `readwrite` roots are writable, `readonly` roots are declared but denied writes; roots must be disjoint. Empty = the whole world (legacy) |
+| `roles.<name>.grants` | — | Per-role grant set; empty inherits `agents.subagent.grants` |
 | `containment` | `auto` | Syscall-jail placement — `auto` (jail if the host can, else advisory), `off`/`none`/`advisory`, `paddock`/`jail` (fails closed) |
 | `network` | `allow_all` | Egress posture for a confined dispatch — `allow_all`, `deny_all`, or `broker` (allowlist via the session's broker) |
 | `network_hosts` | `[]` | The broker's allowlist (exact host names); only meaningful with `network: broker`. Empty = the broker admits nothing; setting hosts with another mode is a validation error |

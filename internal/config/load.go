@@ -362,9 +362,25 @@ type SubAgentConfig struct {
 	// the dispatch is settled), Containment (what bounds it), and Network.
 	World string `yaml:"world"`
 
+	// Grants narrows the dispatch world's write authority (yaah-ihfh.2):
+	// an ordered set of world-relative roots, each read-only or read-write.
+	// Empty means the whole world is writable (the legacy single root).
+	// Roots must be disjoint; a read-only root is declared but not writable.
+	Grants []GrantConfig `yaml:"grants"`
+
 	// Roles holds per-role overrides keyed by role name
 	// ("analyst", "developer", "tester", "reviewer").
 	Roles map[string]RoleConfig `yaml:"roles"`
+}
+
+// GrantConfig is one declared root inside a dispatch world.
+type GrantConfig struct {
+	// Path is relative to the dispatch world root (the worktree). Absolute
+	// paths, "." , and ".." segments are refused.
+	Path string `yaml:"path"`
+	// Access is "readwrite" (the root becomes writable) or "readonly"
+	// (declared, but writes under it are refused).
+	Access string `yaml:"access"`
 }
 
 // RoleConfig overrides a single role's default timeout, iteration cap,
@@ -388,6 +404,10 @@ type RoleConfig struct {
 	// World overrides the dispatch world for this role (auto | worktree |
 	// container); empty inherits agents.subagent.world.
 	World string `yaml:"world"`
+
+	// Grants overrides the sub-agent grant set for this role; empty inherits
+	// agents.subagent.grants.
+	Grants []GrantConfig `yaml:"grants"`
 
 	// TurnCheckpoints enables per-turn checkpoint/restore inside this
 	// role's sub-agent loop. Default false. Only meaningful where a shared

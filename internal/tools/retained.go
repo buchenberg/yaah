@@ -22,6 +22,7 @@ import (
 	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
 	"github.com/buchenberg/yaah/internal/agent/recovery"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/jail"
 	"github.com/buchenberg/yaah/internal/jobs"
 )
@@ -75,6 +76,12 @@ type RetainedRuntime struct {
 	// fallback is legal only when it can still enforce them.
 	Containment string
 	Network     string
+
+	// Grants is the configured dispatch grant set; GrantsForRole supplies a
+	// per-role override. They participate in world resolution: a container
+	// world cannot lower grants yet, so a restrictive set refuses one.
+	Grants        []config.GrantConfig
+	GrantsForRole func(role string) []config.GrantConfig
 
 	// ContainerWorlds reports whether this build implements per-dispatch
 	// container worlds (yaah-ihfh.3). False until the lane ships; a build
@@ -473,12 +480,19 @@ func resolveDispatchWorld(rt RetainedRuntime, role string, report bool) (subagen
 		Jail:             jailAvailable(),
 	}
 
+	grants := rt.Grants
+	if rt.GrantsForRole != nil {
+		if g := rt.GrantsForRole(role); len(g) > 0 {
+			grants = g
+		}
+	}
 	return subagent.ResolveWorld(subagent.WorldRequest{
-		Requested:   requested,
-		Lane:        lane,
-		Retained:    !report,
-		Containment: rt.Containment,
-		Network:     rt.Network,
+		Requested:         requested,
+		Lane:              lane,
+		Retained:          !report,
+		Containment:       rt.Containment,
+		Network:           rt.Network,
+		RestrictiveGrants: len(grants) > 0,
 	}, av)
 }
 

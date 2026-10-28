@@ -129,6 +129,9 @@ type localWorkspace struct {
 	placement containment.Placement
 	// network is the egress axis of the confinement spec.
 	network confinement.NetworkPolicy
+	// writableRoots narrows the jail's writable set (yaah-ihfh.2). Empty
+	// means the legacy single root, the workspace's working directory.
+	writableRoots []string
 	// confinedEnv, when non-empty, overrides the process environment for
 	// confined commands — the redirect that points HOME/TMPDIR/caches into the
 	// worktree's scratch.
@@ -149,6 +152,15 @@ func newLocalWorkspace(pv *PathValidator) *localWorkspace {
 // this way.
 func NewConfinedLocalWorkspace(pv *PathValidator, backend containment.Backend, placement containment.Placement, network confinement.NetworkPolicy) *localWorkspace {
 	return &localWorkspace{pv: pv, confiner: backend, placement: placement, network: network}
+}
+
+// WithWritableRoots narrows the jail to the given roots (yaah-ihfh.2). Empty
+// keeps the legacy single root: the workspace's working directory. The roots
+// are absolute and already checked to live inside the world (ResolveGrants).
+func (w *localWorkspace) WithWritableRoots(roots []string) *localWorkspace {
+	clone := *w
+	clone.writableRoots = append([]string(nil), roots...)
+	return &clone
 }
 
 // Confined reports whether this workspace carries a syscall-jail backend.
@@ -294,8 +306,18 @@ func (w *localWorkspace) advisoryExec(ctx context.Context, req ExecRequest) (Exe
 // never ran, so there is no unconfined fallback.
 func (w *localWorkspace) confinedExec(ctx context.Context, req ExecRequest) (ExecResult, error) {
 	root := w.WorkDir()
+	roots := w.writableRoots
+	if len(roots) == 0 {
+		roots = []string{root}
+	}
+	// Housekeeping writes are redirected into <root>/.yaah-scratch
+	// (ConfinementScratchEnv), so a narrowed grant set must still admit it or
+	// every shell command that touches HOME/TMPDIR would fail.
+	if fi, statErr := os.Stat(filepath.Join(root, ".yaah-scratch")); statErr == nil && fi.IsDir() {
+		roots = append(append([]string(nil), roots...), filepath.Join(root, ".yaah-scratch"))
+	}
 	spec := confinement.ConfinementSpec{
-		WritableRoots: []string{root},
+		WritableRoots: roots,
 		Network:       w.network,
 	}
 	lreq := containment.LaunchRequest{
@@ -328,7 +350,16 @@ func (w *localWorkspace) confinedExec(ctx context.Context, req ExecRequest) (Exe
 		// A write the kernel refused looks like any other failure to the model
 		// ("Permission denied", no clue why), which is the jail's real usability
 		// cost. Say what happened and where the boundary is.
-		if hint := confinementHint(res.Stderr, root); hint != "" {
+		// A narrowed grant set has plural roots, so the legacy single-root
+		// explanation would name the wrong boundary. Use the grant list
+		// instead whenever one is set.
+		var hint string
+		if len(w.writableRoots) > 0 {
+			hint = grantsHint(w.writableRoots, res.Stderr+out.Stdout)
+		} else {
+			hint = confinementHint(res.Stderr, root)
+		}
+		if hint != "" {
 			if req.SeparateStreams {
 				out.Stderr = strings.TrimRight(out.Stderr, "\n") + "\n" + hint
 			} else {
@@ -643,3 +674,16 @@ func (e infoDirEntry) Name() string               { return e.info.Name() }
 func (e infoDirEntry) IsDir() bool                { return e.info.IsDir() }
 func (e infoDirEntry) Type() fs.FileMode          { return e.info.Mode().Type() }
 func (e infoDirEntry) Info() (fs.FileInfo, error) { return e.info, nil }
+
+// grantsHint explains a permission failure under a narrowed grant set: the
+// dispatch's writable roots are a list now, not the whole world, and a bare
+// "Permission denied" invites a retry. Returns "" for a failure that does not
+// look like a refused write.
+func grantsHint(roots []string, output string) string {
+	for _, phrase := range []string{"Permission denied", "Access is denied", "Access to the path"} {
+		if strings.Contains(output, phrase) {
+			return " This dispatch may write only under: " + strings.Join(roots, ", ") + "."
+		}
+	}
+	return ""
+}
