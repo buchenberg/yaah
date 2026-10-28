@@ -176,11 +176,12 @@ func TestApplyOutTool_RecordsEffectsOnAccept(t *testing.T) {
 	bus := shepherdtrace.NewEffectBus(16)
 	events := bus.Subscribe("test")
 
-	tool := &ApplyOutTool{Sandbox: ss, HostDir: src, Effects: &EffectSink{
+	tool := &ApplyOutTool{Sandbox: ss, HostDir: src}
+	tool.SetEffects(&EffectSink{
 		Appender: appender,
 		Bus:      bus,
 		OpID:     opID,
-	}}
+	})
 
 	if _, err := tool.Execute(context.Background(), `{"dry_run": true}`); err != nil {
 		t.Fatalf("dry run: %v", err)
@@ -247,7 +248,8 @@ func TestApplyOutTool_EmitFailureDoesNotFailTheApply(t *testing.T) {
 	ss, _, src := newEffectSession(t, sampleChanges(), nil)
 	appender := &recordingAppender{ownerID: "session:abc", err: errors.New("store unavailable")}
 
-	tool := &ApplyOutTool{Sandbox: ss, HostDir: src, Effects: &EffectSink{Appender: appender, OpID: "session:abc"}}
+	tool := &ApplyOutTool{Sandbox: ss, HostDir: src}
+	tool.SetEffects(&EffectSink{Appender: appender, OpID: "session:abc"})
 	if _, err := tool.Execute(context.Background(), `{"dry_run": true}`); err != nil {
 		t.Fatalf("dry run: %v", err)
 	}
@@ -287,7 +289,8 @@ func TestApplyOutTool_BackendWithoutEffectsIsANoOp(t *testing.T) {
 	}
 
 	appender := &recordingAppender{ownerID: "session:abc"}
-	tool := &ApplyOutTool{Sandbox: ss, HostDir: src, Effects: &EffectSink{Appender: appender, OpID: "session:abc"}}
+	tool := &ApplyOutTool{Sandbox: ss, HostDir: src}
+	tool.SetEffects(&EffectSink{Appender: appender, OpID: "session:abc"})
 	if _, err := tool.Execute(context.Background(), `{"dry_run": true}`); err != nil {
 		t.Fatalf("dry run: %v", err)
 	}
@@ -328,7 +331,8 @@ func TestApplyOutTool_BackendErrorIsReportedNotFatal(t *testing.T) {
 	ss, _, src := newEffectSession(t, nil, errors.New("daemon read failed"))
 	appender := &recordingAppender{ownerID: "session:abc"}
 
-	tool := &ApplyOutTool{Sandbox: ss, HostDir: src, Effects: &EffectSink{Appender: appender, OpID: "session:abc"}}
+	tool := &ApplyOutTool{Sandbox: ss, HostDir: src}
+	tool.SetEffects(&EffectSink{Appender: appender, OpID: "session:abc"})
 	if _, err := tool.Execute(context.Background(), `{"dry_run": true}`); err != nil {
 		t.Fatalf("dry run: %v", err)
 	}

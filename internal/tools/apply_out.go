@@ -82,9 +82,15 @@ type ApplyOutTool struct {
 	// HostDir is the host working tree the delta lands in — the source
 	// the bootstrap copied in.
 	HostDir string
-	// Effects, when set, records what the accept landed as typed workspace
+	// effects, when set, records what the accept landed as typed workspace
 	// effects after the host write succeeds. See EffectSink.
-	Effects *EffectSink
+	//
+	// Unexported so the mutex actually guards it. An exported field lets any
+	// caller assign around SetEffects and skip the lock that recordEffects reads
+	// under — which is the exact race the setter was added to close, and a guard
+	// that can be walked around is documentation, not enforcement. Wiring and
+	// tests both go through SetEffects.
+	effects *EffectSink
 
 	// mu serializes this tool's calls and guards preview. Tool calls can
 	// dispatch in parallel, so two apply_out calls — or a dry run racing
@@ -187,9 +193,17 @@ func (t *ApplyOutTool) Execute(ctx context.Context, args string) (string, error)
 	// write already happened, so returning an error here would tell the model
 	// the accept failed when it succeeded — and a retry would apply the delta a
 	// second time. A trace gap is reported in the result rather than hidden or
-	// treated as a failed apply, and the count says how large the gap is.
+	// treated as a failed apply.
+	//
+	// The count is reported only when it is known. When reading the change set
+	// is what failed, the size of the gap is unknown and saying "0 changes"
+	// would read as "nothing was lost" — the opposite of the truth.
 	if n, err := t.recordEffects(ctx); err != nil {
-		msg += fmt.Sprintf("\n\n(note: the host tree is updated, but %d workspace change(s) could not be recorded as trace effects: %v)", n, err)
+		if n == effectsUnknown {
+			msg += fmt.Sprintf("\n\n(note: the host tree is updated, but the workspace effects could not be recorded in the trace and how many changes that lost is unknown: %v)", err)
+		} else {
+			msg += fmt.Sprintf("\n\n(note: the host tree is updated, but %d workspace change(s) could not be recorded as trace effects: %v)", n, err)
+		}
 	}
 	return msg, nil
 }
@@ -206,13 +220,21 @@ func (t *ApplyOutTool) Execute(ctx context.Context, args string) (string, error)
 func (t *ApplyOutTool) SetEffects(s *EffectSink) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.Effects = s
+	t.effects = s
 }
+
+// effectsUnknown is recordEffects' returned count when the backend call that
+// would report the change set is itself what failed, so the size of the gap
+// cannot be known. Reporting 0 there would read as "nothing was lost", which is
+// the opposite of the truth: everything the accept changed is unrecorded, and
+// how much that is was never determined.
+const effectsUnknown = -1
 
 // recordEffects writes the accepted delta into the trace as typed workspace
 // effects and returns how many were recorded. On failure the count is how many
-// workspace changes went unrecorded, so the caller can say how large the gap is
-// rather than just that there is one.
+// workspace changes went unrecorded — or effectsUnknown when the change set
+// could not be read at all — so the caller can say how large the gap is rather
+// than just that there is one.
 //
 // It is a silent no-op — not an error — when the session has no trace sink, or
 // when the backend has no typed change set to give (the git lane, and the
@@ -234,8 +256,14 @@ func (t *ApplyOutTool) SetEffects(s *EffectSink) {
 // either per-file emission or an apply that reports what it landed; both are
 // larger changes than this seam warrants, and the tool result already names the
 // paths it applied.
+//
+// Must be called with t.mu held, which Execute does. It reads t.effects without
+// taking the lock itself because Go mutexes are not reentrant — acquiring it
+// again here would deadlock. That is also why the field is unexported: the only
+// writer is SetEffects, which takes the lock, so every access is ordered.
 func (t *ApplyOutTool) recordEffects(ctx context.Context) (int, error) {
-	if t.Effects == nil || t.Effects.Appender == nil {
+	sink := t.effects
+	if sink == nil || sink.Appender == nil {
 		return 0, nil
 	}
 	if !t.Sandbox.SupportsEffects() {
@@ -243,7 +271,7 @@ func (t *ApplyOutTool) recordEffects(ctx context.Context) (int, error) {
 	}
 	changes, err := t.Sandbox.EffectChanges(ctx)
 	if err != nil {
-		return 0, err
+		return effectsUnknown, err
 	}
 	effects, err := effect.FromChanges(changes)
 	if err != nil {
@@ -252,7 +280,7 @@ func (t *ApplyOutTool) recordEffects(ctx context.Context) (int, error) {
 	if len(effects) == 0 {
 		return 0, nil
 	}
-	if err := effect.Emit(ctx, t.Effects.Appender, t.Effects.Bus, t.Effects.OpID, effects); err != nil {
+	if err := effect.Emit(ctx, sink.Appender, sink.Bus, sink.OpID, effects); err != nil {
 		return len(effects), err
 	}
 	return len(effects), nil
