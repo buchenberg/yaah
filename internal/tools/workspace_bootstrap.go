@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	"github.com/buchenberg/goatherd-runtime/effect"
 	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 )
 
@@ -310,6 +311,60 @@ func (s *SessionSandbox) DiffSinceBaseline(ctx context.Context, maxLines int) (s
 // Baseline returns the session's baseline state, or nil when the session
 // started without a bootstrap.
 func (s *SessionSandbox) Baseline() *shepherdtrace.WorkspaceState { return s.baseline }
+
+// effectChanger is the optional backend capability that yields typed workspace
+// changes in the runtime's neutral vocabulary. The containerd adapter provides
+// it; the git backend and the in-memory fake do not, so callers must tolerate
+// its absence rather than treat it as an error.
+//
+// Declared locally and structurally rather than imported from the adapter, so
+// this package does not couple to a backend: any sandbox offering the method
+// satisfies it, and a backend that does not simply fails the assertion.
+type effectChanger interface {
+	EffectChanges(ctx context.Context, ws shepherdtrace.WorkspaceState) ([]effect.Change, error)
+}
+
+// SupportsEffects reports whether the session's backend can supply typed
+// workspace effects at all. Callers check this before EffectChanges so that a
+// backend without the capability is a silent no-op rather than an error — the
+// git lane and the tests' in-memory fake have no typed change set to give.
+func (s *SessionSandbox) SupportsEffects() bool {
+	_, ok := s.sb.(effectChanger)
+	return ok
+}
+
+// EffectChanges reports what the session changed in the workspace, against the
+// session baseline, in the runtime's neutral effect vocabulary.
+//
+// The baseline is the same anchor DiffSinceBaseline and ApplyOut use, so the
+// effects describe exactly the delta the accept seam would land — not the whole
+// tree, and not whatever happened to change since the last call.
+//
+// Read-only: unlike croft's Capture this commits no snapshot and pins no lease,
+// so it costs nothing durable and is safe to call after ApplyOut has already
+// written the host.
+//
+// It is not free, though. This is a third backend round-trip on the accept path,
+// after the tool's DiffSinceBaseline and the diff copyOut runs to build its work
+// list — and that an accept already diffed twice is a pre-existing cost, not one
+// this adds. Each call is read-only against the daemon, but on a large tree the
+// latency is measurable. Collapsing them means threading a single change set out
+// of copyOut for the tool to reuse, which changes ApplyOut's contract; worth
+// doing if accept latency ever shows up in practice, not before.
+func (s *SessionSandbox) EffectChanges(ctx context.Context) ([]effect.Change, error) {
+	if s.baseline == nil {
+		return nil, errors.New("workspace: effects: no session baseline — the sandbox was started without a bootstrap")
+	}
+	ec, ok := s.sb.(effectChanger)
+	if !ok {
+		return nil, fmt.Errorf("workspace: effects: backend %q does not report typed workspace changes", s.sb.Backend())
+	}
+	changes, err := ec.EffectChanges(ctx, *s.baseline)
+	if err != nil {
+		return nil, fmt.Errorf("workspace: effects: %w", err)
+	}
+	return changes, nil
+}
 
 // ApplyOut applies the session's outward delta onto the host working tree —
 // the "apply-out on accept" half of D1. It is the single door changes leave

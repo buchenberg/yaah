@@ -346,8 +346,16 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// The accept seam (plan §2.3, D1): the single door changes leave the
 	// container through, registered only in isolated mode — in local mode
 	// the tools write the host directly and there is nothing to let out.
+	//
+	// The pointer is held because the effect sink cannot be attached here: the
+	// trace store, effect bus and root scope are all created further down. The
+	// registry holds the same pointer, so setting the field later reaches the
+	// registered tool — and doing it during wiring, before any turn can
+	// dispatch, means no call can observe the tool half-configured.
+	var applyOutTool *tools.ApplyOutTool
 	if sessionSandbox != nil {
-		toolReg.Register(&tools.ApplyOutTool{Sandbox: sessionSandbox, HostDir: cwd})
+		applyOutTool = &tools.ApplyOutTool{Sandbox: sessionSandbox, HostDir: cwd}
+		toolReg.Register(applyOutTool)
 	}
 
 	db, err = memory.OpenDefault()
@@ -632,6 +640,24 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			} else {
 				rootScopeID = root.ID()
 				retainCapable = root.Sandbox() != nil
+
+				// Late-bind the accept seam's effect sink, now that the
+				// scope it records against exists. The root scope is the
+				// FactAppender (it carries AppendFact and OwnerID), so an
+				// accept records its workspace effects on the session's own
+				// owner path rather than on a synthetic one.
+				//
+				// Attached only when a root scope was created: without one
+				// there is no owner path to append to, and the tool's nil
+				// sink makes recording a silent no-op instead of an error
+				// on every accept.
+				if applyOutTool != nil {
+					applyOutTool.SetEffects(&tools.EffectSink{
+						Appender: root,
+						Bus:      bus,
+						OpID:     rootScopeID,
+					})
+				}
 			}
 
 			// Advisory rules engine (adoption plan B1): the kernel
