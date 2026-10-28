@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.108.0](https://github.com/buchenberg/yaah/compare/v0.107.2...v0.108.0) (2026-10-28)
+
+
+### Features
+
+* **workspace:** record accepted container changes as typed trace effects ([b93975c](https://github.com/buchenberg/yaah/commit/b93975cb2d4675f0e46445726bdbc1cfc3b8a0f1))
+* **workspace:** record accepted container changes as typed trace effects ([5515fa4](https://github.com/buchenberg/yaah/commit/5515fa49b4881d95ca5d58b887ac64a43ea0fd3e))
+
+
+### Bug Fixes
+
+* **workspace:** review fixes — consume the approval, lock the sink, sharpen two tests ([670a418](https://github.com/buchenberg/yaah/commit/670a4185db8b873ddf02ba04092d7776a4a267ae))
+* **workspace:** review fixes — say "unknown" not "0", and make the sink lock real ([6b6725a](https://github.com/buchenberg/yaah/commit/6b6725a3e5ec2278de0dc9c906f98646c92073b4))
+
 ## [0.107.2](https://github.com/buchenberg/yaah/compare/v0.107.1...v0.107.2) (2026-10-28)
 
 
