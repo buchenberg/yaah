@@ -59,9 +59,17 @@ type EffectSink struct {
 	//
 	// This is the session's root scope, not an individual tool call: Execute
 	// receives no call identifier, and inventing one here would produce an ID
-	// nothing else in the trace recognises. So the granularity is "this accept,
-	// in this session" — coarser than the Python reference's per-intent
-	// caused_by, and honest about it rather than fabricating a finer link.
+	// nothing else in the trace recognises.
+	//
+	// Two consequences worth stating plainly rather than letting the field name
+	// imply otherwise. The attribution is coarser than the Python reference's
+	// per-intent caused_by. And because the session baseline is captured at
+	// bootstrap and never advanced, the effects describe the whole session delta
+	// as of this accept — not just what changed since the previous one — so two
+	// accepts in one session record overlapping sets. Execute clears its preview
+	// after an apply, which stops an accept repeating without a fresh
+	// user-visible dry run, but that bounds the repetition; it does not make the
+	// delta incremental.
 	OpID string
 }
 
@@ -152,6 +160,26 @@ func (t *ApplyOutTool) Execute(ctx context.Context, args string) (string, error)
 		return "", fmt.Errorf("apply_out: %w", err)
 	}
 
+	// The preview is consumed by this apply. The user's approval was for that
+	// specific diff landing on the host, and it has now landed — so the approval
+	// is spent, and a further apply must be preceded by a fresh dry run.
+	//
+	// Without this the tool re-applies on a second call with no new dry run:
+	// ApplyOut does not change the sandbox, so the recomputed diff still equals
+	// the stored preview and the staleness check passes. That was already wrong
+	// for the host write, and became worse with effects wired up — a repeated
+	// accept would append the same effect records again and republish them on
+	// the bus the advisory supervisor consumes.
+	//
+	// Note this bounds the repetition; it does not make effects per-accept
+	// deltas. The baseline is captured at bootstrap and never advanced, so each
+	// accept records the whole session delta as of that moment. Advancing it
+	// would need a Capture, and croft's Capture commits a snapshot layer and
+	// pins it under a lease — reintroducing per-accept resource growth that
+	// ApplyOut deliberately shed. Recorded as a follow-up rather than paid for
+	// here.
+	t.preview = ""
+
 	msg := fmt.Sprintf("Applied %d file(s) onto the host working tree:\n  %s\n\nThe changes are in the host's working tree — not committed. Review and commit with the user's normal git flow.",
 		len(files), strings.Join(files, "\n  "))
 
@@ -159,20 +187,44 @@ func (t *ApplyOutTool) Execute(ctx context.Context, args string) (string, error)
 	// write already happened, so returning an error here would tell the model
 	// the accept failed when it succeeded — and a retry would apply the delta a
 	// second time. A trace gap is reported in the result rather than hidden or
-	// treated as a failed apply.
-	if _, err := t.recordEffects(ctx); err != nil {
-		msg += fmt.Sprintf("\n\n(note: the host tree is updated, but the workspace effects could not be recorded in the trace: %v)", err)
+	// treated as a failed apply, and the count says how large the gap is.
+	if n, err := t.recordEffects(ctx); err != nil {
+		msg += fmt.Sprintf("\n\n(note: the host tree is updated, but %d workspace change(s) could not be recorded as trace effects: %v)", n, err)
 	}
 	return msg, nil
 }
 
+// SetEffects late-binds the trace sink.
+//
+// Wiring registers this tool long before the trace store, effect bus and root
+// scope exist, so the sink cannot be a constructor argument. The setter takes
+// the same mutex Execute reads t.Effects under. Today wiring completes before
+// any turn can dispatch, so the ordering is safe either way — but that safety
+// is incidental, and a future reorder or a sink attached from another goroutine
+// would be a data race that -race only catches when the timing cooperates.
+// Taking the lock makes the ordering explicit instead.
+func (t *ApplyOutTool) SetEffects(s *EffectSink) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.Effects = s
+}
+
 // recordEffects writes the accepted delta into the trace as typed workspace
-// effects and returns how many were recorded.
+// effects and returns how many were recorded. On failure the count is how many
+// workspace changes went unrecorded, so the caller can say how large the gap is
+// rather than just that there is one.
 //
 // It is a silent no-op — not an error — when the session has no trace sink, or
 // when the backend has no typed change set to give (the git lane, and the
 // tests' in-memory fake). Only a backend that reports the capability and then
 // fails is an error worth surfacing.
+//
+// Mapping is all-or-nothing: effect.FromChanges rejects a change kind it does
+// not know, and this does not record the mappable remainder. That is deliberate
+// — a partial trace that looks complete is worse than a reported gap, and the
+// count in the returned error says how much was lost. In practice the adapter
+// rejects an unknown croft kind first, so this path needs a backend that
+// produces a kind the runtime's vocabulary has never seen.
 //
 // Called after ApplyOut succeeds, so the effects describe changes that actually
 // reached the host. A failed apply records nothing: claiming effects for work
@@ -195,13 +247,13 @@ func (t *ApplyOutTool) recordEffects(ctx context.Context) (int, error) {
 	}
 	effects, err := effect.FromChanges(changes)
 	if err != nil {
-		return 0, err
+		return len(changes), err
 	}
 	if len(effects) == 0 {
 		return 0, nil
 	}
 	if err := effect.Emit(ctx, t.Effects.Appender, t.Effects.Bus, t.Effects.OpID, effects); err != nil {
-		return 0, err
+		return len(effects), err
 	}
 	return len(effects), nil
 }

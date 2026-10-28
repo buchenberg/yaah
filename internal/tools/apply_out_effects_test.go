@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	"github.com/buchenberg/goatherd-runtime/effect"
@@ -165,14 +166,20 @@ func TestSessionSandbox_EffectChangesRequiresBaseline(t *testing.T) {
 
 func TestApplyOutTool_RecordsEffectsOnAccept(t *testing.T) {
 	ss, sb, src := newEffectSession(t, sampleChanges(), nil)
-	appender := &recordingAppender{ownerID: "session:abc"}
+	// ownerID and OpID are deliberately different strings. In production they
+	// are distinct values — TraceOwnerID comes from the scope's OwnerID() (the
+	// session) while caused_by/CausalParents come from the sink's OpID (the root
+	// scope) — so a test that used one string for both would still pass if Emit
+	// sourced either output from the wrong field.
+	const ownerID, opID = "session:abc", "scope:root-1"
+	appender := &recordingAppender{ownerID: ownerID}
 	bus := shepherdtrace.NewEffectBus(16)
 	events := bus.Subscribe("test")
 
 	tool := &ApplyOutTool{Sandbox: ss, HostDir: src, Effects: &EffectSink{
 		Appender: appender,
 		Bus:      bus,
-		OpID:     "session:abc",
+		OpID:     opID,
 	}}
 
 	if _, err := tool.Execute(context.Background(), `{"dry_run": true}`); err != nil {
@@ -202,26 +209,30 @@ func TestApplyOutTool_RecordsEffectsOnAccept(t *testing.T) {
 		if appender.refs[i] != w.ref || appender.labels[i] != w.label {
 			t.Errorf("effect %d = (%q, %q), want (%q, %q)", i, appender.refs[i], appender.labels[i], w.ref, w.label)
 		}
-		if got := appender.payload[i]["caused_by"]; got != "session:abc" {
-			t.Errorf("effect %d caused_by = %v, want the sink's OpID", i, got)
+		if got := appender.payload[i]["caused_by"]; got != opID {
+			t.Errorf("effect %d caused_by = %v, want the sink's OpID %q", i, got, opID)
 		}
 	}
 
-	// Each effect is also published for live supervision, attributed to the same
-	// operation.
+	// Each effect is also published for live supervision. The receive is
+	// bounded: a bare channel read would block until the test binary's deadline
+	// if Emit published fewer events than expected — a subscriber buffer that
+	// filled and dropped, say — turning a clear failure into a hung run.
 	published := 0
 	for i := 0; i < len(want); i++ {
-		ev := <-events
+		var ev shepherdtrace.EffectEvent
+		select {
+		case ev = <-events:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for effect event %d of %d; published %d so far", i+1, len(want), published)
+		}
 		published++
-		if len(ev.CausalParents) != 1 || ev.CausalParents[0] != "session:abc" {
-			t.Errorf("event %d CausalParents = %v, want [session:abc]", i, ev.CausalParents)
+		if len(ev.CausalParents) != 1 || ev.CausalParents[0] != opID {
+			t.Errorf("event %d CausalParents = %v, want [%s] — the sink's OpID", i, ev.CausalParents, opID)
 		}
-		if ev.TraceOwnerID != "session:abc" {
-			t.Errorf("event %d TraceOwnerID = %q, want the appender's owner path", i, ev.TraceOwnerID)
+		if ev.TraceOwnerID != ownerID {
+			t.Errorf("event %d TraceOwnerID = %q, want %q — the appender's owner path", i, ev.TraceOwnerID, ownerID)
 		}
-	}
-	if published != len(want) {
-		t.Errorf("published %d events, want %d", published, len(want))
 	}
 	if sb.calls == 0 {
 		t.Error("the backend's EffectChanges was never consulted")

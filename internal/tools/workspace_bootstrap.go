@@ -341,8 +341,16 @@ func (s *SessionSandbox) SupportsEffects() bool {
 // tree, and not whatever happened to change since the last call.
 //
 // Read-only: unlike croft's Capture this commits no snapshot and pins no lease,
-// so calling it costs nothing durable and it is safe to call after ApplyOut has
-// already written the host.
+// so it costs nothing durable and is safe to call after ApplyOut has already
+// written the host.
+//
+// It is not free, though. This is a third backend round-trip on the accept path,
+// after the tool's DiffSinceBaseline and the diff copyOut runs to build its work
+// list — and that an accept already diffed twice is a pre-existing cost, not one
+// this adds. Each call is read-only against the daemon, but on a large tree the
+// latency is measurable. Collapsing them means threading a single change set out
+// of copyOut for the tool to reuse, which changes ApplyOut's contract; worth
+// doing if accept latency ever shows up in practice, not before.
 func (s *SessionSandbox) EffectChanges(ctx context.Context) ([]effect.Change, error) {
 	if s.baseline == nil {
 		return nil, errors.New("workspace: effects: no session baseline — the sandbox was started without a bootstrap")

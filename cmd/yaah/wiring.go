@@ -652,11 +652,11 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 				// sink makes recording a silent no-op instead of an error
 				// on every accept.
 				if applyOutTool != nil {
-					applyOutTool.Effects = &tools.EffectSink{
+					applyOutTool.SetEffects(&tools.EffectSink{
 						Appender: root,
 						Bus:      bus,
 						OpID:     rootScopeID,
-					}
+					})
 				}
 			}
 
