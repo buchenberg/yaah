@@ -355,6 +355,13 @@ type SubAgentConfig struct {
 	// working tree until then. "shared" keeps the older direct-to-host lane.
 	Mode string `yaml:"mode"`
 
+	// World selects the dispatch world (yaah-ihfh.3). "auto" (the default)
+	// takes a per-dispatch container when one is available and steps down to a
+	// worktree when it is not, recording every degradation. "container" fails
+	// closed; "worktree" never uses a container. Orthogonal to Mode (whether
+	// the dispatch is settled), Containment (what bounds it), and Network.
+	World string `yaml:"world"`
+
 	// Roles holds per-role overrides keyed by role name
 	// ("analyst", "developer", "tester", "reviewer").
 	Roles map[string]RoleConfig `yaml:"roles"`
@@ -377,6 +384,10 @@ type RoleConfig struct {
 	MaxConcurrency    int      `yaml:"max_concurrency"`     // per-role max sub-agent spawns; 0 = use config default
 	StuckChildTimeout int      `yaml:"stuck_child_timeout"` // seconds; 0 = use global default
 	Directives        []string `yaml:"directives"`          // injected into this role's sub-agent prompt; empty = none
+
+	// World overrides the dispatch world for this role (auto | worktree |
+	// container); empty inherits agents.subagent.world.
+	World string `yaml:"world"`
 
 	// TurnCheckpoints enables per-turn checkpoint/restore inside this
 	// role's sub-agent loop. Default false. Only meaningful where a shared

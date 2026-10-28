@@ -18,6 +18,30 @@ func TestValidateNilConfig(t *testing.T) {
 	}
 }
 
+func TestValidateSubAgentWorld(t *testing.T) {
+	for _, want := range []string{"", "auto", "worktree", "container", "AUTO"} {
+		cfg := defaultConfig()
+		cfg.Agent.SubAgent.World = want
+		if err := Validate(cfg); err != nil {
+			t.Errorf("world %q should be valid: %v", want, err)
+		}
+	}
+
+	cfg := defaultConfig()
+	cfg.Agent.SubAgent.World = "podman"
+	err := Validate(cfg)
+	if err == nil || !strings.Contains(err.Error(), "agents.subagent.world") {
+		t.Fatalf("unknown world should be rejected with the key named, got %v", err)
+	}
+
+	cfg = defaultConfig()
+	cfg.Agent.SubAgent.Roles = map[string]RoleConfig{"developer": {World: "podman"}}
+	err = Validate(cfg)
+	if err == nil || !strings.Contains(err.Error(), "roles.developer.world") {
+		t.Fatalf("unknown per-role world should be rejected with the key named, got %v", err)
+	}
+}
+
 func TestValidateInvalidApproval(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Agent.Default.Approval = "banana"

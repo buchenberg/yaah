@@ -15,6 +15,7 @@ import (
 	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/recovery"
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/jail"
 )
@@ -47,6 +48,7 @@ func RunChecks(opts Options) []Check {
 		CheckModel(cfg, cfgErr),
 		CheckSubAgents(cfg, cfgErr),
 		CheckContainment(cfg, cfgErr),
+		CheckDispatchWorld(cfg, cfgErr),
 		CheckWorkspace(cfg, cfgErr),
 		CheckFallback(cfg, cfgErr),
 		CheckQualityGates(cfg, cfgErr),
@@ -196,6 +198,63 @@ func CheckSubAgents(cfg *config.Config, cfgErr error) Check {
 		Status: "OK",
 		Detail: fmt.Sprintf("enabled — %s / %s, max depth 1, max concurrency %d", providerName, model, sc.MaxConcurrency),
 	}
+}
+
+// CheckDispatchWorld reports the dispatch-world resolution (yaah-ihfh.3):
+// which world a retained dispatch will get, and whether the configured world
+// is reachable here. A `container` request on a build without the lane is a
+// FAIL before the first dispatch, not a surprise mid-run.
+func CheckDispatchWorld(cfg *config.Config, cfgErr error) Check {
+	if cfgErr != nil {
+		return Check{Label: "Dispatch world", Status: "WARN", Detail: "config not loaded"}
+	}
+	sc := cfg.Agent.SubAgent
+	lane, retained := "proposal", true
+	if strings.ToLower(strings.TrimSpace(sc.Mode)) == "shared" {
+		// A shared-lane dispatch has no world at all; resolving it as a
+		// proposal would report a fake failure.
+		lane, retained = "shared", false
+	}
+	av := subagent.WorldAvailability{
+		// The per-dispatch container lane is not shipped yet (croft-dlb).
+		Container:        false,
+		ContainerOffered: false,
+		ContainerReason:  "per-dispatch container worlds are not implemented yet (yaah-ihfh.3, blocked on croft-dlb)",
+		Worktree:         retained,
+		Jail:             jailAvailable(),
+	}
+	res, err := subagent.ResolveWorld(subagent.WorldRequest{
+		Requested:   sc.World,
+		Lane:        lane,
+		Retained:    retained,
+		Containment: sc.Containment,
+		Network:     sc.Network,
+	}, av)
+	if err != nil {
+		return Check{Label: "Dispatch world", Status: "FAIL", Detail: err.Error()}
+	}
+	requested := strings.TrimSpace(sc.World)
+	if requested == "" {
+		requested = "auto"
+	}
+	if res.Resolved == subagent.WorldShared {
+		return Check{Label: "Dispatch world", Status: "OK", Detail: "shared lane — no dispatch world (mode: shared)"}
+	}
+	detail := fmt.Sprintf("%s → %s; container lane not shipped (croft-dlb)", requested, res.Resolved)
+	if res.Degraded {
+		return Check{Label: "Dispatch world", Status: "WARN", Detail: detail + " — " + res.Reason}
+	}
+	return Check{Label: "Dispatch world", Status: "OK", Detail: detail}
+}
+
+// jailAvailable reports whether a syscall jail is usable on this host.
+func jailAvailable() bool {
+	backend := jail.Backend()
+	if backend == nil {
+		return false
+	}
+	ok, _ := backend.Available()
+	return ok
 }
 
 // CheckContainment reports the sub-agent syscall-jail capability (Plan 7 Phase

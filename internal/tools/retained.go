@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +21,8 @@ import (
 	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
 	"github.com/buchenberg/yaah/internal/agent/recovery"
+	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/buchenberg/yaah/internal/jail"
 	"github.com/buchenberg/yaah/internal/jobs"
 )
 
@@ -60,6 +63,24 @@ type RetainedRuntime struct {
 	// creates one per session at construction (yaah-yox), so isolation is a
 	// property of building the runtime rather than of a later wiring step.
 	Proposals *ProposalRegistry
+
+	// World is the configured dispatch world (agents.subagent.world:
+	// auto | worktree | container). Empty means auto. WorldForRole supplies a
+	// per-role override; nil means no override.
+	World        string
+	WorldForRole func(role string) string
+
+	// Containment and Network are the configured authority axes for a
+	// confined dispatch. They participate in world resolution because a
+	// fallback is legal only when it can still enforce them.
+	Containment string
+	Network     string
+
+	// ContainerWorlds reports whether this build implements per-dispatch
+	// container worlds (yaah-ihfh.3). False until the lane ships; a build
+	// that offers no container world degrades silently to the worktree,
+	// while an explicitly requested container fails closed.
+	ContainerWorlds bool
 }
 
 // proposalEnvelope is the JSON the orchestrator receives from a retained
@@ -81,7 +102,14 @@ type proposalEnvelope struct {
 	Notes string `json:"notes,omitempty"`
 	// Outcome is the rendered Outcome{Work,Scope,Record,Notes} block for the
 	// settlement (yaah-lka3: report state, not just a completion word).
-	Outcome string   `json:"outcome,omitempty"`
+	Outcome string `json:"outcome,omitempty"`
+	// World is the resolved dispatch world ("worktree" or "container"). It is
+	// absent on a shared-lane dispatch, which has no world.
+	World string `json:"world,omitempty"`
+	// Warning carries a world degradation: the dispatch ran, but not in the
+	// world that was asked for. The envelope shape and the settlement verbs do
+	// not change; only this line does.
+	Warning string   `json:"warning,omitempty"`
 	Next    []string `json:"next,omitempty"`
 }
 
@@ -268,17 +296,30 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		return "", fmt.Errorf("delegate: capture basis: %w", err)
 	}
 
+	// Resolve the dispatch world before anything is provisioned. A refusal
+	// here fails the dispatch; a degradation is recorded and carried into the
+	// envelope. The world is decided once, before the body starts: switching
+	// worlds after work exists would change the basis of the sealed output.
+	worldRes, werr := resolveDispatchWorld(rt, subParams.Role, report)
+	if werr != nil {
+		return "", fmt.Errorf("delegate: %w", werr)
+	}
+
 	id := fmt.Sprintf("proposal:%d:%d", time.Now().UnixNano(), proposalSeq.Add(1))
 	wt := retainedWorktreePath(rt, id)
 
 	scopeID, provErr := provisionRetainedBranch(ctx, rt, id, wt, forkPoint)
-	env := proposalEnvelope{ProposalID: id, Next: proposalVerbs()}
+	env := proposalEnvelope{ProposalID: id, Next: proposalVerbs(), World: string(worldRes.Resolved)}
+	if worldRes.Degraded {
+		env.Warning = "dispatch world degraded: " + worldRes.Reason
+	}
 	if scopeID == "" {
 		// Nothing ran and nothing was sealed: report, register nothing.
 		env.Status = "error"
 		env.Error = provErr.Error()
 		return marshalProposalEnvelope(env), nil
 	}
+	recordWorldFact(ctx, mgr, scopeID, worldRes)
 
 	sp := subParams
 	sp.Workdir = wt
@@ -309,6 +350,9 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	// it — and hand the report straight back.
 	if report {
 		var notes []string
+		if worldRes.Degraded {
+			notes = append(notes, "dispatch world degraded: "+worldRes.Reason)
+		}
 		if provErr != nil {
 			// A provisioning error's reason is at its front, so it is
 			// head-capped here — the note budget of foldRetainedPartial
@@ -398,6 +442,77 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	env.Diff = clipDiff(output.Diff())
 	env.Files = changesPaths(output.Changes())
 	return marshalProposalEnvelope(env), nil
+}
+
+// resolveDispatchWorld applies the dispatch-world ladder
+// (docs/shepherd-parity.md) to one dispatch. It is pure over the runtime's
+// config and this host's capabilities: it provisions nothing, so a refusal
+// costs a failed call rather than a stranded world.
+func resolveDispatchWorld(rt RetainedRuntime, role string, report bool) (subagent.WorldResolution, error) {
+	requested := strings.TrimSpace(rt.World)
+	if rt.WorldForRole != nil {
+		if w := strings.TrimSpace(rt.WorldForRole(role)); w != "" {
+			requested = w
+		}
+	}
+
+	lane := "proposal"
+	if report {
+		lane = "report"
+	}
+
+	av := subagent.WorldAvailability{
+		// Per-dispatch container worlds are not implemented yet
+		// (yaah-ihfh.3, gated on croft-dlb). ContainerOffered stays tied to
+		// the build capability so a shipped lane can report a host failure as
+		// a degradation instead of falling back silently.
+		Container:        false,
+		ContainerOffered: rt.ContainerWorlds,
+		ContainerReason:  "per-dispatch container worlds are not implemented yet (yaah-ihfh.3, blocked on croft-dlb)",
+		Worktree:         true,
+		Jail:             jailAvailable(),
+	}
+
+	return subagent.ResolveWorld(subagent.WorldRequest{
+		Requested:   requested,
+		Lane:        lane,
+		Retained:    !report,
+		Containment: rt.Containment,
+		Network:     rt.Network,
+	}, av)
+}
+
+// jailAvailable reports whether this host can actually establish a syscall
+// jail. Availability, not presence: a compiled-in-but-disabled LSM degrades.
+func jailAvailable() bool {
+	backend := jail.Backend()
+	if backend == nil {
+		return false
+	}
+	ok, _ := backend.Available()
+	return ok
+}
+
+// recordWorldFact appends the resolved world to the dispatch's scope, so a
+// degraded dispatch is legible in the trace after the fact — the same channel
+// confinement uses. A failure to record is advisory: the run already happened.
+func recordWorldFact(ctx context.Context, mgr *goatherd.ScopeManager, scopeID string, res subagent.WorldResolution) {
+	if mgr == nil || scopeID == "" {
+		return
+	}
+	scope, ok := mgr.Get(scopeID)
+	if !ok {
+		return
+	}
+	payload := map[string]any{
+		"requested": string(res.Requested),
+		"resolved":  string(res.Resolved),
+		"degraded":  res.Degraded,
+		"reason":    res.Reason,
+	}
+	if _, err := scope.AppendFact(ctx, "yaah.subagent.world.v1", "world", payload); err != nil {
+		slog.Debug("world fact: append failed", "scope", scope.ID(), "err", err)
+	}
 }
 
 // retainedNote appends a caveat to a result instead of replacing it: the

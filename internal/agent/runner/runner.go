@@ -199,6 +199,20 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 			WorktreeRoot:      opts.RetainedWorktreeRoot,
 			WorktreeBootstrap: opts.RetainedBootstrap,
 			Proposals:         tools.NewProposalRegistry(),
+			World:             opts.SubCfg.World,
+			WorldForRole: func(role string) string {
+				if rc, ok := opts.SubCfg.Roles[role]; ok {
+					return rc.World
+				}
+				return ""
+			},
+			Containment: opts.SubCfg.Containment,
+			Network:     opts.SubCfg.Network,
+			// False until the per-dispatch container lane ships
+			// (yaah-ihfh.3). Flipping it on makes world: auto prefer a
+			// container and record a degradation when the host cannot
+			// provide one.
+			ContainerWorlds: false,
 		}
 	}
 	return tool

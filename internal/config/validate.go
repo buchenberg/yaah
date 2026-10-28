@@ -175,6 +175,25 @@ func Validate(cfg *Config) error {
 			cfg.Agent.SubAgent.Mode))
 	}
 
+	// World selects the dispatch world (yaah-ihfh.3). An unknown value must
+	// not silently resolve to the host lane.
+	switch strings.ToLower(strings.TrimSpace(cfg.Agent.SubAgent.World)) {
+	case "", "auto", "worktree", "container":
+	default:
+		errs = append(errs, fmt.Sprintf(
+			"agents.subagent.world %q is not one of: auto, worktree, container",
+			cfg.Agent.SubAgent.World))
+	}
+	for role, rc := range cfg.Agent.SubAgent.Roles {
+		switch strings.ToLower(strings.TrimSpace(rc.World)) {
+		case "", "auto", "worktree", "container":
+		default:
+			errs = append(errs, fmt.Sprintf(
+				"agents.subagent.roles.%s.world %q is not one of: auto, worktree, container",
+				role, rc.World))
+		}
+	}
+
 	// Sub-agent budget floors must be sane: non-negative, not above the
 	// matching max in the same role config, and satisfiable within the
 	// schema hard ceiling (subagent-turn-budget-floors §4.6).
