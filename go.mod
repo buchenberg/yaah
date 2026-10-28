@@ -5,7 +5,7 @@ go 1.26.3
 require (
 	github.com/anthropics/anthropic-sdk-go v1.81.0
 	github.com/buchenberg/goatherd-kernel v0.18.0
-	github.com/buchenberg/goatherd-runtime v0.19.0
+	github.com/buchenberg/goatherd-runtime v0.20.0
 	github.com/buchenberg/goatherd-runtime/sandbox/landlock v0.1.2
 	github.com/buchenberg/goatherd-runtime/sandbox/winacl v0.1.1
 	github.com/buchenberg/tviewmd v0.3.1
@@ -38,7 +38,7 @@ require (
 	github.com/Microsoft/go-winio v0.6.3-0.20251027160822-ad3df93bed29 // indirect
 	github.com/Microsoft/hcsshim v0.15.0-rc.1 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
-	github.com/buchenberg/goatherd-runtime/sandbox/croft v0.1.2
+	github.com/buchenberg/goatherd-runtime/sandbox/croft v0.1.3
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

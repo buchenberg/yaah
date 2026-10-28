@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	"github.com/buchenberg/goatherd-runtime/effect"
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
@@ -37,6 +39,32 @@ import (
 // hostOnly() marker either — it is the one tool whose whole job is to
 // write the host, registered only in isolated mode.
 
+// EffectSink carries what recording typed workspace effects needs. It is
+// optional and late-bound: ApplyOutTool is registered during tool wiring, well
+// before the trace store, effect bus and root scope exist, so wiring attaches
+// this afterwards. A nil sink means the session has no tracing, and the accept
+// behaves exactly as it did before effects existed.
+type EffectSink struct {
+	// Appender records each effect as a capture fact on its owner path.
+	// *goatherd.Scope satisfies effect.FactAppender with methods it already
+	// exports; naming the interface here keeps this package off the runtime
+	// root.
+	Appender effect.FactAppender
+	// Bus publishes the effects for live supervision. Nil appends the durable
+	// record without publishing, which is correct for a session with no
+	// supervisor attached.
+	Bus *shepherdtrace.EffectBus
+	// OpID attributes the effects to an operation, becoming each record's
+	// caused_by and the bus event's causal parent.
+	//
+	// This is the session's root scope, not an individual tool call: Execute
+	// receives no call identifier, and inventing one here would produce an ID
+	// nothing else in the trace recognises. So the granularity is "this accept,
+	// in this session" — coarser than the Python reference's per-intent
+	// caused_by, and honest about it rather than fabricating a finer link.
+	OpID string
+}
+
 // ApplyOutTool applies the session sandbox's outward delta onto the host
 // working tree, or previews it.
 type ApplyOutTool struct {
@@ -46,6 +74,9 @@ type ApplyOutTool struct {
 	// HostDir is the host working tree the delta lands in — the source
 	// the bootstrap copied in.
 	HostDir string
+	// Effects, when set, records what the accept landed as typed workspace
+	// effects after the host write succeeds. See EffectSink.
+	Effects *EffectSink
 
 	// mu serializes this tool's calls and guards preview. Tool calls can
 	// dispatch in parallel, so two apply_out calls — or a dry run racing
@@ -120,8 +151,59 @@ func (t *ApplyOutTool) Execute(ctx context.Context, args string) (string, error)
 	if err := t.Sandbox.ApplyOut(ctx, t.HostDir); err != nil {
 		return "", fmt.Errorf("apply_out: %w", err)
 	}
-	return fmt.Sprintf("Applied %d file(s) onto the host working tree:\n  %s\n\nThe changes are in the host's working tree — not committed. Review and commit with the user's normal git flow.",
-		len(files), strings.Join(files, "\n  ")), nil
+
+	msg := fmt.Sprintf("Applied %d file(s) onto the host working tree:\n  %s\n\nThe changes are in the host's working tree — not committed. Review and commit with the user's normal git flow.",
+		len(files), strings.Join(files, "\n  "))
+
+	// Recording effects is best-effort and must not fail the call. The host
+	// write already happened, so returning an error here would tell the model
+	// the accept failed when it succeeded — and a retry would apply the delta a
+	// second time. A trace gap is reported in the result rather than hidden or
+	// treated as a failed apply.
+	if _, err := t.recordEffects(ctx); err != nil {
+		msg += fmt.Sprintf("\n\n(note: the host tree is updated, but the workspace effects could not be recorded in the trace: %v)", err)
+	}
+	return msg, nil
+}
+
+// recordEffects writes the accepted delta into the trace as typed workspace
+// effects and returns how many were recorded.
+//
+// It is a silent no-op — not an error — when the session has no trace sink, or
+// when the backend has no typed change set to give (the git lane, and the
+// tests' in-memory fake). Only a backend that reports the capability and then
+// fails is an error worth surfacing.
+//
+// Called after ApplyOut succeeds, so the effects describe changes that actually
+// reached the host. A failed apply records nothing: claiming effects for work
+// that did not land would be worse than recording none. The residual gap is a
+// *partial* apply — copyOut writes file by file, so an error part way through
+// leaves some changes on the host and none in the trace. Closing that needs
+// either per-file emission or an apply that reports what it landed; both are
+// larger changes than this seam warrants, and the tool result already names the
+// paths it applied.
+func (t *ApplyOutTool) recordEffects(ctx context.Context) (int, error) {
+	if t.Effects == nil || t.Effects.Appender == nil {
+		return 0, nil
+	}
+	if !t.Sandbox.SupportsEffects() {
+		return 0, nil
+	}
+	changes, err := t.Sandbox.EffectChanges(ctx)
+	if err != nil {
+		return 0, err
+	}
+	effects, err := effect.FromChanges(changes)
+	if err != nil {
+		return 0, err
+	}
+	if len(effects) == 0 {
+		return 0, nil
+	}
+	if err := effect.Emit(ctx, t.Effects.Appender, t.Effects.Bus, t.Effects.OpID, effects); err != nil {
+		return 0, err
+	}
+	return len(effects), nil
 }
 
 // IsDangerous gates the real apply behind user approval. A dry run never
