@@ -146,11 +146,16 @@ type roleParams struct {
 // createRole writes a new role .md file and reloads the registry.
 func (t *RoleTool) createRole(p roleParams) (string, error) {
 	dir := t.writeDir()
+	// Resolve before creating anything: a rejected name must leave the host
+	// untouched, so it cannot even make the roles directory.
+	path, err := roleFilePath(dir, p.Name)
+	if err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("creating role directory %s: %w", dir, err)
 	}
 
-	path := filepath.Join(dir, p.Name+".md")
 	if _, err := os.Stat(path); err == nil {
 		return "", fmt.Errorf("role %q already exists at %s (use 'edit' to modify)", p.Name, path)
 	}
@@ -244,13 +249,64 @@ func (t *RoleTool) deleteRole(name string) (string, error) {
 
 // findRoleFile locates a role file by name across all search directories.
 func (t *RoleTool) findRoleFile(name string) (string, error) {
+	// Validate once, up front, so an invalid name is reported as invalid
+	// rather than as "not found" — and so the loop below never builds a path
+	// from it, even when there are no search directories.
+	if err := validateRoleName(name); err != nil {
+		return "", err
+	}
 	for _, dir := range t.Dirs {
-		path := filepath.Join(dir, name+".md")
+		path, err := roleFilePath(dir, name)
+		if err != nil {
+			return "", err
+		}
 		if _, err := os.Stat(path); err == nil {
 			return path, nil
 		}
 	}
 	return "", fmt.Errorf("%w: not found in any search directory", RoleNotFoundError{Role: name})
+}
+
+// validateRoleName rejects names that are paths rather than role names. A role
+// file is <dir>/<name>.md, so the name contributes exactly one path element:
+// separators, traversal, absolute paths and volume names are refused before any
+// path is built (bead yaah-06u).
+func validateRoleName(name string) error {
+	switch {
+	case name == "":
+		return fmt.Errorf("invalid role name: name is empty")
+	case name == "." || name == "..":
+		return fmt.Errorf("invalid role name %q: must name a role, not a directory", name)
+	case strings.ContainsAny(name, `/\`):
+		return fmt.Errorf("invalid role name %q: must not contain a path separator", name)
+	case strings.ContainsRune(name, 0):
+		return fmt.Errorf("invalid role name %q: must not contain a NUL byte", name)
+	case filepath.IsAbs(name), filepath.VolumeName(name) != "", strings.HasPrefix(name, "~"):
+		return fmt.Errorf("invalid role name %q: must be a bare name, not a path", name)
+	}
+	return nil
+}
+
+// roleFilePath joins a search directory and a validated role name into the
+// role's file path, refusing any result that does not stay inside dir.
+//
+// validateRoleName already rejects separators, traversal and absolute names, so
+// this second check is defense in depth: it holds even for a caller that builds
+// the name from something other than the schema field, and it is what makes the
+// containment claim true of the path actually opened or removed.
+func roleFilePath(dir, name string) (string, error) {
+	if err := validateRoleName(name); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, name+".md")
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return "", fmt.Errorf("invalid role name %q: %w", name, err)
+	}
+	if rel == ".." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("invalid role name %q: resolves outside %s", name, dir)
+	}
+	return path, nil
 }
 
 // writeDir returns the directory where new roles should be created.

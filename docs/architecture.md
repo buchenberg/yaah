@@ -532,7 +532,7 @@ A retained dispatch runs the sub-agent in a **worktree of its own** and seals it
 
 **Teardown.** The worktree lives until settlement: `select`/`apply`/`discard` end the child scope and remove it, `release` tears it down explicitly. A worktree left behind by a killed run is detected through the git worktree registry, cleared, and retried once on the next `Create`. Recovery reports stale entries instead of deleting them automatically.
 
-**Limits.** A worktree checks out tracked files only, so gitignored build inputs must be recreated by `retained_worktree_bootstrap`. Isolation is filesystem-level: dispatches share the host process, network, and object store.
+**Limits.** A worktree checks out tracked files only, so gitignored build inputs must be recreated by `retained_worktree_bootstrap`. Isolation is filesystem-level: dispatches share the host process, network, and object store. Egress is therefore a separate axis, not a side effect of isolation — see the [isolation vs egress matrix](./configuration.md#the-isolation-vs-egress-matrix) for what each lane governs and what it does not.
 
 ---
 
