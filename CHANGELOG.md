@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.107.2](https://github.com/buchenberg/yaah/compare/v0.107.1...v0.107.2) (2026-10-28)
+
+
+### Bug Fixes
+
+* enforcement by construction — Workspace-only FS access, argument-aware danger, SSRF/traversal guards ([5f89845](https://github.com/buchenberg/yaah/commit/5f89845429134c9d0b11fab7b91317da116634ee))
+* enforcement by construction — Workspace-only FS access, argument-aware danger, SSRF/traversal guards ([85a3ef9](https://github.com/buchenberg/yaah/commit/85a3ef97fb358a787d75a0c370ebd083b138f115))
+* **tools:** stop treating --abbrev as a value flag for branch ([ce83abe](https://github.com/buchenberg/yaah/commit/ce83abe37ee1858f48781fd94f8aea0e6dd47dea))
+
 ## [0.107.1](https://github.com/buchenberg/yaah/compare/v0.107.0...v0.107.1) (2026-10-28)
 
 
