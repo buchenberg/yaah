@@ -325,9 +325,12 @@ func jailed(placement string, available bool) bool {
 // contract are probed at session start (inside the startup bound), and a
 // doctor run that booted throwaway containers would be a probe, not a
 // diagnosis. The detail line names the libraries the binary really
-// depends on — croft for the isolated workspace, shepherd for supervision —
-// so an "unknown backend" failure is diagnosable here, against what the
-// binary provides.
+// depends on — goatherd-runtime's sandbox/croft adapter for the isolated
+// workspace, shepherd for supervision — so an "unknown backend" failure is
+// diagnosable here, against what the binary provides. That failure now has
+// a platform cause as well as a config one: the adapter registers no
+// backend off-Linux, so a non-Linux binary genuinely cannot provide
+// "containerd" whatever the config says.
 func CheckWorkspace(cfg *config.Config, cfgErr error) Check {
 	if cfgErr != nil {
 		return Check{Label: "Workspace", Status: "WARN", Detail: "config not loaded"}
@@ -373,7 +376,7 @@ func CheckWorkspace(cfg *config.Config, cfgErr error) Check {
 		} else {
 			detail += ", socket containerd default"
 		}
-		detail += "; sandbox library: croft (containerd), supervision: shepherd (git); daemon and image contract probed at session start"
+		detail += "; sandbox library: goatherd-runtime sandbox/croft (containerd), supervision: shepherd (git); daemon and image contract probed at session start"
 		return Check{Label: "Workspace", Status: "OK", Detail: detail}
 	default:
 		return Check{Label: "Workspace", Status: "FAIL", Detail: fmt.Sprintf("unknown backend %q (valid: local, containerd)", w.Backend)}

@@ -134,7 +134,7 @@ func TestCheckWorkspace_Isolated(t *testing.T) {
 		"yaah",                                   // the namespace
 		"/workspace",                             // the containment root
 		"socket /run/containerd/containerd.sock", // the configured socket
-		"sandbox library: croft (containerd), supervision: shepherd (git)",
+		"sandbox library: goatherd-runtime sandbox/croft (containerd), supervision: shepherd (git)",
 	} {
 		if !strings.Contains(check.Detail, want) {
 			t.Errorf("isolated report %q missing %q", check.Detail, want)

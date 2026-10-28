@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	croft "github.com/buchenberg/croft"
 	"io/fs"
 	"path"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 )
 
 // This file interprets the `sh -c` subset that sandboxWorkspace emits over the
@@ -59,7 +60,7 @@ var (
 // runSh interprets a `sh -c` request. Callers must not hold s.mu; the whole
 // script runs under it, which keeps the fake's tree consistent for the
 // duration and is fine because scripts are short.
-func (s *Sandbox) runSh(ctx context.Context, req croft.ExecRequest) croft.ExecResult {
+func (s *Sandbox) runSh(ctx context.Context, req goatherdsandbox.ExecRequest) goatherdsandbox.ExecResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sh := &shSession{
@@ -74,7 +75,7 @@ func (s *Sandbox) runSh(ctx context.Context, req croft.ExecRequest) croft.ExecRe
 		sh.cwd = "/"
 	}
 	code := sh.run(req.Args[1])
-	return croft.ExecResult{
+	return goatherdsandbox.ExecResult{
 		ExitCode: code,
 		Stdout:   sh.stdout.String(),
 		Stderr:   sh.stderr.String(),

@@ -3,20 +3,22 @@ package tools
 import (
 	"context"
 	"errors"
-	croft "github.com/buchenberg/croft"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
+	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+	croftadapter "github.com/buchenberg/goatherd-runtime/sandbox/croft"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/sandboxfake"
 )
 
 // probeResult is the canned outcome the fake's ExecHook returns for the
 // contract script: the exit code, stdout, and stderr the probe must classify.
-func probeResult(exit int, stdout string) func(croft.ExecRequest) (croft.ExecResult, error) {
-	return func(croft.ExecRequest) (croft.ExecResult, error) {
-		return croft.ExecResult{ExitCode: exit, Stdout: stdout, Stderr: "stderr detail"}, nil
+func probeResult(exit int, stdout string) func(goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
+	return func(goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
+		return goatherdsandbox.ExecResult{ExitCode: exit, Stdout: stdout, Stderr: "stderr detail"}, nil
 	}
 }
 
@@ -87,8 +89,8 @@ func TestProbeImageContract_OperationalFailureHasBothChannels(t *testing.T) {
 
 func TestProbeImageContract_ExecTransportError(t *testing.T) {
 	sb := sandboxfake.New()
-	sb.ExecHook = func(croft.ExecRequest) (croft.ExecResult, error) {
-		return croft.ExecResult{}, context.DeadlineExceeded
+	sb.ExecHook = func(goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
+		return goatherdsandbox.ExecResult{}, context.DeadlineExceeded
 	}
 
 	err := ProbeImageContract(context.Background(), sb)
@@ -107,7 +109,7 @@ func TestProbeImageContract_CreateFailureStillDestroys(t *testing.T) {
 	// path too. The destroy is observable here because it succeeds on a
 	// sandbox that was, in fact, created.
 	sb := sandboxfake.New()
-	if err := sb.Create(context.Background(), croft.SandboxSpec{}); err != nil {
+	if err := sb.Create(context.Background(), goatherdsandbox.SandboxSpec{}); err != nil {
 		t.Fatalf("seed Create: %v", err)
 	}
 	sb.ExecHook = probeResult(0, "")
@@ -149,15 +151,26 @@ var errCreateRefused = errors.New("no image")
 
 // failCreateSandbox fails Create but delegates everything else — the probe
 // must still attempt Destroy through it.
-type failCreateSandbox struct{ croft.Sandbox }
+type failCreateSandbox struct{ goatherdsandbox.Sandbox }
 
-func (*failCreateSandbox) Create(context.Context, croft.SandboxSpec) error {
+func (*failCreateSandbox) Create(context.Context, goatherdsandbox.SandboxSpec) error {
 	return errCreateRefused
 }
 
-// TestOpenContainerdWorkspaceSandbox pins the direct construction: the
-// config surface reaches croft through croft.New (no registry, no
-// self-registration), and the returned sandbox is unprovisioned.
+// TestOpenContainerdWorkspaceSandbox pins the opener's two platform outcomes.
+//
+// On Linux it resolves through goatherd-runtime's sandbox registry — importing
+// the adapter is what registers "containerd", so this also proves the
+// self-registration wiring yaah depends on — and hands back an unprovisioned
+// sandbox, Create still being the caller's explicit lifecycle step.
+//
+// Everywhere else it must refuse. The adapter's implementation is gated to
+// Linux (goatherd-croft does not compile elsewhere and the substrate it drives
+// is Linux-shaped), so no backend registers and the registry reports an
+// unknown backend rather than returning something that cannot work. That is
+// the invariant config validation relies on when it refuses
+// workspace.backend: containerd off-Linux at load: the refusal is real at the
+// seam too, not only in the config layer.
 func TestOpenContainerdWorkspaceSandbox(t *testing.T) {
 	w := config.WorkspaceConfig{
 		Backend: config.BackendContainerd,
@@ -169,6 +182,17 @@ func TestOpenContainerdWorkspaceSandbox(t *testing.T) {
 		},
 	}
 	sb, err := OpenContainerdWorkspaceSandbox(w)
+
+	if runtime.GOOS != "linux" {
+		if err == nil {
+			t.Fatalf("on %s the containerd backend must not open, got %v", runtime.GOOS, sb)
+		}
+		if !strings.Contains(err.Error(), "containerd") {
+			t.Errorf("the refusal must name the backend it could not provide, got: %v", err)
+		}
+		return
+	}
+
 	if err != nil {
 		t.Fatalf("OpenContainerdWorkspaceSandbox: %v", err)
 	}
@@ -177,12 +201,22 @@ func TestOpenContainerdWorkspaceSandbox(t *testing.T) {
 	}
 }
 
-// TestOpenContainerdWorkspaceSandbox_Passthrough pins that every containerd
-// field the config surface exposes — FIFODir included — reaches the backend
-// the registry resolves. The adapter keeps its Config unexported, so the test
-// reads the field reflectively rather than through an accessor the adapter
-// would have to grow just for this.
-func TestOpenContainerdWorkspaceSandbox_Passthrough(t *testing.T) {
+// TestContainerdAdapterConfig_Passthrough pins that every containerd field
+// yaah's config surface exposes — FIFODir included — reaches the adapter's
+// Config, and that Root lands on Workdir.
+//
+// It tests the mapping function rather than a backend resolved through the
+// registry, so it runs on every platform: the adapter registers no backend
+// off-Linux, but its Config type is platform-neutral, and a field silently
+// dropped between yaah's config surface and the backend is worth catching
+// everywhere. This also retires the reflection the previous version needed to
+// read an unexported field out of a resolved backend — the adapter's Config is
+// exported and comparable, so DeepEqual asserts the whole struct at once and
+// would also catch a field being set that should not be.
+//
+// Registry resolution itself, including its refusal off-Linux, is covered by
+// TestOpenContainerdWorkspaceSandbox.
+func TestContainerdAdapterConfig_Passthrough(t *testing.T) {
 	w := config.WorkspaceConfig{
 		Backend: config.BackendContainerd,
 		Root:    "/sandbox",
@@ -194,28 +228,16 @@ func TestOpenContainerdWorkspaceSandbox_Passthrough(t *testing.T) {
 			FIFODir:     "/var/tmp/yaah-fifo",
 		},
 	}
-	sb, err := OpenContainerdWorkspaceSandbox(w)
-	if err != nil {
-		t.Fatalf("OpenContainerdWorkspaceSandbox: %v", err)
+	want := croftadapter.Config{
+		Address:     "/run/containerd/containerd.sock",
+		Namespace:   "prod",
+		Image:       "example/dev:latest",
+		Snapshotter: "overlayfs",
+		FIFODir:     "/var/tmp/yaah-fifo",
+		Workdir:     "/sandbox",
 	}
-
-	// The registry hands back the concrete adapter as the Sandbox interface;
-	// dig out its unexported cfg one field at a time.
-	cfg := reflect.ValueOf(sb).Elem().FieldByName("cfg")
-	if !cfg.IsValid() {
-		t.Fatalf("backend %T carries no cfg field; update the test to its layout", sb)
-	}
-	for field, want := range map[string]string{
-		"Address":     w.Containerd.Address,
-		"Namespace":   w.Containerd.Namespace,
-		"Image":       w.Containerd.Image,
-		"Snapshotter": w.Containerd.Snapshotter,
-		"FIFODir":     w.Containerd.FIFODir,
-		"Workdir":     w.Root,
-	} {
-		if got := cfg.FieldByName(field).String(); got != want {
-			t.Errorf("cfg.%s = %q, want %q", field, got, want)
-		}
+	if got := containerdAdapterConfig(w); !reflect.DeepEqual(got, want) {
+		t.Errorf("containerdAdapterConfig() =\n\t%+v\nwant\n\t%+v", got, want)
 	}
 }
 
@@ -223,7 +245,7 @@ func TestOpenContainerdWorkspaceSandbox_Passthrough(t *testing.T) {
 // whose teardown fails can be asserted on without teaching the fake a mode
 // it should not have.
 type destroyFailingSandbox struct {
-	croft.Sandbox
+	goatherdsandbox.Sandbox
 }
 
 func (destroyFailingSandbox) Destroy(context.Context) error {
