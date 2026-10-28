@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.106.3](https://github.com/buchenberg/yaah/compare/v0.106.2...v0.106.3) (2026-10-27)
+
+
+### Bug Fixes
+
+* **providers:** accept signature-only 400s as replay rejections ([1d07fd3](https://github.com/buchenberg/yaah/commit/1d07fd39731cf7e26958f9ec4dfe2f4c40ed72f6))
+* **providers:** replay unsigned thinking as a thinking block, not text ([c82c3d2](https://github.com/buchenberg/yaah/commit/c82c3d20c5adf2638ff898d3451742eccb6c3ac5))
+* **providers:** require invalid_request_error for signature-only fallbacks ([adfb819](https://github.com/buchenberg/yaah/commit/adfb8197514917c6b00908486977e1ead455e80e))
+* **providers:** tighten the replay-rejection match to replayed thinking ([d4fc745](https://github.com/buchenberg/yaah/commit/d4fc745da1c09c167de0d95026d41f6f429b484a))
+* **providers:** treat code-less signature 400s as replay rejections ([7f0841f](https://github.com/buchenberg/yaah/commit/7f0841fe7389a9dc4c336bbcb198cb2304313b99))
+
 ## [0.106.2](https://github.com/buchenberg/yaah/compare/v0.106.1...v0.106.2) (2026-10-27)
 
 
