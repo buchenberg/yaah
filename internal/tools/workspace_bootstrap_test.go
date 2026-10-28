@@ -259,6 +259,18 @@ func TestApplyOut_CopyOutFallback(t *testing.T) {
 // do not cross back to the host. That is a deliberate open question tracked as
 // yaah-vlwm, not coverage missing by accident.
 func TestApplyOut_CarriesModeChanges(t *testing.T) {
+	// Windows cannot represent permission bits — every regular file the host
+	// reports is 0666 there, and a chmod cannot make it 0755 — so there is no
+	// mode to carry and the property is unobservable. The bootstrap test above
+	// guards its own mode assertion the same way.
+	//
+	// This skips the assertion, not the code: copyOut's Chmod still runs on
+	// Windows (TestApplyOut_CopyOutFallback exercises it and passes there), so
+	// os.Chmod is not a new failure mode on that platform.
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows cannot represent permission bits, so a mode-only change is not observable")
+	}
+
 	src := gitHostRepo(t)
 	hostReadme := filepath.Join(src, "readme.txt")
 	before, err := os.Stat(hostReadme)
