@@ -43,6 +43,17 @@ func TestStreamDelta_contentShapes(t *testing.T) {
 			wantReasoning: "think ",
 		},
 		{
+			name:          "reasoning-named blocks stay out of visible content",
+			line:          `data: {"id":"c1","choices":[{"index":0,"delta":{"content":[{"type":"analysis","text":"hidden"},{"type":"text","text":"x"}]}}]}`,
+			wantContent:   "x",
+			wantReasoning: "hidden",
+		},
+		{
+			name:        "unknown text-bearing block recovered into visible",
+			line:        `data: {"id":"c1","choices":[{"index":0,"delta":{"content":[{"type":"citation","text":"cited"},{"type":"text","text":"x"}]}}]}`,
+			wantContent: "citedx",
+		},
+		{
 			name:          "string reasoning_content alongside string content",
 			line:          `data: {"id":"c1","choices":[{"index":0,"delta":{"reasoning_content":"because","content":"ok"}}]}`,
 			wantContent:   "ok",
@@ -97,15 +108,33 @@ func TestStreamDelta_arrayContentKeepsToolCalls(t *testing.T) {
 
 // An unrecognized content shape must be an error so SendStream can warn once
 // per turn; dropping it silently is what made yaah-050b invisible.
-func TestStreamDelta_unknownContentShapeErrors(t *testing.T) {
+// An unrecognized content shape must not be silent (yaah-050b) and must not
+// cost the delta its tool calls: the delta degrades to empty content, records
+// the shape for SendStream's once-per-stream warning, and keeps its tool calls
+// (review 616).
+func TestStreamDelta_unknownContentShapeDegrades(t *testing.T) {
 	var delta StreamDelta
-	if err := json.Unmarshal([]byte(`{"content":{"type":"text","text":"hi"}}`), &delta); err == nil {
-		t.Fatal("object-shaped content must not decode silently")
+	if err := json.Unmarshal([]byte(`{"content":{"type":"text","text":"hi"},"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read","arguments":"{}"}}]}`), &delta); err != nil {
+		t.Fatalf("object-shaped content must degrade, got %v", err)
 	}
-	if err := json.Unmarshal([]byte(`{"content":[]}`), &delta); err != nil {
+	if delta.Content != "" || delta.ReasoningContent != "" {
+		t.Errorf("content = %q, reasoning = %q, want both empty", delta.Content, delta.ReasoningContent)
+	}
+	if len(delta.ToolCalls) != 1 {
+		t.Fatalf("tool calls lost: %+v", delta.ToolCalls)
+	}
+	if delta.contentShapeErr == nil {
+		t.Error("shape error must be recorded for the once-per-stream warning")
+	}
+
+	var clean StreamDelta
+	if err := json.Unmarshal([]byte(`{"content":[]}`), &clean); err != nil {
 		t.Fatalf("empty block array must decode, got %v", err)
 	}
-	if err := json.Unmarshal([]byte(`{"content":null}`), &delta); err != nil {
+	if clean.contentShapeErr != nil {
+		t.Error("clean shapes must not record a shape error")
+	}
+	if err := json.Unmarshal([]byte(`{"content":null}`), &clean); err != nil {
 		t.Fatalf("null content must decode, got %v", err)
 	}
 }

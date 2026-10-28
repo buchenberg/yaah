@@ -36,14 +36,20 @@ type StreamDelta struct {
 	ReasoningContent   string           `json:"reasoning_content,omitempty"`
 	ReasoningSignature string           `json:"reasoning_signature,omitempty"`
 	ToolCalls          []types.ToolCall `json:"tool_calls,omitempty"`
+
+	// contentShapeErr records an unreadable content shape so SendStream can
+	// report it once per stream; the delta degrades to empty content rather
+	// than failing the chunk, keeping its tool calls. Never serialized.
+	contentShapeErr error
 }
 
 // UnmarshalJSON decodes a delta that may carry content in either wire shape:
 // the OpenAI plain string, or an array of typed blocks as zai/GLM streams it.
 // Thinking blocks land in ReasoningContent and text blocks in Content;
 // tool_calls and the signature fields pass through unchanged. A content shape
-// that is neither is an error, which SendStream reports once per turn instead
-// of dropping the chunk silently.
+// that is neither degrades the delta to empty content — its tool calls
+// survive, matching the response path — and the shape is recorded for
+// SendStream's once-per-stream warning instead of dropped silently.
 //
 // reasoning_content goes through the same normalizer: some endpoints send
 // typed blocks there too, and a shape this decoder cannot read must cost the
@@ -61,7 +67,12 @@ func (d *StreamDelta) UnmarshalJSON(data []byte) error {
 	}
 	text, thinking, err := decodeContentValue(w.Content)
 	if err != nil {
-		return err
+		// Degrade instead of failing the chunk: an unreadable content shape
+		// costs the delta its content and reasoning, never its tool calls —
+		// the same contract as the response path. The shape is recorded so
+		// SendStream can report it once per stream.
+		text, thinking = "", ""
+		d.contentShapeErr = err
 	}
 	reasoning, rThinking, rErr := decodeContentValue(w.ReasoningContent)
 	if rErr != nil {
