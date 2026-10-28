@@ -215,6 +215,7 @@ for keyless local endpoints.
 | `timeout` | 0 (no timeout) | HTTP request timeout in seconds; negative values fall back to 120s |
 | `max_tokens` | 4096 native, 16384 compatible; unset on `openai` | Output-token cap when a request has none. Native `api.anthropic.com` stays at 4096 for older Claude models; compatible endpoints default to 16384 because reasoning tokens count against the budget. When the model exhausts a known cap before emitting content, the client retries once with a doubled cap, clamped to a conservative known model output limit (and to 65536); providers that do not report a cap are not retried, and the native Anthropic safe floor is never raised |
 | `headers` | — | Extra HTTP headers, sent by OpenAI-compatible providers only |
+| `supports_cache_control` | `false` | Opts an OpenAI-compatible provider into Anthropic-style `cache_control` breakpoints. `cache_control` is an Anthropic wire concept, not an OpenAI one, so it must be opted into: Mistral and strict OpenAI-compatible endpoints answer `422 extra_forbidden` when the field leaks. Independent of `agents.default.prompt_caching`, which only decides whether breakpoints are stamped. Ignored for `api: anthropic` (always legal there); GitHub Copilot is opted in implicitly |
 | `oauth_client_id` / `oauth_scope` / `oauth_domain` | — | OAuth device-flow settings used with `auth: oauth` |
 
 Anthropic-shaped providers report `input_tokens` excluding cache reads. yaah

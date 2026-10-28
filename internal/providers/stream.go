@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -37,6 +38,45 @@ type StreamDelta struct {
 	ToolCalls          []types.ToolCall `json:"tool_calls,omitempty"`
 }
 
+// UnmarshalJSON decodes a delta that may carry content in either wire shape:
+// the OpenAI plain string, or an array of typed blocks as zai/GLM streams it.
+// Thinking blocks land in ReasoningContent and text blocks in Content;
+// tool_calls and the signature fields pass through unchanged. A content shape
+// that is neither is an error, which SendStream reports once per turn instead
+// of dropping the chunk silently.
+//
+// reasoning_content goes through the same normalizer: some endpoints send
+// typed blocks there too, and a shape this decoder cannot read must cost the
+// delta only its reasoning, never its visible content or tool calls.
+func (d *StreamDelta) UnmarshalJSON(data []byte) error {
+	var w struct {
+		Role               string           `json:"role"`
+		Content            json.RawMessage  `json:"content"`
+		ReasoningContent   json.RawMessage  `json:"reasoning_content"`
+		ReasoningSignature string           `json:"reasoning_signature"`
+		ToolCalls          []types.ToolCall `json:"tool_calls"`
+	}
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
+	}
+	text, thinking, err := decodeContentValue(w.Content)
+	if err != nil {
+		return err
+	}
+	reasoning, rThinking, rErr := decodeContentValue(w.ReasoningContent)
+	if rErr != nil {
+		// Degrade instead of failing the chunk: dropping the whole delta is
+		// how the visible content in the same chunk gets lost.
+		reasoning, rThinking = "", ""
+	}
+	d.Role = w.Role
+	d.Content = text
+	d.ReasoningContent = reasoning + rThinking + thinking
+	d.ReasoningSignature = w.ReasoningSignature
+	d.ToolCalls = w.ToolCalls
+	return nil
+}
+
 // SendStream sends a streaming chat request and returns a channel of chunks.
 // The channel is closed when the stream ends or an error occurs.
 // The request's Stream field is set to true (the caller's struct is mutated).
@@ -52,7 +92,7 @@ func (c *OpenAIClient) SendStream(ctx context.Context, req types.ChatRequest) (<
 		defer close(chunks)
 		defer close(errs)
 
-		body, err := json.Marshal(lowerRequest(req, c.resolveThinkingMode(req.Model), c.CopilotMode, !c.thinkingExplicit(req.Model)))
+		body, err := json.Marshal(lowerRequest(req, c.lowerOptions(req.Model)))
 		if err != nil {
 			errs <- fmt.Errorf("marshal request: %w", err)
 			return
@@ -94,10 +134,22 @@ func (c *OpenAIClient) SendStream(ctx context.Context, req types.ChatRequest) (<
 
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
+		loggedUndecodable := false
 		for scanner.Scan() {
 			line := scanner.Bytes()
 			chunk, done, err := parseSSEChunk(line)
 			if err != nil {
+				// A chunk that does not decode is otherwise invisible: the
+				// turn keeps streaming and simply loses whatever it carried
+				// (typically all of the reasoning). Warn once per stream so a
+				// wire-shape change stays diagnosable without flooding the log.
+				if !loggedUndecodable {
+					loggedUndecodable = true
+					// Only the error and the size are logged: the line itself is
+					// model output, which must not land in a log file.
+					slog.Warn("provider stream: dropping undecodable chunk; further occurrences in this turn are silent",
+						"model", req.Model, "error", err, "bytes", len(line))
+				}
 				continue // skip malformed lines
 			}
 			if done {
