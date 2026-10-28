@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.107.1](https://github.com/buchenberg/yaah/compare/v0.107.0...v0.107.1) (2026-10-28)
+
+
+### Bug Fixes
+
+* **workspace:** mode changes made in a container session survive accept ([e998e9b](https://github.com/buchenberg/yaah/commit/e998e9b39e56ce6a18a9d9e2b193f97f00d97515))
+* **workspace:** never impose a guessed mode on the host during apply-out ([9782c0d](https://github.com/buchenberg/yaah/commit/9782c0d46d97c7e31b2ecc52a64009f162460f7c))
+
+
+### Tests
+
+* **workspace:** actually pin the modeFromSandbox gate ([9587152](https://github.com/buchenberg/yaah/commit/958715246ae035e4c42a610105e1d682d0576cf1))
+* **workspace:** read the symlink mode instead of assuming Linux's 0777 ([c6c477b](https://github.com/buchenberg/yaah/commit/c6c477bc539806c32fa483a0d1a825fa7a4ff630))
+* **workspace:** skip the mode-fidelity assertion where modes do not exist ([03ae195](https://github.com/buchenberg/yaah/commit/03ae1953f0cab10e1fc1641ff3979406b3adb179))
+
 ## [0.107.0](https://github.com/buchenberg/yaah/compare/v0.106.3...v0.107.0) (2026-10-28)
 
 
