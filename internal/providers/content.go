@@ -79,9 +79,14 @@ func decodeContentValue(raw json.RawMessage) (text, thinking string, err error) 
 				}
 				visible.WriteString(inner)
 			default:
-				// Blocks without text (images, opaque metadata) carry
-				// nothing this decoder can place; skipping them keeps the
-				// rest of the chunk.
+				// Unknown block type: skip it only when it carries no user
+				// text (images, opaque metadata). A text-bearing block of a
+				// type this decoder does not know is recovered verbatim —
+				// dropping it before its text is read is how a provider adding
+				// a new block type would cost the response its visible content.
+				if b.Text != "" {
+					visible.WriteString(b.Text)
+				}
 			}
 		}
 		return visible.String(), reasoning.String(), nil
@@ -90,4 +95,20 @@ func decodeContentValue(raw json.RawMessage) (text, thinking string, err error) 
 	// Only the shape is reported, never the payload: this error travels to a
 	// log line, and the payload can be model output the user would see.
 	return "", "", fmt.Errorf("unsupported content shape (starts with %q, %d bytes)", raw[0], len(raw))
+}
+
+// mergeReasoning joins the two places a reasoning-capable endpoint may put
+// reasoning in one response: the reasoning_content field and thinking blocks
+// carried in content. Endpoints that send both echo the same text twice, so
+// equal halves collapse to one copy; unequal halves both survive, since the
+// two places can hold complementary segments.
+func mergeReasoning(field, blocks string) string {
+	switch {
+	case field == "":
+		return blocks
+	case blocks == "" || field == blocks:
+		return field
+	default:
+		return field + blocks
+	}
 }

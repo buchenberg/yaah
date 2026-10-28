@@ -87,3 +87,32 @@ func TestParseSSEChunk_marksOpenAIUsageInclusive(t *testing.T) {
 		t.Errorf("InclusivePromptTokens() = %d, want 100", got)
 	}
 }
+
+// TestStreamDelta_reasoningDedup pins the de-duplication when an endpoint
+// sends the same reasoning in reasoning_content and in content thinking
+// blocks (review 616).
+func TestStreamDelta_reasoningDedup(t *testing.T) {
+	cases := []struct {
+		name        string
+		input       string
+		wantContent string
+		wantReason  string
+	}{
+		{name: "equal halves collapse", input: `{"reasoning_content":"same","content":[{"type":"thinking","thinking":"same"},{"type":"text","text":"hi"}]}`, wantContent: "hi", wantReason: "same"},
+		{name: "distinct halves concatenate", input: `{"reasoning_content":"field","content":[{"type":"thinking","thinking":"blocks"}]}`, wantContent: "", wantReason: "fieldblocks"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var delta StreamDelta
+			if err := delta.UnmarshalJSON([]byte(tc.input)); err != nil {
+				t.Fatalf("UnmarshalJSON() error = %v", err)
+			}
+			if delta.Content != tc.wantContent {
+				t.Errorf("Content = %q, want %q", delta.Content, tc.wantContent)
+			}
+			if delta.ReasoningContent != tc.wantReason {
+				t.Errorf("ReasoningContent = %q, want %q", delta.ReasoningContent, tc.wantReason)
+			}
+		})
+	}
+}

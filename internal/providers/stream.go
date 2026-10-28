@@ -71,7 +71,9 @@ func (d *StreamDelta) UnmarshalJSON(data []byte) error {
 	}
 	d.Role = w.Role
 	d.Content = text
-	d.ReasoningContent = reasoning + rThinking + thinking
+	// reasoning_content and content-embedded thinking can carry the same
+	// reasoning twice; mergeReasoning drops the duplicate.
+	d.ReasoningContent = mergeReasoning(reasoning+rThinking, thinking)
 	d.ReasoningSignature = w.ReasoningSignature
 	d.ToolCalls = w.ToolCalls
 	return nil

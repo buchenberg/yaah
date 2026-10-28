@@ -181,6 +181,7 @@ func TestDecodeContentValue_shapes(t *testing.T) {
 		{name: "thinking string", raw: `[{"type":"thinking","thinking":"why"}]`, wantReasoning: "why"},
 		{name: "thinking inline text", raw: `[{"type":"thinking","text":"why"}]`, wantReasoning: "why"},
 		{name: "unknown block type ignored", raw: `[{"type":"image"},{"type":"text","text":"x"}]`, wantText: "x"},
+		{name: "unknown text-bearing block recovered", raw: `[{"type":"citation","text":"cited"},{"type":"text","text":"x"}]`, wantText: "citedx"},
 		{name: "object shape", raw: `{"type":"text"}`, wantErr: true},
 		{name: "number shape", raw: `42`, wantErr: true},
 	}
@@ -259,5 +260,53 @@ func TestOpenAIClient_SendArrayContent(t *testing.T) {
 	}
 	if got := resp.Choices[0].Message.ReasoningContent; got != "think" {
 		t.Errorf("reasoning = %q, want %q", got, "think")
+	}
+}
+
+// TestDecodeChatResponse_unreadableContentDegrades pins the response path's
+// degradation contract: a content shape the decoder cannot read costs the
+// message its content, never its tool calls or the rest of the response —
+// the streaming path degrades the same way (review 616).
+func TestDecodeChatResponse_unreadableContentDegrades(t *testing.T) {
+	body := []byte(`{"choices":[{"index":0,"message":{"content":{"text":123},"reasoning_content":"r","tool_calls":[{"id":"t1","type":"function","function":{"name":"f","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`)
+	resp, err := decodeChatResponse(body)
+	if err != nil {
+		t.Fatalf("decodeChatResponse() error = %v", err)
+	}
+	if len(resp.Choices) != 1 {
+		t.Fatalf("len(Choices) = %d, want 1", len(resp.Choices))
+	}
+	msg := resp.Choices[0].Message
+	if msg.Content != "" {
+		t.Errorf("Content = %q, want empty", msg.Content)
+	}
+	if msg.ReasoningContent != "r" {
+		t.Errorf("ReasoningContent = %q, want %q", msg.ReasoningContent, "r")
+	}
+	if len(msg.ToolCalls) != 1 || msg.ToolCalls[0].ID != "t1" {
+		t.Errorf("ToolCalls = %+v, want the tool call preserved", msg.ToolCalls)
+	}
+}
+
+// TestMergeReasoning pins the reasoning de-duplication: endpoints that send
+// both reasoning_content and content-embedded thinking echo the same text
+// twice (review 616).
+func TestMergeReasoning(t *testing.T) {
+	cases := []struct {
+		name   string
+		field  string
+		blocks string
+		want   string
+	}{
+		{name: "field only", field: "a", want: "a"},
+		{name: "blocks only", blocks: "b", want: "b"},
+		{name: "equal halves collapse", field: "same", blocks: "same", want: "same"},
+		{name: "distinct halves concatenate", field: "a", blocks: "b", want: "ab"},
+		{name: "both empty", want: ""},
+	}
+	for _, tc := range cases {
+		if got := mergeReasoning(tc.field, tc.blocks); got != tc.want {
+			t.Errorf("mergeReasoning(%q, %q) = %q, want %q", tc.field, tc.blocks, got, tc.want)
+		}
 	}
 }

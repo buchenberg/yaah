@@ -2,7 +2,7 @@ package providers
 
 import (
 	"encoding/json"
-	"fmt"
+	"log/slog"
 
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -55,17 +55,23 @@ func decodeChatResponse(body []byte) (*types.ChatResponse, error) {
 	for i, ch := range env.Choices {
 		text, thinking, err := decodeContentValue(ch.Msg.Content)
 		if err != nil {
-			return nil, fmt.Errorf("choice %d: %w", i, err)
+			// A content shape this decoder cannot read costs the message
+			// its content and reasoning, never its tool calls or the rest
+			// of the response — the streaming path degrades the same way.
+			// Logged so a wire-shape change stays diagnosable.
+			slog.Warn("provider: unreadable message content shape", "choice", i, "error", err)
+			text, thinking = "", ""
 		}
 		msg := ch.Msg.Message // the embedded types.Message, carried field for field
 		msg.Content = text
 		// reasoning_content is normally a plain string but some endpoints send
 		// it as typed blocks too; a shape this decoder cannot read must not
 		// cost the response its visible content, so the block-derived thinking
-		// from content is kept either way.
+		// from content is kept either way. mergeReasoning drops the duplicate
+		// when both sources carry the same reasoning.
 		reasoning := thinking
 		if rText, rThinking, rErr := decodeContentValue(ch.Msg.ReasoningContent); rErr == nil {
-			reasoning = rText + rThinking + reasoning
+			reasoning = mergeReasoning(rText+rThinking, thinking)
 		}
 		msg.ReasoningContent = reasoning
 		out.Choices[i] = types.Choice{
