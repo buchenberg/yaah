@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.107.0](https://github.com/buchenberg/yaah/compare/v0.106.3...v0.107.0) (2026-10-28)
+
+
+### Features
+
+* **workspace:** route the container lane through the goatherd sandbox seam ([3e9a7e9](https://github.com/buchenberg/yaah/commit/3e9a7e9a71ff376d8296b19bde1a0fc545078202))
+
 ## [0.106.3](https://github.com/buchenberg/yaah/compare/v0.106.2...v0.106.3) (2026-10-27)
 
 
