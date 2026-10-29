@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.109.0](https://github.com/buchenberg/yaah/compare/v0.108.1...v0.109.0) (2026-10-29)
+
+
+### Features
+
+* **dispatch-world:** report-lane container worlds (yaah-ihfh.3) ([380db3e](https://github.com/buchenberg/yaah/commit/380db3ed5b42dc697a735ec63b0ae3c38161c7c2))
+* **grants:** world-relative read/write grants to multi-root confinement (yaah-ihfh.2) ([203decb](https://github.com/buchenberg/yaah/commit/203decb7549e5ac4a2ec0332b42a17e8750ff5b7))
+* **subagent:** dispatch worlds, world-relative grants, and the Shepherd parity ledger ([59373a2](https://github.com/buchenberg/yaah/commit/59373a2ab778d314bc96abaab05ffe9a68fd1758))
+* **subagent:** dispatch-world ladder + parity ledger (yaah-ihfh) ([cd4b32c](https://github.com/buchenberg/yaah/commit/cd4b32cb8c4ffbf579dd3d4d5348ad5fe0533b33))
+
+
+### Bug Fixes
+
+* **dispatch-world:** review fixes — grants honesty, hint path, doctor ([51875a0](https://github.com/buchenberg/yaah/commit/51875a07d92621df8740cb93c7482accb6df739f))
+* **grants:** review fixes — all-readonly means nothing writable ([dae97bb](https://github.com/buchenberg/yaah/commit/dae97bbd86d78ab0e34dfd1194d92948ceb7a74a))
+
+
+### Documentation
+
+* **parity:** pins for croft-dlb; the blocker is settlement wiring ([97282e5](https://github.com/buchenberg/yaah/commit/97282e55008a7aefbf74ce1a8fe1e619d910ae28))
+* **test:** review fixes — WithWritableRoots semantics, assert refusal ([c438050](https://github.com/buchenberg/yaah/commit/c4380505f37d83204fd646f40f476d6e3186b42c))
+
 ## [0.108.1](https://github.com/buchenberg/yaah/compare/v0.108.0...v0.108.1) (2026-10-28)
 
 
