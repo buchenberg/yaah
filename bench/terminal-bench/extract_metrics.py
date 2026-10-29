@@ -32,6 +32,7 @@ RUNS_DIR is the terminal-bench `runs/` output directory.
 import datetime
 import glob
 import json
+import math
 import os
 import sqlite3
 import sys
@@ -129,6 +130,8 @@ def compute_cost(tokens, model, pricing, period="off_peak"):
         billable_output = float(tokens.get("output", 0) or 0) + float(tokens.get("reasoning", 0) or 0)
         total += float(rates.get("output", 0) or 0) * billable_output
     except (TypeError, ValueError):
+        return None, key
+    if not math.isfinite(total):
         return None, key
     return total / 1_000_000.0, key
 
@@ -288,9 +291,10 @@ def sub_session_usage(runs_dir, run_id, task_id):
 
 def _safe_float(value):
     try:
-        return float(value or 0)
+        result = float(value or 0)
     except (TypeError, ValueError, OverflowError):
         return 0.0
+    return result if math.isfinite(result) else 0.0
 
 
 def opencode_usage(runs_dir, run_id, task_id):
@@ -318,10 +322,13 @@ def opencode_usage(runs_dir, run_id, task_id):
             pass
 
     # Stream parsing is the fallback when the durable session row is missing.
-    stream_steps = 0
+    stream_steps = stream_child_steps = 0
     stream_input = stream_output = stream_reasoning = 0
     stream_read = stream_write = 0
     stream_cost = 0.0
+    stream_child_input = stream_child_output = stream_child_reasoning = 0
+    stream_child_read = stream_child_write = 0
+    stream_child_cost = 0.0
     if streams:
         with open(streams[0]) as f:
             for line in f:
@@ -330,18 +337,25 @@ def opencode_usage(runs_dir, run_id, task_id):
                 except ValueError:
                     continue
                 event_session = event.get("sessionID") or ""
-                if root_session and event_session and event_session != root_session:
-                    # Child-session events are represented by the DB split.
-                    continue
+                is_child = bool(root_session and event_session and event_session != root_session)
                 part = event.get("part") or {}
                 if event.get("type") != "step_finish":
                     continue
-                stream_steps += 1
                 tokens = part.get("tokens") or {}
+                cache = tokens.get("cache") or {}
+                if is_child:
+                    stream_child_steps += 1
+                    stream_child_input += _nonneg_int(tokens.get("input"))
+                    stream_child_output += _nonneg_int(tokens.get("output"))
+                    stream_child_reasoning += _nonneg_int(tokens.get("reasoning"))
+                    stream_child_read += _nonneg_int(cache.get("read"))
+                    stream_child_write += _nonneg_int(cache.get("write"))
+                    stream_child_cost += _safe_float(part.get("cost"))
+                    continue
+                stream_steps += 1
                 stream_input += _nonneg_int(tokens.get("input"))
                 stream_output += _nonneg_int(tokens.get("output"))
                 stream_reasoning += _nonneg_int(tokens.get("reasoning"))
-                cache = tokens.get("cache") or {}
                 stream_read += _nonneg_int(cache.get("read"))
                 stream_write += _nonneg_int(cache.get("write"))
                 stream_cost += _safe_float(part.get("cost"))
@@ -352,6 +366,7 @@ def opencode_usage(runs_dir, run_id, task_id):
     if db_paths and root_session:
         rows = []
         messages = []
+        messages_available = False
         try:
             con = sqlite3.connect(f"file:{db_paths[0]}?mode=ro", uri=True)
             rows = con.execute(
@@ -364,6 +379,7 @@ def opencode_usage(runs_dir, run_id, task_id):
                     "SELECT session_id, COUNT(*) FROM session_message "
                     "WHERE type = 'assistant' GROUP BY session_id"
                 ).fetchall()
+                messages_available = True
             except sqlite3.Error:
                 messages = []
             con.close()
@@ -382,7 +398,11 @@ def opencode_usage(runs_dir, run_id, task_id):
                 child_rows.append(child)
                 stack.extend(by_parent.get(child[0], []))
             session_ids = {root_session, *(r[0] for r in child_rows)}
-            steps = sum(count for sid, count in messages if sid in session_ids)
+            steps = (
+                sum(count for sid, count in messages if sid in session_ids)
+                if messages_available
+                else (stream_steps if streams else None)
+            )
 
             def bucket(row):
                 return (
@@ -430,19 +450,25 @@ def opencode_usage(runs_dir, run_id, task_id):
 
     if not streams:
         return None
+    sub_in = stream_child_input + stream_child_read + stream_child_write
+    sub_out = stream_child_output
     return {
-        "tokens_in": stream_input + stream_read + stream_write,
-        "tokens_out": stream_output,
-        "tokens_cached": stream_read,
-        "sub_tokens_in": 0,
-        "sub_tokens_out": 0,
+        "tokens_in": stream_input + stream_read + stream_write + sub_in,
+        "tokens_out": stream_output + sub_out,
+        "tokens_cached": stream_read + stream_child_read,
+        "sub_tokens_in": sub_in,
+        "sub_tokens_out": sub_out,
         "orch_tokens_in": stream_input + stream_read + stream_write,
         "orch_tokens_out": stream_output,
-        "sessions": 1,
-        "steps": stream_steps,
-        "reported_cost_usd": stream_cost,
+        "sessions": 1 + (1 if stream_child_steps else 0),
+        "steps": stream_steps + stream_child_steps,
+        "reported_cost_usd": stream_cost + stream_child_cost,
         "tokens": token_record(
-            stream_input, stream_output, stream_read, stream_write, stream_reasoning
+            stream_input + stream_child_input,
+            stream_output + stream_child_output,
+            stream_read + stream_child_read,
+            stream_write + stream_child_write,
+            stream_reasoning + stream_child_reasoning,
         ),
     }
 

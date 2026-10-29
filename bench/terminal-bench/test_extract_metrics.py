@@ -119,6 +119,30 @@ class TokenNormalizationTest(unittest.TestCase):
         self.assertEqual(usage["tokens"]["reasoning"], 5)
         self.assertEqual(usage["tokens"]["cache_read"], 30)
 
+    def test_opencode_stream_fallback_keeps_child_events(self):
+        with tempfile.TemporaryDirectory() as root:
+            task_dir = os.path.join(root, "run", "hello-world", "trial", "agent-logs")
+            os.makedirs(task_dir)
+            events = [
+                {"type": "step_finish", "sessionID": "ses_root", "part": {
+                    "tokens": {"input": 10, "output": 1, "reasoning": 0,
+                               "cache": {"read": 2, "write": 0}}, "cost": 0.01}},
+                {"type": "step_finish", "sessionID": "ses_child", "part": {
+                    "tokens": {"input": 5, "output": 2, "reasoning": 1,
+                               "cache": {"read": 3, "write": 0}}, "cost": 0.02}},
+            ]
+            with open(os.path.join(task_dir, "opencode-stdout.jsonl"), "w") as f:
+                for event in events:
+                    f.write(json.dumps(event) + "\n")
+            with open(os.path.join(task_dir, "opencode-session.txt"), "w") as f:
+                f.write("ses_root")
+            usage = em.opencode_usage(root, "run", "hello-world")
+        self.assertEqual(usage["tokens"]["input"], 15)
+        self.assertEqual(usage["tokens"]["cache_read"], 5)
+        self.assertEqual(usage["sub_tokens_in"], 8)
+        self.assertEqual(usage["sub_tokens_out"], 2)
+        self.assertEqual(usage["steps"], 2)
+
     def test_opencode_db_folds_child_sessions(self):
         with tempfile.TemporaryDirectory() as root:
             task_dir = os.path.join(root, "run", "hello-world", "trial", "agent-logs")
@@ -178,7 +202,7 @@ class TokenNormalizationTest(unittest.TestCase):
             usage = em.opencode_usage(root, "run", "hello-world")
         self.assertEqual(usage["tokens"]["input"], 0)
         self.assertEqual(usage["tokens_in"], 0)
-        self.assertEqual(usage["steps"], 0)
+        self.assertIsNone(usage["steps"])
 
     def test_usage_report_splits_cached_prompt(self):
         with tempfile.TemporaryDirectory() as root:

@@ -171,8 +171,9 @@ Normalization rules:
   zero. When an arm reports reasoning separately, `output` excludes it and
   the shared cost bills reasoning at the output rate; when the arm cannot
   separate them, `reasoning` is null and `output` is the billed output.
-- `steps` is assistant turns for yaah and the driver's API-call count for
-  adapter arms; `null` when unavailable.
+- `steps` is assistant turns for yaah, assistant messages from OpenCode's
+  session DB (step counts from the event stream are the fallback), and the
+  driver's API-call count for report-based arms; `null` when unavailable.
 - Cost comes from the single shared [pricing.json](pricing.json) table, never
   from an arm's self-reported price. The extractor selects the provider's
   peak/off-peak tier from the run's start time (and records whether the tier
