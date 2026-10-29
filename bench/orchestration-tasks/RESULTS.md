@@ -470,3 +470,35 @@ output IDs, and sealed-output counts. Recorded copies are re-vendored.
 
 This affects every orchestration task that asserts settlement/sealed evidence,
 not only the mock track.
+
+## 2026-10-29 — deterministic mock provider (`yaah-bpu`)
+
+Adds a mock-provider track for orchestration mechanics without sampling a
+model. `_mock/server.py` is an OpenAI-compatible streaming server; each task
+has a trap that pins the model allowlist, ordered request kinds, allowed tool
+calls, and canned assistant turns. A request outside the trap is rejected
+with 400 — there is no fallback to a real provider.
+
+`orch-settle-discard-mock` is the first wired task. It keeps the real yaah
+binary, fixture, runtime, proposal/settlement path, and verifier; only the
+provider is synthetic. The trap reads the proposal id from the actual
+`delegate` result and substitutes it into the discard call and `answer.txt`,
+so the runtime's per-session id stays real rather than being faked.
+
+Two fixed runs, same commit, same fake key (`DEEPSEEK_API_KEY=mock`):
+
+- `2026-10-29__16-06-22`: **1/1**
+- `2026-10-29__16-07-08`: **1/1**
+
+`compare_runs.py` reports an exact match on verdict, message/tool sequence,
+token accounting, and trace record-schema counts. The token counts are 72,716
+input / 96 output / 10,842 sub-agent input / 32 sub-agent output in both
+runs; both trace stores carry the same 47 records across the same schemas.
+Only the runtime-generated proposal id (and timestamps) vary. The server's
+usage estimate normalizes that id before measuring, so the token accounting
+does not move with it.
+
+Run with `DATASET=bench/orchestration-tasks`,
+`SUITE=bench/orchestration-tasks/mock-suite.txt`, and `DEEPSEEK_API_KEY=mock`;
+the mock service is a compose sidecar built from `_mock/` with a task-specific
+trap.

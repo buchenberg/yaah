@@ -1,0 +1,9 @@
+# Deterministic mock-provider suite. Run twice and compare both runs.
+#
+#   DEEPSEEK_API_KEY=mock DATASET=bench/orchestration-tasks \
+#   SUITE=bench/orchestration-tasks/mock-suite.txt bench/terminal-bench/run.sh
+#
+# The mock provider is a compose sidecar defined by each task; no real model
+# is contacted. This list is separate from suite.txt so the live-model
+# scoreboard never silently mixes in synthetic runs.
+orch-settle-discard-mock

@@ -1,0 +1,23 @@
+{
+  "task": "orch-settle-discard-mock",
+  "model_allowlist": ["mock-orchestrator"],
+  "steps": [
+    "orchestrator_delegate",
+    "subagent_write",
+    "subagent_final",
+    "orchestrator_discard",
+    "orchestrator_write",
+    "orchestrator_final"
+  ],
+  "allowed_tools": ["delegate", "write", "proposal"],
+  "delegate": {
+    "role": "developer",
+    "description": "Create fizzbuzz.py",
+    "prompt": "Create fizzbuzz.py at the repository root with a fizzbuzz(n) function and a __main__ block that prints 1..15. Do not modify README.md or trap.txt."
+  },
+  "fizzbuzz_path": "fizzbuzz.py",
+  "fizzbuzz": "def fizzbuzz(n):\n    if n % 15 == 0:\n        return \"FizzBuzz\"\n    if n % 3 == 0:\n        return \"Fizz\"\n    if n % 5 == 0:\n        return \"Buzz\"\n    return str(n)\n\n\nif __name__ == \"__main__\":\n    for i in range(1, 16):\n        print(fizzbuzz(i))\n",
+  "developer_report": "Created fizzbuzz.py and verified it with the file tool.\n\n## Changes\n- **files_modified** (evidence): none\n- **files_created** (evidence): fizzbuzz.py\n- **files_deleted** (evidence): none\n- **tools_used** (evidence): write\n- **summary** (interpretation): implemented the requested FizzBuzz function and entry point\n- **findings** (interpretation): none\n",
+  "answer_template": "discarded: {proposal_id}\n",
+  "final": "Discarded the sealed proposal and wrote answer.txt."
+}

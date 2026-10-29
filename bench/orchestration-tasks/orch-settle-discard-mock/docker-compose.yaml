@@ -1,0 +1,33 @@
+services:
+  client:
+    build:
+      dockerfile: Dockerfile
+    image: ${T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME}
+    container_name: ${T_BENCH_TASK_DOCKER_CLIENT_CONTAINER_NAME}
+    command: ["sh", "-c", "sleep infinity"]
+    environment:
+      - TEST_DIR=${T_BENCH_TEST_DIR}
+    depends_on:
+      mock:
+        condition: service_healthy
+    volumes:
+      - ${T_BENCH_TASK_LOGS_PATH}:${T_BENCH_CONTAINER_LOGS_PATH}
+      - ${T_BENCH_TASK_AGENT_LOGS_PATH}:${T_BENCH_CONTAINER_AGENT_LOGS_PATH}
+  mock:
+    build:
+      context: ../_mock
+      dockerfile: Dockerfile
+    image: ${T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME}-mock
+    environment:
+      - MOCK_TRAP=/traps/orch-settle-discard-mock.json
+    expose:
+      - "8080"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"
+      interval: 1s
+      timeout: 2s
+      retries: 30
