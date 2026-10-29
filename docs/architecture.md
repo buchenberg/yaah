@@ -883,6 +883,13 @@ but never returns them. The agent loop continues even if the database is
 unavailable. The persister does not advance the message index on a failed
 insert.
 
+### Two stores
+
+Session state lives in `state.db`; the append-only Shepherd evidence and
+recovery record lives in `trace.db`. They intentionally overlap in message
+content and are not replicas. See [storage.md](./storage.md) for the ownership,
+fidelity, and retention contract.
+
 ---
 
 ---
