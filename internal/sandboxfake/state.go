@@ -23,6 +23,12 @@ import (
 // noise. A real backend derives identity from content or revisions, not from
 // write timestamps.
 
+// ReleaseState is a no-op: the fake capture carries no external pin. It exists
+// so capturing test backends still satisfy the release contract.
+func (s *Sandbox) ReleaseState(_ context.Context, _ shepherdtrace.WorkspaceState) error {
+	return nil
+}
+
 // capture records the tree as a WorkspaceState. Revision counts captures, so
 // two captures of different trees never collide on the same key.
 func (s *Sandbox) Capture(_ context.Context) (shepherdtrace.WorkspaceState, error) {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -78,32 +77,40 @@ func openDispatchWorld(ctx context.Context, rt RetainedRuntime) (*SessionSandbox
 		if err != nil {
 			return nil, fmt.Errorf("capture the session container state: %w", err)
 		}
-		release := func() {
+		release := func() error {
 			// Capture pins a state. The sibling's active layer keeps its own
 			// lease; drop this transient pin once the state has been applied.
+			// An isolated backend that cannot release is refused rather than
+			// leaking a pin per report dispatch.
 			releaser, ok := dw.SessionSandbox.sb.(interface {
 				ReleaseState(context.Context, shepherdtrace.WorkspaceState) error
 			})
 			if !ok {
-				return
+				if dw.SessionSandbox.sb.Capabilities().Isolated {
+					return fmt.Errorf("session backend %q captures state but does not expose ReleaseState", dw.SessionSandbox.sb.Backend())
+				}
+				return nil
 			}
-			if rerr := releaser.ReleaseState(context.WithoutCancel(startCtx), state); rerr != nil {
-				slog.Warn("dispatch world: release session capture", "err", rerr)
-			}
+			return releaser.ReleaseState(context.WithoutCancel(startCtx), state)
 		}
 		ss, err := StartSessionSandbox(startCtx, dw.Config, dw.Opener, "", dw.Deny)
 		if err != nil {
-			release()
+			_ = release()
 			return nil, err
 		}
 		if err := ss.sb.Apply(startCtx, state); err != nil {
 			dctx, dcancel := context.WithTimeout(context.WithoutCancel(ctx), dispatchWorldDestroyTimeout)
 			defer dcancel()
 			destroyErr := ss.Destroy(dctx)
-			release()
-			return nil, errors.Join(fmt.Errorf("seed the sibling container from the session state: %w", err), destroyErr)
+			releaseErr := release()
+			return nil, errors.Join(fmt.Errorf("seed the sibling container from the session state: %w", err), destroyErr, releaseErr)
 		}
-		release()
+		if err := release(); err != nil {
+			dctx, dcancel := context.WithTimeout(context.WithoutCancel(ctx), dispatchWorldDestroyTimeout)
+			defer dcancel()
+			_ = ss.Destroy(dctx)
+			return nil, fmt.Errorf("release the session capture: %w", err)
+		}
 		return ss, nil
 	}
 
