@@ -337,7 +337,7 @@ Sub-agents use their own curated pipeline and per-role directives.
 | `output_limit` | 51200 | Byte cap on sub-agent reports; 0 = built-in 50 KiB cap |
 | `json_mode` | false | Force structured JSON output |
 | `mode` | `retained` | Dispatch lane — `retained` (isolated worktree + proposal) or `shared` (direct to host) |
-| `world` | `auto` | Dispatch world — `auto` (per-dispatch container for report-lane dispatches when `workspace.containerd.image` is set on Linux, else the worktree, recording any degradation), `worktree` (never container), `container` (report lanes only; fails closed if unavailable). Proposal-lane container worlds await the container settlement path. Orthogonal to `mode`. See [shepherd-parity.md](./shepherd-parity.md#dispatch-worlds) |
+| `world` | `auto` | Dispatch world — `auto` (per-dispatch container for report-lane dispatches when `workspace.containerd.image` is set on Linux, else the worktree, recording any degradation; **proposal** lanes stay on the worktree until manifest rehydration lands), `worktree` (never container), `container` (opt in; a proposal seals a GitDelta manifest, a report runs in a container; fails closed if unavailable). Orthogonal to `mode`. See [shepherd-parity.md](./shepherd-parity.md#dispatch-worlds) |
 | `roles.<name>.world` | — | Per-role world override (`auto` / `worktree` / `container`); empty inherits `agents.subagent.world` |
 | `grants` | `[]` | Per-dispatch write authority — a list of `{path, access}` roots relative to the dispatch world. `readwrite` roots are writable, `readonly` roots are declared but denied writes; roots must be disjoint. Empty = the whole world (legacy) |
 | `roles.<name>.grants` | — | Per-role grant set; empty inherits `agents.subagent.grants` |
@@ -428,19 +428,25 @@ everything runs on the host filesystem, as it always has.
 | `root` | `/workspace` | Containment root inside the sandbox. Must be absolute and not `/` when a container sandbox is in effect (`backend: containerd`, or `containerd.image` set in a local session) — config validation refuses otherwise |
 | `containerd.address` | containerd's own default | containerd socket or endpoint; supports `${ENV_VAR}` substitution |
 | `containerd.namespace` | `default` | containerd namespace for the session's containers |
-| `containerd.image` | (required for `containerd`) | Base image. Must satisfy the tool contract (sh, GNU stat/find, git, rg, base64, Go toolchain) — verified at startup. In a `local` session, setting it also enables per-dispatch container worlds for report-lane sub-agents (see below) |
+| `containerd.image` | (required for `containerd`) | Base image. Must satisfy the tool contract (sh, GNU stat/find, git, rg, base64, Go toolchain) — verified at startup. In a `local` session, setting it also enables per-dispatch container worlds: report lanes use one under `world: auto`; proposal lanes opt in with `world: container` (see below) |
 | `containerd.snapshotter` | `overlayfs` | containerd snapshotter plugin |
 | `containerd.fifo_dir` | `<yaah home>/containerd-fifo` | Directory the containerd *client* creates the task/exec stdio FIFOs in. containerd's own default (`/run/containerd/fifo`) is root-only, so the yaah default keeps unprivileged sessions working; must be absolute. Avoids a predictable name under the shared temp dir, which another local user could pre-create |
 
 The `containerd` stanza is also the per-dispatch container's config: in a
 `local` session (where `backend` stays `local`), setting `containerd.image`
 lets a **report-lane** sub-agent dispatch run in its own container instead of a
-worktree. The container is created from the repository at dispatch time,
-destroyed afterwards, and never seals — proposal-lane container worlds stay
-awaiting the container settlement path (see [shepherd-parity.md](./shepherd-parity.md)). A
-preflight failure (open, probe, create, bootstrap) degrades `world: auto` to the
-worktree with a recorded warning; `world: container` fails closed. This path is
-Linux-only, like the `containerd` backend itself.
+worktree, and lets a **proposal-lane** dispatch opt in with
+`world: container`. A report container is created at dispatch time and
+destroyed afterwards; it never seals. A proposal container seals a `GitDelta`
+change manifest before it is destroyed, and `select`/`apply` settle that
+manifest onto the host. Proposal containers are opt-in, not `auto`, until
+persisted manifests can be rehydrated across restarts: the manifest survives
+under `.yaah/proposals/<id>/`, but `proposal list`/`show`/`select` cannot see it
+after a restart. A preflight failure (open, probe, create, bootstrap) degrades
+`world: auto` to the worktree with a recorded warning; `world: container` fails
+closed. A restrictive `network` posture (`deny_all`/`broker`) is refused for a
+container world because `http`/`webfetch` run in this process, outside the
+container. This path is Linux-only, like the `containerd` backend itself.
 
 The `containerd` backend requires a Linux containerd daemon: config
 validation refuses it at load on any other platform. The daemon's socket is
@@ -709,6 +715,7 @@ here rather than restating it.
 | Orchestrator / root session (local) | path containment only: `--workspace`, `agents.default.workspace_deny_patterns` | none — unconfined, no jail | the URL guard (below) |
 | `mode: shared` dispatch | the host tree, same as the root | none — and a restrictive `network` is **refused**, because there is no workdir to jail | the URL guard |
 | Retained dispatch (`proposal` / `report` lane, worktree) | worktree-only writable root under `containment`; advisory where no jail exists | `agents.subagent.network`: `allow_all` (default), `deny_all`, or `broker` + `network_hosts` | the URL guard — and a *restrictive* posture **omits** both tools, because they would bypass the jail |
+| Per-dispatch container (`world: container`, or `auto` for a report lane) | the container | the container's netns (loopback-only); a restrictive `agents.subagent.network` is **refused** for a container world | the URL guard — `http`/`webfetch` run in the yaah process, outside the container |
 | Isolated session (`workspace.backend: containerd`), and every dispatch inside it | the container | the container's own posture; `agents.subagent.network` is neither applied nor refused | the URL guard — the request is still made by the yaah process, **outside** the container, so the container neither protects nor blocks these two tools |
 
 **What the URL guard blocks (`http`, `webfetch`; always on, in every lane).**

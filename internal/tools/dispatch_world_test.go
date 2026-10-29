@@ -59,17 +59,80 @@ func TestResolveDispatchWorld(t *testing.T) {
 		}
 	})
 
-	t.Run("a shipped lane reports a host failure as a degradation", func(t *testing.T) {
+	t.Run("a wired dispatch setup keeps an auto proposal on the worktree", func(t *testing.T) {
+		rt := RetainedRuntime{
+			World:           "auto",
+			ContainerWorlds: true,
+			DispatchWorlds:  &DispatchWorlds{},
+			Containment:     "auto",
+			Network:         "allow_all",
+		}
+		res, err := resolveDispatchWorld(rt, "developer", false)
+		if err != nil {
+			t.Fatalf("resolveDispatchWorld: %v", err)
+		}
+		if res.Resolved != subagent.WorldWorktree || res.Degraded {
+			t.Fatalf("got %+v, want an undegraded worktree (proposal containers are opt-in)", res)
+		}
+	})
+
+	t.Run("explicit container opts a proposal into the container world", func(t *testing.T) {
+		rt := RetainedRuntime{
+			World:           "container",
+			ContainerWorlds: true,
+			DispatchWorlds:  &DispatchWorlds{},
+			Containment:     "auto",
+			Network:         "allow_all",
+		}
+		res, err := resolveDispatchWorld(rt, "developer", false)
+		if err != nil {
+			t.Fatalf("resolveDispatchWorld: %v", err)
+		}
+		if res.Resolved != subagent.WorldContainer || res.Degraded {
+			t.Fatalf("got %+v, want an undegraded container", res)
+		}
+	})
+
+	t.Run("auto proposals stay silent while the lane is opt-in", func(t *testing.T) {
 		rt := RetainedRuntime{World: "auto", ContainerWorlds: true, Containment: "auto", Network: "allow_all"}
 		res, err := resolveDispatchWorld(rt, "developer", false)
 		if err != nil {
 			t.Fatalf("resolveDispatchWorld: %v", err)
 		}
-		if res.Resolved != "worktree" || !res.Degraded {
-			t.Fatalf("got %+v, want a degraded worktree", res)
+		if res.Resolved != "worktree" || res.Degraded {
+			t.Fatalf("got %+v, want an undegraded worktree", res)
 		}
-		if !strings.Contains(res.Reason, "settlement") {
-			t.Fatalf("reason %q must name the blocker", res.Reason)
+	})
+
+	t.Run("a restrictive egress posture refuses a container world", func(t *testing.T) {
+		rt := RetainedRuntime{
+			World:           "auto",
+			ContainerWorlds: true,
+			DispatchWorlds:  &DispatchWorlds{},
+			Containment:     "auto",
+			Network:         "deny_all",
+		}
+		res, err := resolveDispatchWorld(rt, "reviewer", true)
+		if err != nil {
+			// A host with no usable syscall jail (for example macOS without a
+			// Seatbelt backend) has no legal world for deny_all: the worktree
+			// cannot enforce it either. The container must still be refused
+			// for the network reason, not chosen.
+			if !strings.Contains(err.Error(), "network") {
+				t.Fatalf("error = %q, want it to name the network posture", err)
+			}
+		} else if res.Resolved != subagent.WorldWorktree || !res.Degraded {
+			t.Fatalf("got %+v, want a degraded worktree", res)
+		} else if !strings.Contains(res.Reason, "network") {
+			t.Fatalf("reason %q must name the network posture", res.Reason)
+		}
+
+		explicit := rt
+		explicit.World = "container"
+		if _, err := resolveDispatchWorld(explicit, "reviewer", true); err == nil {
+			t.Fatal("explicit container with deny_all must fail closed")
+		} else if !strings.Contains(err.Error(), "network") {
+			t.Fatalf("error = %q, want it to name the network posture", err)
 		}
 	})
 

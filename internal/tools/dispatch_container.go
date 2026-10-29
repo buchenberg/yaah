@@ -6,17 +6,18 @@ import (
 	"strings"
 	"time"
 
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	goatherd "github.com/buchenberg/goatherd-runtime"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/jobs"
 )
 
-// dispatch_container.go implements the report lane's per-dispatch container
-// world (yaah-ihfh.3). A report dispatch never seals, so it can use a container
-// without a settlement path: the world is created, used, and destroyed, and
-// nothing it produces is settled. A proposal dispatch still resolves to the
-// worktree, because a container proposal has no wired settlement path across
-// the git parent and the croft child.
+// dispatch_container.go implements per-dispatch container worlds (yaah-ihfh.3).
+// A report dispatch never seals, so its container is created, used, and
+// destroyed. A proposal dispatch seals its work as a GitDelta manifest before
+// the container is destroyed (docs/shepherd-parity.md §Container settlement:
+// GitDelta), so settlement needs no live world: the manifest is the proposal.
+// Both lanes obtain the world from the same DispatchWorlds setup.
 
 const (
 	// dispatchWorldStartTimeout bounds a per-dispatch container's preflight:
@@ -72,8 +73,8 @@ func openDispatchWorld(ctx context.Context, rt RetainedRuntime) (*SessionSandbox
 
 // runDispatchContainer runs one report dispatch inside its own container world.
 // The child scope is pure-causal (no worktree sandbox): the container is the
-// substrate, and it is owned by this call rather than by the scope — attaching
-// it to the scope would demand a settlement path that is not wired yet.
+// substrate, and it is owned by this call. A report registers no proposal, so
+// there is nothing to settle and the container is destroyed on every path.
 //
 // The body runs with the sandbox's workspace in its context so the runner builds
 // the sub-agent's registry against the container; teardown discards the scope
@@ -129,6 +130,140 @@ func runDispatchContainer(
 	runCtx = WithDispatchWorkspace(runCtx, sandbox.Workspace())
 
 	return rt.Runner(runCtx, prompt, sp)
+}
+
+// runDispatchContainerProposal runs one proposal dispatch inside its own
+// container world and seals the result as a GitDelta manifest. The container is
+// destroyed at seal on every path — success, body error, or seal failure — so
+// no world outlives the proposal and no lease or recovery scan is needed.
+//
+// A body error still yields a sealed (partial) manifest, matching the worktree
+// lane: the work is reviewable, and the envelope says why the run stopped. A
+// seal or persistence failure has no proposal to settle and is reported in the
+// envelope, never silently dropped.
+func runDispatchContainerProposal(
+	ctx context.Context,
+	rt RetainedRuntime,
+	parent *goatherd.Scope,
+	prompt string,
+	subParams jobs.SubAgentParams,
+	timeout time.Duration,
+	res subagent.WorldResolution,
+	sandbox *SessionSandbox,
+	basisState shepherdtrace.WorkspaceState,
+	basisDigest string,
+) (out string, runErr error) {
+	id := fmt.Sprintf("proposal:%d:%d", time.Now().UnixNano(), proposalSeq.Add(1))
+	env := proposalEnvelope{ProposalID: id, Next: proposalVerbs(), World: string(res.Resolved)}
+	if res.Degraded {
+		env.Warning = "dispatch world degraded: " + res.Reason
+	}
+
+	var scope *goatherd.Scope
+	// The container must be gone by the time the envelope is returned. Both
+	// teardown steps are bounded and cancel-free: the dispatch's context is
+	// usually over by now, and a teardown that honoured it would leak the very
+	// thing it exists to remove.
+	defer func() {
+		if note := teardownDispatchWorld(ctx, parent, scope, sandbox); note != "" {
+			env.Notes = appendSettleNote(env.Notes, note)
+		}
+		out = marshalProposalEnvelope(env)
+	}()
+
+	scope, err := rt.ScopeManager.Fork(rt.RootScopeID, id, nil)
+	if err != nil {
+		env.Status = "error"
+		env.Error = "fork container dispatch scope: " + err.Error()
+		return "", nil
+	}
+	recordWorldFact(ctx, rt.ScopeManager, scope.ID(), res)
+
+	root := sandbox.Workspace().WorkDir()
+	// The basis is captured after the bootstrap and before the body: the
+	// bootstrap commits a synthetic baseline when the host tree was dirty, so
+	// HEAD is exactly the tree the body starts from.
+	base, herr := containerGitHead(ctx, sandbox.sb, root)
+	if herr != nil {
+		env.Status = "error"
+		env.Error = "container dispatch: capture baseline HEAD: " + herr.Error()
+		return "", nil
+	}
+
+	sp := subParams
+	sp.Workdir = root
+
+	budgetDeadline := time.Now().Add(timeout)
+	parentDeadline, parentHasDeadline := ctx.Deadline()
+	budgetGoverns := timeout > 0 && (!parentHasDeadline || parentDeadline.After(budgetDeadline))
+
+	runCtx := ctx
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		runCtx, cancel = context.WithTimeout(ctx, timeout)
+	}
+	runCtx = WithDispatchWorkspace(runCtx, sandbox.Workspace())
+	result, bodyErr := rt.Runner(runCtx, prompt, sp)
+	runErrState := runCtx.Err()
+	parentErr := ctx.Err()
+	if cancel != nil {
+		cancel()
+	}
+
+	var notes []string
+	bodyFailure := ""
+	if bodyErr != nil {
+		source := classifyRetainedBodyFailure(bodyErr, timeout, runErrState, parentErr, budgetGoverns)
+		bodyFailure = retainedBodyFailure(bodyErr, sp.Role, timeout, source)
+		notes = append(notes, bodyFailure)
+	}
+
+	// Seal on the dispatch context, not the (possibly expired) run context: a
+	// timed-out body's partial work is still worth sealing.
+	delta, review, sealErr := captureGitDelta(ctx, sandbox.sb, root, base)
+	if sealErr != nil {
+		notes = append(notes, "seal: "+sealErr.Error())
+		env.Status = "error"
+		env.Result = trimResult(result)
+		env.Error = trimResult(strings.Join(notes, "; "))
+		return "", nil
+	}
+	dir, perr := persistGitDelta(ctx, rt.RepoPath, id, delta, review)
+	if perr != nil {
+		notes = append(notes, "seal: persist delta: "+perr.Error())
+		env.Status = "error"
+		env.Result = trimResult(result)
+		env.Error = trimResult(strings.Join(notes, "; "))
+		return "", nil
+	}
+
+	rt.Proposals.add(&retainedProposal{
+		id:          id,
+		delta:       delta,
+		review:      review,
+		result:      trimResult(result),
+		runErr:      bodyFailure,
+		parentID:    rt.RootScopeID,
+		mgr:         rt.ScopeManager,
+		repoPath:    rt.RepoPath,
+		basisState:  basisState,
+		basisDigest: basisDigest,
+		artifactDir: dir,
+		world:       string(subagent.WorldContainer),
+	})
+
+	env.Status = "proposal"
+	env.Result = trimResult(result)
+	env.Files = delta.Paths()
+	reviewText := review
+	if reviewText == "" {
+		reviewText = delta.RenderDiff()
+	}
+	env.Diff = clipDiff(reviewText)
+	if len(notes) > 0 {
+		env.Error = trimResult(strings.Join(notes, "; "))
+	}
+	return "", nil
 }
 
 // teardownDispatchWorld discards the dispatch's pure-causal scope and destroys

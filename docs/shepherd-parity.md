@@ -29,7 +29,7 @@ for the jail; it does not compose with one.
 
 | Session | World per dispatch | Authority | Settlement |
 |---|---|---|---|
-| local (default) | linked git worktree (`ForkIsolated`); report lanes may use a per-dispatch container when `workspace.containerd.image` is set on Linux | Landlock / winacl around the dispatch's shell children; the container boundary for a container world | sealed proposal (worktree); none (report) |
+| local (default) | linked git worktree (`ForkIsolated`); report lanes may use a per-dispatch container under `world: auto` when `workspace.containerd.image` is set on Linux; proposal lanes may opt in with `world: container` | Landlock / winacl around the dispatch's shell children; the container boundary for a container world | sealed proposal (worktree); GitDelta manifest (container proposal, opt-in); none (report) |
 | containerd | the session's one container (shared) | the container boundary | none (`Retain` off) |
 
 The reference's grain is one world per **run**. yaah's run is a dispatch, so
@@ -58,7 +58,9 @@ agents:
 
 - `auto` (default) — try `container`, step down to `worktree` when the
   container world is unavailable **and** the fallback still satisfies every
-  declared requirement. Degradations are recorded and surfaced.
+  declared requirement. Degradations are recorded and surfaced. A **proposal**
+  lane is the exception while manifest rehydration is pending: `auto` keeps it
+  on the worktree, and `container` opts in.
 - `container` — fail closed. A dispatch that cannot get a container world does
   not run.
 - `worktree` — never container. The existing behaviour, made explicit.
@@ -94,8 +96,8 @@ declared. This generalises the reference's placement-honesty rule
 | Declared | Fallback runs only if | Otherwise |
 |---|---|---|
 | `containment: auto` | the fallback has some enforcement | advisory, recorded |
-| `containment: paddock` | the fallback is actually jailed | fail |
-| `network: deny_all` / `broker` | the fallback can enforce it (Landlock ABI ≥ 4, or netns) | fail |
+| `containment: paddock` | the fallback is jailed, or is a container boundary (tier `contained` — a substitute, not a composition) | fail |
+| `network: deny_all` / `broker` | the fallback can enforce it for both shell children and host-run `http`/`webfetch` (Landlock ABI ≥ 4); a container netns covers only the shell children, so a container world is refused | fail |
 | `ReadOnly` grants | the fallback can enforce them | fail |
 | settlement (`mode: retained`) | the fallback is a retained world | fail, or explicitly opt out of retention |
 
@@ -155,8 +157,7 @@ lane reuses the `workspace.containerd` stanza (image, namespace, address,
 snapshotter, `fifo_dir`) and the session container's copy-in contract: the
 repository is copied in at dispatch time, the body runs with the sandbox
 workspace as its substrate, and the scope and container are torn down
-afterwards. Nothing is sealed, so croft's sequence-keyed capture cannot reach a
-settlement.
+afterwards. Nothing is sealed, so the report lane needs no settlement path.
 
 - Offered only in a host session (no session container) on Linux with
   `workspace.containerd.image` set.
@@ -167,34 +168,100 @@ settlement.
   transparently re-run in another world.
 - The resolution is recorded as `yaah.subagent.world.v1`, and a degraded report
   carries the warning in its result. **In-run** failures still fail the dispatch.
-- Proposal lanes are unchanged: `world: container` refuses and `auto` degrades
-  to the worktree, because container settlement is not wired yet.
+- Proposal lanes opt in with `world: container`; `auto` keeps them on the
+  worktree until manifest rehydration lands. An opted-in proposal seals a
+  `GitDelta` manifest before the container is destroyed.
+- A restrictive `network` posture (`deny_all`/`broker`) is refused for a
+  container world: the shell children are netns-bound, but `http`/`webfetch`
+  execute in the yaah process on the host, which a container netns cannot
+  cover. `allow_all` is the only posture a container world accepts.
 
-### Retained container worlds — waiting on settlement wiring
+### Retained container worlds — shipped as a change manifest
 
 `croft-dlb` shipped (croft `v0.9.1`, adapter `v0.2.0`): unchanged captures
 return the previous state verbatim, and `ContentDigest` rides the kernel
-state's `Data`. Container capture is now digest-stable.
+state's `Data`.
 
-What remains is yaah's settlement path, not croft. In a host session the parent
-root is a **git** sandbox while the dispatch world is a **croft** one;
-settlement's `select`/`apply` compare and merge workspace states within one
-backend. A container proposal therefore needs either a git-patchable delta that
-yaah settles onto the host tree, or a container root (hybrid mode). Until that
-is chosen:
+yaah's settlement path does not use that digest across backends. In a host
+session the parent root is a **git** sandbox while the dispatch world is croft,
+so container proposals settle as a `GitDelta` change manifest (below) rather
+than as a kernel state. The container is destroyed at seal; the manifest is the
+proposal, so `select`, `apply`, `release`, and `discard` all work with no live
+world:
 
-- `world: auto` resolves `container` → `worktree` for a **proposal** dispatch,
-  with a recorded warning;
-- `world: container` fails closed for a proposal dispatch;
-- report lanes already use a container world (above), because they never seal.
+- `world: auto` keeps a **proposal** on the worktree even when
+  `DispatchWorlds` is wired: the manifest cannot be rehydrated after a restart
+  yet, so automatic proposal containers would strand sealed work. `world:
+  container` opts in; a preflight failure there fails closed, and `auto` keeps
+  the worktree.
+- report lanes use a container world under `auto`, because they never seal.
 
-Acceptance for flipping `container` to available for **retained** dispatches:
+Acceptance for retained container dispatches:
 
 1. ~~`Capture` is content-stable~~ — done (croft-dlb).
-2. A dispatch container can be settled onto the host: `select` fast-forwards,
-   `apply` merges path-disjoint, `discard` removes the world.
-3. A crash mid-dispatch is recoverable or prunable by `yaah shepherd`.
+2. ~~A dispatch container can be settled onto the host~~ — done: `select`
+   applies onto the dispatch basis, `apply` writes whole paths when disjoint,
+   `release` exports the manifest, `discard` removes it.
+3. A crash mid-dispatch is recoverable or prunable by `yaah shepherd`: after a
+   seal the manifest is durable and there is no world to recover, but a
+   container orphaned before the seal is still the container runtime's to reap.
+   **Not met for post-seal recovery:** `.yaah/proposals/<id>/` survives a
+   restart, but the in-session registry is not rebuilt, so `proposal
+   list`/`show`/`select` cannot reach it. This is why proposal containers are
+   opt-in rather than selected by `auto`; the durability slice is tracked
+   separately.
 4. `yaah doctor` reports the resolution and the reason before the first run.
+
+## Container settlement: `GitDelta`
+
+A proposal from a container world cannot use the kernel's state-based
+settlement: the parent root is a git sandbox and the dispatch world is croft,
+so there is no shared state language to compare or merge. The cross-backend
+artifact is a **change manifest**, not a text patch:
+
+```
+GitDelta = []Change{ Path, Kind(add|modify|delete), Mode, Content }
+```
+
+It is Shepherd's `Changeset`: whole-path post-images, produced with git
+plumbing inside the container against the baseline commit the bootstrap already
+creates (`commitContainerBaseline`). A text patch is deliberately rejected —
+its context/fuzz and binary handling are the fidelity traps; the manifest is
+exact, and applying it is a writer rather than a patch parser.
+
+### Semantics (reference-faithful)
+
+- **Basis** — the in-container baseline commit (the synthetic commit for a
+  dirty host tree; HEAD for a clean one). The host's git state at dispatch is
+  captured for the `select` precondition.
+- **`select`** — capture the host state again; equal ⇒ apply the manifest
+  (fast-forward). A moved host fails closed.
+- **`apply`** — only when the manifest's paths are disjoint from the host's
+  changes since the basis. Whole-path replacement/deletion; no 3-way, no hunk
+  merge, no content synthesis.
+- **`release`** — persist the manifest under the proposal's retention path and
+  drop the world.
+- **`discard`** — drop the manifest and the world.
+- Consume-once, same envelope and verbs as the worktree lane.
+
+### Lifecycle
+
+The container is destroyed at seal: the proposal is the manifest, not a live
+snapshot, so there is no pinned croft state, no lease, and no orphan container
+to recover. The manifest is written durably (`.yaah/proposals/<id>/`) at seal,
+which is what makes a crash-surviving proposal possible without keeping the
+world alive. Total manifest size is capped; exceeding it fails the seal with a
+clear message rather than truncating.
+
+### Acceptance
+
+1. A container proposal shows a diff and settles `select`/`apply`/`release`/
+   `discard` onto the host tree.
+2. `apply` refuses overlapping paths; `select` refuses a moved host.
+3. The container is gone after seal; the manifest survives on disk across a
+   restart (in-session registry rehydration is not implemented yet).
+4. Report lanes are unchanged.
+5. Tests run without a daemon (sandbox fake + temp repos).
 
 ## Decision records
 
@@ -215,6 +282,15 @@ A dispatch is yaah's run. When containers are available, a proposal dispatch
 gets its own container world; a report or shared dispatch gets one only where
 it adds value (report: yes; shared: no, by definition). The session world is
 never the dispatch world.
+
+### D11 — container settlement is a change manifest (yaah-ihfh.3)
+
+A container proposal settles as a `GitDelta` manifest (whole-path
+post-images), not a text patch and not a croft state. The reasons: the parent
+and child worlds do not share a state language; a manifest is exact where a
+patch is contextual; path-disjoint whole-path application is the reference's
+"no content synthesis" rule; and destroying the container at seal removes the
+pinning/recovery problem entirely.
 
 ### D10 — grants are world-relative (yaah-ihfh.2)
 
