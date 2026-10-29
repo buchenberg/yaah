@@ -10,7 +10,10 @@ the Terminal-Bench harness as an installed agent.
 - Agent adapter: `yaah_agent.py` (import path `yaah_agent:YaahAgent`)
 - Comparison adapters: `hermes_agent.py` for hermes (import path
   `hermes_agent:HermesAgent`; ships a prebuilt package tree per Python
-  minor version — see its module docstring for the tarball build)
+  minor version — see its module docstring for the tarball build), and
+  `opencode_agent.py` for OpenCode (import path
+  `opencode_agent:OpenCodeAgent`; copies the static binary and keeps the
+  session database under the mounted `agent-logs` path)
 - Container setup: `yaah-setup.sh.j2` (config written in-container)
 - Runner: `run.sh`
 - Results: [RESULTS.md](RESULTS.md)
@@ -63,15 +66,17 @@ Benching the comparison CLIs (same suite and key; see RESULTS.md for
 recorded runs):
 
 ```bash
-# opencode (harness installed-agent; no token accounting)
-.venv/bin/tb run --agent opencode --model deepseek/deepseek-flash \
+# hermes (adapter on PYTHONPATH; full usage accounting via --usage-file)
+PYTHONPATH=<this-dir> .venv/bin/tb run \
+  --agent-import-path hermes_agent:HermesAgent \
   -t hello-world -t broken-python -t csv-to-parquet \
   -t jsonl-aggregator -t assign-seats -t gomoku-planner \
   --dataset-path original-tasks --output-path runs --n-concurrent 1
 
-# hermes (adapter on PYTHONPATH; full usage accounting via --usage-file)
-PYTHONPATH=<this-dir> .venv/bin/tb run \
-  --agent-import-path hermes_agent:HermesAgent \
+# opencode (adapter on PYTHONPATH; private server + JSON event stream)
+PYTHONPATH=<this-dir> OPENCODE_BIN="$HOME/.opencode/bin/opencode" \
+  OPENCODE_MODEL=deepseek/deepseek-flash \
+  .venv/bin/tb run --agent-import-path opencode_agent:OpenCodeAgent \
   -t hello-world -t broken-python -t csv-to-parquet \
   -t jsonl-aggregator -t assign-seats -t gomoku-planner \
   --dataset-path original-tasks --output-path runs --n-concurrent 1
@@ -179,8 +184,10 @@ Normalization rules:
 For runs that dispatch sub-agents, the extractor splits the session total into
 the orchestrator share and the sub-agent share (`sub_tokens_in/out`, with
 `orchestrator = total - sub`). `--subs` prints the per-role breakdown from
-`yaah.subagent.usage.v1` trace facts. Orchestration-suite records live in
-`../orchestration-tasks/RESULTS.md`.
+`yaah.subagent.usage.v1` trace facts. OpenCode contributes the per-step
+`step_finish` token/cost buckets from `opencode-stdout.jsonl`; child sessions
+are summed from `session_v2` where they exist. Orchestration-suite records live
+in `../orchestration-tasks/RESULTS.md`.
 
 ## Podman gotchas
 

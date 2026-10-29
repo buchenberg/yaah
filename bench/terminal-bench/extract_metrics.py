@@ -7,8 +7,8 @@ Accounting sources: yaah sums its in-container state.db (sessions table,
 tokens_in includes cached); hermes and aider read their usage-report JSONs,
 whose input_tokens exclude (hermes) or include (aider) cached buckets —
 normalized to the common schema via each report's prompt_includes_cache
-flag. opencode reports nothing through the installed-agent path until its
-adapter lands (yaah-53i).
+flag. opencode sums the JSON `step_finish` events from its adapter, with the
+session database as a fallback.
 
 For yaah runs with sub-agents, the session totals are split into the
 orchestrator share and the sub-agent share. `finishSubAgent` folds child
@@ -123,8 +123,11 @@ def compute_cost(tokens, model, pricing, period="off_peak"):
         rates = rates[period]
     total = 0.0
     try:
-        for field in ("input", "output", "cache_read", "cache_write"):
+        for field in ("input", "cache_read", "cache_write"):
             total += float(rates.get(field, 0) or 0) * float(tokens.get(field, 0) or 0)
+        # Reasoning tokens are billed at the output rate.
+        billable_output = float(tokens.get("output", 0) or 0) + float(tokens.get("reasoning", 0) or 0)
+        total += float(rates.get("output", 0) or 0) * billable_output
     except (TypeError, ValueError):
         return None, key
     return total / 1_000_000.0, key
@@ -283,6 +286,116 @@ def sub_session_usage(runs_dir, run_id, task_id):
     ], "final-turn"
 
 
+def opencode_usage(runs_dir, run_id, task_id):
+    """Read the OpenCode arm's JSON event stream, then the session DB fallback.
+
+    The stream is authoritative for the root session's steps and token
+    buckets. Child sessions live in `session_v2` with a parent_id; their
+    tokens are reported separately so the same sub-agent rule applies to every
+    arm.
+    """
+    stream_paths = glob.glob(
+        f"{runs_dir}/{run_id}/{task_id}/*/agent-logs/opencode-stdout.jsonl"
+    )
+    steps = 0
+    input_tokens = output_tokens = reasoning_tokens = 0
+    cache_read = cache_write = 0
+    reported_cost = 0.0
+    root_session = ""
+    if stream_paths:
+        with open(stream_paths[0]) as f:
+            for line in f:
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                part = event.get("part") or {}
+                root_session = root_session or event.get("sessionID") or ""
+                if event.get("type") != "step_finish":
+                    continue
+                steps += 1
+                tokens = part.get("tokens") or {}
+                input_tokens += _nonneg_int(tokens.get("input"))
+                output_tokens += _nonneg_int(tokens.get("output"))
+                reasoning_tokens += _nonneg_int(tokens.get("reasoning"))
+                cache = tokens.get("cache") or {}
+                cache_read += _nonneg_int(cache.get("read"))
+                cache_write += _nonneg_int(cache.get("write"))
+                try:
+                    reported_cost += float(part.get("cost") or 0)
+                except (TypeError, ValueError):
+                    pass
+
+    session_file = glob.glob(
+        f"{runs_dir}/{run_id}/{task_id}/*/agent-logs/opencode-session.txt"
+    )
+    if session_file:
+        try:
+            root_session = Path(session_file[0]).read_text().strip() or root_session
+        except OSError:
+            pass
+
+    sub_in = sub_out = 0
+    sub_sessions = 0
+    db_paths = glob.glob(
+        f"{runs_dir}/{run_id}/{task_id}/*/agent-logs/opencode-data/opencode/opencode.db"
+    )
+    if db_paths and root_session:
+        try:
+            con = sqlite3.connect(f"file:{db_paths[0]}?mode=ro", uri=True)
+            rows = con.execute(
+                "SELECT id, parent_id, tokens_input, tokens_output FROM session_v2"
+            ).fetchall()
+            con.close()
+            by_parent = {}
+            for sid, parent, tin, tout in rows:
+                by_parent.setdefault(parent, []).append((sid, tin or 0, tout or 0))
+            stack = list(by_parent.get(root_session, []))
+            while stack:
+                sid, tin, tout = stack.pop()
+                sub_sessions += 1
+                sub_in += int(tin)
+                sub_out += int(tout)
+                stack.extend(by_parent.get(sid, []))
+        except sqlite3.Error:
+            sub_in = sub_out = sub_sessions = 0
+
+    if not (root_session and steps):
+        # Session DB fallback when the event stream was lost or empty.
+        if not db_paths or not root_session:
+            return None
+        try:
+            con = sqlite3.connect(f"file:{db_paths[0]}?mode=ro", uri=True)
+            row = con.execute(
+                "SELECT tokens_input, tokens_output, tokens_reasoning, "
+                "tokens_cache_read, tokens_cache_write, cost FROM session_v2 WHERE id = ?",
+                (root_session,),
+            ).fetchone()
+            con.close()
+        except sqlite3.Error:
+            return None
+        if not row:
+            return None
+        input_tokens, output_tokens, reasoning_tokens, cache_read, cache_write, reported_cost = row
+        steps = None
+
+    return {
+        "tokens_in": input_tokens + cache_read + cache_write,
+        "tokens_out": output_tokens,
+        "tokens_cached": cache_read,
+        "sub_tokens_in": sub_in,
+        "sub_tokens_out": sub_out,
+        "orch_tokens_in": input_tokens + cache_read + cache_write,
+        "orch_tokens_out": output_tokens,
+        "sessions": 1 + sub_sessions,
+        "steps": steps,
+        "reported_cost_usd": reported_cost,
+        "tokens": token_record(
+            input_tokens, output_tokens, cache_read, cache_write, reasoning_tokens
+        ),
+    }
+
+
 def usage_report_tokens(runs_dir, run_id, task_id):
     """Read a driver usage report (hermes-usage.json or aider-usage.json)
     and normalize to the common token columns plus legacy totals.
@@ -438,6 +551,8 @@ def main(argv):
             usage = yaah_usage(runs_dir, run_id, r["task_id"])
             subs, sub_source = sub_session_usage(runs_dir, run_id, r["task_id"])
             if usage is None:
+                usage = opencode_usage(runs_dir, run_id, r["task_id"])
+            if usage is None:
                 usage = usage_report_tokens(runs_dir, run_id, r["task_id"])
             tokens = usage.get("tokens") if usage else None
             cost, price_key = compute_cost(tokens, model, pricing, period)
@@ -480,6 +595,11 @@ def main(argv):
                 if tokens:
                     for field in ("input", "output", "cache_read", "cache_write"):
                         totals[run_id]["tokens"][field] += tokens.get(field, 0) or 0
+                    if tokens.get("reasoning") is not None:
+                        totals[run_id]["tokens"]["reasoning"] = (
+                            (totals[run_id]["tokens"]["reasoning"] or 0)
+                            + tokens["reasoning"]
+                        )
                 if cost is not None:
                     totals[run_id]["cost_usd"] += cost
                     totals[run_id]["cost_tasks"] += 1

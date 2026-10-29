@@ -91,6 +91,34 @@ class TokenNormalizationTest(unittest.TestCase):
         self.assertIsNone(cost)
         self.assertEqual(key, "deepseek-flash")
 
+    def test_opencode_usage_sums_step_finish_events(self):
+        with tempfile.TemporaryDirectory() as root:
+            task_dir = os.path.join(root, "run", "hello-world", "trial", "agent-logs")
+            os.makedirs(task_dir)
+            events = [
+                {"type": "step_finish", "sessionID": "ses_test", "part": {
+                    "tokens": {"input": 100, "output": 20, "reasoning": 5,
+                               "cache": {"read": 30, "write": 0}},
+                    "cost": 0.1,
+                }},
+                {"type": "step_finish", "sessionID": "ses_test", "part": {
+                    "tokens": {"input": 10, "output": 2, "reasoning": 0,
+                               "cache": {"read": 0, "write": 0}},
+                    "cost": 0.02,
+                }},
+            ]
+            with open(os.path.join(task_dir, "opencode-stdout.jsonl"), "w") as f:
+                for event in events:
+                    f.write(json.dumps(event) + "\n")
+            with open(os.path.join(task_dir, "opencode-session.txt"), "w") as f:
+                f.write("ses_test")
+            usage = em.opencode_usage(root, "run", "hello-world")
+        self.assertEqual(usage["steps"], 2)
+        self.assertEqual(usage["tokens"]["input"], 110)
+        self.assertEqual(usage["tokens"]["output"], 22)
+        self.assertEqual(usage["tokens"]["reasoning"], 5)
+        self.assertEqual(usage["tokens"]["cache_read"], 30)
+
     def test_usage_report_splits_cached_prompt(self):
         with tempfile.TemporaryDirectory() as root:
             task_dir = os.path.join(root, "run", "hello-world", "trial", "agent-logs")
