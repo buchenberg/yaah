@@ -342,8 +342,10 @@ A worktree proposal records the runtime's explicit review pair before it is
 settled: `goatherd.merge.proposed.v1` on the child owner path (changes, count,
 baseline digest, diff digest) and `goatherd.supervisor.decision.v1` on the
 parent owner path (`approved`, reason, action, child scope). The decision is
-written only when the sealed output settles, and its action names what
-happened (`selected`, `applied`, `discarded`, `released`). This is the
+written when the sealed output settles, or as `seal_failed` if sealing fails
+(so the proposal is not left without a terminal verdict); its action names
+what happened (`selected`, `applied`, `discarded`, `released`, `seal_failed`).
+This is the
 settlement-shaped review the reference records; it does not adopt
 `CommitMerge`, which only applies to shared-sandbox children and has been
 removed upstream (`shepherd-runtime-go-s3u`).

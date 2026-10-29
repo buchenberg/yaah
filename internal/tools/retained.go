@@ -664,9 +664,11 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		if reviewProposal != nil && reviewFactID != "" {
 			reason := "seal failed"
 			if sealErr != nil {
-				reason += ": " + sealErr.Error()
+				reason += ": " + truncateAt(sealErr.Error(), noteBudget)
 			}
-			if _, derr := mgr.RecordMergeDecision(ctx, reviewProposal, false, reason, "seal_failed", reviewFactID); derr != nil {
+			// The run context may be exactly what failed; the terminal decision
+			// must still land, like the other audit facts.
+			if _, derr := mgr.RecordMergeDecision(context.WithoutCancel(ctx), reviewProposal, false, reason, "seal_failed", reviewFactID); derr != nil {
 				notes = append(notes, "review decision: "+derr.Error())
 			}
 		}
