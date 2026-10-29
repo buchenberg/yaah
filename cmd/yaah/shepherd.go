@@ -51,6 +51,9 @@ var shepherdContainersCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if namespace == "default" {
+			fmt.Fprintln(cmd.ErrOrStderr(), "warning: namespace \"default\" is shared by every containerd user; verify it is the one this workspace uses")
+		}
 		orphans, err := tools.ListOrphanContainers(context.Background(), address, namespace)
 		if err != nil {
 			return fmt.Errorf("shepherd: list containers: %w", err)
@@ -76,6 +79,9 @@ var shepherdPruneContainerCmd = &cobra.Command{
 		address, namespace, err := shepherdContainerTarget()
 		if err != nil {
 			return err
+		}
+		if namespace == "default" {
+			fmt.Fprintln(cmd.ErrOrStderr(), "warning: namespace \"default\" is shared by every containerd user; verify it is the one this workspace uses")
 		}
 		orphans, err := tools.ListOrphanContainers(context.Background(), address, namespace)
 		if err != nil {

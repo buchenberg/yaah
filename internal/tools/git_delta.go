@@ -666,6 +666,14 @@ func persistGitDelta(
 		return "", "", fmt.Errorf("exclude proposal path from git: %w", err)
 	}
 	dir = proposalArtifactDir(repoPath, id)
+	// The directory name is a sanitized id; two raw ids must never share one
+	// artifact directory and silently overwrite each other's metadata.
+	if existing, rerr := os.ReadFile(filepath.Join(dir, proposalMetaFile)); rerr == nil {
+		var meta proposalMeta
+		if json.Unmarshal(existing, &meta) == nil && meta.ID != "" && meta.ID != id {
+			return "", "", fmt.Errorf("proposal artifact directory %s already belongs to %s", dir, meta.ID)
+		}
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", "", fmt.Errorf("create proposal dir %s: %w", dir, err)
 	}

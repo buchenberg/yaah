@@ -167,3 +167,18 @@ func TestLoadProposalRegistry_RestartRootRebinds(t *testing.T) {
 		t.Fatalf("host out.txt: %v", err)
 	}
 }
+
+func TestPersistGitDelta_RefusesCollidingArtifactDir(t *testing.T) {
+	f := newDeltaFixture(t)
+	if err := os.MkdirAll(proposalArtifactDir(f.repo, "proposal:1:2"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	first := rehydrateDelta()
+	if _, _, err := persistGitDelta(context.Background(), f.repo, "proposal:1:2", first, "", "", "", f.sessionID, f.rootID, f.basisState, f.basisDigest); err != nil {
+		t.Fatalf("first persist: %v", err)
+	}
+	// This id sanitizes to the same directory segment as proposal:1:2.
+	if _, _, err := persistGitDelta(context.Background(), f.repo, "proposal-1-2", first, "", "", "", f.sessionID, f.rootID, f.basisState, f.basisDigest); err == nil {
+		t.Fatal("a colliding id must not overwrite the existing artifact")
+	}
+}

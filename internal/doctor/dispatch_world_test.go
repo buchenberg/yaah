@@ -70,10 +70,10 @@ func TestCheckDispatchWorld(t *testing.T) {
 	t.Run("a role-level container request is checked", func(t *testing.T) {
 		cfg := &config.Config{}
 		cfg.Agent.SubAgent.Roles = map[string]config.RoleConfig{
-			"reviewer": {World: "container"},
+			"developer": {World: "container"},
 		}
 		check := CheckDispatchWorld(cfg, nil)
-		if check.Status != "FAIL" || !strings.Contains(check.Detail, "role reviewer") {
+		if check.Status != "FAIL" || !strings.Contains(check.Detail, "role developer") {
 			t.Fatalf("got %+v, want a role-named FAIL", check)
 		}
 	})
@@ -85,7 +85,7 @@ func TestCheckDispatchWorld(t *testing.T) {
 		cfg := &config.Config{}
 		cfg.Workspace.Containerd.Image = "registry.example/yaah-workspace:latest"
 		cfg.Agent.SubAgent.Roles = map[string]config.RoleConfig{
-			"reviewer": {World: "container"},
+			"developer": {World: "container"},
 		}
 		check := CheckDispatchWorld(cfg, nil)
 		if check.Status != "OK" || !strings.Contains(check.Detail, "1 role override(s) checked") {

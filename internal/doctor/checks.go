@@ -288,6 +288,12 @@ func CheckDispatchWorld(cfg *config.Config, cfgErr error) Check {
 		if strings.TrimSpace(rc.World) == "" && len(rc.Grants) == 0 {
 			continue
 		}
+		// A shared-lane role has no world at all; its world/grants override
+		// is inert in the runtime (delegate skips world resolution), so
+		// checking it here would produce a false failure.
+		if subagent.DispatchLaneFor(subagent.SubAgentRole(role)) == subagent.LaneShared {
+			continue
+		}
 		checked++
 		roleWorld := rc.World
 		if strings.TrimSpace(roleWorld) == "" {
@@ -307,9 +313,7 @@ func CheckDispatchWorld(cfg *config.Config, cfgErr error) Check {
 			roleErrs = append(roleErrs, fmt.Sprintf("role %s: %v", role, err))
 			continue
 		}
-		if roleProposal.Degraded || roleReport.Degraded {
-			detail += fmt.Sprintf("; role %s: proposal %s, report %s", role, describe(roleProposal), describe(roleReport))
-		}
+		detail += fmt.Sprintf("; role %s: proposal %s, report %s", role, describe(roleProposal), describe(roleReport))
 	}
 	if len(roleErrs) > 0 {
 		return Check{Label: "Dispatch world", Status: "FAIL", Detail: detail + "; role overrides: " + strings.Join(roleErrs, "; ")}

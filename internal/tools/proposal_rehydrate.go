@@ -28,8 +28,11 @@ import (
 // consumed rather than resurrected.
 func LoadProposalRegistry(repoPath string, mgr *goatherd.ScopeManager, rootScopeID, sessionID string) (*ProposalRegistry, []string) {
 	reg := NewProposalRegistry()
-	if strings.TrimSpace(repoPath) == "" || rootScopeID == "" {
-		return reg, nil
+	if strings.TrimSpace(repoPath) == "" {
+		return reg, []string{"proposal rehydrate: no repository path — container proposals are not visible"}
+	}
+	if rootScopeID == "" {
+		return reg, []string{"proposal rehydrate: no root scope — container proposals are not visible"}
 	}
 	root := filepath.Join(repoPath, ".yaah", "proposals")
 	entries, err := os.ReadDir(root)
@@ -80,12 +83,14 @@ func loadGitDeltaProposal(dir, repoPath string, mgr *goatherd.ScopeManager, root
 	// changes across a restart, so the durable session id is the key; the old
 	// parent id is the fallback for artifacts sealed before this field existed.
 	switch {
-	case meta.SessionID != "" && sessionID != "":
+	case sessionID != "" && meta.SessionID != "":
 		if meta.SessionID != sessionID {
 			return nil, "", nil
 		}
-	case meta.ParentScopeID != rootScopeID:
-		// Another session's proposal: not ours to list or settle.
+	case sessionID == "" && meta.SessionID != "" && meta.ParentScopeID != rootScopeID:
+		return nil, fmt.Sprintf("proposal %s: session id unavailable and the root scope differs; not rehydrated", meta.ID), nil
+	case meta.SessionID == "" && meta.ParentScopeID != rootScopeID:
+		// A legacy artifact from another session: not ours to settle.
 		return nil, "", nil
 	}
 	if want := proposalArtifactDir(repoPath, meta.ID); filepath.Clean(want) != filepath.Clean(dir) {

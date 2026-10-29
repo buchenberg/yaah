@@ -13,6 +13,7 @@ func TestTaskStatusIsOrphan(t *testing.T) {
 	}{
 		{containerd.Running, false},
 		{containerd.Paused, false},
+		{containerd.Pausing, false},
 		{containerd.Stopped, true},
 		{containerd.Created, true},
 		{containerd.Unknown, true},
@@ -26,6 +27,9 @@ func TestTaskStatusIsOrphan(t *testing.T) {
 func TestOwnedContainer(t *testing.T) {
 	if ownedContainer(nil) {
 		t.Error("a container with no labels is not ours")
+	}
+	if ownedContainer(map[string]string{containerLabelCroft: ""}) {
+		t.Error("an empty label value is not ownership")
 	}
 	if !ownedContainer(map[string]string{containerLabelCroft: "id"}) {
 		t.Error("croft.sandbox is an owned label")

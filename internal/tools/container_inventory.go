@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -53,14 +54,18 @@ func ListOrphanContainers(ctx context.Context, address, namespace string) ([]Orp
 	for _, c := range containers {
 		info, err := c.Info(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("inspect container %s: %w", c.ID(), err)
+			// One unreadable container must not make the whole inventory
+			// unusable; it is almost certainly not one of ours anyway.
+			slog.Warn("container inventory: inspect failed", "container", c.ID(), "err", err)
+			continue
 		}
 		if !ownedContainer(info.Labels) {
 			continue
 		}
 		orphan, err := containerIsOrphan(ctx, c)
 		if err != nil {
-			return nil, fmt.Errorf("inspect task for %s: %w", c.ID(), err)
+			slog.Warn("container inventory: task inspect failed", "container", c.ID(), "err", err)
+			continue
 		}
 		if orphan {
 			out = append(out, OrphanContainer{ID: c.ID(), Image: info.Image, CreatedAt: info.CreatedAt})
@@ -100,17 +105,19 @@ func PruneContainer(ctx context.Context, address, namespace, id string) error {
 	if !ownedContainer(info.Labels) {
 		return fmt.Errorf("container %s is not owned by the yaah/croft sandbox layer", id)
 	}
-	orphan, err := containerIsOrphan(ctx, c)
-	if err != nil {
-		return err
-	}
-	if !orphan {
-		return fmt.Errorf("container %s still has a running task — refusing to prune live work", id)
-	}
-
-	if task, err := c.Task(ctx, nil); err == nil {
-		if _, err := task.Delete(ctx, containerd.WithProcessKill); err != nil && !errdefs.IsNotFound(err) {
-			return fmt.Errorf("delete stopped task for %s: %w", id, err)
+	// Load the task once: classify and delete the same handle rather than
+	// re-reading it (a task could start between the two reads).
+	task, err := c.Task(ctx, nil)
+	if err == nil {
+		status, serr := task.Status(ctx)
+		if serr != nil {
+			return fmt.Errorf("task status for %s: %w", id, serr)
+		}
+		if !taskStatusIsOrphan(status.Status) {
+			return fmt.Errorf("container %s still has a live task (%s) — refusing to prune live work", id, status.Status)
+		}
+		if _, derr := task.Delete(ctx, containerd.WithProcessKill); derr != nil && !errdefs.IsNotFound(derr) {
+			return fmt.Errorf("delete stopped task for %s: %w", id, derr)
 		}
 	} else if !errdefs.IsNotFound(err) {
 		return fmt.Errorf("load task for %s: %w", id, err)
@@ -144,7 +151,7 @@ func containerIsOrphan(ctx context.Context, c containerd.Container) (bool, error
 // unknown) is a leftover.
 func taskStatusIsOrphan(status containerd.ProcessStatus) bool {
 	switch status {
-	case containerd.Running, containerd.Paused:
+	case containerd.Running, containerd.Paused, containerd.Pausing:
 		return false
 	default:
 		return true
@@ -155,9 +162,14 @@ func ownedContainer(labels map[string]string) bool {
 	if labels == nil {
 		return false
 	}
-	_, croft := labels[containerLabelCroft]
-	_, shepherd := labels[containerLabelShepherd]
-	return croft || shepherd
+	// A key alone is not ownership: an empty value is not a sandbox id.
+	if v, ok := labels[containerLabelCroft]; ok && strings.TrimSpace(v) != "" {
+		return true
+	}
+	if v, ok := labels[containerLabelShepherd]; ok && strings.TrimSpace(v) != "" {
+		return true
+	}
+	return false
 }
 
 func containerNamespace(namespace string) string {
