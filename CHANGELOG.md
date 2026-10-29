@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.114.1](https://github.com/buchenberg/yaah/compare/v0.114.0...v0.114.1) (2026-10-29)
+
+
+### Documentation
+
+* **readme:** add diagrams for sessions, lanes, and dispatch worlds ([9ab910f](https://github.com/buchenberg/yaah/commit/9ab910f6715ec0ed800f6475b3d1e23ca67fae13))
+* **readme:** add diagrams for sessions, lanes, and dispatch worlds ([95a4fcb](https://github.com/buchenberg/yaah/commit/95a4fcb35b63a02e8b7a5ecfae9675487fdf3275))
+
 ## [0.114.0](https://github.com/buchenberg/yaah/compare/v0.113.0...v0.114.0) (2026-10-29)
 
 
