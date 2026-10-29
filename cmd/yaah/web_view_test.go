@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/todo"
+	"github.com/buchenberg/yaah/internal/worldinfo"
 )
 
 // syncBuffer is a mutex-guarded ResponseWriter so a test can read the SSE
@@ -195,4 +197,67 @@ func TestForwardCtrlAnswerLifecycle(t *testing.T) {
 		}
 		waitAnswerMapEmpty(t, am)
 	})
+}
+
+// TestSSEHeaderCarriesWorldAndPreservesItOnModelSwitch pins the flat world
+// fields on ctrl.header and the model-switch path: SetHeader must not drop the
+// posture cached when the stream was built.
+func TestSSEHeaderCarriesWorldAndPreservesItOnModelSwitch(t *testing.T) {
+	buf := newSyncBuffer()
+	v := &sseView{w: buf}
+	v.provider, v.model = "prov", "model"
+	v.world = worldHeaderOf(worldinfo.Status{
+		Backend:       "local",
+		Mode:          "retained",
+		Containment:   "auto",
+		Network:       "allow_all",
+		WorldReq:      "auto",
+		ProposalWorld: "worktree",
+		ReportWorld:   "worktree",
+	})
+	v.SendConnect()
+	frames := buf.String()
+	for _, want := range []string{
+		`"workspace":"local"`, `"mode":"retained"`,
+		`"containment":"auto"`, `"network":"allow_all"`,
+		`"world":"auto"`, `"worldResolved":"worktree"`,
+	} {
+		if !strings.Contains(frames, want) {
+			t.Fatalf("header frame missing %s: %s", want, frames)
+		}
+	}
+
+	v.SetHeader("prov2", "model2")
+	frames = buf.String()
+	if !strings.Contains(frames, `"model":"model2"`) || !strings.Contains(frames, `"worldResolved":"worktree"`) {
+		t.Fatalf("model switch dropped or failed to keep the world: %s", frames)
+	}
+}
+
+// TestSSEHeaderZeroWorldHidesBadge pins the zero-value rule: a session that
+// never derived a posture sends no workspace field, so the client hides the
+// badge.
+func TestSSEHeaderZeroWorldHidesBadge(t *testing.T) {
+	buf := newSyncBuffer()
+	v := &sseView{w: buf, provider: "prov", model: "model"}
+	v.SendConnect()
+	if strings.Contains(buf.String(), `"workspace"`) {
+		t.Fatalf("zero world emitted a workspace field: %s", buf.String())
+	}
+}
+
+// TestSSESubAgentWorldFrames pins the per-dispatch world on the sub-agent
+// frames the browser uses for its row chip.
+func TestSSESubAgentWorldFrames(t *testing.T) {
+	buf := newSyncBuffer()
+	v := &sseView{w: buf}
+	v.HandleEvent(&agent.SubAgentStartEvent{Role: "developer", World: "container"})
+	v.HandleEvent(&agent.SubAgentEndEvent{Role: "developer", World: "worktree", WorldDegraded: true, WorldReason: "no image"})
+	frames := buf.String()
+	if !strings.Contains(frames, `"type":"subagent.start"`) || !strings.Contains(frames, `"world":"container"`) {
+		t.Fatalf("start frame = %s", frames)
+	}
+	if !strings.Contains(frames, `"world":"worktree"`) || !strings.Contains(frames, `"world_degraded":true`) || !strings.Contains(frames, `"world_reason":"no image"`) {
+		t.Fatalf("end frame = %s", frames)
+	}
 }

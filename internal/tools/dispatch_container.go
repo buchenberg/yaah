@@ -140,6 +140,7 @@ func runDispatchContainer(
 	res subagent.WorldResolution,
 	sandbox *SessionSandbox,
 ) (result string, runErr error) {
+	recordDispatchWorld(ctx, res)
 	id := fmt.Sprintf("proposal:%d:%d", time.Now().UnixNano(), proposalSeq.Add(1))
 	scope, err := rt.ScopeManager.Fork(rt.RootScopeID, id, nil)
 	if err != nil {
@@ -202,6 +203,7 @@ func runDispatchContainerProposal(
 	basisState shepherdtrace.WorkspaceState,
 	basisDigest string,
 ) (out string, runErr error) {
+	recordDispatchWorld(ctx, res)
 	id := fmt.Sprintf("proposal:%d:%d", time.Now().UnixNano(), proposalSeq.Add(1))
 	env := proposalEnvelope{ProposalID: id, Next: proposalVerbs(), World: string(res.Resolved)}
 	if res.Degraded {

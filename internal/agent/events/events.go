@@ -81,6 +81,12 @@ type SubAgentStartEvent struct {
 	Role       string // sub-agent role (e.g. "developer", "analyst")
 	Model      string // model assigned to the sub-agent
 	Prompt     string // abbreviated task description
+	// World is the resolved dispatch world ("worktree", "container", or
+	// "shared"). Plain strings keep the events package free of a subagent
+	// import; empty means unresolved and every surface renders nothing.
+	World         string
+	WorldDegraded bool
+	WorldReason   string
 }
 
 func (*SubAgentStartEvent) eventMarker() {}
@@ -94,6 +100,10 @@ type SubAgentEndEvent struct {
 	Duration   time.Duration // total execution duration
 	Error      string        // error message (empty on success)
 	Result     string        // truncated final result (empty on error or background)
+	// World mirrors SubAgentStartEvent's resolved dispatch world.
+	World         string
+	WorldDegraded bool
+	WorldReason   string
 }
 
 func (*SubAgentEndEvent) eventMarker() {}

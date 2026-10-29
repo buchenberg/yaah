@@ -23,6 +23,7 @@ import (
 	"github.com/buchenberg/yaah/internal/cwdpath"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
+	"github.com/buchenberg/yaah/internal/worldinfo"
 )
 
 // ProtocolVersion is the ACP major version this server speaks.
@@ -74,6 +75,9 @@ type Session interface {
 	// ACP server renders as the model picker's currentValue.
 	ProviderName() string
 	ModelName() string
+	// WorldStatus reports the session's workspace/dispatch-world posture;
+	// the zero value is omitted from session/new and session/load results.
+	WorldStatus() worldinfo.Status
 	Close()
 	ToolReg() *tools.Registry
 }
@@ -425,6 +429,7 @@ func (s *Server) handleSessionNew(ctx context.Context, msg Message, respOK func(
 	respOK(msg.ID, SessionNewResult{
 		SessionID:     st.id,
 		ConfigOptions: buildModelConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName()),
+		Meta:          worldMetaOf(st.sess.WorldStatus()),
 	})
 }
 
@@ -581,7 +586,10 @@ func (s *Server) handleSessionLoad(
 			return
 		}
 		s.replayConversation(st, sendUpdate)
-		respOK(msg.ID, SessionLoadResult{ConfigOptions: s.loadConfigOptions(ctx, st)})
+		respOK(msg.ID, SessionLoadResult{
+			ConfigOptions: s.loadConfigOptions(ctx, st),
+			Meta:          worldMetaOf(st.sess.WorldStatus()),
+		})
 		return
 	}
 
@@ -595,7 +603,10 @@ func (s *Server) handleSessionLoad(
 		return
 	}
 	s.replayConversation(st, sendUpdate)
-	respOK(msg.ID, SessionLoadResult{ConfigOptions: s.loadConfigOptions(ctx, st)})
+	respOK(msg.ID, SessionLoadResult{
+		ConfigOptions: s.loadConfigOptions(ctx, st),
+		Meta:          worldMetaOf(st.sess.WorldStatus()),
+	})
 }
 
 // loadConfigOptions renders the config options a session/load response
@@ -604,6 +615,26 @@ func (s *Server) handleSessionLoad(
 // omits the field entirely.
 func (s *Server) loadConfigOptions(ctx context.Context, st *sessionState) []SessionConfigOption {
 	return buildModelConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName())
+}
+
+// worldMetaOf renders the ACP `_meta` block for a derived posture. The zero
+// status yields nil, which omits `_meta` entirely rather than sending an
+// empty block.
+func worldMetaOf(s worldinfo.Status) *SessionMeta {
+	if s.IsZero() {
+		return nil
+	}
+	return &SessionMeta{World: &WorldMeta{
+		Backend:     s.Backend,
+		Isolated:    s.Isolated,
+		Mode:        s.Mode,
+		Containment: s.Containment,
+		Network:     s.Network,
+		World:       s.WorldReq,
+		Resolved:    s.ProposalWorld,
+		Degraded:    s.Degraded,
+		Reason:      s.Reason,
+	}}
 }
 
 // sameDir compares two canonical cwds case-insensitively on Windows,

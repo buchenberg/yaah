@@ -15,6 +15,7 @@ import (
 	"github.com/buchenberg/yaah/internal/tui/components/reasoning"
 	"github.com/buchenberg/yaah/internal/tui/components/subagent"
 	"github.com/buchenberg/yaah/internal/tui/components/toolblock"
+	"github.com/buchenberg/yaah/internal/worldinfo"
 	"github.com/rivo/tview"
 )
 
@@ -118,6 +119,7 @@ type App struct {
 	embeddingEnabled     bool
 	embeddingModel       string
 	middlewarePipeline   []string
+	worldStatus          worldinfo.Status
 	agentActive          bool
 	subAgents            []*subagent.Block
 	subAgentsBusy        atomic.Bool
@@ -199,6 +201,13 @@ func (t *App) SetModel(name string) {
 // UI thread.
 func (t *App) SetMCPServers(servers []mcpinfo.Server) {
 	t.McpServers = servers
+	t.renderInfoPane()
+}
+
+// SetWorld populates the info pane's World section. Must be called before
+// Run(); the status is read by renderInfoPane from the UI thread.
+func (t *App) SetWorld(s worldinfo.Status) {
+	t.worldStatus = s
 	t.renderInfoPane()
 }
 

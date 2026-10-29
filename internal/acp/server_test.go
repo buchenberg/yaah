@@ -18,6 +18,7 @@ import (
 	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
+	"github.com/buchenberg/yaah/internal/worldinfo"
 )
 
 // fakeSession is a controllable Session for server tests.
@@ -43,6 +44,9 @@ type fakeSession struct {
 	// reg, when set, is what ToolReg returns; question-tool and
 	// elicitation tests register a question tool there.
 	reg *tools.Registry
+	// world is what WorldStatus reports; session/new and session/load
+	// tests set it to pin the `_meta` block.
+	world worldinfo.Status
 }
 
 func (f *fakeSession) TurnBudgetExhausted() bool {
@@ -94,6 +98,12 @@ func (f *fakeSession) ToolReg() *tools.Registry {
 	return tools.NewRegistry()
 }
 func (f *fakeSession) AgentSessionID() string { return f.id }
+
+func (f *fakeSession) WorldStatus() worldinfo.Status {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.world
+}
 
 func (f *fakeSession) SetModel(provider, model string) {
 	f.mu.Lock()

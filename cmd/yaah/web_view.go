@@ -13,6 +13,7 @@ import (
 	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/toolfmt"
+	"github.com/buchenberg/yaah/internal/worldinfo"
 )
 
 type wireOption struct {
@@ -32,6 +33,38 @@ type wireHeaderMeta struct {
 	Provider   string          `json:"provider"`
 	Model      string          `json:"model"`
 	MCPServers []wireMCPServer `json:"mcpServers"`
+
+	// World posture, flat on the header frame so the Alpine client can read
+	// it without a nested shape. Every field is omitted when the session
+	// never derived a status (the zero value), which hides the badge.
+	Workspace     string `json:"workspace,omitempty"`
+	Isolated      bool   `json:"isolated"`
+	WorkspaceRoot string `json:"workspaceRoot,omitempty"`
+	Mode          string `json:"mode,omitempty"`
+	Containment   string `json:"containment,omitempty"`
+	Jail          bool   `json:"jail"`
+	Network       string `json:"network,omitempty"`
+	World         string `json:"world,omitempty"`
+	WorldResolved string `json:"worldResolved,omitempty"`
+	WorldDegraded bool   `json:"worldDegraded,omitempty"`
+	WorldReason   string `json:"worldReason,omitempty"`
+}
+
+// wireWorldMeta is the world subset the view caches so a model switch
+// (SetHeader) re-sends the posture unchanged. It flattens onto
+// wireHeaderMeta when the frame is built.
+type wireWorldMeta struct {
+	Workspace     string
+	Isolated      bool
+	WorkspaceRoot string
+	Mode          string
+	Containment   string
+	Jail          bool
+	Network       string
+	World         string
+	WorldResolved string
+	WorldDegraded bool
+	WorldReason   string
 }
 
 type wireTodo struct {
@@ -76,6 +109,10 @@ type sseWireEvent struct {
 	Model  string `json:"model,omitempty"`
 	Prompt string `json:"prompt,omitempty"`
 
+	World         string `json:"world,omitempty"`
+	WorldDegraded bool   `json:"world_degraded,omitempty"`
+	WorldReason   string `json:"world_reason,omitempty"`
+
 	Response      string `json:"response,omitempty"`
 	ContextTokens int    `json:"context_tokens,omitempty"`
 	ContextWindow int    `json:"context_window,omitempty"`
@@ -112,12 +149,7 @@ func marshalWire(we sseWireEvent) []byte {
 func (v *sseView) SendConnect() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	h := &wireHeaderMeta{
-		Provider:   v.provider,
-		Model:      v.model,
-		MCPServers: v.mcpServers,
-	}
-	v.writeLocked(marshalWire(sseWireEvent{Type: "ctrl.header", Meta: h}))
+	v.writeLocked(marshalWire(sseWireEvent{Type: "ctrl.header", Meta: v.headerLocked()}))
 	if len(v.todos) > 0 {
 		v.writeLocked(marshalWire(sseWireEvent{Type: "ctrl.todos", Items: v.todos}))
 	}
@@ -130,11 +162,7 @@ func (v *sseView) SetHeader(provider, model string) {
 	defer v.mu.Unlock()
 	v.provider = provider
 	v.model = model
-	v.writeLocked(marshalWire(sseWireEvent{Type: "ctrl.header", Meta: &wireHeaderMeta{
-		Provider:   provider,
-		Model:      model,
-		MCPServers: v.mcpServers,
-	}}))
+	v.writeLocked(marshalWire(sseWireEvent{Type: "ctrl.header", Meta: v.headerLocked()}))
 }
 
 type sseView struct {
@@ -145,6 +173,9 @@ type sseView struct {
 	provider   string
 	model      string
 	mcpServers []wireMCPServer
+	// world is the session posture, populated once when the view is built and
+	// re-sent unchanged by SetHeader.
+	world wireWorldMeta
 
 	// current todo state — updated by forwardCtrl; sent on SSE connect
 	todos []wireTodo
@@ -153,6 +184,49 @@ type sseView struct {
 // AcceptsEventsBetweenRuns reports that writes are mutex-guarded and can be
 // delivered from the background-job goroutine outside a run.
 func (v *sseView) AcceptsEventsBetweenRuns() bool { return true }
+
+// headerLocked builds the header frame from cached state, assuming v.mu is
+// held. Keeping one builder is what makes SetHeader preserve the world.
+func (v *sseView) headerLocked() *wireHeaderMeta {
+	h := &wireHeaderMeta{
+		Provider:   v.provider,
+		Model:      v.model,
+		MCPServers: v.mcpServers,
+	}
+	h.Workspace = v.world.Workspace
+	h.Isolated = v.world.Isolated
+	h.WorkspaceRoot = v.world.WorkspaceRoot
+	h.Mode = v.world.Mode
+	h.Containment = v.world.Containment
+	h.Jail = v.world.Jail
+	h.Network = v.world.Network
+	h.World = v.world.World
+	h.WorldResolved = v.world.WorldResolved
+	h.WorldDegraded = v.world.WorldDegraded
+	h.WorldReason = v.world.WorldReason
+	return h
+}
+
+// worldHeaderOf flattens a derived status onto the cached header shape. The
+// zero status maps to the zero value, so the client's badge is hidden.
+func worldHeaderOf(s worldinfo.Status) wireWorldMeta {
+	if s.IsZero() {
+		return wireWorldMeta{}
+	}
+	return wireWorldMeta{
+		Workspace:     s.Backend,
+		Isolated:      s.Isolated,
+		WorkspaceRoot: s.Root,
+		Mode:          s.Mode,
+		Containment:   s.Containment,
+		Jail:          s.JailOK,
+		Network:       s.Network,
+		World:         s.WorldReq,
+		WorldResolved: s.ProposalWorld,
+		WorldDegraded: s.Degraded,
+		WorldReason:   s.Reason,
+	}
+}
 
 func (v *sseView) HandleEvent(evt agent.Event) {
 	var we sseWireEvent
@@ -177,10 +251,14 @@ func (v *sseView) HandleEvent(evt agent.Event) {
 			Summary: toolfmt.Summary(e.Name, e.Args, e.Result),
 		}
 	case *agent.SubAgentStartEvent:
-		we = sseWireEvent{Type: "subagent.start", Role: e.Role, Model: e.Model, Prompt: e.Prompt}
+		we = sseWireEvent{
+			Type: "subagent.start", Role: e.Role, Model: e.Model, Prompt: e.Prompt,
+			World: e.World, WorldDegraded: e.WorldDegraded, WorldReason: e.WorldReason,
+		}
 	case *agent.SubAgentEndEvent:
 		we = sseWireEvent{Type: "subagent.end", Role: e.Role, Model: e.Model,
-			Prompt: e.Prompt, Ms: e.Duration.Milliseconds(), Error: e.Error}
+			Prompt: e.Prompt, Ms: e.Duration.Milliseconds(), Error: e.Error,
+			World: e.World, WorldDegraded: e.WorldDegraded, WorldReason: e.WorldReason}
 	case *agent.EscalationEvent:
 		we = sseWireEvent{Type: "ctrl.status",
 			Text: fmt.Sprintf("ESCALATION [%s] %s: %s", e.Severity, e.SubAgentRole, e.Summary)}

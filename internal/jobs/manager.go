@@ -46,10 +46,13 @@ type backgroundJob struct {
 	description string
 	startedAt   time.Time
 
-	// model and usage are written by the runner via context-injected
-	// pointers (WithSubAgentModelPtr / WithSubAgentUsage) so the runner
-	// closure does not need to know it is running in the background.
+	// model, world, and usage are written by the runner via context-injected
+	// pointers (WithSubAgentModelPtr / WithSubAgentWorldPtr / WithSubAgentUsage)
+	// so the runner closure does not need to know it is running in the
+	// background. world is guarded by mu like model because the event hooks
+	// read it from this job's goroutine while Status may touch the job.
 	model string
+	world SubAgentWorld
 	usage types.Usage
 
 	cancel context.CancelFunc
@@ -60,6 +63,14 @@ type backgroundJob struct {
 	status   string
 	err      error
 	duration time.Duration
+}
+
+// worldSnapshot reads the job's resolved dispatch world under the same lock
+// the writer uses. Event hooks and the completion path call it.
+func (j *backgroundJob) worldSnapshot() SubAgentWorld {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.world
 }
 
 func (j *backgroundJob) snapshot() BackgroundJobStatus {
@@ -145,8 +156,8 @@ type BackgroundJobs struct {
 	// at Run end via SetLoopHooks, so events only fire while a loop is
 	// live. Nil between runs is fine — the job keeps running; only the
 	// UI event is skipped. Guarded by hookMu; read via loopHooks().
-	OnStart func(id, role, model, prompt string)
-	OnEnd   func(id, role, model, prompt, result string, dur time.Duration, err string)
+	OnStart func(id, role, model, prompt string, world SubAgentWorld)
+	OnEnd   func(id, role, model, prompt, result string, dur time.Duration, err string, world SubAgentWorld)
 
 	// OnStartSession / OnEndSession are session-scoped fallbacks for jobs
 	// that start or finish outside a live loop (most commonly a job that
@@ -155,8 +166,8 @@ type BackgroundJobs struct {
 	// explicitly via NotifySession* when its broker closed during teardown,
 	// so the live broker path is never duplicated. Guarded by hookMu; set via
 	// SetSessionHooks.
-	OnStartSession func(id, role, model, prompt string)
-	OnEndSession   func(id, role, model, prompt, result string, dur time.Duration, err string)
+	OnStartSession func(id, role, model, prompt string, world SubAgentWorld)
+	OnEndSession   func(id, role, model, prompt, result string, dur time.Duration, err string, world SubAgentWorld)
 
 	// hookMu guards OnStart/OnEnd/OnStartSession/OnEndSession against
 	// Run-boundary writes racing with reads from completing job goroutines
@@ -167,8 +178,8 @@ type BackgroundJobs struct {
 // SetLoopHooks installs (or clears, when both nil) the loop-scoped
 // OnStart/OnEnd hooks. Safe to call while jobs are running.
 func (m *BackgroundJobs) SetLoopHooks(
-	onStart func(id, role, model, prompt string),
-	onEnd func(id, role, model, prompt, result string, dur time.Duration, err string),
+	onStart func(id, role, model, prompt string, world SubAgentWorld),
+	onEnd func(id, role, model, prompt, result string, dur time.Duration, err string, world SubAgentWorld),
 ) {
 	m.hookMu.Lock()
 	m.OnStart = onStart
@@ -177,7 +188,7 @@ func (m *BackgroundJobs) SetLoopHooks(
 }
 
 // loopHooks snapshots the current loop-scoped hooks.
-func (m *BackgroundJobs) loopHooks() (onStart func(id, role, model, prompt string), onEnd func(id, role, model, prompt, result string, dur time.Duration, err string)) {
+func (m *BackgroundJobs) loopHooks() (onStart func(id, role, model, prompt string, world SubAgentWorld), onEnd func(id, role, model, prompt, result string, dur time.Duration, err string, world SubAgentWorld)) {
 	m.hookMu.RLock()
 	defer m.hookMu.RUnlock()
 	return m.OnStart, m.OnEnd
@@ -187,8 +198,8 @@ func (m *BackgroundJobs) loopHooks() (onStart func(id, role, model, prompt strin
 // fallbacks used when no loop hook is live. Unlike SetLoopHooks, these are
 // not cleared at turn boundaries.
 func (m *BackgroundJobs) SetSessionHooks(
-	onStart func(id, role, model, prompt string),
-	onEnd func(id, role, model, prompt, result string, dur time.Duration, err string),
+	onStart func(id, role, model, prompt string, world SubAgentWorld),
+	onEnd func(id, role, model, prompt, result string, dur time.Duration, err string, world SubAgentWorld),
 ) {
 	m.hookMu.Lock()
 	m.OnStartSession = onStart
@@ -197,7 +208,7 @@ func (m *BackgroundJobs) SetSessionHooks(
 }
 
 // sessionHooks snapshots the current session-scoped hooks.
-func (m *BackgroundJobs) sessionHooks() (onStart func(id, role, model, prompt string), onEnd func(id, role, model, prompt, result string, dur time.Duration, err string)) {
+func (m *BackgroundJobs) sessionHooks() (onStart func(id, role, model, prompt string, world SubAgentWorld), onEnd func(id, role, model, prompt, result string, dur time.Duration, err string, world SubAgentWorld)) {
 	m.hookMu.RLock()
 	defer m.hookMu.RUnlock()
 	return m.OnStartSession, m.OnEndSession
@@ -206,23 +217,23 @@ func (m *BackgroundJobs) sessionHooks() (onStart func(id, role, model, prompt st
 // NotifySessionStart invokes the session-scoped start fallback, if any. The
 // loop uses it when its broker is already closed (teardown race), so the
 // event still reaches the session view instead of being dropped.
-func (m *BackgroundJobs) NotifySessionStart(id, role, model, prompt string) {
+func (m *BackgroundJobs) NotifySessionStart(id, role, model, prompt string, world SubAgentWorld) {
 	if onStart, _ := m.sessionHooks(); onStart != nil {
-		onStart(id, role, model, prompt)
+		onStart(id, role, model, prompt, world)
 	}
 }
 
 // NotifySessionEnd invokes the session-scoped end fallback, if any.
-func (m *BackgroundJobs) NotifySessionEnd(id, role, model, prompt, result string, dur time.Duration, err string) {
+func (m *BackgroundJobs) NotifySessionEnd(id, role, model, prompt, result string, dur time.Duration, err string, world SubAgentWorld) {
 	if _, onEnd := m.sessionHooks(); onEnd != nil {
-		onEnd(id, role, model, prompt, result, dur, err)
+		onEnd(id, role, model, prompt, result, dur, err, world)
 	}
 }
 
 // startHook returns the loop hook when one is installed, otherwise the
 // session fallback. Exactly one path fires, so live views never see a
 // duplicate start event.
-func (m *BackgroundJobs) startHook() func(id, role, model, prompt string) {
+func (m *BackgroundJobs) startHook() func(id, role, model, prompt string, world SubAgentWorld) {
 	if onStart, _ := m.loopHooks(); onStart != nil {
 		return onStart
 	}
@@ -233,7 +244,7 @@ func (m *BackgroundJobs) startHook() func(id, role, model, prompt string) {
 // endHook returns the loop hook when one is installed, otherwise the
 // session fallback. Exactly one path fires, so live views never see a
 // duplicate end event.
-func (m *BackgroundJobs) endHook() func(id, role, model, prompt, result string, dur time.Duration, err string) {
+func (m *BackgroundJobs) endHook() func(id, role, model, prompt, result string, dur time.Duration, err string, world SubAgentWorld) {
 	if _, onEnd := m.loopHooks(); onEnd != nil {
 		return onEnd
 	}
@@ -367,11 +378,20 @@ func (m *BackgroundJobs) Launch(callCtx context.Context, runner TaskRunner, role
 		job.mu.Unlock()
 	}
 	jobCtx = WithSubAgentModelWriter(jobCtx, setJobModel)
+	// Carry a world the caller already resolved (the shared direct lane sets
+	// it before launching); a retained body overwrites it with the real
+	// resolution below.
+	job.world = SubAgentWorldFromContext(callCtx)
+	jobCtx = WithSubAgentWorldWriter(jobCtx, func(w SubAgentWorld) {
+		job.mu.Lock()
+		job.world = w
+		job.mu.Unlock()
+	})
 	jobCtx = WithSubAgentUsage(jobCtx, &job.usage)
 	jobCtx = WithSubAgentStartNotifier(jobCtx, func(model string) {
 		setJobModel(model)
 		if onStart := m.startHook(); onStart != nil {
-			onStart(job.id, role, model, description)
+			onStart(job.id, role, model, description, job.worldSnapshot())
 		}
 	})
 
@@ -426,7 +446,7 @@ func (m *BackgroundJobs) run(job *backgroundJob, jobCtx context.Context, jobCanc
 		if runErr != nil {
 			errStr = runErr.Error()
 		}
-		onEnd(job.id, job.role, job.model, job.description, result, job.duration, errStr)
+		onEnd(job.id, job.role, job.model, job.description, result, job.duration, errStr, job.worldSnapshot())
 	}
 	if m.Deliver != nil {
 		m.Deliver(job.role, job.description, result, runErr)

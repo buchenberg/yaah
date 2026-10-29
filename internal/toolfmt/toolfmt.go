@@ -196,3 +196,19 @@ func SubagentLabel(role, desc string) string {
 		return "sub-agent"
 	}
 }
+
+// SubagentWorldLabel renders a resolved dispatch world for display. The same
+// formatter is used by the TUI, REPL, web, and ACP views so a dispatch reads
+// identically everywhere. An empty world (unresolved) renders as nothing.
+func SubagentWorldLabel(world string, degraded bool, reason string) string {
+	if world == "" {
+		return ""
+	}
+	if !degraded {
+		return world
+	}
+	if reason == "" {
+		return world + " (degraded)"
+	}
+	return world + " (degraded: " + reason + ")"
+}

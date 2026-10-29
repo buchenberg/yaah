@@ -58,7 +58,8 @@ func (t *App) HandleEvent(event agent.Event) {
 		})
 	case *agent.SubAgentStartEvent:
 		t.queueUpdateDrawCritical(func() {
-			t.AddSubAgentStart(e.SubAgentID, e.Role, e.Prompt)
+			t.AddSubAgentStart(e.SubAgentID, e.Role, e.Prompt,
+				toolfmt.SubagentWorldLabel(e.World, e.WorldDegraded, e.WorldReason))
 			t.setActivity(activity.SubAgent, activity.FormatSubAgentDetail(e.Role, len(t.subAgents)))
 		})
 	case *agent.SubAgentEndEvent:

@@ -15,6 +15,7 @@ type Block struct {
 	role         string
 	displayName  string
 	task         string
+	world        string
 	state        State
 	startTime    time.Time
 	spinnerFrame int
@@ -50,8 +51,13 @@ func (b *Block) ID() string             { return b.id }
 func (b *Block) Role() string           { return b.role }
 func (b *Block) S() State               { return b.state }
 func (b *Block) Task() string           { return b.task }
+func (b *Block) World() string          { return b.world }
 func (b *Block) DisplayName() string    { return b.displayName }
 func (b *Block) Elapsed() time.Duration { return time.Since(b.startTime) }
+
+// SetWorld records the dispatch world label shown beside the role
+// ("worktree", "container", or a degraded label). Empty renders nothing.
+func (b *Block) SetWorld(w string) { b.world = w }
 
 func (b *Block) AdvanceSpinner() {
 	if b.state == Active {

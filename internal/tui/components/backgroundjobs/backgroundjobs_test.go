@@ -95,3 +95,15 @@ func TestFormat_AdvancesWithSpinner(t *testing.T) {
 		t.Errorf("pane output did not change after advancing the spinner: %q", first)
 	}
 }
+
+// TestFormat_WorldLabel pins the per-dispatch world on the row: the label the
+// start event carries ("worktree", a degraded form) renders beside the role.
+func TestFormat_WorldLabel(t *testing.T) {
+	th := colors.NewDarkTheme()
+	b := subagent.New("sa-1", "developer", "fix the bug")
+	b.SetWorld("worktree")
+	out := Format([]*subagent.Block{b}, &th)
+	if !strings.Contains(out, "worktree") {
+		t.Fatalf("world label not rendered: %q", out)
+	}
+}

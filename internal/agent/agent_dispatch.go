@@ -36,9 +36,13 @@ type toolDispatch struct {
 
 	subAgentID    string
 	subAgentModel string
-	subUsage      types.Usage
-	startOnce     sync.Once
-	finishOnce    sync.Once
+	// world is the resolved dispatch world, written by the retained runtime
+	// (or seeded as "shared" by the direct lane) through the context pointer
+	// installed in setupSubAgent.
+	world      tools.SubAgentWorld
+	subUsage   types.Usage
+	startOnce  sync.Once
+	finishOnce sync.Once
 
 	watchdogActive  bool
 	releaseSubAgent func()
@@ -272,7 +276,15 @@ func (d *toolDispatch) publishStartFn() func(model string) {
 	l := d.loop
 	return func(model string) {
 		if l.broker != nil {
-			l.broker.PublishMustDeliver(&SubAgentStartEvent{SubAgentID: d.subAgentID, Role: d.taskRole, Model: model, Prompt: d.taskPrompt})
+			l.broker.PublishMustDeliver(&SubAgentStartEvent{
+				SubAgentID:    d.subAgentID,
+				Role:          d.taskRole,
+				Model:         model,
+				Prompt:        d.taskPrompt,
+				World:         d.world.Resolved,
+				WorldDegraded: d.world.Degraded,
+				WorldReason:   d.world.Reason,
+			})
 		}
 	}
 }
@@ -285,6 +297,7 @@ func (d *toolDispatch) setupSubAgent(runCtx context.Context) context.Context {
 	publishStart := d.publishStartFn()
 
 	runCtx = tools.WithSubAgentModelPtr(runCtx, &d.subAgentModel)
+	runCtx = tools.WithSubAgentWorldPtr(runCtx, &d.world)
 	runCtx = tools.WithSubAgentStartNotifier(runCtx, func(model string) {
 		d.startOnce.Do(func() { publishStart(model) })
 	})
@@ -347,12 +360,15 @@ func (d *toolDispatch) emitSubAgentEnd(res, errStr string, duration time.Duratio
 		model = l.Config.Model
 	}
 	endEvt := &SubAgentEndEvent{
-		SubAgentID: d.subAgentID,
-		Role:       d.taskRole,
-		Model:      model,
-		Prompt:     d.taskPrompt,
-		Duration:   duration,
-		Error:      errStr,
+		SubAgentID:    d.subAgentID,
+		Role:          d.taskRole,
+		Model:         model,
+		Prompt:        d.taskPrompt,
+		Duration:      duration,
+		Error:         errStr,
+		World:         d.world.Resolved,
+		WorldDegraded: d.world.Degraded,
+		WorldReason:   d.world.Reason,
 	}
 	if errStr == "" {
 		endEvt.Result = res

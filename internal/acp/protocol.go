@@ -239,6 +239,9 @@ type EnvVariable struct {
 type SessionNewResult struct {
 	SessionID     string                `json:"sessionId"`
 	ConfigOptions []SessionConfigOption `json:"configOptions,omitempty"`
+	// Meta carries yaah's `_meta` extensions, including the session's
+	// workspace/dispatch-world posture. Spec clients ignore it.
+	Meta *SessionMeta `json:"_meta,omitempty"`
 }
 
 // === session/load ===
@@ -263,6 +266,8 @@ type SessionLoadParams struct {
 // the same model picker without a separate request.
 type SessionLoadResult struct {
 	ConfigOptions []SessionConfigOption `json:"configOptions,omitempty"`
+	// Meta mirrors SessionNewResult.Meta: the restored session's posture.
+	Meta *SessionMeta `json:"_meta,omitempty"`
 }
 
 // === session/list ===
@@ -287,6 +292,27 @@ type SessionInfo struct {
 // messages).
 type SessionMeta struct {
 	MessageCount int `json:"messageCount,omitempty"`
+	// World is the session's workspace/dispatch-world posture on
+	// session/new and session/load. Absent when the session never derived
+	// one, so older flows and spec-only clients are unaffected. It never
+	// carries the containerd socket, deny patterns, or credentials.
+	World *WorldMeta `json:"world,omitempty"`
+}
+
+// WorldMeta is the ACP view of a derived world posture. Fields are omitted
+// when unset; a client should treat a missing block as "no information".
+type WorldMeta struct {
+	Backend     string `json:"backend,omitempty"`
+	Isolated    bool   `json:"isolated,omitempty"`
+	Mode        string `json:"mode,omitempty"`
+	Containment string `json:"containment,omitempty"`
+	Network     string `json:"network,omitempty"`
+	// World is the requested world; Resolved is the proposal-lane
+	// resolution the session's default dispatch gets.
+	World    string `json:"world,omitempty"`
+	Resolved string `json:"resolved,omitempty"`
+	Degraded bool   `json:"degraded,omitempty"`
+	Reason   string `json:"reason,omitempty"`
 }
 
 // ListSessionsResult is the result of session/list. nextCursor, when

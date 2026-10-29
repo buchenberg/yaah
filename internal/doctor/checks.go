@@ -18,6 +18,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/jail"
+	"github.com/buchenberg/yaah/internal/worldinfo"
 )
 
 // Check represents a single diagnostic result.
@@ -209,24 +210,16 @@ func CheckDispatchWorld(cfg *config.Config, cfgErr error) Check {
 		return Check{Label: "Dispatch world", Status: "WARN", Detail: "config not loaded"}
 	}
 	sc := cfg.Agent.SubAgent
-	shared := strings.ToLower(strings.TrimSpace(sc.Mode)) == "shared"
-	requested := strings.ToLower(strings.TrimSpace(sc.World))
-	if requested == "" {
-		requested = "auto"
-	}
+	isolated := cfg.Workspace.Backend == config.BackendContainerd
+	shared := worldinfo.Mode(cfg) == "shared"
+	requested := worldinfo.RequestedWorld(cfg)
+	containerSession := worldinfo.ContainerSession(cfg, isolated)
 
-	// The runtime offers per-dispatch containers to a HOST session on Linux
-	// with an image configured; a container session shares its one container.
-	offered := cfg.Workspace.Backend != config.BackendContainerd &&
-		runtime.GOOS == "linux" && cfg.Workspace.Containerd.Image != ""
-	av := subagent.WorldAvailability{
-		Container:        offered,
-		ContainerOffered: offered,
-		ContainerRetains: offered,
-		ContainerReason:  "per-dispatch containers need workspace.containerd.image on a Linux host",
-		Worktree:         !shared,
-		Jail:             jailAvailable(),
-	}
+	// The raw ladder and the host availability live in worldinfo, so doctor,
+	// the session banner, and the per-dispatch resolver cannot drift. Role
+	// overrides still resolve here against the same availability: only the
+	// session default has a session-level summary.
+	av := worldinfo.Availability(cfg, isolated)
 	resolve := func(world string, grants []config.GrantConfig, lane string, retained bool) (subagent.WorldResolution, error) {
 		return subagent.ResolveWorld(subagent.WorldRequest{
 			Requested:         world,
@@ -252,8 +245,9 @@ func CheckDispatchWorld(cfg *config.Config, cfgErr error) Check {
 		return Check{Label: "Dispatch world", Status: "OK", Detail: "shared lane — no dispatch world (mode: shared)"}
 	}
 
-	proposal, perr := resolve(requested, sc.Grants, "proposal", true)
-	report, rerr := resolve(requested, sc.Grants, "report", false)
+	res := worldinfo.Resolve(cfg, isolated)
+	proposal, perr := res.Proposal, res.ProposalErr
+	report, rerr := res.Report, res.ReportErr
 
 	var detail string
 	switch requested {
@@ -261,10 +255,22 @@ func CheckDispatchWorld(cfg *config.Config, cfgErr error) Check {
 		if perr != nil {
 			return Check{Label: "Dispatch world", Status: "FAIL", Detail: perr.Error()}
 		}
-		detail = "container for every dispatch"
+		if rerr != nil {
+			return Check{Label: "Dispatch world", Status: "FAIL", Detail: rerr.Error()}
+		}
+		if proposal.Resolved == subagent.WorldShared {
+			detail = "container for report dispatches; proposals stay on the session container (shared)"
+		} else {
+			detail = "container for every dispatch"
+		}
 	case "worktree":
 		if perr != nil {
 			return Check{Label: "Dispatch world", Status: "FAIL", Detail: perr.Error()}
+		}
+		if rerr != nil {
+			// A container session has no host worktree: the proposal lane is
+			// routed shared, but a report lane cannot run one.
+			return Check{Label: "Dispatch world", Status: "FAIL", Detail: rerr.Error()}
 		}
 		detail = "worktree for every dispatch"
 	default: // auto
@@ -288,10 +294,15 @@ func CheckDispatchWorld(cfg *config.Config, cfgErr error) Check {
 		if strings.TrimSpace(rc.World) == "" && len(rc.Grants) == 0 {
 			continue
 		}
+		lane := subagent.DispatchLaneFor(subagent.SubAgentRole(role))
 		// A shared-lane role has no world at all; its world/grants override
 		// is inert in the runtime (delegate skips world resolution), so
-		// checking it here would produce a false failure.
-		if subagent.DispatchLaneFor(subagent.SubAgentRole(role)) == subagent.LaneShared {
+		// checking it here would produce a false failure. A container
+		// session routes every non-report role shared as well.
+		if lane == subagent.LaneShared {
+			continue
+		}
+		if containerSession && lane != subagent.LaneRetainedReport {
 			continue
 		}
 		checked++
@@ -302,6 +313,17 @@ func CheckDispatchWorld(cfg *config.Config, cfgErr error) Check {
 		grants := rc.Grants
 		if len(grants) == 0 {
 			grants = sc.Grants
+		}
+		if containerSession {
+			// Only report lanes reach the retained runtime in a container
+			// session; the proposal lane is routed shared by the wiring.
+			roleReport, err := resolve(roleWorld, grants, "report", false)
+			if err != nil {
+				roleErrs = append(roleErrs, fmt.Sprintf("role %s: %v", role, err))
+				continue
+			}
+			detail += fmt.Sprintf("; role %s: report %s", role, describe(roleReport))
+			continue
 		}
 		roleProposal, err := resolve(roleWorld, grants, "proposal", true)
 		if err != nil {
@@ -322,16 +344,6 @@ func CheckDispatchWorld(cfg *config.Config, cfgErr error) Check {
 		detail += fmt.Sprintf("; %d role override(s) checked", checked)
 	}
 	return Check{Label: "Dispatch world", Status: "OK", Detail: detail}
-}
-
-// jailAvailable reports whether a syscall jail is usable on this host.
-func jailAvailable() bool {
-	backend := jail.Backend()
-	if backend == nil {
-		return false
-	}
-	ok, _ := backend.Available()
-	return ok
 }
 
 // CheckContainment reports the sub-agent syscall-jail capability (Plan 7 Phase

@@ -375,14 +375,19 @@ func TestBackgroundJobs_SessionHooksFireOutsideLoop(t *testing.T) {
 	m := newTestManager()
 	defer m.Close()
 
-	startCh := make(chan string, 1)
-	endCh := make(chan string, 1)
+	startCh := make(chan worldEvent, 1)
+	endCh := make(chan worldEvent, 1)
 	m.SetSessionHooks(
-		func(id, role, model, prompt string) { startCh <- id },
-		func(id, role, model, prompt, result string, dur time.Duration, err string) { endCh <- id },
+		func(id, role, model, prompt string, world SubAgentWorld) {
+			startCh <- worldEvent{id: id, world: world}
+		},
+		func(id, role, model, prompt, result string, dur time.Duration, err string, world SubAgentWorld) {
+			endCh <- worldEvent{id: id, world: world}
+		},
 	)
 
 	runner := func(ctx context.Context, prompt string, p SubAgentParams) (string, error) {
+		WriteSubAgentWorld(ctx, SubAgentWorld{Resolved: "worktree"})
 		NotifySubAgentStart(ctx, "test-model")
 		return "done", nil
 	}
@@ -393,20 +398,32 @@ func TestBackgroundJobs_SessionHooksFireOutsideLoop(t *testing.T) {
 
 	select {
 	case got := <-startCh:
-		if got != id {
-			t.Errorf("start id = %q, want %q", got, id)
+		if got.id != id {
+			t.Errorf("start id = %q, want %q", got.id, id)
+		}
+		if got.world.Resolved != "worktree" {
+			t.Errorf("start world = %+v, want worktree", got.world)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("session start hook did not fire")
 	}
 	select {
 	case got := <-endCh:
-		if got != id {
-			t.Errorf("end id = %q, want %q", got, id)
+		if got.id != id {
+			t.Errorf("end id = %q, want %q", got.id, id)
+		}
+		if got.world.Resolved != "worktree" {
+			t.Errorf("end world = %+v, want worktree", got.world)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("session end hook did not fire")
 	}
+}
+
+// worldEvent carries a hook id plus the resolved world a test asserted on.
+type worldEvent struct {
+	id    string
+	world SubAgentWorld
 }
 
 // TestBackgroundJobs_LoopHooksTakePrecedence pins the no-duplicate guarantee:
@@ -417,12 +434,12 @@ func TestBackgroundJobs_LoopHooksTakePrecedence(t *testing.T) {
 	defer m.Close()
 
 	loopEnd := make(chan string, 1)
-	m.SetLoopHooks(nil, func(id, role, model, prompt, result string, dur time.Duration, err string) {
+	m.SetLoopHooks(nil, func(id, role, model, prompt, result string, dur time.Duration, err string, world SubAgentWorld) {
 		loopEnd <- id
 	})
 
 	var sessionEnd atomic.Int32
-	m.SetSessionHooks(nil, func(id, role, model, prompt, result string, dur time.Duration, err string) {
+	m.SetSessionHooks(nil, func(id, role, model, prompt, result string, dur time.Duration, err string, world SubAgentWorld) {
 		sessionEnd.Add(1)
 	})
 
@@ -589,5 +606,39 @@ func TestBackgroundJobs_CloseAndWaitNoJobs(t *testing.T) {
 	m := newTestManager()
 	if !m.CloseAndWait(2 * time.Second) {
 		t.Error("CloseAndWait = false with no jobs at all, want true")
+	}
+}
+
+// TestBackgroundJobs_SeedsWorldFromCallContext pins the shared direct lane's
+// background path: a world the caller already resolved (no retained body will
+// overwrite it) reaches the job's start event instead of staying empty.
+func TestBackgroundJobs_SeedsWorldFromCallContext(t *testing.T) {
+	m := newTestManager()
+	defer m.Close()
+
+	startCh := make(chan SubAgentWorld, 1)
+	m.SetSessionHooks(
+		func(id, role, model, prompt string, world SubAgentWorld) { startCh <- world },
+		nil,
+	)
+
+	callWorld := SubAgentWorld{Resolved: "shared"}
+	ctx := WithSubAgentWorldPtr(context.Background(), &callWorld)
+
+	runner := func(ctx context.Context, prompt string, p SubAgentParams) (string, error) {
+		NotifySubAgentStart(ctx, "test-model")
+		return "done", nil
+	}
+	if _, err := m.Launch(ctx, runner, "worker", "task", "x", SubAgentParams{Role: "worker"}, 0); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	select {
+	case got := <-startCh:
+		if got.Resolved != "shared" {
+			t.Fatalf("start world = %+v, want shared", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("session start hook did not fire")
 	}
 }

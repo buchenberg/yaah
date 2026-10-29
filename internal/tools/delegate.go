@@ -185,6 +185,14 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 	// edited mid-dispatch.
 	lane := t.laneFor(params.Role)
 
+	// A dispatch that never reaches the retained resolver has no world of its
+	// own: it runs on the session's tree. Publish that resolution so the
+	// start event names "shared" instead of falling back to the session-level
+	// summary; the background manager seeds its job from this same value.
+	if t.Retained == nil || lane == LaneShared {
+		WriteSubAgentWorld(runCtx, SubAgentWorld{Resolved: "shared"})
+	}
+
 	if params.Background {
 		if t.BackgroundJobs == nil {
 			return "", fmt.Errorf("delegate: background mode requested but not available")

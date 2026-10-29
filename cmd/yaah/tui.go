@@ -113,6 +113,7 @@ func runTUI() error {
 		cfg.Embedding.Model,
 		pipelineList,
 	)
+	app.SetWorld(sess.WorldStatus())
 
 	names := make(map[string]string)
 	for key, p := range cfg.Providers {

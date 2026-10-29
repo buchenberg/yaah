@@ -61,6 +61,61 @@ func WriteSubAgentModel(ctx context.Context, model string) {
 // before its loop begins.
 type subAgentStartKey struct{}
 
+// SubAgentWorld is the resolved dispatch world carried from the dispatch
+// body (the retained runtime or the shared lane) to the event publishers.
+// The zero value means no world was resolved, which every surface renders as
+// nothing. It is a plain struct so events can carry it without importing
+// internal/agent/subagent.
+type SubAgentWorld struct {
+	// Resolved is the world kind: "worktree", "container", or "shared".
+	Resolved string
+	// Degraded reports that the request could not get its world.
+	Degraded bool
+	// Reason explains a degraded resolution.
+	Reason string
+}
+
+// subAgentWorldWriterKey is a context key for the closure a dispatch body
+// calls to report its resolved world.
+type subAgentWorldWriterKey struct{}
+
+// subAgentWorldValueKey stores the *SubAgentWorld the pointer writer targets,
+// so a reader (the background manager seeding a job) can observe it without
+// knowing the writer closure.
+type subAgentWorldValueKey struct{}
+
+// WithSubAgentWorldWriter stores write in ctx so a dispatch body can report
+// its resolved world. Synchronization with concurrent readers is the
+// installer's responsibility.
+func WithSubAgentWorldWriter(ctx context.Context, write func(SubAgentWorld)) context.Context {
+	return context.WithValue(ctx, subAgentWorldWriterKey{}, write)
+}
+
+// WithSubAgentWorldPtr stores ptr in ctx so a dispatch body can write the
+// resolved world into it. Only safe when the caller reads *ptr after joining
+// the body (e.g. a foreground dispatch collected via a channel); use
+// WithSubAgentWorldWriter for shared targets.
+func WithSubAgentWorldPtr(ctx context.Context, ptr *SubAgentWorld) context.Context {
+	ctx = context.WithValue(ctx, subAgentWorldValueKey{}, ptr)
+	return WithSubAgentWorldWriter(ctx, func(w SubAgentWorld) { *ptr = w })
+}
+
+// WriteSubAgentWorld reports w through the writer stored in ctx, if present.
+func WriteSubAgentWorld(ctx context.Context, w SubAgentWorld) {
+	if write, ok := ctx.Value(subAgentWorldWriterKey{}).(func(SubAgentWorld)); ok && write != nil {
+		write(w)
+	}
+}
+
+// SubAgentWorldFromContext returns the world last written through a pointer
+// installed by WithSubAgentWorldPtr, or the zero value when none was.
+func SubAgentWorldFromContext(ctx context.Context) SubAgentWorld {
+	if ptr, ok := ctx.Value(subAgentWorldValueKey{}).(*SubAgentWorld); ok && ptr != nil {
+		return *ptr
+	}
+	return SubAgentWorld{}
+}
+
 // WithSubAgentStartNotifier stores fn in ctx so the sub-agent runner can
 // announce the resolved model at start time. The caller uses this to
 // emit a start event that already knows which model the child runs on.
