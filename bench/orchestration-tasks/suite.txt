@@ -5,17 +5,18 @@
 #   SUITE=bench/orchestration-tasks/suite.txt \
 #   bench/terminal-bench/run.sh
 #
-# Cite this file's commit alongside any score. Minimal metric set: one task
-# per load-bearing behavior, kept lean so a full run stays cheap. The other
-# task directories remain runnable ad hoc by name:
+# Cite this file's commit alongside any score. Nine scenarios cover the
+# load-bearing orchestration behaviors; orch-settle-discard remains runnable
+# ad hoc because it overlaps orch-settle-apply:
 #   orch-settle-discard  (discard verb; overlaps settle-apply)
-#   orch-quality-gate    (gate validator loop)
-#   orch-escalation      (blocker escalation contract)
-#   orch-guard           (supervision error-rate rule)
-# orch-recovery is not listed: it needs a seeded kernel trace with a stale
-# scope (see yaah-mcs).
+# orch-recovery uses a seeded kernel trace with a stale scope + registered
+# worktree; the fixture seeder runs at image build time.
 orch-fanout
 orch-report-fanout
 orch-settle-apply
 orch-confinement
 orch-compact
+orch-quality-gate
+orch-escalation
+orch-guard
+orch-recovery
