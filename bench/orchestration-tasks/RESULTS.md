@@ -487,8 +487,8 @@ so the runtime's per-session id stays real rather than being faked.
 
 Two fixed runs, same commit, same fake key (`DEEPSEEK_API_KEY=mock`):
 
-- `2026-10-29__15-53-47`: **1/1**
-- `2026-10-29__15-54-31`: **1/1**
+- `2026-10-29__16-06-22`: **1/1**
+- `2026-10-29__16-07-08`: **1/1**
 
 `compare_runs.py` reports an exact match on verdict, message/tool sequence,
 token accounting, and trace record-schema counts. The token counts are 72,716

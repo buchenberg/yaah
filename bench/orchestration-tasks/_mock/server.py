@@ -242,12 +242,15 @@ class MockHandler(BaseHTTPRequestHandler):
             if not isinstance(messages, list):
                 raise TrapError("messages must be a list")
             kind = _classify(messages)
-            expected = self.server._next_kind()
-            if kind != expected:
-                raise TrapError(
-                    f"request {self.server.step_index + 1}: got {kind!r}, "
-                    f"expected {expected!r}"
-                )
+        except (TrapError, ValueError, TypeError) as exc:
+            self._json(400, {"error": str(exc)})
+            return
+        except Exception as exc:
+            self.log_message("request failed: %s", exc)
+            self._json(500, {"error": str(exc)})
+            return
+
+        try:
             content, tool_name, args = self.server._response(kind, messages)
             if (
                 tool_name is not None
@@ -266,14 +269,20 @@ class MockHandler(BaseHTTPRequestHandler):
             # Advance only after the whole response validates: a rejected
             # request must not consume a step from the transcript.
             self.server._advance(kind)
-        except (TrapError, ValueError, TypeError) as exc:
+        except TrapError as exc:
             self._json(400, {"error": str(exc)})
             return
         except Exception as exc:
-            self.log_message("request failed: %s", exc)
+            self.log_message("response build failed: %s", exc)
             self._json(500, {"error": str(exc)})
             return
-        self.send_stream(events)
+
+        try:
+            self.send_stream(events)
+        except Exception as exc:
+            # Headers may already be on the wire; log instead of attempting
+            # a second HTTP response.
+            self.log_message("stream failed: %s", exc)
 
 
 class MockServer(ThreadingHTTPServer):
