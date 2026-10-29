@@ -17,7 +17,7 @@ question about which one is missing:
 |---|---|---|
 | Machine | `workspace.run` + consume-once settlement | `delegate` + `proposal` verbs |
 | World | vcs-core carriers (overlayfs / FUSE / clonefile / copy) | git worktree; croft container |
-| Authority | Landlock / Seatbelt over the agent process | Landlock / winacl over child processes (macOS Seatbelt pending) |
+| Authority | Landlock / Seatbelt over the agent process | Landlock / winacl / Seatbelt over child processes |
 | Record | `shepherd2` abi.v0 | `goatherd-kernel` (byte-identical) |
 
 The container tier is a **world**, never an authority. A container substitutes
@@ -330,7 +330,7 @@ Pinned inputs (drift guard: `internal/parity`):
 | kernel | `goatherd-kernel v0.18.0` |
 | runtime | `goatherd-runtime v0.20.0` |
 | container world | `goatherd-runtime/sandbox/croft v0.2.0` / `goatherd-croft v0.9.1` |
-| containment | landlock, winacl; seatbelt pending upstream |
+| containment | landlock v0.1.2, winacl v0.1.1, seatbelt v0.1.0 |
 | grants | world-relative RW/RO roots, disjoint (config, not tools) |
 
 Remaining divergences are tracked only in `yaah-ihfh` and its children. A

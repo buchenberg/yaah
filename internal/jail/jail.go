@@ -4,8 +4,8 @@
 // own nested module, and a host passes the one that fits into the sandbox
 // constructor. The runtime never imports a member, and build tags are
 // prohibited in this repo, so selection is a runtime.GOOS lookup into a
-// detector table: landlock on Linux, winacl on Windows, no entry elsewhere
-// (advisory tier only).
+// detector table: landlock on Linux, winacl on Windows, seatbelt on macOS,
+// no entry elsewhere (advisory tier only).
 //
 // Availability is what Backend() reports, not presence: every member's
 // Detect() returns nil unless the mechanism's Available() succeeds at call
@@ -20,6 +20,7 @@ import (
 
 	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 	"github.com/buchenberg/goatherd-runtime/sandbox/landlock"
+	"github.com/buchenberg/goatherd-runtime/sandbox/seatbelt"
 	"github.com/buchenberg/goatherd-runtime/sandbox/winacl"
 )
 
@@ -29,6 +30,7 @@ import (
 var detectors = map[string]func() containment.Backend{
 	"linux":   landlock.Detect,
 	"windows": winacl.Detect,
+	"darwin":  seatbelt.Detect,
 }
 
 // backendFor resolves the detector entry for goos and calls it, returning nil

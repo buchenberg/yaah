@@ -21,7 +21,7 @@ running tests, and retrying. yaah splits that work:
 - **Sub-agents do the long-running work.** Each role gets a focused tool set, its own iteration/turn budget, and a structured evidence contract.
 - **Parallel by default.** Independent research, implementation, and validation can run at the same time.
 - **Isolated by construction.** A dispatch runs in its own git worktree and returns a sealed proposal (`select`, `apply`, `release`, or `discard`). A rejected attempt costs one dispatch and leaves the tree untouched.
-- **Confined when the host can.** Retention isolates files; confinement governs processes and the network. Where the host can jail (Landlock on Linux, winacl on Windows), a dispatch shells inside a kernel-enforced confinement jail — Landlock's syscall filtering, winacl's write-restricted access checks — whose sole writable root is its worktree, and on Linux egress can also be fully denied or pinned to a session broker's allowlist. Hosts without a usable jail degrade visibly; `paddock` fails closed instead. See [Confinement and egress](#confinement-and-egress).
+- **Confined when the host can.** Retention isolates files; confinement governs processes and the network. Where the host can jail (Landlock on Linux, winacl on Windows, Seatbelt on macOS), a dispatch shells inside a kernel-enforced confinement jail — Landlock's syscall filtering, winacl's write-restricted access checks, Seatbelt's per-process profiles — whose sole writable root is its worktree, and on Linux egress can also be fully denied or pinned to a session broker's allowlist. Hosts without a usable jail degrade visibly; `paddock` fails closed instead. See [Confinement and egress](#confinement-and-egress).
 - **Supervised while running.** A supervision kernel reads every session's trace and steers or halts a running sub-agent loop on advisory rules — destructive-command patterns, error-rate spikes — rather than waiting for the run to finish.
 - **Speculative by design.** The orchestrator can compare several proposals and land the best one; nothing is committed by a sub-agent.
 
@@ -204,7 +204,8 @@ survive it, and anything that cannot be moved back is reported rather than lost.
 ### Confinement and egress
 
 Where the host can jail, the jail is real — Landlock on Linux, winacl on
-Windows; on Linux the network can be governed with it as well:
+Windows, Seatbelt on macOS; on Linux the network can be governed with it as
+well:
 
 - **Confinement jail.** `agents.subagent.containment: auto | paddock | advisory |
   off` (default `auto`; aliases `jail` for `paddock`, `none` for `off`).
@@ -248,23 +249,23 @@ neither covers — is the
 
 The containment family is one contract with per-platform mechanisms
 (`goatherd-runtime/sandbox/*`). yaah picks the member per platform:
-`landlock` on Linux, `winacl` on Windows, and nothing (advisory only)
-elsewhere — e.g. macOS.
+`landlock` on Linux, `winacl` on Windows, `seatbelt` on macOS, and nothing
+(advisory only) elsewhere.
 
-| | Linux — shipped | Windows — shipped | macOS — planned |
+| | Linux — shipped | Windows — shipped | macOS — shipped |
 |---|---|---|---|
 | Mechanism | Landlock rulesets: kernel-enforced filesystem rights, port-scoped network rules | Write-restricted token, per-root write capability SIDs, Low integrity level, no-write-up label | Seatbelt SBPL profiles |
 | Privilege | none | none (no elevation, container, or VM) | none (`sandbox-exec` ships with macOS) |
-| Writable root | worktree plus redirected scratch | worktree only (per-root write grants) | worktree plus platform temp directories (draft) |
+| Writable root | worktree plus redirected scratch | worktree only (per-root write grants) | worktree plus platform temp directories |
 | Git rule | commit refusal with an explanation | same refusal; denials classified as discarded runs | profile denies writes under the repository's `.git` |
 | Egress | `allow_all` / `deny_all` / `broker` (port pin) | `allow_all` only — no kernel network axis; restrictive postures fail closed | `deny_all` enforceable; broker allowlists are cooperative, not kernel-pinned |
-| Placement & probe | `paddock` / `auto` / `advisory`, fail-closed probe | same contract, same fail-closed probe | same semantics; probe coverage to be built |
+| Placement & probe | `paddock` / `auto` / `advisory`, fail-closed probe | same contract, same fail-closed probe | same contract, same fail-closed probe |
 
 Mechanism differences are deliberate and reported with distinct enforcement
 tiers: Linux denies syscalls (`native-syscall-deny`), Windows denies access
-checks (`native-access-check-deny`). The macOS column is drafted from public
-Seatbelt implementations — it is a plan, not shipped code — and includes the
-known trade-off that profiles need broad read access so toolchains work.
+checks (`native-access-check-deny`), macOS denies policy evaluations
+(`native-sandbox-deny`). Seatbelt profiles need broad read access so toolchains
+work; that is the documented trade-off, not a silent widening.
 
 ## Commands
 

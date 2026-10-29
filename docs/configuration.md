@@ -578,14 +578,14 @@ question. `mode: shared` is the direct-to-host lane: the explicit opt-out from
 retention.
 
 **Confinement — `containment`, default `auto`.** Where the host can jail
-(Landlock on Linux — syscall filtering — and winacl on Windows — write-restricted
-access checks — which is why its enforcement tier is `native-access-check-deny`)
-a dispatch runs its shell inside a kernel-enforced confinement jail whose sole
-writable root is its worktree. `auto` jails where the host can and **degrades
-visibly to advisory** where it cannot (a platform with no usable backend — macOS
-today), recording which happened on the sub-agent's trace; `paddock` (alias
-`jail`) fails closed instead of degrading; `off` (or `none`/`advisory`) always
-runs on the host. The orchestrator is never jailed either way.
+(Landlock on Linux — syscall filtering; winacl on Windows — write-restricted
+access checks; Seatbelt on macOS — per-process SBPL profiles) a dispatch runs
+its shell inside a kernel-enforced confinement jail whose sole writable root is
+its worktree. `auto` jails where the host can and **degrades visibly to
+advisory** where it cannot, recording which happened on the sub-agent's trace;
+`paddock` (alias `jail`) fails closed instead of degrading; `off` (or
+`none`/`advisory`) always runs on the host. The orchestrator is never jailed
+either way.
 
 > **The git rule.** A retained dispatch works in a
 > **linked** `git worktree`, whose index and object store live in the *original*
