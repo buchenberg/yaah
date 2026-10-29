@@ -1,0 +1,8 @@
+agents:
+  default:
+    shepherd_trace_path: /app/.orch-trace/trace.sqlite
+    retained_repo_path: /app
+  subagent:
+    mode: retained
+    model: deepseek-flash
+    max_concurrency: 1

@@ -431,3 +431,24 @@ Python fixture) — ~450 tokens a call, far below the run-to-run spread this
 task shows (85K–178K across trials), so it lands inside the noise. The
 mechanism scales with the number of tools actually left out, which is what
 the bead predicted.
+
+## 2026-10-29 — orch-recovery (seed + live)
+
+Adds the ninth planned scenario: a stale isolated worktree and its sealed
+output are baked into the image by a multi-stage Go seeder, then recovered
+from the durable trace. The seeder creates a normal root plus an isolated
+worktree child, writes `recovered.txt`, seals the child, and exits without
+settling — the crash shape.
+
+- Task: `orch-recovery`
+- Oracle: run `2026-10-29__13-36-00`, **1/1**, all three verifier layers pass
+- Live yaah: run `2026-10-29__13-36-38`, **1/1**, all three layers pass
+- Model: `deepseek-flash`; off-peak; one trial
+- Live metrics: 16,846 uncached input / 1,778 output / 102,656 cache read,
+  7 steps, 15s, **$0.0039**
+
+The verifier checks the reported adopted path, the exact recovered payload,
+`trap.txt` byte identity, git worktree registration, the fork record in the
+trace, and the sealed output. `suite.txt` now lists nine scenarios;
+`orch-settle-discard` remains runnable ad hoc because it overlaps
+`orch-settle-apply`.

@@ -523,3 +523,52 @@ def assert_message_count_below(maximum: int) -> None:
         "compaction did not roll the context over"
     )
 
+
+
+def worktree_registered(path: Path) -> bool:
+    """Whether path is registered as a git worktree of /app."""
+    try:
+        out = _git("worktree", "list", "--porcelain")
+    except Exception:
+        return False
+    target = str(path.resolve())
+    for line in out.splitlines():
+        if line.startswith("worktree ") and str(Path(line[len("worktree "):]).resolve()) == target:
+            return True
+    return False
+
+
+def recovered_scope_exists(owner: str, path: Path) -> bool:
+    """Whether the trace carries a fork record for owner at path."""
+    conn = _connect(TRACE_DB)
+    try:
+        rows = conn.execute(
+            """
+            SELECT json_extract(body_json, '$.isolated'),
+                   json_extract(body_json, '$.child_owner'),
+                   json_extract(body_json, '$.sandbox_path')
+            FROM records
+            WHERE schema_ref = 'goatherd.scope.forked.v1'
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+    target = str(path)
+    for isolated, child_owner, sandbox_path in rows:
+        if (
+            str(isolated).lower() in ("1", "true")
+            and child_owner == owner
+            and sandbox_path == target
+        ):
+            return True
+    return False
+
+
+def sealed_output_count() -> int:
+    conn = _connect(TRACE_DB)
+    try:
+        return conn.execute(
+            "SELECT COUNT(*) FROM records WHERE schema_ref = 'goatherd.run_output.sealed.v1'"
+        ).fetchone()[0]
+    finally:
+        conn.close()
