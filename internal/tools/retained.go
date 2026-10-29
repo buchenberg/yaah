@@ -153,15 +153,57 @@ func proposalVerbs() []string { return []string{"select", "apply", "release", "d
 // retainedProposal is one sealed sub-agent run awaiting settlement: the isolated
 // child scope that owns the worktree, and the retained output its workspace was
 // sealed into (nil when the run errored before sealing).
+//
+// A container proposal carries no live scope and no sealed kernel output: the
+// container is destroyed at seal and the proposal is the GitDelta manifest.
+// Exactly one of output (worktree lane) and delta (container lane) is set for a
+// sealed proposal.
 type retainedProposal struct {
 	id       string
 	scopeID  string
 	workdir  string
 	output   *goatherd.RetainedOutput
+	delta    *GitDelta
+	review   string
 	result   string
 	runErr   string
 	parentID string
 	mgr      *goatherd.ScopeManager
+
+	// Container-lane settlement state. repoPath is the host repository the
+	// manifest settles onto; basisDigest is the host workspace state captured
+	// before the copy-in, which select compares against; artifactDir is the
+	// durable proposal directory; world records the lane for envelopes.
+	repoPath    string
+	basisDigest string
+	artifactDir string
+	world       string
+}
+
+// changedFiles is the proposal's file list, whichever lane produced it.
+func (p *retainedProposal) changedFiles() []string {
+	switch {
+	case p.delta != nil:
+		return p.delta.Paths()
+	case p.output != nil:
+		return changesPaths(p.output.Changes())
+	default:
+		return nil
+	}
+}
+
+// reviewDiff is the proposal's reviewable diff, whichever lane produced it.
+func (p *retainedProposal) reviewDiff() string {
+	switch {
+	case p.review != "":
+		return p.review
+	case p.delta != nil:
+		return p.delta.RenderDiff()
+	case p.output != nil:
+		return p.output.Diff()
+	default:
+		return ""
+	}
 }
 
 // proposalSeq disambiguates proposal ids minted within the same nanosecond
@@ -241,11 +283,11 @@ func (r *ProposalRegistry) summaries() string {
 	var b strings.Builder
 	b.WriteString("Open proposals:\n")
 	for _, p := range ps {
-		var files []string
-		if p.output != nil {
-			files = changesPaths(p.output.Changes())
-		}
+		files := p.changedFiles()
 		fmt.Fprintf(&b, "  %s  files=%d", p.id, len(files))
+		if p.world != "" {
+			fmt.Fprintf(&b, "  world=%s", p.world)
+		}
 		if p.runErr != "" {
 			fmt.Fprintf(&b, "  (run error: %s)", p.runErr)
 		}
@@ -262,9 +304,9 @@ func (r *ProposalRegistry) listEnvelope() string {
 	ps := r.all()
 	list := make([]proposalSummary, 0, len(ps))
 	for _, p := range ps {
-		files := []string{}
-		if p.output != nil {
-			files = append(files, changesPaths(p.output.Changes())...)
+		files := p.changedFiles()
+		if files == nil {
+			files = []string{}
 		}
 		list = append(list, proposalSummary{ProposalID: p.id, Files: files})
 	}
@@ -331,17 +373,37 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		return "", fmt.Errorf("delegate: %w", werr)
 	}
 
-	// A container world never seals, so it is legal only on the report lane.
-	// resolveDispatchWorld already refuses a retained container; this is the
-	// belt-and-braces check that keeps a future resolver change from
-	// dispatching a proposal into a world it cannot settle.
+	// A container world serves both lanes. A report never seals, so the
+	// container is simply destroyed. A proposal seals a GitDelta manifest
+	// before the container is destroyed: the manifest is the proposal, so no
+	// live world (and no kernel output) has to survive settlement.
 	if worldRes.Resolved == subagent.WorldContainer {
+		var basisDigest string
 		if !report {
-			return "", fmt.Errorf("delegate: a container dispatch world is report-lane only — proposal settlement across git/croft worlds is not wired yet")
+			// The select precondition is the host workspace state captured
+			// before the copy-in. Proposal bookkeeping is excluded from git
+			// first: the manifest lives in the host tree, and writing it after
+			// the basis capture would otherwise move the very state select
+			// compares against.
+			if err := ensureProposalPathsExcluded(ctx, rt.RepoPath); err != nil {
+				return "", fmt.Errorf("delegate: container proposal: exclude proposal path: %w", err)
+			}
+			basis, cerr := parent.CaptureWorkspace(ctx)
+			if cerr != nil {
+				return "", fmt.Errorf("delegate: container proposal: capture host basis: %w", cerr)
+			}
+			digest, derr := basis.Digest()
+			if derr != nil {
+				return "", fmt.Errorf("delegate: container proposal: digest host basis: %w", derr)
+			}
+			basisDigest = digest
 		}
 		ss, perr := openDispatchWorld(ctx, rt)
 		if perr == nil {
-			return runDispatchContainer(ctx, rt, parent, prompt, subParams, timeout, worldRes, ss)
+			if report {
+				return runDispatchContainer(ctx, rt, parent, prompt, subParams, timeout, worldRes, ss)
+			}
+			return runDispatchContainerProposal(ctx, rt, parent, prompt, subParams, timeout, worldRes, ss, basisDigest)
 		}
 		// Preflight failed before any work exists: auto may step down to the
 		// worktree (recording the degradation); an explicit container fails
@@ -519,13 +581,15 @@ func resolveDispatchWorld(rt RetainedRuntime, role string, report bool) (subagen
 	av := subagent.WorldAvailability{
 		// A per-dispatch container is created only where the session wired the
 		// setup: a host session with workspace.containerd.image on Linux.
-		// ContainerRetains stays false — yaah's settlement path (git parent
-		// ↔ croft child) is not wired — so a proposal dispatch still refuses
-		// one and auto still degrades to the worktree with the reason below.
+		// ContainerRetains follows DispatchWorlds: when the setup is present,
+		// a proposal seals a GitDelta manifest and the host settles it, so a
+		// container world is available to both lanes. When it is absent, a
+		// proposal refuses a container and auto degrades to the worktree with
+		// the reason below.
 		Container:        rt.ContainerWorlds,
 		ContainerOffered: rt.ContainerWorlds,
-		ContainerRetains: false,
-		ContainerReason:  "per-dispatch container worlds need workspace.containerd.image on a Linux host (proposal lanes await the container settlement path)",
+		ContainerRetains: rt.DispatchWorlds != nil,
+		ContainerReason:  "per-dispatch container worlds need workspace.containerd.image on a Linux host, and a wired dispatch setup for container settlement",
 		Worktree:         true,
 		Jail:             jailAvailable(),
 	}
@@ -676,19 +740,22 @@ func (r *ProposalRegistry) settleRetainedProposal(ctx context.Context, id, actio
 	if err != nil {
 		return "", err
 	}
+	if _, ok := settlementVerb(action); !ok {
+		return "", fmt.Errorf("proposal: unknown action %q (select, apply, release, discard)", action)
+	}
+	if p.delta != nil {
+		return r.settleGitDeltaProposal(ctx, p, action)
+	}
 	if p.output == nil {
 		return "", fmt.Errorf("proposal %s has no sealed output to settle", id)
 	}
-	verb, ok := settlementVerb(action)
-	if !ok {
-		return "", fmt.Errorf("proposal: unknown action %q (select, apply, release, discard)", action)
-	}
+	verb, _ := settlementVerb(action)
 
 	env := proposalEnvelope{
 		Status:     "settled",
 		ProposalID: id,
 		Action:     action,
-		Files:      changesPaths(p.output.Changes()),
+		Files:      p.changedFiles(),
 	}
 
 	// Release integrates nothing and leaves the isolated scope — and its

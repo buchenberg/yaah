@@ -167,33 +167,36 @@ settlement.
   transparently re-run in another world.
 - The resolution is recorded as `yaah.subagent.world.v1`, and a degraded report
   carries the warning in its result. **In-run** failures still fail the dispatch.
-- Proposal lanes are unchanged: `world: container` refuses and `auto` degrades
-  to the worktree, because container settlement is not wired yet.
+- Proposal lanes resolve to the container too once the per-dispatch setup is
+  wired: they seal a `GitDelta` manifest before the container is destroyed.
 
-### Retained container worlds — waiting on settlement wiring
+### Retained container worlds — shipped as a change manifest
 
 `croft-dlb` shipped (croft `v0.9.1`, adapter `v0.2.0`): unchanged captures
 return the previous state verbatim, and `ContentDigest` rides the kernel
-state's `Data`. Container capture is now digest-stable.
+state's `Data`.
 
-What remains is yaah's settlement path, not croft. In a host session the parent
-root is a **git** sandbox while the dispatch world is a **croft** one;
-settlement's `select`/`apply` compare and merge workspace states within one
-backend. A container proposal therefore needs either a git-patchable delta that
-yaah settles onto the host tree, or a container root (hybrid mode). Until that
-is chosen:
+yaah's settlement path does not use that digest across backends. In a host
+session the parent root is a **git** sandbox while the dispatch world is croft,
+so container proposals settle as a `GitDelta` change manifest (below) rather
+than as a kernel state. The container is destroyed at seal; the manifest is the
+proposal, so `select`, `apply`, `release`, and `discard` all work with no live
+world:
 
-- `world: auto` resolves `container` → `worktree` for a **proposal** dispatch,
-  with a recorded warning;
-- `world: container` fails closed for a proposal dispatch;
-- report lanes already use a container world (above), because they never seal.
+- `world: auto` resolves `container` for a proposal when the per-dispatch setup
+  (`DispatchWorlds`) is wired; a preflight failure degrades to the worktree;
+- `world: container` fails closed for a proposal when that setup is absent;
+- report lanes already use a container world, because they never seal.
 
-Acceptance for flipping `container` to available for **retained** dispatches:
+Acceptance for retained container dispatches:
 
 1. ~~`Capture` is content-stable~~ — done (croft-dlb).
-2. A dispatch container can be settled onto the host: `select` fast-forwards,
-   `apply` merges path-disjoint, `discard` removes the world.
-3. A crash mid-dispatch is recoverable or prunable by `yaah shepherd`.
+2. ~~A dispatch container can be settled onto the host~~ — done: `select`
+   fast-forwards onto the dispatch basis, `apply` merges path-disjoint,
+   `release` exports the manifest, `discard` removes it.
+3. A crash mid-dispatch is recoverable or prunable by `yaah shepherd`: after a
+   seal the manifest is durable and there is no world to recover, but a
+   container orphaned before the seal is still the container runtime's to reap.
 4. `yaah doctor` reports the resolution and the reason before the first run.
 
 ## Container settlement: `GitDelta`

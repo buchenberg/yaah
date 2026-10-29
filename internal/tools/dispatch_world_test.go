@@ -59,6 +59,29 @@ func TestResolveDispatchWorld(t *testing.T) {
 		}
 	})
 
+	t.Run("a wired dispatch setup lets a proposal take the container", func(t *testing.T) {
+		rt := RetainedRuntime{
+			World:           "auto",
+			ContainerWorlds: true,
+			DispatchWorlds:  &DispatchWorlds{},
+			Containment:     "auto",
+			Network:         "allow_all",
+		}
+		res, err := resolveDispatchWorld(rt, "developer", false)
+		if err != nil {
+			t.Fatalf("resolveDispatchWorld: %v", err)
+		}
+		if res.Resolved != subagent.WorldContainer || res.Degraded {
+			t.Fatalf("got %+v, want an undegraded container", res)
+		}
+
+		explicit := rt
+		explicit.World = "container"
+		if res, err := resolveDispatchWorld(explicit, "developer", false); err != nil || res.Resolved != subagent.WorldContainer {
+			t.Fatalf("explicit container = %+v, %v, want the container world", res, err)
+		}
+	})
+
 	t.Run("a shipped lane reports a host failure as a degradation", func(t *testing.T) {
 		rt := RetainedRuntime{World: "auto", ContainerWorlds: true, Containment: "auto", Network: "allow_all"}
 		res, err := resolveDispatchWorld(rt, "developer", false)

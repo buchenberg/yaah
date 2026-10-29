@@ -63,8 +63,9 @@ type WorldAvailability struct {
 	// cannot provide it" (auto degrades with a warning).
 	ContainerOffered bool
 	// ContainerRetains reports that a container world can be sealed and
-	// settled. False until yaah's container settlement path (git parent ↔
-	// croft child) is wired; capture itself is digest-stable since croft-dlb.
+	// settled. A retained container settles as a GitDelta change manifest
+	// (whole-path post-images) onto the host tree, so no shared state language
+	// between the git parent and the container child is needed.
 	ContainerRetains bool
 	// ContainerReason explains Container=false.
 	ContainerReason string
@@ -163,7 +164,7 @@ func containerRefusal(req WorldRequest, av WorldAvailability) string {
 		return "container worlds are unavailable on this host"
 	}
 	if req.Retained && !av.ContainerRetains {
-		return "container settlement is not wired yet: the parent world is git and the dispatch world is croft"
+		return "container settlement is unavailable in this session: no per-dispatch container setup is wired"
 	}
 	// Restrictive grants are enforceable in a container only once the world
 	// adapter can lower them to mounts/roots. Until then the honest answer is

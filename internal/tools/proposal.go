@@ -4,15 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 )
 
 // ProposalTool settles retained sub-agent proposals (Plan 7 Phase 2). A retained
-// dispatch (delegate in "retained" mode) runs a sub-agent in an isolated
-// worktree and seals its delta into a proposal; the orchestrator reads it and
-// settles it once — select (fast-forward), apply (three-way, path-disjoint),
+// dispatch runs a sub-agent in its bound world — an isolated git worktree, or a
+// per-dispatch container — and seals the work into a proposal; the orchestrator
+// reads it and settles it once. A worktree proposal settles through the kernel's
+// state-based verbs: select (fast-forward), apply (three-way, path-disjoint),
 // release (export the delta, then tear the worktree down), or discard (throw it
-// away and remove its worktree). The verbs mirror Shepherd's run select | apply
-// | release | discard.
+// away and remove its worktree). A container proposal settles as a GitDelta
+// manifest: select (fast-forward onto the dispatch basis), apply (whole-path,
+// path-disjoint), release (export the manifest), or discard. The verbs mirror
+// Shepherd's run select | apply | release | discard.
 type ProposalTool struct {
 	// Proposals is the session's registry of open proposals, created by
 	// runner.NewDelegateTool alongside the retained runtime and passed to this
@@ -25,7 +30,7 @@ type ProposalTool struct {
 func (*ProposalTool) Name() string { return "proposal" }
 
 func (*ProposalTool) Description() string {
-	return "Settle retained sub-agent proposals: select (fast-forward), apply (three-way merge, path-disjoint), release, discard — plus list and show. A proposal is produced by delegate."
+	return "Settle retained sub-agent proposals: select (fast-forward onto the dispatch basis), apply (path-disjoint), release, discard — plus list and show. A proposal is produced by delegate; the worktree lane merges three-way, the container lane settles a whole-path delta manifest."
 }
 
 func (*ProposalTool) Schema() json.RawMessage {
@@ -35,7 +40,7 @@ func (*ProposalTool) Schema() json.RawMessage {
 			"action": {
 				"type": "string",
 				"enum": ["list", "show", "select", "apply", "release", "discard"],
-				"description": "list: show open proposals; show: one proposal's diff and files; select: fast-forward the proposal onto the working tree — fails closed if the tree moved since the dispatch; apply: three-way merge onto a moved tree, path-disjoint or refused; release: export the delta to a retention path, then tear the worktree down; discard: throw the proposal away and remove its worktree"
+				"description": "list: show open proposals; show: one proposal's diff and files; select: fast-forward onto the dispatch basis — fails closed if the host moved since the dispatch; apply: apply path-disjoint onto a moved host (a worktree proposal merges three-way, a container proposal writes whole-path post-images), refused on overlap; release: export the delta to a retention path (and tear a worktree down); discard: throw the proposal away"
 			},
 			"proposal_id": {
 				"type": "string",
@@ -76,10 +81,13 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 			Error:      p.runErr,
 			Next:       proposalVerbs(),
 		}
-		if p.output != nil {
-			env.Diff = clipDiff(p.output.Diff())
-			env.Files = changesPaths(p.output.Changes())
+		if p.delta != nil {
+			// A container proposal's world is gone; the manifest is the
+			// proposal, and its review was captured with it.
+			env.World = string(subagent.WorldContainer)
 		}
+		env.Diff = clipDiff(p.reviewDiff())
+		env.Files = p.changedFiles()
 		return marshalProposalEnvelope(env), nil
 	case "select", "apply", "release", "discard":
 		if raw.ProposalID == "" {

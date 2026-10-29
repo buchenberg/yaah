@@ -65,12 +65,13 @@ func TestLedgerNamesEveryWorld(t *testing.T) {
 	}
 }
 
-// TestLedgerRecordsBlockers pins the two upstream blockers that keep parts of
-// the parity epic open. Dropping the claims when they land is deliberate, and
-// this guard makes it explicit rather than accidental.
+// TestLedgerRecordsBlockers pins the upstream blocker that keeps part of the
+// parity epic open. Dropping the claim when it lands is deliberate, and this
+// guard makes it explicit rather than accidental. Container settlement is no
+// longer a blocker: it ships as the GitDelta manifest (§Container settlement).
 func TestLedgerRecordsBlockers(t *testing.T) {
 	ledger := read(t, ledgerPath)
-	for _, blocker := range []string{"settlement wiring", "seatbelt"} {
+	for _, blocker := range []string{"seatbelt"} {
 		if !strings.Contains(strings.ToLower(ledger), strings.ToLower(blocker)) {
 			t.Errorf("ledger must name the %q blocker while it is open", blocker)
 		}

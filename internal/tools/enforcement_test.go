@@ -76,6 +76,8 @@ var fsExempt = map[string]string{
 
 	"retained.go": "the retained lane's harness paths, not project paths: worktree teardown probe (Stat), the release export written beside the worktree (MkdirAll/WriteFile), the repo's .git/info/exclude (ReadFile/OpenFile), and the default repo path (Getwd)",
 
+	"git_delta.go": "container settlement is deliberately a host writer: the manifest applies to the host repository tree (not through a dispatch workspace) and its durable artifact lives in the repo's harness-owned .yaah/ bookkeeping",
+
 	"role.go": "the role tool edits yaah's own role definitions and then reloads the process-wide role registry; role files are harness metadata, and the reload has no workspace view",
 
 	"availability.go:Stat": "GoToolAvailable walks up from a registry-curation root looking for go.mod to decide which Go tools to ship; it runs before any dispatch, when no workspace is injected yet",
