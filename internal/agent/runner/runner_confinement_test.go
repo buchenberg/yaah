@@ -31,7 +31,7 @@ func TestResolveSubAgentConfinement_RefusalFailsTheDispatch(t *testing.T) {
 		t.Fatalf("plant the symlink: %v", err)
 	}
 	// paddock fails closed even with no backend, so this reaches the redirect.
-	ws, rec, err := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: "paddock"}, workdir, allowAllNetwork())
+	ws, rec, err := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: "paddock"}, "", workdir, allowAllNetwork())
 	if err == nil {
 		t.Fatalf("an unredirectable scratch must fail the dispatch, got ws=%v rec=%+v", ws, rec)
 	}
@@ -43,7 +43,7 @@ func TestResolveSubAgentConfinement_RefusalFailsTheDispatch(t *testing.T) {
 	// redirect.
 	if _, _, rerr := buildSubAgentRegistry(
 		taskRunnerOpts{pathValidator: pv, subCfg: config.SubAgentConfig{Containment: "paddock"}},
-		subagent.RoleProfile{Tools: []string{"read", "grep"}}, 0, workdir); rerr == nil {
+		subagent.RoleProfile{Tools: []string{"read", "grep"}}, "", 0, workdir); rerr == nil {
 		t.Fatal("buildSubAgentRegistry must fail on an unredirectable scratch")
 	}
 }
@@ -130,7 +130,7 @@ func TestBuildSubAgentRegistry_ReturnsConfinementRecord(t *testing.T) {
 	// report.
 	if _, conf, err := buildSubAgentRegistry(
 		taskRunnerOpts{pathValidator: pv, subCfg: config.SubAgentConfig{Containment: "off"}},
-		profile, 0, t.TempDir()); err != nil {
+		profile, "", 0, t.TempDir()); err != nil {
 		t.Fatalf("off: %v", err)
 	} else if conf != nil {
 		t.Errorf("off must not record a resolution, got %+v", conf)
@@ -140,7 +140,7 @@ func TestBuildSubAgentRegistry_ReturnsConfinementRecord(t *testing.T) {
 	// the auto default, and must record.
 	if _, conf, err := buildSubAgentRegistry(
 		taskRunnerOpts{pathValidator: pv, subCfg: config.SubAgentConfig{}},
-		profile, 0, t.TempDir()); err != nil {
+		profile, "", 0, t.TempDir()); err != nil {
 		t.Fatalf("default: %v", err)
 	} else if conf == nil {
 		t.Error("the default (auto) must record a resolution")
@@ -148,7 +148,7 @@ func TestBuildSubAgentRegistry_ReturnsConfinementRecord(t *testing.T) {
 
 	_, conf, err := buildSubAgentRegistry(
 		taskRunnerOpts{pathValidator: pv, subCfg: config.SubAgentConfig{Containment: "auto"}},
-		profile, 0, t.TempDir())
+		profile, "", 0, t.TempDir())
 	if err != nil {
 		t.Fatalf("auto: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestResolveSubAgentConfinement_Placement(t *testing.T) {
 		{"jail", true, true},
 	}
 	for _, c := range cases {
-		ws, rec, rerr := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: c.setting}, t.TempDir(), allowAllNetwork())
+		ws, rec, rerr := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: c.setting}, "", t.TempDir(), allowAllNetwork())
 		if rerr != nil {
 			t.Errorf("containment=%q: %v", c.setting, rerr)
 			continue
@@ -205,7 +205,7 @@ func TestResolveSubAgentConfinement_Placement(t *testing.T) {
 	// "auto" jails only where a backend exists; elsewhere it degrades to
 	// advisory — and either way records the resolution, so a reader can tell the
 	// two apart.
-	autoWS, autoRec, autoErr := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: "auto"}, t.TempDir(), allowAllNetwork())
+	autoWS, autoRec, autoErr := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: "auto"}, "", t.TempDir(), allowAllNetwork())
 	if autoErr != nil {
 		t.Fatalf("auto: %v", autoErr)
 	}
@@ -228,7 +228,7 @@ func TestResolveSubAgentConfinement_Placement(t *testing.T) {
 	}
 
 	// An unset setting is the same default and must resolve identically.
-	defWS, defRec, defErr := resolveSubAgentConfinement(pv, config.SubAgentConfig{}, t.TempDir(), allowAllNetwork())
+	defWS, defRec, defErr := resolveSubAgentConfinement(pv, config.SubAgentConfig{}, "", t.TempDir(), allowAllNetwork())
 	if defErr != nil {
 		t.Fatalf("default: %v", defErr)
 	}
@@ -288,7 +288,7 @@ func TestResolveSubAgentConfinement_UnsetNetworkIsTheConfigDefault(t *testing.T)
 		t.Skip("Landlock present but unusable on this host")
 	}
 	pv := tools.NewPathValidator(t.TempDir(), false, nil)
-	_, rec, err := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: "auto"}, t.TempDir(), confinement.NetworkPolicy{})
+	_, rec, err := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: "auto"}, "", t.TempDir(), confinement.NetworkPolicy{})
 	if err != nil {
 		t.Fatalf("an unset network must not refuse the dispatch: %v", err)
 	}
@@ -376,7 +376,7 @@ func TestBuildSubAgentRegistry_RestrictiveEgressOmitsHostNetworkTools(t *testing
 	// Default posture: the tools stay, as they always have.
 	open, _, err := buildSubAgentRegistry(
 		taskRunnerOpts{pathValidator: pv, subCfg: config.SubAgentConfig{}, subNetwork: allowAllNetwork()},
-		profile, 0, t.TempDir())
+		profile, "", 0, t.TempDir())
 	if err != nil {
 		t.Fatalf("allow_all: %v", err)
 	}
@@ -400,7 +400,7 @@ func TestBuildSubAgentRegistry_RestrictiveEgressOmitsHostNetworkTools(t *testing
 			subCfg:        config.SubAgentConfig{},
 			subNetwork:    confinement.NetworkPolicy{Mode: confinement.NetDenyAll},
 		},
-		profile, 0, t.TempDir())
+		profile, "", 0, t.TempDir())
 	if err != nil {
 		t.Fatalf("deny_all: %v", err)
 	}
@@ -441,7 +441,7 @@ func TestBuildSubAgentRegistry_RestrictiveEgressOnTheUnjailedLane(t *testing.T) 
 	}
 
 	// No workdir: the lane does not jail, so the posture is refused outright.
-	if _, _, err := buildSubAgentRegistry(opts, profile, 0, ""); err == nil {
+	if _, _, err := buildSubAgentRegistry(opts, profile, "", 0, ""); err == nil {
 		t.Fatal("a restrictive posture with no workdir to jail against must be refused")
 	} else if !strings.Contains(err.Error(), "no workdir") {
 		t.Errorf("the refusal should say why, got %v", err)
@@ -450,7 +450,7 @@ func TestBuildSubAgentRegistry_RestrictiveEgressOnTheUnjailedLane(t *testing.T) 
 	// Containment off is the same contradiction, named differently.
 	off := opts
 	off.subCfg = config.SubAgentConfig{Containment: "off"}
-	if _, _, err := buildSubAgentRegistry(off, profile, 0, t.TempDir()); err == nil {
+	if _, _, err := buildSubAgentRegistry(off, profile, "", 0, t.TempDir()); err == nil {
 		t.Fatal("a restrictive posture with containment off must be refused")
 	} else if !strings.Contains(err.Error(), "containment is") {
 		t.Errorf("the refusal should name the containment setting, got %v", err)
@@ -470,7 +470,7 @@ func TestBuildSubAgentRegistry_RefusedJailStillOmitsHostNetworkTools(t *testing.
 		subCfg:        config.SubAgentConfig{Containment: "paddock"},
 		subNetwork:    confinement.NetworkPolicy{Mode: confinement.NetDenyAll},
 	}
-	reg, _, err := buildSubAgentRegistry(opts, profile, 0, t.TempDir())
+	reg, _, err := buildSubAgentRegistry(opts, profile, "", 0, t.TempDir())
 	if err != nil {
 		// A host whose jail cannot carry the rule refuses the posture outright —
 		// also correct, and there is no registry to inspect.
@@ -485,6 +485,24 @@ func TestBuildSubAgentRegistry_RefusedJailStillOmitsHostNetworkTools(t *testing.
 	for _, name := range []string{"webfetch", "http"} {
 		if reg.Get(name) != nil {
 			t.Errorf("a restrictive posture must omit %s regardless of whether the jail established", name)
+		}
+	}
+}
+
+// TestResolveSubAgentConfinement_RestrictiveGrantsNeedAJail pins the honesty
+// rule for world-relative grants: a declared set cannot run with containment
+// off (the whole host would be writable) instead of being silently ignored.
+func TestResolveSubAgentConfinement_RestrictiveGrantsNeedAJail(t *testing.T) {
+	pv := tools.NewPathValidator(t.TempDir(), false, nil)
+	pv.WorkDir = pv.WorkspaceRoot
+	grants := []config.GrantConfig{{Path: "src", Access: "readwrite"}}
+
+	for _, setting := range []string{"off", "none", "advisory"} {
+		_, _, err := resolveSubAgentConfinement(pv,
+			config.SubAgentConfig{Containment: setting, Grants: grants},
+			"", t.TempDir(), allowAllNetwork())
+		if err == nil {
+			t.Errorf("containment=%q with restrictive grants must fail closed, not run unconfined", setting)
 		}
 	}
 }

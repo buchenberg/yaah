@@ -77,7 +77,7 @@ func TestBuildSubAgentRegistry_InheritsSessionSandbox(t *testing.T) {
 		Tools: []string{"read", "write", "go_refactor", "grep"},
 	}
 
-	reg, _, err := buildSubAgentRegistry(opts, profile, 0, "/host/some/worktree")
+	reg, _, err := buildSubAgentRegistry(opts, profile, "", 0, "/host/some/worktree")
 	if err != nil {
 		t.Fatalf("buildSubAgentRegistry: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestBuildSubAgentRegistry_LocalRouteUnchanged(t *testing.T) {
 	opts := taskRunnerOpts{pathValidator: pv}
 	profile := subagent.RoleProfile{Tools: []string{"read", "go_refactor"}}
 
-	reg, _, err := buildSubAgentRegistry(opts, profile, 0, child)
+	reg, _, err := buildSubAgentRegistry(opts, profile, "", 0, child)
 	if err != nil {
 		t.Fatalf("buildSubAgentRegistry: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestBuildSubAgentRegistry_WorkdirWithoutSessionValidator(t *testing.T) {
 	// it, so the path must be real.
 	workdir := t.TempDir()
 
-	reg, _, err := buildSubAgentRegistry(opts, profile, 0, workdir)
+	reg, _, err := buildSubAgentRegistry(opts, profile, "", 0, workdir)
 	if err != nil {
 		t.Fatalf("buildSubAgentRegistry: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestBuildSubAgentRegistry_UnrestrictedSessionPostureGuard(t *testing.T) {
 	opts := taskRunnerOpts{
 		pathValidator: tools.NewPathValidator("", true, nil),
 	}
-	reg, _, err := buildSubAgentRegistry(opts, profile, 0, workdir)
+	reg, _, err := buildSubAgentRegistry(opts, profile, "", 0, workdir)
 	if err != nil {
 		t.Fatalf("buildSubAgentRegistry: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestBuildSubAgentRegistry_UnrestrictedSessionPostureGuard(t *testing.T) {
 	ask := func(path, reason string) bool { return true }
 	contained := tools.NewPathValidator(rooted, true, nil)
 	contained.AskFn = ask
-	reg2, _, err := buildSubAgentRegistry(taskRunnerOpts{pathValidator: contained}, profile, 0, workdir)
+	reg2, _, err := buildSubAgentRegistry(taskRunnerOpts{pathValidator: contained}, profile, "", 0, workdir)
 	if err != nil {
 		t.Fatalf("buildSubAgentRegistry (contained): %v", err)
 	}
@@ -237,7 +237,7 @@ func TestBuildSubAgentRegistry_NestedTaskInherits(t *testing.T) {
 	opts := taskRunnerOpts{workspace: ws}
 	profile := subagent.RoleProfile{Tools: []string{"read", "delegate"}}
 
-	reg, _, err := buildSubAgentRegistry(opts, profile, 1, "")
+	reg, _, err := buildSubAgentRegistry(opts, profile, "", 1, "")
 	if err != nil {
 		t.Fatalf("buildSubAgentRegistry: %v", err)
 	}

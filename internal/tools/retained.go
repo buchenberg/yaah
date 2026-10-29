@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +21,9 @@ import (
 	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
 	"github.com/buchenberg/yaah/internal/agent/recovery"
+	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/jail"
 	"github.com/buchenberg/yaah/internal/jobs"
 )
 
@@ -60,6 +64,56 @@ type RetainedRuntime struct {
 	// creates one per session at construction (yaah-yox), so isolation is a
 	// property of building the runtime rather than of a later wiring step.
 	Proposals *ProposalRegistry
+
+	// World is the configured dispatch world (agents.subagent.world:
+	// auto | worktree | container). Empty means auto. WorldForRole supplies a
+	// per-role override; nil means no override.
+	World        string
+	WorldForRole func(role string) string
+
+	// Containment and Network are the configured authority axes for a
+	// confined dispatch. They participate in world resolution because a
+	// fallback is legal only when it can still enforce them.
+	Containment string
+	Network     string
+
+	// Grants is the configured dispatch grant set; GrantsForRole supplies a
+	// per-role override. They participate in world resolution: a container
+	// world cannot lower grants yet, so a restrictive set refuses one.
+	Grants        []config.GrantConfig
+	GrantsForRole func(role string) []config.GrantConfig
+
+	// ContainerWorlds reports whether this session can attempt a per-dispatch
+	// container world (yaah-ihfh.3). It is true only in a host session whose
+	// config names a container image; a session that offers no container world
+	// degrades silently to the worktree, while an explicitly requested
+	// container fails closed.
+	ContainerWorlds bool
+
+	// DispatchWorlds is the setup a per-dispatch container needs: the same
+	// workspace.containerd stanza the session container uses, the backend
+	// opener, and the resolved copy-in deny list. Nil when this session cannot
+	// offer one, in which case a report dispatch runs in the worktree world.
+	DispatchWorlds *DispatchWorlds
+}
+
+// DispatchWorlds carries what a per-dispatch container world needs. The
+// composition root builds it from the session's workspace config, so the
+// dispatch container and the session container share one image contract and one
+// set of connection settings rather than drifting apart.
+type DispatchWorlds struct {
+	// Config is the workspace stanza (image, namespace, address, snapshotter,
+	// fifo_dir, root).
+	Config config.WorkspaceConfig
+	// Opener constructs the sandbox. Wiring passes
+	// OpenContainerdWorkspaceSandbox; tests pass a fake, so no test needs a
+	// containerd daemon.
+	Opener SandboxOpener
+	// Deny is agents.default.workspace_deny_patterns with its defaults
+	// already resolved. It is passed through rather than recomputed: the two
+	// substrates must copy the same files in, or a secret readable in one
+	// world would be absent from the other.
+	Deny []string
 }
 
 // proposalEnvelope is the JSON the orchestrator receives from a retained
@@ -81,7 +135,14 @@ type proposalEnvelope struct {
 	Notes string `json:"notes,omitempty"`
 	// Outcome is the rendered Outcome{Work,Scope,Record,Notes} block for the
 	// settlement (yaah-lka3: report state, not just a completion word).
-	Outcome string   `json:"outcome,omitempty"`
+	Outcome string `json:"outcome,omitempty"`
+	// World is the resolved dispatch world ("worktree" or "container"). It is
+	// absent on a shared-lane dispatch, which has no world.
+	World string `json:"world,omitempty"`
+	// Warning carries a world degradation: the dispatch ran, but not in the
+	// world that was asked for. The envelope shape and the settlement verbs do
+	// not change; only this line does.
+	Warning string   `json:"warning,omitempty"`
 	Next    []string `json:"next,omitempty"`
 }
 
@@ -261,8 +322,39 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		rt.RepoPath = wd
 	}
 
+	// Resolve the dispatch world before anything is provisioned. A refusal
+	// here fails the dispatch; a degradation is recorded and carried into the
+	// envelope. The world is decided once, before the body starts: switching
+	// worlds after work exists would change the basis of the sealed output.
+	worldRes, werr := resolveDispatchWorld(rt, subParams.Role, report)
+	if werr != nil {
+		return "", fmt.Errorf("delegate: %w", werr)
+	}
+
+	// A container world never seals, so it is legal only on the report lane.
+	// resolveDispatchWorld already refuses a retained container; this is the
+	// belt-and-braces check that keeps a future resolver change from
+	// dispatching a proposal into a world it cannot settle.
+	if worldRes.Resolved == subagent.WorldContainer {
+		if !report {
+			return "", fmt.Errorf("delegate: a container dispatch world is report-lane only — proposal settlement across git/croft worlds is not wired yet")
+		}
+		ss, perr := openDispatchWorld(ctx, rt)
+		if perr == nil {
+			return runDispatchContainer(ctx, rt, parent, prompt, subParams, timeout, worldRes, ss)
+		}
+		// Preflight failed before any work exists: auto may step down to the
+		// worktree (recording the degradation); an explicit container fails
+		// closed. Nothing was provisioned, so the world can still change.
+		worldRes, werr = dispatchWorldPreflightFailure(worldRes, perr)
+		if werr != nil {
+			return "", werr
+		}
+	}
+
 	// The basis: the parent's workspace at dispatch. The proposal's delta is
-	// everything the sub-agent changes relative to it.
+	// everything the sub-agent changes relative to it. A container report
+	// dispatch never needs it — it returns above, before the copy-in.
 	forkPoint, err := parent.CaptureWorkspace(ctx)
 	if err != nil {
 		return "", fmt.Errorf("delegate: capture basis: %w", err)
@@ -272,13 +364,17 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	wt := retainedWorktreePath(rt, id)
 
 	scopeID, provErr := provisionRetainedBranch(ctx, rt, id, wt, forkPoint)
-	env := proposalEnvelope{ProposalID: id, Next: proposalVerbs()}
+	env := proposalEnvelope{ProposalID: id, Next: proposalVerbs(), World: string(worldRes.Resolved)}
+	if worldRes.Degraded {
+		env.Warning = "dispatch world degraded: " + worldRes.Reason
+	}
 	if scopeID == "" {
 		// Nothing ran and nothing was sealed: report, register nothing.
 		env.Status = "error"
 		env.Error = provErr.Error()
 		return marshalProposalEnvelope(env), nil
 	}
+	recordWorldFact(ctx, mgr, scopeID, worldRes)
 
 	sp := subParams
 	sp.Workdir = wt
@@ -309,6 +405,9 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	// it — and hand the report straight back.
 	if report {
 		var notes []string
+		if worldRes.Degraded {
+			notes = append(notes, "dispatch world degraded: "+worldRes.Reason)
+		}
 		if provErr != nil {
 			// A provisioning error's reason is at its front, so it is
 			// head-capped here — the note budget of foldRetainedPartial
@@ -398,6 +497,86 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	env.Diff = clipDiff(output.Diff())
 	env.Files = changesPaths(output.Changes())
 	return marshalProposalEnvelope(env), nil
+}
+
+// resolveDispatchWorld applies the dispatch-world ladder
+// (docs/shepherd-parity.md) to one dispatch. It is pure over the runtime's
+// config and this host's capabilities: it provisions nothing, so a refusal
+// costs a failed call rather than a stranded world.
+func resolveDispatchWorld(rt RetainedRuntime, role string, report bool) (subagent.WorldResolution, error) {
+	requested := strings.TrimSpace(rt.World)
+	if rt.WorldForRole != nil {
+		if w := strings.TrimSpace(rt.WorldForRole(role)); w != "" {
+			requested = w
+		}
+	}
+
+	lane := "proposal"
+	if report {
+		lane = "report"
+	}
+
+	av := subagent.WorldAvailability{
+		// A per-dispatch container is created only where the session wired the
+		// setup: a host session with workspace.containerd.image on Linux.
+		// ContainerRetains stays false — yaah's settlement path (git parent
+		// ↔ croft child) is not wired — so a proposal dispatch still refuses
+		// one and auto still degrades to the worktree with the reason below.
+		Container:        rt.ContainerWorlds,
+		ContainerOffered: rt.ContainerWorlds,
+		ContainerRetains: false,
+		ContainerReason:  "per-dispatch container worlds need workspace.containerd.image on a Linux host (proposal lanes await the container settlement path)",
+		Worktree:         true,
+		Jail:             jailAvailable(),
+	}
+
+	grants := rt.Grants
+	if rt.GrantsForRole != nil {
+		if g := rt.GrantsForRole(role); len(g) > 0 {
+			grants = g
+		}
+	}
+	return subagent.ResolveWorld(subagent.WorldRequest{
+		Requested:         requested,
+		Lane:              lane,
+		Retained:          !report,
+		Containment:       rt.Containment,
+		Network:           rt.Network,
+		RestrictiveGrants: len(grants) > 0,
+	}, av)
+}
+
+// jailAvailable reports whether this host can actually establish a syscall
+// jail. Availability, not presence: a compiled-in-but-disabled LSM degrades.
+func jailAvailable() bool {
+	backend := jail.Backend()
+	if backend == nil {
+		return false
+	}
+	ok, _ := backend.Available()
+	return ok
+}
+
+// recordWorldFact appends the resolved world to the dispatch's scope, so a
+// degraded dispatch is legible in the trace after the fact — the same channel
+// confinement uses. A failure to record is advisory: the run already happened.
+func recordWorldFact(ctx context.Context, mgr *goatherd.ScopeManager, scopeID string, res subagent.WorldResolution) {
+	if mgr == nil || scopeID == "" {
+		return
+	}
+	scope, ok := mgr.Get(scopeID)
+	if !ok {
+		return
+	}
+	payload := map[string]any{
+		"requested": string(res.Requested),
+		"resolved":  string(res.Resolved),
+		"degraded":  res.Degraded,
+		"reason":    res.Reason,
+	}
+	if _, err := scope.AppendFact(ctx, "yaah.subagent.world.v1", "world", payload); err != nil {
+		slog.Debug("world fact: append failed", "scope", scope.ID(), "err", err)
+	}
 }
 
 // retainedNote appends a caveat to a result instead of replacing it: the

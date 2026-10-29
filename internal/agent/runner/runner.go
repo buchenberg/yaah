@@ -133,6 +133,13 @@ type DelegateToolOpts struct {
 	// SubAgentNetworkPolicy). The zero value means allow_all — the config
 	// default; the composition root passes an explicit policy either way.
 	SubNetwork confinement.NetworkPolicy
+
+	// DispatchWorlds is the per-dispatch container setup (yaah-ihfh.3). Non-nil
+	// only in a host session that can offer a container world: the retained
+	// runtime then creates one per report dispatch, and the runner runs the
+	// sub-agent's tools inside it. Nil leaves every dispatch on the worktree
+	// (or the session's own substrate).
+	DispatchWorlds *tools.DispatchWorlds
 }
 
 // NewDelegateTool builds the planner's DelegateTool: it resolves the advertised
@@ -199,6 +206,27 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 			WorktreeRoot:      opts.RetainedWorktreeRoot,
 			WorktreeBootstrap: opts.RetainedBootstrap,
 			Proposals:         tools.NewProposalRegistry(),
+			World:             opts.SubCfg.World,
+			WorldForRole: func(role string) string {
+				if rc, ok := opts.SubCfg.Roles[role]; ok {
+					return rc.World
+				}
+				return ""
+			},
+			Containment: opts.SubCfg.Containment,
+			Network:     opts.SubCfg.Network,
+			Grants:      opts.SubCfg.Grants,
+			GrantsForRole: func(role string) []config.GrantConfig {
+				if rc, ok := opts.SubCfg.Roles[role]; ok {
+					return rc.Grants
+				}
+				return nil
+			},
+			// A per-dispatch container world is offerable only where the
+			// composition root wired its setup; the ladder then decides per
+			// lane what may actually use it (yaah-ihfh.3).
+			ContainerWorlds: opts.DispatchWorlds != nil,
+			DispatchWorlds:  opts.DispatchWorlds,
 		}
 	}
 	return tool
@@ -396,13 +424,21 @@ type taskRunnerOpts struct {
 // structurally without relying on middleware alone. Depth is hardcoded to 1.
 func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 	return func(ctx context.Context, prompt string, params tools.SubAgentParams) (string, error) {
+		// A per-dispatch world overrides the session's substrate for this
+		// dispatch only (yaah-ihfh.3). The shadow copy keeps the captured
+		// closure state immutable, so a container dispatch cannot leak its
+		// workspace into the next one. The workspace and the host path
+		// validator are mutually exclusive by construction: the workspace is
+		// the substrate, and a validator rooted on the host would gate paths
+		// in a tree this dispatch never sees.
+		opts := dispatchOpts(opts, ctx)
 		role := subagent.SubAgentRole(params.Role)
 		profile := subagent.RoleProfileFor(role)
 
 		// A tool-less profile is valid — some roles (e.g. grump) are
 		// designed to respond without calling any tools.
 
-		subReg, subConf, rerr := buildSubAgentRegistry(opts, profile, remainingDepth, params.Workdir)
+		subReg, subConf, rerr := buildSubAgentRegistry(opts, profile, role, remainingDepth, params.Workdir)
 		if rerr != nil {
 			return "", fmt.Errorf("sub-agent %s: %w", role, rerr)
 		}
@@ -683,6 +719,20 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 
 		return result, runErr
 	}
+}
+
+// dispatchOpts returns the runtime options for one dispatch. A per-dispatch
+// container world travels in the context (the retained lane owns the sandbox,
+// the runner owns the registry), and it replaces the session's substrate for
+// this dispatch: the workspace becomes the tools' world and the host path
+// validator is dropped, because the two substrates must never race for a tool.
+// Without one the captured options pass through unchanged.
+func dispatchOpts(opts taskRunnerOpts, ctx context.Context) taskRunnerOpts {
+	if ws := tools.DispatchWorkspace(ctx); ws != nil {
+		opts.workspace = ws
+		opts.pathValidator = nil
+	}
+	return opts
 }
 
 // buildSubAgentSysPrompt assembles the full system prompt for a sub-agent
@@ -1121,7 +1171,7 @@ func subAgentUnavailableTools(opts taskRunnerOpts, profile subagent.RoleProfile,
 	return unavailable
 }
 
-func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, remainingDepth int, workdir string) (*tools.Registry, *subAgentConfinement, error) {
+func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, role subagent.SubAgentRole, remainingDepth int, workdir string) (*tools.Registry, *subAgentConfinement, error) {
 	resolveTimeout := subAgentTimeoutResolver(opts.subCfg)
 	registerTask := func(reg *tools.Registry) {
 		reg.Register(&tools.DelegateTool{
@@ -1217,7 +1267,7 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 		// lane has a bound world to jail against. The orchestrator's workspace
 		// and a workdir-less (shared-host) sub-agent keep running unconfined.
 		if workdir != "" {
-			ws, rec, cerr := resolveSubAgentConfinement(pv, opts.subCfg, workdir, opts.subNetwork)
+			ws, rec, cerr := resolveSubAgentConfinement(pv, opts.subCfg, role, workdir, opts.subNetwork)
 			if cerr != nil {
 				return nil, nil, cerr
 			}
@@ -1612,7 +1662,7 @@ func (c *subAgentConfinement) payload() map[string]any {
 // "paddock" (alias "jail") fails closed. The writable root is the worktree — the
 // sub-agent's bound world — so the kernel boundary and the run's own boundary
 // agree.
-func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConfig, workdir string, network confinement.NetworkPolicy) (tools.Workspace, *subAgentConfinement, error) {
+func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConfig, role subagent.SubAgentRole, workdir string, network confinement.NetworkPolicy) (tools.Workspace, *subAgentConfinement, error) {
 	requested := strings.TrimSpace(cfg.Containment)
 	placement := containmentPlacement(requested)
 
@@ -1638,11 +1688,37 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 		}
 	}
 
+	// Resolve the declared grants before any early return: a restrictive set
+	// is unenforceable without a jail, and `containment: off` must refuse it
+	// rather than run unconfined with the whole host writable.
+	grantSet := cfg.Grants
+	if rc, ok := cfg.Roles[string(role)]; ok && len(rc.Grants) > 0 {
+		grantSet = rc.Grants
+	}
+	var grants tools.DispatchGrants
+	if workdir != "" {
+		var gerr error
+		grants, gerr = tools.ResolveGrants(grantSet, workdir)
+		if gerr != nil {
+			return nil, nil, gerr
+		}
+	}
+	if grants.Restrictive() && placement == "" {
+		return nil, nil, fmt.Errorf("grants: restrictive grants need a jail, but containment is %q — set containment: auto or paddock", requested)
+	}
+
 	if placement == "" || workdir == "" {
 		return nil, nil, nil
 	}
 
+	if grants.Restrictive() && !available && placement != containment.PlacementPaddock {
+		return nil, nil, fmt.Errorf("grants: restrictive grants need a syscall jail, which this host cannot establish")
+	}
+
 	rec, confine := confinementRecord(requested, placement, available, backend, workdir, network)
+	if grants.Restrictive() && rec != nil {
+		rec.Writable = strings.Join(grants.Writable, ",")
+	}
 	if !confine {
 		// "auto" degrades visibly to advisory: the host path *is* advisory.
 		return nil, rec, nil
@@ -1652,6 +1728,13 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 	// the host cannot enforce fails closed inside the backend, so it is surfaced
 	// rather than silently downgraded.
 	ws := tools.NewConfinedLocalWorkspace(pv, backend, placement, network)
+	if grants.Restrictive() {
+		// Only a declared set narrows the roots; an undeclared set keeps the
+		// legacy single-root workspace (and its hint path). A declared
+		// all-readonly set passes an empty list, which WithWritableRoots
+		// treats as "nothing writable".
+		ws = ws.WithWritableRoots(grants.Writable)
+	}
 
 	// Redirect housekeeping writes into the worktree (the one writable root):
 	// HOME, TMPDIR, and the build caches. The scratch is scrubbed before the

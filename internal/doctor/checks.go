@@ -15,6 +15,7 @@ import (
 	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/recovery"
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/jail"
 )
@@ -47,6 +48,7 @@ func RunChecks(opts Options) []Check {
 		CheckModel(cfg, cfgErr),
 		CheckSubAgents(cfg, cfgErr),
 		CheckContainment(cfg, cfgErr),
+		CheckDispatchWorld(cfg, cfgErr),
 		CheckWorkspace(cfg, cfgErr),
 		CheckFallback(cfg, cfgErr),
 		CheckQualityGates(cfg, cfgErr),
@@ -196,6 +198,100 @@ func CheckSubAgents(cfg *config.Config, cfgErr error) Check {
 		Status: "OK",
 		Detail: fmt.Sprintf("enabled — %s / %s, max depth 1, max concurrency %d", providerName, model, sc.MaxConcurrency),
 	}
+}
+
+// CheckDispatchWorld reports the dispatch-world resolution (yaah-ihfh.3):
+// which world a retained dispatch will get, and whether the configured world
+// is reachable here. A `container` request on a build without the lane is a
+// FAIL before the first dispatch, not a surprise mid-run.
+func CheckDispatchWorld(cfg *config.Config, cfgErr error) Check {
+	if cfgErr != nil {
+		return Check{Label: "Dispatch world", Status: "WARN", Detail: "config not loaded"}
+	}
+	sc := cfg.Agent.SubAgent
+	shared := strings.ToLower(strings.TrimSpace(sc.Mode)) == "shared"
+	requested := strings.ToLower(strings.TrimSpace(sc.World))
+	if requested == "" {
+		requested = "auto"
+	}
+
+	// The runtime offers per-dispatch containers to a HOST session on Linux
+	// with an image configured; a container session shares its one container,
+	// and the proposal lane waits on the container settlement path.
+	offered := cfg.Workspace.Backend != config.BackendContainerd &&
+		runtime.GOOS == "linux" && cfg.Workspace.Containerd.Image != ""
+	av := subagent.WorldAvailability{
+		Container:        offered,
+		ContainerOffered: offered,
+		ContainerReason:  "per-dispatch containers need workspace.containerd.image on a Linux host",
+		Worktree:         !shared,
+		Jail:             jailAvailable(),
+	}
+	req := func(lane string, retained bool) subagent.WorldRequest {
+		return subagent.WorldRequest{
+			Requested:   requested,
+			Lane:        lane,
+			Retained:    retained,
+			Containment: sc.Containment,
+			Network:     sc.Network,
+			// Grants are global; a restrictive set is what the resolver must
+			// honour. Role overrides are not resolved here (doctor reports
+			// the session default).
+			RestrictiveGrants: len(sc.Grants) > 0,
+		}
+	}
+	proposal, perr := subagent.ResolveWorld(req("proposal", true), av)
+	report, rerr := subagent.ResolveWorld(req("report", false), av)
+
+	if shared {
+		if requested == "container" {
+			return Check{Label: "Dispatch world", Status: "FAIL", Detail: "mode: shared has no dispatch world — container is unreachable"}
+		}
+		return Check{Label: "Dispatch world", Status: "OK", Detail: "shared lane — no dispatch world (mode: shared)"}
+	}
+
+	switch requested {
+	case "container":
+		if perr == nil {
+			return Check{Label: "Dispatch world", Status: "OK", Detail: "container for every dispatch"}
+		}
+		if rerr == nil && report.Resolved == subagent.WorldContainer {
+			return Check{Label: "Dispatch world", Status: "WARN", Detail: "container for report lanes; proposal lanes fail closed until the container settlement path is wired: " + perr.Error()}
+		}
+		return Check{Label: "Dispatch world", Status: "FAIL", Detail: perr.Error()}
+	case "worktree":
+		if perr != nil {
+			return Check{Label: "Dispatch world", Status: "FAIL", Detail: perr.Error()}
+		}
+		return Check{Label: "Dispatch world", Status: "OK", Detail: "worktree for every dispatch"}
+	default: // auto
+		if perr == nil && proposal.Resolved == subagent.WorldContainer {
+			return Check{Label: "Dispatch world", Status: "OK", Detail: "container for every dispatch"}
+		}
+		detail := "auto → worktree for proposals"
+		if rerr == nil && report.Resolved == subagent.WorldContainer {
+			detail += "; container for report lanes"
+		} else if offered {
+			detail += "; report lanes also use the worktree"
+		}
+		if offered {
+			detail += " (proposal containers await settlement wiring)"
+		}
+		if perr != nil {
+			return Check{Label: "Dispatch world", Status: "FAIL", Detail: detail + ": " + perr.Error()}
+		}
+		return Check{Label: "Dispatch world", Status: "OK", Detail: detail}
+	}
+}
+
+// jailAvailable reports whether a syscall jail is usable on this host.
+func jailAvailable() bool {
+	backend := jail.Backend()
+	if backend == nil {
+		return false
+	}
+	ok, _ := backend.Available()
+	return ok
 }
 
 // CheckContainment reports the sub-agent syscall-jail capability (Plan 7 Phase
