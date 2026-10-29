@@ -161,9 +161,10 @@ type proposalEnvelope struct {
 // mirroring Shepherd's run select | apply | release | discard.
 func proposalVerbs() []string { return []string{"select", "apply", "release", "discard"} }
 
-// retainedReviewMaxDiffLines bounds the diff carried by the proposal fact.
-// The trace stores the digest and metadata, not the diff body; 1000 lines is
-// generous enough to review the change without turning the fact into a copy.
+// retainedReviewMaxDiffLines bounds the proposal diff used for review and its
+// digest. The trace fact stores the change metadata and digest, not the diff
+// body; 1000 lines is generous enough to review the change without turning the
+// fact into a copy.
 const retainedReviewMaxDiffLines = 1000
 
 // retainedProposal is one sealed sub-agent run awaiting settlement: the isolated
@@ -657,12 +658,26 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 
 	if output == nil {
 		// Sealing failed: the isolated scope still owns its worktree, so
-		// discard it rather than strand it. There is nothing to settle.
+		// discard it rather than strand it. There is nothing to settle, but
+		// close the review pair with a failed decision so the proposal fact is
+		// not left as an unexplained orphan.
+		if reviewProposal != nil && reviewFactID != "" {
+			reason := "seal failed"
+			if sealErr != nil {
+				reason += ": " + sealErr.Error()
+			}
+			if _, derr := mgr.RecordMergeDecision(ctx, reviewProposal, false, reason, "seal_failed", reviewFactID); derr != nil {
+				notes = append(notes, "review decision: "+derr.Error())
+			}
+		}
 		if scope, gok := mgr.Get(scopeID); gok {
 			_ = parent.Discard(scope)
 		}
 		env.Status = "error"
 		env.Result = trimResult(result)
+		if len(notes) > 0 {
+			env.Error = trimResult(strings.Join(notes, "; "))
+		}
 		return marshalProposalEnvelope(env), nil
 	}
 
@@ -955,7 +970,7 @@ func (r *ProposalRegistry) settleRetainedProposal(ctx context.Context, id, actio
 	// select, apply, and discard already end the child scope themselves.
 	if verb == goatherd.SettleRelease {
 		if err := teardownReleasedProposal(p); err != nil {
-			env.Notes = fmt.Sprintf("release worktree teardown failed: %v; worktree stranded at %s", err, p.workdir)
+			env.Notes = appendSettleNote(env.Notes, fmt.Sprintf("release worktree teardown failed: %v; worktree stranded at %s", err, p.workdir))
 		}
 	}
 
