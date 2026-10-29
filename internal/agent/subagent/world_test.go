@@ -81,6 +81,24 @@ func TestResolveWorld_Ladder(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "restrictive egress refuses an available container",
+			req:  WorldRequest{Requested: "auto", Lane: "proposal", Retained: true, Network: "deny_all"},
+			av:   both,
+			want: WorldWorktree, degraded: true,
+		},
+		{
+			name:    "explicit container refuses a restrictive egress posture",
+			req:     WorldRequest{Requested: "container", Lane: "report", Network: "broker"},
+			av:      both,
+			wantErr: true, wantInErr: "network",
+		},
+		{
+			name:    "the opt-in gate names itself",
+			req:     WorldRequest{Requested: "container", Lane: "proposal", Retained: true},
+			av:      WorldAvailability{Container: true, ContainerOffered: true, ContainerRetains: false, ContainerRetainsReason: "proposal container worlds are opt-in", Worktree: true, Jail: true},
+			wantErr: true, wantInErr: "opt-in",
+		},
+		{
 			name: "retained dispatch cannot use a non-settling container",
 			req:  WorldRequest{Requested: "auto", Lane: "proposal", Retained: true},
 			av:   WorldAvailability{Container: true, ContainerOffered: true, ContainerRetains: false, Worktree: true, Jail: true},

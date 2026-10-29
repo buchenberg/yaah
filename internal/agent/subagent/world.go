@@ -65,8 +65,14 @@ type WorldAvailability struct {
 	// ContainerRetains reports that a container world can be sealed and
 	// settled. A retained container settles as a GitDelta change manifest
 	// (whole-path post-images) onto the host tree, so no shared state language
-	// between the git parent and the container child is needed.
+	// between the git parent and the container child is needed. Automatic
+	// proposal containers are opt-in until manifest rehydration lands; the
+	// resolver reports that as false for an auto proposal even when the setup
+	// is wired.
 	ContainerRetains bool
+	// ContainerRetainsReason explains ContainerRetains=false when Container is
+	// true (for example, the opt-in gate rather than a missing setup).
+	ContainerRetainsReason string
 	// ContainerReason explains Container=false.
 	ContainerReason string
 
@@ -164,7 +170,21 @@ func containerRefusal(req WorldRequest, av WorldAvailability) string {
 		return "container worlds are unavailable on this host"
 	}
 	if req.Retained && !av.ContainerRetains {
+		if av.ContainerRetainsReason != "" {
+			return av.ContainerRetainsReason
+		}
 		return "container settlement is unavailable in this session: no per-dispatch container setup is wired"
+	}
+	// A container is a substitute for the syscall jail, not a composition:
+	// containment: paddock is satisfied by the container boundary. The ledger
+	// records the tier as "contained", never "paddock".
+	//
+	// Egress is different. A restrictive posture is enforced for the shell
+	// children by the jail, but http/webfetch execute in this process on the
+	// host; a container netns cannot cover them. Refuse the world rather than
+	// silently weaken the declaration.
+	if restrictiveNetwork(req.Network) {
+		return "a restrictive network posture (" + strings.ToLower(strings.TrimSpace(req.Network)) + ") cannot be enforced for a container world; use a worktree world or allow_all"
 	}
 	// Restrictive grants are enforceable in a container only once the world
 	// adapter can lower them to mounts/roots. Until then the honest answer is

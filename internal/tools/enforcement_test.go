@@ -76,7 +76,15 @@ var fsExempt = map[string]string{
 
 	"retained.go": "the retained lane's harness paths, not project paths: worktree teardown probe (Stat), the release export written beside the worktree (MkdirAll/WriteFile), the repo's .git/info/exclude (ReadFile/OpenFile), and the default repo path (Getwd)",
 
-	"git_delta.go": "container settlement is deliberately a host writer: the manifest applies to the host repository tree (not through a dispatch workspace) and its durable artifact lives in the repo's harness-owned .yaah/ bookkeeping",
+	"git_delta.go:Chmod":     "container settlement applies the manifest's post-image mode to the host tree — the manifest is the authority, not the workspace",
+	"git_delta.go:Lstat":     "settlement checks a destination's ancestors for a symlink escape before writing; this is the host-writer half of settlement, not tool file access",
+	"git_delta.go:MkdirAll":  "settlement creates parents for whole-path post-images inside the validated repository root",
+	"git_delta.go:Open":      "the durable artifact fsync opens the manifest file it just wrote under .yaah/ bookkeeping",
+	"git_delta.go:OpenFile":  "the durable artifact fsync opens the manifest read-write for FlushFileBuffers on Windows",
+	"git_delta.go:ReadFile":  "release copies the manifest it owns out of .yaah/proposals — not a project path",
+	"git_delta.go:Remove":    "settlement applies a manifest delete to the host tree",
+	"git_delta.go:RemoveAll": "consume-once removes the proposal's own .yaah/proposals directory",
+	"git_delta.go:Stat":      "fsync skips artifacts that were not written and checks a path before opening",
 
 	"role.go": "the role tool edits yaah's own role definitions and then reloads the process-wide role registry; role files are harness metadata, and the reload has no workspace view",
 

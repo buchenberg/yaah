@@ -581,20 +581,33 @@ func resolveDispatchWorld(rt RetainedRuntime, role string, report bool) (subagen
 		lane = "report"
 	}
 
+	// Rollout gate (yaah-ihfh.3): automatic proposal containers would seal a
+	// manifest that the in-memory registry cannot rehydrate after a restart.
+	// Keep `auto` on the worktree until that durability work lands; an explicit
+	// `world: container` (session or role) opts in. Report lanes are unaffected
+	// because they never seal.
+	explicitContainer := strings.EqualFold(strings.TrimSpace(requested), "container")
+	proposalAuto := !report && !explicitContainer
+	containerRetains := rt.DispatchWorlds != nil && !proposalAuto
+	containerOffered := rt.ContainerWorlds && !proposalAuto
+	retainsReason := ""
+	switch {
+	case proposalAuto && rt.DispatchWorlds != nil:
+		retainsReason = "proposal container worlds are opt-in while manifest rehydration is pending; set agents.subagent.world: container (or a per-role world override) to use one"
+	case !containerRetains:
+		retainsReason = "container settlement is unavailable in this session: no per-dispatch container setup is wired"
+	}
+
 	av := subagent.WorldAvailability{
 		// A per-dispatch container is created only where the session wired the
 		// setup: a host session with workspace.containerd.image on Linux.
-		// ContainerRetains follows DispatchWorlds: when the setup is present,
-		// a proposal seals a GitDelta manifest and the host settles it, so a
-		// container world is available to both lanes. When it is absent, a
-		// proposal refuses a container and auto degrades to the worktree with
-		// the reason below.
-		Container:        rt.ContainerWorlds,
-		ContainerOffered: rt.ContainerWorlds,
-		ContainerRetains: rt.DispatchWorlds != nil,
-		ContainerReason:  "per-dispatch container worlds need workspace.containerd.image on a Linux host, and a wired dispatch setup for container settlement",
-		Worktree:         true,
-		Jail:             jailAvailable(),
+		Container:              rt.ContainerWorlds,
+		ContainerOffered:       containerOffered,
+		ContainerRetains:       containerRetains,
+		ContainerRetainsReason: retainsReason,
+		ContainerReason:        "per-dispatch container worlds need workspace.containerd.image on a Linux host, and a wired dispatch setup for container settlement",
+		Worktree:               true,
+		Jail:                   jailAvailable(),
 	}
 
 	grants := rt.Grants
