@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
@@ -155,7 +156,12 @@ func (s *SessionSandbox) ReleaseCapture(ctx context.Context, state shepherdtrace
 	if !ok {
 		return fmt.Errorf("workspace: session backend %q does not expose ReleaseState", s.sb.Backend())
 	}
-	return releaser.ReleaseState(ctx, state)
+	// The caller passes a cancel-stripped context so a completed dispatch can
+	// still clean up. Bound the backend call here: a wedged release must not
+	// hold captureMu past every later dispatch's own timeout.
+	releaseCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	return releaser.ReleaseState(releaseCtx, state)
 }
 
 // Destroy releases the session sandbox. It is idempotent and safe from
