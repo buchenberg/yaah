@@ -12,6 +12,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
 )
 
 // decodeProposalEnvelope unmarshals a proposal envelope and fails the test on
@@ -890,5 +893,172 @@ func TestRetained_ReportLaneBodyErrorPropagates(t *testing.T) {
 		if _, statErr := os.Stat(wd); !os.IsNotExist(statErr) {
 			t.Errorf("failed report run must tear down the worktree (stat err=%v)", statErr)
 		}
+	}
+}
+
+func findRetainedFacts(t *testing.T, store *shepherdtrace.SQLiteTraceStore, owner, schema string) []shepherdtrace.Record {
+	t.Helper()
+	slice, err := store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, owner, 999, shepherdtrace.ModeBoth)
+	if err != nil {
+		t.Fatalf("read trace for %s: %v", owner, err)
+	}
+	var out []shepherdtrace.Record
+	for _, id := range slice.FactIDs() {
+		if rec, ok := slice.FactsByID[id].(shepherdtrace.Record); ok && rec.Envelope.SchemaRef == schema {
+			out = append(out, rec)
+		}
+	}
+	return out
+}
+
+func TestRetained_ReviewProvenance(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	rt := RetainedRuntime{
+		Runner:       writingRunner(t, "out.txt").run(),
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+		Proposals:    NewProposalRegistry(),
+	}
+
+	res, err := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 0, false)
+	if err != nil {
+		t.Fatalf("startRetainedRun: %v", err)
+	}
+	env := decodeProposalEnvelope(t, res)
+	if env.Status != "proposal" {
+		t.Fatalf("proposal envelope = %+v", env)
+	}
+	proposals := findRetainedFacts(t, fx.store, env.ProposalID, goatherd.SchemaMergeProposed)
+	if len(proposals) != 1 {
+		t.Fatalf("proposal facts = %d, want 1", len(proposals))
+	}
+
+	root, ok := fx.mgr.Get(rootID)
+	if !ok {
+		t.Fatal("root scope missing")
+	}
+	if _, err := rt.Proposals.settleRetainedProposal(context.Background(), env.ProposalID, "select"); err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	decisions := findRetainedFacts(t, fx.store, root.OwnerID(), goatherd.SchemaSupervisorDecision)
+	if len(decisions) != 1 {
+		t.Fatalf("decision facts = %d, want 1", len(decisions))
+	}
+	if fmt.Sprint(decisions[0].Body.Payload["approved"]) != "true" {
+		t.Errorf("decision approved = %v, want true", decisions[0].Body.Payload["approved"])
+	}
+	if fmt.Sprint(decisions[0].Body.Payload["action"]) != string(goatherd.SettleSelect) {
+		t.Errorf("decision action = %v, want %s", decisions[0].Body.Payload["action"], goatherd.SettleSelect)
+	}
+}
+
+func TestRetained_ReviewProvenanceDiscard(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	rt := RetainedRuntime{
+		Runner:       writingRunner(t, "out.txt").run(),
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+		Proposals:    NewProposalRegistry(),
+	}
+	res, err := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 0, false)
+	if err != nil {
+		t.Fatalf("startRetainedRun: %v", err)
+	}
+	env := decodeProposalEnvelope(t, res)
+	root, _ := fx.mgr.Get(rootID)
+	if _, err := rt.Proposals.settleRetainedProposal(context.Background(), env.ProposalID, "discard"); err != nil {
+		t.Fatalf("discard: %v", err)
+	}
+	decisions := findRetainedFacts(t, fx.store, root.OwnerID(), goatherd.SchemaSupervisorDecision)
+	if len(decisions) != 1 {
+		t.Fatalf("decision facts = %d, want 1", len(decisions))
+	}
+	if fmt.Sprint(decisions[0].Body.Payload["approved"]) != "false" {
+		t.Errorf("decision approved = %v, want false", decisions[0].Body.Payload["approved"])
+	}
+	if fmt.Sprint(decisions[0].Body.Payload["action"]) != string(goatherd.SettleDiscard) {
+		t.Errorf("decision action = %v, want %s", decisions[0].Body.Payload["action"], goatherd.SettleDiscard)
+	}
+}
+
+func TestRecordFailedReviewDecision_SurvivesCancellation(t *testing.T) {
+	fx, _, rootID := newSessionFixtures(t)
+	parent, ok := fx.mgr.Get(rootID)
+	if !ok {
+		t.Fatal("root scope missing")
+	}
+	child, err := fx.mgr.Fork(rootID, "review-fail-child", nil)
+	if err != nil {
+		t.Fatalf("fork: %v", err)
+	}
+	proposal := &goatherd.MergeProposal{
+		ChildScopeID: child.ID(),
+		Changes:      []goatherd.ProposedChange{{Path: "out.txt", Kind: goatherd.ChangeCreate}},
+	}
+	factID, err := fx.mgr.RecordMergeProposal(context.Background(), proposal)
+	if err != nil {
+		t.Fatalf("RecordMergeProposal: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	longErr := errors.New(strings.Repeat("seal failed detail ", 1000))
+	if err := recordFailedReviewDecision(ctx, fx.mgr, proposal, factID, longErr); err != nil {
+		t.Fatalf("recordFailedReviewDecision on a cancelled context: %v", err)
+	}
+	decisions := findRetainedFacts(t, fx.store, parent.OwnerID(), goatherd.SchemaSupervisorDecision)
+	if len(decisions) != 1 {
+		t.Fatalf("decision facts = %d, want 1", len(decisions))
+	}
+	reason := fmt.Sprint(decisions[0].Body.Payload["reason"])
+	if !strings.Contains(reason, "seal failed") {
+		t.Errorf("reason = %q, want seal failure", reason)
+	}
+	if len(reason) > noteBudget+len(truncationMarker)+len("seal failed: ") {
+		t.Errorf("reason length = %d, want it bounded by noteBudget", len(reason))
+	}
+	if fmt.Sprint(decisions[0].Body.Payload["action"]) != "seal_failed" {
+		t.Errorf("action = %v, want seal_failed", decisions[0].Body.Payload["action"])
+	}
+}
+
+func TestStartRetainedRun_SealFailureClosesReviewPair(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	rt := RetainedRuntime{
+		Runner:       writingRunner(t, "out.txt").run(),
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+		Proposals:    NewProposalRegistry(),
+		sealOutput: func(context.Context, string) (*goatherd.RetainedOutput, error) {
+			return nil, errors.New("forced seal failure")
+		},
+	}
+	res, err := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 0, false)
+	if err != nil {
+		t.Fatalf("startRetainedRun: %v", err)
+	}
+	env := decodeProposalEnvelope(t, res)
+	if env.Status != "error" || !strings.Contains(env.Error, "forced seal failure") {
+		t.Fatalf("envelope = %+v, want an error naming the seal failure", env)
+	}
+	root, ok := fx.mgr.Get(rootID)
+	if !ok {
+		t.Fatal("root scope missing")
+	}
+	decisions := findRetainedFacts(t, fx.store, root.OwnerID(), goatherd.SchemaSupervisorDecision)
+	if len(decisions) != 1 {
+		t.Fatalf("decision facts = %d, want 1", len(decisions))
+	}
+	if fmt.Sprint(decisions[0].Body.Payload["action"]) != "seal_failed" {
+		t.Errorf("decision action = %v, want seal_failed", decisions[0].Body.Payload["action"])
+	}
+	if fmt.Sprint(decisions[0].Body.Payload["approved"]) != "false" {
+		t.Errorf("decision approved = %v, want false", decisions[0].Body.Payload["approved"])
 	}
 }

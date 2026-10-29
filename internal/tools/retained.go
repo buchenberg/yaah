@@ -99,6 +99,10 @@ type RetainedRuntime struct {
 	// opener, and the resolved copy-in deny list. Nil when this session cannot
 	// offer one, in which case a report dispatch runs in the worktree world.
 	DispatchWorlds *DispatchWorlds
+
+	// sealOutput overrides the seal call in tests. Production leaves it nil
+	// and seals through ScopeManager.Seal.
+	sealOutput func(ctx context.Context, scopeID string) (*goatherd.RetainedOutput, error)
 }
 
 // DispatchWorlds carries what a per-dispatch container world needs. The
@@ -161,6 +165,12 @@ type proposalEnvelope struct {
 // mirroring Shepherd's run select | apply | release | discard.
 func proposalVerbs() []string { return []string{"select", "apply", "release", "discard"} }
 
+// retainedReviewMaxDiffLines bounds the proposal diff used for review and its
+// digest. The trace fact stores the change metadata and digest, not the diff
+// body; 1000 lines is generous enough to review the change without turning the
+// fact into a copy.
+const retainedReviewMaxDiffLines = 1000
+
 // retainedProposal is one sealed sub-agent run awaiting settlement: the isolated
 // child scope that owns the worktree, and the retained output its workspace was
 // sealed into (nil when the run errored before sealing).
@@ -180,6 +190,13 @@ type retainedProposal struct {
 	runErr   string
 	parentID string
 	mgr      *goatherd.ScopeManager
+
+	// Review provenance for a worktree proposal: the proposal recorded before
+	// sealing and the fact it was recorded as. The decision is recorded when
+	// the sealed output is settled, so review rationale is part of the trace
+	// even though integration is settlement-only.
+	reviewProposal *goatherd.MergeProposal
+	reviewFactID   string
 
 	// Container-lane settlement state. repoPath is the host repository that
 	// holds the durable artifacts (and is the settlement target for a host
@@ -610,10 +627,22 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	// the scrub keeps them out of the proposal's delta.
 	ScrubConfinementScratch(wt)
 
+	// Record the review proposal before sealing: the child is still active and
+	// the fork baseline is still addressable. A failure here is a caveat, not
+	// a reason to discard reviewable work; the seal and settlement still run.
+	reviewProposal, reviewFactID, reviewErr := recordRetainedReview(ctx, mgr, scopeID)
+
 	// Seal even after a body error: the partial work is reviewable. A seal
 	// failure is surfaced, never dropped.
-	output, sealErr := mgr.Seal(ctx, scopeID)
+	seal := mgr.Seal
+	if rt.sealOutput != nil {
+		seal = rt.sealOutput
+	}
+	output, sealErr := seal(ctx, scopeID)
 	var notes []string
+	if reviewErr != nil {
+		notes = append(notes, "review proposal: "+reviewErr.Error())
+	}
 	bodyFailure := ""
 	if bodyErr != nil {
 		// The run stopped early (timeout, halt, provider error) but its partial
@@ -637,24 +666,34 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 
 	if output == nil {
 		// Sealing failed: the isolated scope still owns its worktree, so
-		// discard it rather than strand it. There is nothing to settle.
+		// discard it rather than strand it. There is nothing to settle, but
+		// close the review pair with a failed decision so the proposal fact is
+		// not left as an unexplained orphan.
+		if derr := recordFailedReviewDecision(ctx, mgr, reviewProposal, reviewFactID, sealErr); derr != nil {
+			notes = append(notes, "review decision: "+derr.Error())
+		}
 		if scope, gok := mgr.Get(scopeID); gok {
 			_ = parent.Discard(scope)
 		}
 		env.Status = "error"
 		env.Result = trimResult(result)
+		if len(notes) > 0 {
+			env.Error = trimResult(strings.Join(notes, "; "))
+		}
 		return marshalProposalEnvelope(env), nil
 	}
 
 	rt.Proposals.add(&retainedProposal{
-		id:       id,
-		scopeID:  scopeID,
-		workdir:  wt,
-		output:   output,
-		result:   trimResult(result),
-		runErr:   bodyFailure,
-		parentID: rt.RootScopeID,
-		mgr:      mgr,
+		id:             id,
+		scopeID:        scopeID,
+		workdir:        wt,
+		output:         output,
+		result:         trimResult(result),
+		runErr:         bodyFailure,
+		parentID:       rt.RootScopeID,
+		mgr:            mgr,
+		reviewProposal: reviewProposal,
+		reviewFactID:   reviewFactID,
 	})
 
 	env.Status = "proposal"
@@ -909,27 +948,31 @@ func (r *ProposalRegistry) settleRetainedProposal(ctx context.Context, id, actio
 		env.Retained = retained
 	}
 
-	if err := p.output.Settle(ctx, verb); err != nil {
+	settleErr := p.output.Settle(ctx, verb)
+	if settleErr != nil {
 		switch {
-		case errors.Is(err, goatherd.ErrOutputConsumed):
+		case errors.Is(settleErr, goatherd.ErrOutputConsumed):
 			return "", fmt.Errorf("proposal %s was already settled — a sealed output is consumed once", id)
-		case errors.Is(err, goatherd.ErrApplyConflict):
-			return "", fmt.Errorf("proposal %s: the parent changed paths this proposal also changes (%w); resolve the overlap, then apply or discard", id, err)
-		case errors.Is(err, goatherd.ErrSettleEffectLanded):
+		case errors.Is(settleErr, goatherd.ErrApplyConflict):
+			return "", fmt.Errorf("proposal %s: the parent changed paths this proposal also changes (%w); resolve the overlap, then apply or discard", id, settleErr)
+		case errors.Is(settleErr, goatherd.ErrSettleEffectLanded):
 			// The work is on the parent; only the causal merge failed to finish.
 			// End the proposal with the failure noted — a retry would re-apply
 			// an effect that already happened.
-			env.Error = err.Error()
+			env.Error = settleErr.Error()
 		default:
-			return "", fmt.Errorf("proposal %s: %w", id, err)
+			return "", fmt.Errorf("proposal %s: %w", id, settleErr)
 		}
+	}
+	if reviewErr := p.recordReviewDecision(ctx, verb, settleErr); reviewErr != nil {
+		env.Notes = appendSettleNote(env.Notes, "review decision: "+reviewErr.Error())
 	}
 
 	// Only after a successful release settle do we tear the child down;
 	// select, apply, and discard already end the child scope themselves.
 	if verb == goatherd.SettleRelease {
 		if err := teardownReleasedProposal(p); err != nil {
-			env.Notes = fmt.Sprintf("release worktree teardown failed: %v; worktree stranded at %s", err, p.workdir)
+			env.Notes = appendSettleNote(env.Notes, fmt.Sprintf("release worktree teardown failed: %v; worktree stranded at %s", err, p.workdir))
 		}
 	}
 
@@ -1079,6 +1122,69 @@ func provisionRetainedBranch(
 		}
 	}
 	return scope.ID(), nil
+}
+
+// recordRetainedReview writes the proposal half of the review provenance pair.
+// It runs while the child is active and the fork baseline is available; the
+// decision is written at settlement, after the output is consumed.
+func recordRetainedReview(ctx context.Context, mgr *goatherd.ScopeManager, scopeID string) (*goatherd.MergeProposal, string, error) {
+	proposal, err := mgr.ProposeMerge(ctx, scopeID, retainedReviewMaxDiffLines)
+	if err != nil {
+		return nil, "", fmt.Errorf("propose merge: %w", err)
+	}
+	factID, err := mgr.RecordMergeProposal(ctx, proposal)
+	if err != nil {
+		return nil, "", fmt.Errorf("record merge proposal: %w", err)
+	}
+	return proposal, factID, nil
+}
+
+// recordFailedReviewDecision closes a review pair whose seal failed. The run
+// context may be exactly what failed, so the terminal decision must not inherit
+// its cancellation; the reason is bounded like every other envelope caveat.
+func recordFailedReviewDecision(ctx context.Context, mgr *goatherd.ScopeManager, proposal *goatherd.MergeProposal, factID string, sealErr error) error {
+	if proposal == nil || factID == "" {
+		return nil
+	}
+	reason := "seal failed"
+	if sealErr != nil {
+		reason += ": " + truncateAt(sealErr.Error(), noteBudget)
+	}
+	if _, err := mgr.RecordMergeDecision(context.WithoutCancel(ctx), proposal, false, reason, "seal_failed", factID); err != nil {
+		return fmt.Errorf("record merge decision: %w", err)
+	}
+	return nil
+}
+
+// recordReviewDecision writes the verdict half of the provenance pair. select
+// and apply are approvals; release and discard are not integrations. A settle
+// error that nevertheless landed the effect still records the approval with
+// the error as its note, so the trace does not hide a partial settlement.
+func (p *retainedProposal) recordReviewDecision(ctx context.Context, action goatherd.SettlementAction, settleErr error) error {
+	if p.reviewProposal == nil || p.reviewFactID == "" {
+		return nil
+	}
+	approved := action == goatherd.SettleSelect || action == goatherd.SettleApply
+	reason := ""
+	if !approved {
+		switch action {
+		case goatherd.SettleRelease:
+			reason = "released without integration"
+		case goatherd.SettleDiscard:
+			reason = "proposal discarded"
+		}
+	}
+	if settleErr != nil {
+		if reason != "" {
+			reason += "; "
+		}
+		reason += settleErr.Error()
+	}
+	_, err := p.mgr.RecordMergeDecision(ctx, p.reviewProposal, approved, reason, string(action), p.reviewFactID)
+	if err != nil {
+		return fmt.Errorf("record merge decision: %w", err)
+	}
+	return nil
 }
 
 // runRetainedBody invokes the sub-agent runner with its workdir set to the
