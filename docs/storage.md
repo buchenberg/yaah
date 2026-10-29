@@ -50,11 +50,13 @@ cache; it is a **write-ahead/audit tier beside a mutable read model**.
 `trace.db` is a recovery/evidence store, not a backup of every byte:
 
 - the transcript content fields introduced by `yaah-o86` — session/system
-  prompt, assistant content, reasoning, signature, and tool output — are
-  capped at 64KiB and carry `*_truncated` markers;
+  prompt, assistant content, reasoning, signature, refusal, the assistant
+  tool-call argument copies, and tool output — are capped at 64KiB and carry
+  `*_truncated` markers;
 - oversized tool output carries the loop's `output_spill` path, not a second
-  copy of the full body; tool-declaration arguments keep their existing
-  schema, so trace is not a byte-exact backup of every field;
+  copy of the full body; the declaration `args` payload keeps its existing
+  schema and is not covered by this cap, so trace is not a byte-exact backup
+  of every field;
 - trace records a provider-shaped conversation (`rebuild`) but does not carry
   every `state.db` concern: titles, embeddings, FTS index, session ordering, or
   the compaction working set.
