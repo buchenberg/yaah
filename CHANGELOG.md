@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.110.0](https://github.com/buchenberg/yaah/compare/v0.109.0...v0.110.0) (2026-10-29)
+
+
+### Features
+
+* **container:** settle container proposals as a GitDelta manifest ([a64a30e](https://github.com/buchenberg/yaah/commit/a64a30ef0bb070b1928e27a255389d96cfc0aa3e))
+* **container:** settle proposals as a GitDelta manifest ([58c1410](https://github.com/buchenberg/yaah/commit/58c1410fb8dbe5d8a1336f206f04f47c7007d446))
+
+
+### Bug Fixes
+
+* **container-settlement:** basis-aware apply + doc accuracy ([9713706](https://github.com/buchenberg/yaah/commit/9713706198634443fce54fcec4e1055583d1f925))
+* **dispatch-world:** gate proposal containers and refuse restrictive egress ([72f595d](https://github.com/buchenberg/yaah/commit/72f595d8a2162c668ba0f87ff9700921dc227b6c))
+* **dispatch-world:** platform-honest egress test; tidy git_delta comments ([832641a](https://github.com/buchenberg/yaah/commit/832641a9d1a11b1fef06a3dd1d873d3a18a67ab0))
+* **git-delta:** review fixes — backend precondition, Paths contract ([14620dc](https://github.com/buchenberg/yaah/commit/14620dc0e89cf3a2dff7bf52859b374a451e1afd))
+* **git-delta:** Windows — fsync needs a writable handle; modes are a no-op ([618a3b2](https://github.com/buchenberg/yaah/commit/618a3b276d8c157fe66c178a83e497a64d6f533b))
+
+
+### Tests
+
+* **git-delta:** skip Unix mode assertions on Windows ([9079f16](https://github.com/buchenberg/yaah/commit/9079f169b9c2c9c2c61f076a36f7ccc213c8b6ba))
+
 ## [0.109.0](https://github.com/buchenberg/yaah/compare/v0.108.1...v0.109.0) (2026-10-29)
 
 
