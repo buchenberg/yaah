@@ -1,0 +1,14 @@
+providers:
+  mock:
+    base_url: http://mock:8080/v1
+    api_key: mock
+agents:
+  default:
+    provider: mock
+    model: mock-orchestrator
+    small_model: mock-orchestrator
+  subagent:
+    provider: mock
+    mode: retained
+    model: mock-orchestrator
+    max_concurrency: 1

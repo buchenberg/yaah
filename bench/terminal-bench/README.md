@@ -110,6 +110,18 @@ SUITES=orch ./bench/run-all.sh     # orchestration only
 combined `summary-<timestamp>.txt`. It does not merge the scores: coding
 measures outcome accuracy, orchestration measures trace compliance.
 
+The deterministic mock-provider track is separate from the live-model
+scoreboard:
+
+```bash
+DEEPSEEK_API_KEY=mock DATASET=bench/orchestration-tasks \
+SUITE=bench/orchestration-tasks/mock-suite.txt bench/terminal-bench/run.sh
+```
+
+It runs the real task fixture and binary against a task-specific trap in
+`bench/orchestration-tasks/_mock/`; see that directory's README and RESULTS
+for the two-run comparison.
+
 Oracle validation for an orchestration task: `tb run --agent oracle` stages
 `solution.sh` at `/oracle/solution.sh`, and each task's `run-tests.sh` sees
 that file and sets `ORCH_ORACLE=1`. For a manual run, set it yourself:

@@ -9,6 +9,8 @@
 # load-bearing orchestration behaviors; orch-settle-discard remains runnable
 # ad hoc because it overlaps orch-settle-apply:
 #   orch-settle-discard  (discard verb; overlaps settle-apply)
+# The deterministic mock-provider variant lives in mock-suite.txt; keep it
+# out of this live-model scoreboard.
 # orch-recovery uses a seeded kernel trace with a stale scope + registered
 # worktree; the fixture seeder runs at image build time.
 orch-fanout
