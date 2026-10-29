@@ -329,6 +329,7 @@ def opencode_usage(runs_dir, run_id, task_id):
     stream_child_input = stream_child_output = stream_child_reasoning = 0
     stream_child_read = stream_child_write = 0
     stream_child_cost = 0.0
+    stream_child_sessions = set()
     if streams:
         with open(streams[0]) as f:
             for line in f:
@@ -345,6 +346,8 @@ def opencode_usage(runs_dir, run_id, task_id):
                 cache = tokens.get("cache") or {}
                 if is_child:
                     stream_child_steps += 1
+                    if event_session:
+                        stream_child_sessions.add(event_session)
                     stream_child_input += _nonneg_int(tokens.get("input"))
                     stream_child_output += _nonneg_int(tokens.get("output"))
                     stream_child_reasoning += _nonneg_int(tokens.get("reasoning"))
@@ -401,7 +404,7 @@ def opencode_usage(runs_dir, run_id, task_id):
             steps = (
                 sum(count for sid, count in messages if sid in session_ids)
                 if messages_available
-                else (stream_steps if streams else None)
+                else (stream_steps + stream_child_steps if streams else None)
             )
 
             def bucket(row):
@@ -460,8 +463,8 @@ def opencode_usage(runs_dir, run_id, task_id):
         "sub_tokens_out": sub_out,
         "orch_tokens_in": stream_input + stream_read + stream_write,
         "orch_tokens_out": stream_output,
-        "sessions": 1 + (1 if stream_child_steps else 0),
-        "steps": stream_steps + stream_child_steps,
+        "sessions": 1 + len(stream_child_sessions),
+        "steps": (stream_steps + stream_child_steps) or None,
         "reported_cost_usd": stream_cost + stream_child_cost,
         "tokens": token_record(
             stream_input + stream_child_input,
