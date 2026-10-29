@@ -114,12 +114,16 @@ func TestResolveDispatchWorld(t *testing.T) {
 		}
 		res, err := resolveDispatchWorld(rt, "reviewer", true)
 		if err != nil {
-			t.Fatalf("resolveDispatchWorld: %v", err)
-		}
-		if res.Resolved != subagent.WorldWorktree || !res.Degraded {
+			// A host with no usable syscall jail (for example macOS without a
+			// Seatbelt backend) has no legal world for deny_all: the worktree
+			// cannot enforce it either. The container must still be refused
+			// for the network reason, not chosen.
+			if !strings.Contains(err.Error(), "network") {
+				t.Fatalf("error = %q, want it to name the network posture", err)
+			}
+		} else if res.Resolved != subagent.WorldWorktree || !res.Degraded {
 			t.Fatalf("got %+v, want a degraded worktree", res)
-		}
-		if !strings.Contains(res.Reason, "network") {
+		} else if !strings.Contains(res.Reason, "network") {
 			t.Fatalf("reason %q must name the network posture", res.Reason)
 		}
 

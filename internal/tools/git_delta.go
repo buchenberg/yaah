@@ -505,10 +505,9 @@ func sandboxBlobSize(ctx context.Context, sb goatherdsandbox.Sandbox, root, sha 
 	return size, nil
 }
 
-// readSandboxBlob reads a git blob as base64 inside the shell and decodes it in
-// Go. Raw binary on stdout can be mangled by an exec transport; base64 makes the
-// bytes explicit.
-// readSandboxBlob reads one blob as base64 over the sandbox transport.
+// readSandboxBlob reads one blob as base64 over the sandbox transport and
+// decodes it in Go. Raw binary on stdout can be mangled by an exec transport;
+// base64 makes the bytes explicit.
 //
 // The producer currently costs two execs per changed file (a size probe, then
 // this read). A `git cat-file --batch` stream would return size and content in
@@ -872,8 +871,9 @@ func normalizeHostDiffPaths(backend string, paths []string) ([]string, error) {
 // apply's guard: apply compares against the dispatch basis (hostChangedSinceBasis),
 // because pre-existing dirty paths are part of that basis. This helper's
 // --untracked-files=all view is therefore broader than the guard's view.
-// check. A repository git cannot read is an error: apply must fail closed rather
-// than write over unknown changes.
+//
+// A repository git cannot read is an error rather than an empty list, so a
+// caller cannot mistake an unreadable repository for "nothing changed".
 func hostChangedPaths(ctx context.Context, repoPath string) ([]string, error) {
 	cmd := exec.CommandContext(ctx, "git", "-C", repoPath,
 		"status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames")
