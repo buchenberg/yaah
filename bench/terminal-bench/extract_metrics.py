@@ -73,7 +73,7 @@ def pricing_key(model, pricing):
 def _nonneg_int(value):
     try:
         return max(int(value or 0), 0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 0
 
 
@@ -179,9 +179,9 @@ def yaah_usage(runs_dir, run_id, task_id):
         return None
     con = sqlite3.connect(paths[0])
     try:
-        columns = {row[1] for row in con.execute("PRAGMA table_info(sessions)")}
+        columns = {row[1].lower() for row in con.execute("PRAGMA table_info(sessions)")}
         def total(column):
-            return f"COALESCE(SUM({column}),0)" if column in columns else "0"
+            return f"COALESCE(SUM({column}),0)" if column.lower() in columns else "0"
         row = con.execute(
             f"SELECT {total('tokens_in')}, {total('tokens_out')}, "
             f"{total('tokens_cached')}, {total('sub_tokens_in')}, "
