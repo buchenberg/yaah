@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	goatherd "github.com/buchenberg/goatherd-runtime"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/jobs"
@@ -149,6 +150,7 @@ func runDispatchContainerProposal(
 	timeout time.Duration,
 	res subagent.WorldResolution,
 	sandbox *SessionSandbox,
+	basisState shepherdtrace.WorkspaceState,
 	basisDigest string,
 ) (out string, runErr error) {
 	id := fmt.Sprintf("proposal:%d:%d", time.Now().UnixNano(), proposalSeq.Add(1))
@@ -244,6 +246,7 @@ func runDispatchContainerProposal(
 		parentID:    rt.RootScopeID,
 		mgr:         rt.ScopeManager,
 		repoPath:    rt.RepoPath,
+		basisState:  basisState,
 		basisDigest: basisDigest,
 		artifactDir: dir,
 		world:       string(subagent.WorldContainer),

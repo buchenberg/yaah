@@ -810,6 +810,32 @@ func checkResolvedInsideRoot(root, p string) error {
 	return nil
 }
 
+// hostChangedSinceBasis lists the paths that changed on the host after the
+// dispatch basis was captured. The basis state carries the host's dirty tree at
+// dispatch, so a pre-existing modification that the proposal also touches is
+// not a collision — the proposal built on that exact content.
+func (p *retainedProposal) hostChangedSinceBasis(ctx context.Context) ([]string, error) {
+	if p.basisState.Backend == "" {
+		return nil, fmt.Errorf("no recorded host basis; use discard")
+	}
+	if p.mgr == nil || p.parentID == "" {
+		return nil, fmt.Errorf("the host root scope is no longer available")
+	}
+	parent, ok := p.mgr.Get(p.parentID)
+	if !ok {
+		return nil, fmt.Errorf("the host root scope is no longer available")
+	}
+	sb := parent.Sandbox()
+	if sb == nil {
+		return nil, fmt.Errorf("the host root has no workspace sandbox")
+	}
+	_, files, err := sb.Diff(ctx, p.basisState, 0)
+	if err != nil {
+		return nil, err
+	}
+	return files, nil
+}
+
 // hostChangedPaths lists the paths the host working tree has changed relative to
 // its HEAD, including untracked files. It is the input to apply's path-disjoint
 // check. A repository git cannot read is an error: apply must fail closed rather
@@ -890,9 +916,12 @@ func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retain
 			return "", fmt.Errorf("proposal %s: select: %w", p.id, err)
 		}
 	case goatherd.SettleApply:
-		changed, err := hostChangedPaths(ctx, p.repoPath)
+		// Changes *since the dispatch basis*, not everything dirty: the host
+		// is allowed to arrive at settlement already dirty (the basis captured
+		// that state), and only work done after the dispatch can collide.
+		changed, err := p.hostChangedSinceBasis(ctx)
 		if err != nil {
-			return "", fmt.Errorf("proposal %s: apply: cannot determine the host's changes, refusing to write: %w", p.id, err)
+			return "", fmt.Errorf("proposal %s: apply: cannot determine the host's changes since the dispatch, refusing to write: %w", p.id, err)
 		}
 		if overlap := overlappingPaths(p.delta.Paths(), changed); len(overlap) > 0 {
 			return "", fmt.Errorf("proposal %s: the host changed paths this proposal also changes (%s); apply is path-disjoint only — resolve the overlap, then apply or discard",

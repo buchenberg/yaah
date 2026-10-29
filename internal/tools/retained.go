@@ -175,6 +175,7 @@ type retainedProposal struct {
 	// before the copy-in, which select compares against; artifactDir is the
 	// durable proposal directory; world records the lane for envelopes.
 	repoPath    string
+	basisState  shepherdtrace.WorkspaceState
 	basisDigest string
 	artifactDir string
 	world       string
@@ -378,6 +379,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	// before the container is destroyed: the manifest is the proposal, so no
 	// live world (and no kernel output) has to survive settlement.
 	if worldRes.Resolved == subagent.WorldContainer {
+		var basis shepherdtrace.WorkspaceState
 		var basisDigest string
 		if !report {
 			// The select precondition is the host workspace state captured
@@ -388,7 +390,8 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 			if err := ensureProposalPathsExcluded(ctx, rt.RepoPath); err != nil {
 				return "", fmt.Errorf("delegate: container proposal: exclude proposal path: %w", err)
 			}
-			basis, cerr := parent.CaptureWorkspace(ctx)
+			var cerr error
+			basis, cerr = parent.CaptureWorkspace(ctx)
 			if cerr != nil {
 				return "", fmt.Errorf("delegate: container proposal: capture host basis: %w", cerr)
 			}
@@ -403,7 +406,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 			if report {
 				return runDispatchContainer(ctx, rt, parent, prompt, subParams, timeout, worldRes, ss)
 			}
-			return runDispatchContainerProposal(ctx, rt, parent, prompt, subParams, timeout, worldRes, ss, basisDigest)
+			return runDispatchContainerProposal(ctx, rt, parent, prompt, subParams, timeout, worldRes, ss, basis, basisDigest)
 		}
 		// Preflight failed before any work exists: auto may step down to the
 		// worktree (recording the degradation); an explicit container fails

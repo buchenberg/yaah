@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/sandboxfake"
@@ -326,13 +327,23 @@ type deltaFixture struct {
 	fx          *sessionFixtures
 	repo        string
 	rootID      string
+	basisState  shepherdtrace.WorkspaceState
 	basisDigest string
 	registry    *ProposalRegistry
 }
 
 func newDeltaFixture(t *testing.T) *deltaFixture {
+	return newDeltaFixtureWith(t, nil)
+}
+
+// newDeltaFixtureWith lets a test dirty the host before the basis is captured,
+// modelling a dispatch from an already-dirty tree.
+func newDeltaFixtureWith(t *testing.T, prep func(repo string)) *deltaFixture {
 	t.Helper()
 	fx, repo, rootID := newSessionFixtures(t)
+	if prep != nil {
+		prep(repo)
+	}
 	parent, ok := fx.mgr.Get(rootID)
 	if !ok {
 		t.Fatalf("root scope %s not found", rootID)
@@ -345,7 +356,7 @@ func newDeltaFixture(t *testing.T) *deltaFixture {
 	if err != nil {
 		t.Fatalf("digest host basis: %v", err)
 	}
-	return &deltaFixture{fx: fx, repo: repo, rootID: rootID, basisDigest: digest, registry: NewProposalRegistry()}
+	return &deltaFixture{fx: fx, repo: repo, rootID: rootID, basisState: state, basisDigest: digest, registry: NewProposalRegistry()}
 }
 
 // add persists a delta and registers it as an open proposal.
@@ -361,6 +372,7 @@ func (f *deltaFixture) add(t *testing.T, id string, delta *GitDelta) *retainedPr
 		parentID:    f.rootID,
 		mgr:         f.fx.mgr,
 		repoPath:    f.repo,
+		basisState:  f.basisState,
 		basisDigest: f.basisDigest,
 		artifactDir: dir,
 		world:       "container",
@@ -801,5 +813,35 @@ func TestContainerProposal_SealFailureDestroysContainer(t *testing.T) {
 	entries, rerr := os.ReadDir(filepath.Join(repo, ".yaah", "proposals"))
 	if rerr == nil && len(entries) != 0 {
 		t.Errorf("a failed seal must persist nothing, found %v", entries)
+	}
+}
+
+// TestGitDeltaSettle_ApplyIgnoresPreExistingDirty pins the basis semantics: a
+// file that was already dirty at dispatch is part of the basis, so a proposal
+// touching it is not a collision when the host has not moved since.
+func TestGitDeltaSettle_ApplyIgnoresPreExistingDirty(t *testing.T) {
+	f := newDeltaFixtureWith(t, func(repo string) {
+		if err := os.WriteFile(filepath.Join(repo, "shared.txt"), []byte("host dirty\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	})
+	delta := &GitDelta{
+		BasisHead: "basis",
+		Changes: []DeltaChange{{
+			Path:    "shared.txt",
+			Kind:    "modify",
+			Mode:    0o644,
+			Content: []byte("host dirty\nsub-agent edit\n"),
+		}},
+	}
+	f.add(t, "proposal:dirty-basis", delta)
+
+	f.settle(t, "proposal:dirty-basis", "apply")
+	got, err := os.ReadFile(filepath.Join(f.repo, "shared.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "host dirty\nsub-agent edit\n" {
+		t.Fatalf("content = %q", got)
 	}
 }

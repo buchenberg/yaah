@@ -155,8 +155,7 @@ lane reuses the `workspace.containerd` stanza (image, namespace, address,
 snapshotter, `fifo_dir`) and the session container's copy-in contract: the
 repository is copied in at dispatch time, the body runs with the sandbox
 workspace as its substrate, and the scope and container are torn down
-afterwards. Nothing is sealed, so croft's sequence-keyed capture cannot reach a
-settlement.
+afterwards. Nothing is sealed, so the report lane needs no settlement path.
 
 - Offered only in a host session (no session container) on Linux with
   `workspace.containerd.image` set.
@@ -192,7 +191,7 @@ Acceptance for retained container dispatches:
 
 1. ~~`Capture` is content-stable~~ — done (croft-dlb).
 2. ~~A dispatch container can be settled onto the host~~ — done: `select`
-   fast-forwards onto the dispatch basis, `apply` merges path-disjoint,
+   applies onto the dispatch basis, `apply` writes whole paths when disjoint,
    `release` exports the manifest, `discard` removes it.
 3. A crash mid-dispatch is recoverable or prunable by `yaah shepherd`: after a
    seal the manifest is durable and there is no world to recover, but a
@@ -245,7 +244,8 @@ clear message rather than truncating.
 1. A container proposal shows a diff and settles `select`/`apply`/`release`/
    `discard` onto the host tree.
 2. `apply` refuses overlapping paths; `select` refuses a moved host.
-3. The container is gone after seal; the manifest survives a restart.
+3. The container is gone after seal; the manifest survives on disk across a
+   restart (in-session registry rehydration is not implemented yet).
 4. Report lanes are unchanged.
 5. Tests run without a daemon (sandbox fake + temp repos).
 
