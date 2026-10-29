@@ -129,9 +129,12 @@ type localWorkspace struct {
 	placement containment.Placement
 	// network is the egress axis of the confinement spec.
 	network confinement.NetworkPolicy
-	// writableRoots narrows the jail's writable set (yaah-ihfh.2). Empty
-	// means the legacy single root, the workspace's working directory.
+	// writableRoots narrows the jail's writable set (yaah-ihfh.2) and narrowed
+	// records that a set was declared. The two are separate because an
+	// all-readonly declaration is legitimately empty — and must mean "nothing
+	// writable", not "the legacy whole-world root".
 	writableRoots []string
+	narrowed      bool
 	// confinedEnv, when non-empty, overrides the process environment for
 	// confined commands — the redirect that points HOME/TMPDIR/caches into the
 	// worktree's scratch.
@@ -160,6 +163,7 @@ func NewConfinedLocalWorkspace(pv *PathValidator, backend containment.Backend, p
 func (w *localWorkspace) WithWritableRoots(roots []string) *localWorkspace {
 	clone := *w
 	clone.writableRoots = append([]string(nil), roots...)
+	clone.narrowed = true
 	return &clone
 }
 
@@ -307,7 +311,7 @@ func (w *localWorkspace) advisoryExec(ctx context.Context, req ExecRequest) (Exe
 func (w *localWorkspace) confinedExec(ctx context.Context, req ExecRequest) (ExecResult, error) {
 	root := w.WorkDir()
 	roots := w.writableRoots
-	if len(roots) == 0 {
+	if !w.narrowed {
 		roots = []string{root}
 	}
 	// Housekeeping writes are redirected into <root>/.yaah-scratch
@@ -354,7 +358,7 @@ func (w *localWorkspace) confinedExec(ctx context.Context, req ExecRequest) (Exe
 		// explanation would name the wrong boundary. Use the grant list
 		// instead whenever one is set.
 		var hint string
-		if len(w.writableRoots) > 0 {
+		if w.narrowed {
 			hint = grantsHint(w.writableRoots, res.Stderr+out.Stdout)
 		} else {
 			hint = confinementHint(res.Stderr, root)
@@ -682,6 +686,9 @@ func (e infoDirEntry) Info() (fs.FileInfo, error) { return e.info, nil }
 func grantsHint(roots []string, output string) string {
 	for _, phrase := range []string{"Permission denied", "Access is denied", "Access to the path"} {
 		if strings.Contains(output, phrase) {
+			if len(roots) == 0 {
+				return " This dispatch declares no writable root (read-only grants); only its housekeeping scratch is writable."
+			}
 			return " This dispatch may write only under: " + strings.Join(roots, ", ") + "."
 		}
 	}

@@ -31,6 +31,18 @@ func TestCheckDispatchWorld(t *testing.T) {
 		}
 	})
 
+	t.Run("world values are case-insensitive", func(t *testing.T) {
+		cfg := &config.Config{}
+		cfg.Agent.SubAgent.World = "Container"
+		if check := CheckDispatchWorld(cfg, nil); check.Status != "FAIL" {
+			t.Fatalf("world: Container must be treated as container (FAIL without an image), got %+v", check)
+		}
+		cfg.Agent.SubAgent.Mode = "shared"
+		if check := CheckDispatchWorld(cfg, nil); check.Status != "FAIL" {
+			t.Fatalf("shared + world: Container must fail, got %+v", check)
+		}
+	})
+
 	t.Run("shared mode has no world", func(t *testing.T) {
 		cfg := &config.Config{}
 		cfg.Agent.SubAgent.Mode = "shared"

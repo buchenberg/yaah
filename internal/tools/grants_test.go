@@ -90,3 +90,40 @@ func TestNarrowedGrants_EnforceSubRoots(t *testing.T) {
 		t.Fatalf("the undeclared write must not land (stat err = %v)", statErr)
 	}
 }
+
+// TestReadOnlyGrants_DenyAllWrites pins the all-readonly case: a declared set
+// with no writable root means "nothing writable", not the legacy whole world.
+// The housekeeping scratch is still admitted so redirected HOME/TMPDIR writes
+// do not fail.
+func TestReadOnlyGrants_DenyAllWrites(t *testing.T) {
+	backend := landlock.Detect()
+	if backend == nil {
+		t.Skip("no Landlock on this host")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell redirection")
+	}
+	world := t.TempDir()
+	scratch := filepath.Join(world, ".yaah-scratch")
+	if err := os.MkdirAll(scratch, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ws := confinedTestWorkspace(world, backend, containment.PlacementPaddock).
+		WithWritableRoots(nil)
+
+	res, err := ws.Exec(context.Background(), ExecRequest{
+		Command: "sh", Args: []string{"-c", "echo no > " + filepath.Join(world, "a.txt")},
+	})
+	if err == nil && res.ExitCode == 0 {
+		t.Fatalf("an all-readonly dispatch must deny writes in the world: %+v", res)
+	}
+	if !strings.Contains(res.Stdout+res.Stderr, "no writable root") {
+		t.Errorf("the refusal must explain the read-only grant set, got %+v", res)
+	}
+
+	if res, err := ws.Exec(context.Background(), ExecRequest{
+		Command: "sh", Args: []string{"-c", "echo ok > " + filepath.Join(scratch, "tmp.txt")},
+	}); err != nil || res.ExitCode != 0 {
+		t.Fatalf("the scratch must stay writable: %+v err=%v", res, err)
+	}
+}

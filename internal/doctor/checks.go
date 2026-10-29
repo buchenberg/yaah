@@ -210,7 +210,7 @@ func CheckDispatchWorld(cfg *config.Config, cfgErr error) Check {
 	}
 	sc := cfg.Agent.SubAgent
 	shared := strings.ToLower(strings.TrimSpace(sc.Mode)) == "shared"
-	requested := strings.TrimSpace(sc.World)
+	requested := strings.ToLower(strings.TrimSpace(sc.World))
 	if requested == "" {
 		requested = "auto"
 	}
