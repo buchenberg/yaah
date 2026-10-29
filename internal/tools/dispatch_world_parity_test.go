@@ -45,7 +45,15 @@ func TestWorldInfoParityWithRuntimeLadder(t *testing.T) {
 			}(),
 		},
 		{name: "image offers container", cfg: withImage(), container: linux},
-		{name: "image with explicit worktree", cfg: withImage(), container: linux},
+		{
+			name: "image with explicit worktree",
+			cfg: func() *config.Config {
+				cfg := withImage()
+				cfg.Agent.SubAgent.World = "worktree"
+				return cfg
+			}(),
+			container: linux,
+		},
 		{
 			name: "container session",
 			cfg: func() *config.Config {

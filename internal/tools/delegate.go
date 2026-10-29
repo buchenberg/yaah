@@ -188,9 +188,16 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 	// A dispatch that never reaches the retained resolver has no world of its
 	// own: it runs on the session's tree. Publish that resolution so the
 	// start event names "shared" instead of falling back to the session-level
-	// summary; the background manager seeds its job from this same value.
+	// summary. A background call has no dispatch writer yet — setupSubAgent
+	// installs one for foreground dispatches only — so carry the value on the
+	// launch context, which the manager seeds its job from.
 	if t.Retained == nil || lane == LaneShared {
-		WriteSubAgentWorld(runCtx, SubAgentWorld{Resolved: "shared"})
+		world := SubAgentWorld{Resolved: "shared"}
+		if params.Background {
+			runCtx = WithSubAgentWorldPtr(runCtx, &world)
+		} else {
+			WriteSubAgentWorld(runCtx, world)
+		}
 	}
 
 	if params.Background {
@@ -212,7 +219,7 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 				return startRetainedRun(ctx, rt, prompt, sp, timeout, report)
 			}
 		}
-		jobID, err := t.BackgroundJobs.Launch(ctx, runner, params.Role, params.Description, params.Prompt, subParams, timeout)
+		jobID, err := t.BackgroundJobs.Launch(runCtx, runner, params.Role, params.Description, params.Prompt, subParams, timeout)
 		if err != nil {
 			return "", err
 		}

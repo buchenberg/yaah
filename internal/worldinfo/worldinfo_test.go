@@ -124,6 +124,29 @@ func TestDeriveContainerSession(t *testing.T) {
 	}
 }
 
+// TestDeriveContainerSessionReportErrorSurfaces pins the report-lane error
+// rule: a shared proposal lane must not hide the report lane's failure, or the
+// surfaces render "unavailable" with no explanation.
+func TestDeriveContainerSessionReportErrorSurfaces(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("per-dispatch containers are offered on Linux only")
+	}
+	cfg := &config.Config{}
+	cfg.Workspace.Backend = config.BackendContainerd
+	cfg.Workspace.Containerd.Image = "registry.example/yaah:1"
+	cfg.Agent.SubAgent.World = "worktree"
+	s := Derive(cfg, "", true)
+	if s.ProposalWorld != "shared" {
+		t.Fatalf("ProposalWorld = %q, want shared", s.ProposalWorld)
+	}
+	if s.ReportWorld != "unavailable" {
+		t.Fatalf("ReportWorld = %q, want unavailable", s.ReportWorld)
+	}
+	if !s.Degraded || s.Reason == "" {
+		t.Fatalf("report-lane error not surfaced: %+v", s)
+	}
+}
+
 func TestDeriveBrokerHosts(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Agent.SubAgent.Network = "broker"

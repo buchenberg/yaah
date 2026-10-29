@@ -624,7 +624,7 @@ func worldMetaOf(s worldinfo.Status) *SessionMeta {
 	if s.IsZero() {
 		return nil
 	}
-	return &SessionMeta{World: &WorldMeta{
+	w := &WorldMeta{
 		Backend:     s.Backend,
 		Isolated:    s.Isolated,
 		Mode:        s.Mode,
@@ -634,7 +634,11 @@ func worldMetaOf(s worldinfo.Status) *SessionMeta {
 		Resolved:    s.ProposalWorld,
 		Degraded:    s.Degraded,
 		Reason:      s.Reason,
-	}}
+	}
+	if s.ReportWorld != s.ProposalWorld {
+		w.Report = s.ReportWorld
+	}
+	return &SessionMeta{World: w}
 }
 
 // sameDir compares two canonical cwds case-insensitively on Windows,

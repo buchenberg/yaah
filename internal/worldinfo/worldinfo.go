@@ -120,9 +120,11 @@ func Derive(cfg *config.Config, workspaceRoot string, isolated bool) Status {
 
 	// The session-level degradation is the default lane's: the proposal
 	// lane when it carries a world, otherwise the report lane (a container
-	// session's proposals are routed shared and never degrade there).
+	// session's proposals are routed shared and never degrade there). A
+	// report-lane error still replaces a shared proposal so the reason
+	// reaches the surfaces instead of leaving "unavailable" unexplained.
 	primary, primaryErr := res.Proposal, res.ProposalErr
-	if primaryErr == nil && primary.Resolved == subagent.WorldShared && res.ReportErr == nil {
+	if primaryErr == nil && primary.Resolved == subagent.WorldShared {
 		primary, primaryErr = res.Report, res.ReportErr
 	}
 	switch {

@@ -380,8 +380,12 @@ func (m *BackgroundJobs) Launch(callCtx context.Context, runner TaskRunner, role
 	jobCtx = WithSubAgentModelWriter(jobCtx, setJobModel)
 	// Carry a world the caller already resolved (the shared direct lane sets
 	// it before launching); a retained body overwrites it with the real
-	// resolution below.
-	job.world = SubAgentWorldFromContext(callCtx)
+	// resolution below. The job is not published or started yet, but take the
+	// lock anyway so the field's guard is unconditional.
+	seededWorld := SubAgentWorldFromContext(callCtx)
+	job.mu.Lock()
+	job.world = seededWorld
+	job.mu.Unlock()
 	jobCtx = WithSubAgentWorldWriter(jobCtx, func(w SubAgentWorld) {
 		job.mu.Lock()
 		job.world = w

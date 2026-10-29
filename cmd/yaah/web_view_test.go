@@ -226,6 +226,9 @@ func TestSSEHeaderCarriesWorldAndPreservesItOnModelSwitch(t *testing.T) {
 			t.Fatalf("header frame missing %s: %s", want, frames)
 		}
 	}
+	if strings.Contains(frames, `"worldReport"`) {
+		t.Fatalf("equal lanes must not emit worldReport: %s", frames)
+	}
 
 	v.SetHeader("prov2", "model2")
 	frames = buf.String()
@@ -259,5 +262,23 @@ func TestSSESubAgentWorldFrames(t *testing.T) {
 	}
 	if !strings.Contains(frames, `"world":"worktree"`) || !strings.Contains(frames, `"world_degraded":true`) || !strings.Contains(frames, `"world_reason":"no image"`) {
 		t.Fatalf("end frame = %s", frames)
+	}
+}
+
+// TestSSEHeaderCarriesReportLaneWhenItDiffers pins the flat report field: a
+// container session's proposal and report lanes differ, and the badge tooltip
+// must not lose the report lane.
+func TestSSEHeaderCarriesReportLaneWhenItDiffers(t *testing.T) {
+	buf := newSyncBuffer()
+	v := &sseView{w: buf, provider: "prov", model: "model"}
+	v.world = worldHeaderOf(worldinfo.Status{
+		Backend:       "containerd",
+		Isolated:      true,
+		ProposalWorld: "shared",
+		ReportWorld:   "container",
+	})
+	v.SendConnect()
+	if !strings.Contains(buf.String(), `"worldReport":"container"`) {
+		t.Fatalf("header missing the report lane: %s", buf.String())
 	}
 }

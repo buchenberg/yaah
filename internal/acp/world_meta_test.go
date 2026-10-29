@@ -57,3 +57,25 @@ func TestServer_zeroWorldStatusOmitsMeta(t *testing.T) {
 		t.Fatalf("zero world status emitted _meta: %s", msg.Result)
 	}
 }
+
+// TestWorldMetaOf_ReportLaneWhenItDiffers pins the report lane on the block: a
+// container session resolves proposals shared but reports to a sibling
+// container, and a client must not be told only half the posture.
+func TestWorldMetaOf_ReportLaneWhenItDiffers(t *testing.T) {
+	m := worldMetaOf(worldinfo.Status{
+		Backend:       "containerd",
+		Isolated:      true,
+		Mode:          "retained",
+		Containment:   "auto",
+		Network:       "allow_all",
+		WorldReq:      "auto",
+		ProposalWorld: "shared",
+		ReportWorld:   "container",
+	})
+	if m == nil || m.World == nil {
+		t.Fatal("world meta missing")
+	}
+	if m.World.Resolved != "shared" || m.World.Report != "container" {
+		t.Fatalf("world meta = %+v, want resolved shared and report container", m.World)
+	}
+}

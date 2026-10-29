@@ -557,6 +557,7 @@ document.addEventListener('alpine:init', () => {
         if (this.head.containment) p.push('containment: ' + this.head.containment + ' · jail: ' + (this.head.jail ? 'available' : 'unavailable'))
         if (this.head.network) p.push('network: ' + this.head.network)
         if (this.head.world) p.push('world: ' + this.head.world + ' → ' + (this.head.worldResolved || ''))
+        if (this.head.worldReport) p.push('report world: ' + this.head.worldReport)
         if (this.head.worldDegraded && this.head.worldReason) p.push(this.head.worldReason)
         return p.join('\n')
       },
@@ -620,7 +621,13 @@ document.addEventListener('alpine:init', () => {
           }
           case 'subagent.end': {
             const row = this.matchSubRow(d.role, d.prompt)
-            if (row && d.model) row.subModel = d.model
+            if (row) {
+              if (d.model) row.subModel = d.model
+              // The end frame carries the world too; fill a row whose start
+              // frame had no match (e.g. truncated args).
+              const world = this.worldLabel(d.world, d.world_degraded, d.world_reason)
+              if (world) row.subWorld = world
+            }
             this.status = 'ready'; break
           }
           case 'ctrl.continue':

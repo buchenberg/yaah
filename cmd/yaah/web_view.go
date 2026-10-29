@@ -46,6 +46,7 @@ type wireHeaderMeta struct {
 	Network       string `json:"network,omitempty"`
 	World         string `json:"world,omitempty"`
 	WorldResolved string `json:"worldResolved,omitempty"`
+	WorldReport   string `json:"worldReport,omitempty"`
 	WorldDegraded bool   `json:"worldDegraded,omitempty"`
 	WorldReason   string `json:"worldReason,omitempty"`
 }
@@ -63,6 +64,7 @@ type wireWorldMeta struct {
 	Network       string
 	World         string
 	WorldResolved string
+	WorldReport   string
 	WorldDegraded bool
 	WorldReason   string
 }
@@ -202,6 +204,7 @@ func (v *sseView) headerLocked() *wireHeaderMeta {
 	h.Network = v.world.Network
 	h.World = v.world.World
 	h.WorldResolved = v.world.WorldResolved
+	h.WorldReport = v.world.WorldReport
 	h.WorldDegraded = v.world.WorldDegraded
 	h.WorldReason = v.world.WorldReason
 	return h
@@ -223,9 +226,19 @@ func worldHeaderOf(s worldinfo.Status) wireWorldMeta {
 		Network:       s.Network,
 		World:         s.WorldReq,
 		WorldResolved: s.ProposalWorld,
+		WorldReport:   reportLane(s),
 		WorldDegraded: s.Degraded,
 		WorldReason:   s.Reason,
 	}
+}
+
+// reportLane is the report-lane resolution when it differs from the proposal
+// lane; empty otherwise, so the header stays flat and quiet by default.
+func reportLane(s worldinfo.Status) string {
+	if s.ReportWorld == s.ProposalWorld {
+		return ""
+	}
+	return s.ReportWorld
 }
 
 func (v *sseView) HandleEvent(evt agent.Event) {

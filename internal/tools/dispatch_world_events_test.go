@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/buchenberg/yaah/internal/jobs"
 )
@@ -46,5 +47,39 @@ func TestDelegateSharedModeRecordsWorld(t *testing.T) {
 	}
 	if got.Resolved != "shared" {
 		t.Fatalf("world = %+v, want shared", got)
+	}
+}
+
+// TestDelegateBackgroundSharedLaneSeedsWorld pins the background half of the
+// shared lane: a background call has no dispatch writer yet (setupSubAgent is
+// foreground-only), so the world must ride the launch context the manager
+// seeds its job from.
+func TestDelegateBackgroundSharedLaneSeedsWorld(t *testing.T) {
+	mgr := jobs.NewBackgroundJobs()
+	defer mgr.Close()
+
+	startCh := make(chan SubAgentWorld, 1)
+	mgr.SetSessionHooks(
+		func(id, role, model, prompt string, world SubAgentWorld) { startCh <- world },
+		nil,
+	)
+	d := &DelegateTool{
+		Runner: func(ctx context.Context, prompt string, p jobs.SubAgentParams) (string, error) {
+			NotifySubAgentStart(ctx, "test-model")
+			return "ok", nil
+		},
+		LaneForRole:    func(role string) DelegateLane { return LaneShared },
+		BackgroundJobs: mgr,
+	}
+	if _, err := d.Execute(context.Background(), `{"role":"developer","prompt":"p","background":true}`); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	select {
+	case got := <-startCh:
+		if got.Resolved != "shared" {
+			t.Fatalf("background start world = %+v, want shared", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("session start hook did not fire")
 	}
 }

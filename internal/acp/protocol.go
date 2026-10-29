@@ -311,6 +311,10 @@ type WorldMeta struct {
 	// resolution the session's default dispatch gets.
 	World    string `json:"world,omitempty"`
 	Resolved string `json:"resolved,omitempty"`
+	// Report is the report-lane resolution when it differs, e.g. a
+	// container session routes proposals shared but resolves reports to
+	// sibling containers.
+	Report   string `json:"report,omitempty"`
 	Degraded bool   `json:"degraded,omitempty"`
 	Reason   string `json:"reason,omitempty"`
 }
