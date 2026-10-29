@@ -334,6 +334,7 @@ type deltaFixture struct {
 	rootID      string
 	basisState  shepherdtrace.WorkspaceState
 	basisDigest string
+	sessionID   string
 	registry    *ProposalRegistry
 }
 
@@ -361,25 +362,27 @@ func newDeltaFixtureWith(t *testing.T, prep func(repo string)) *deltaFixture {
 	if err != nil {
 		t.Fatalf("digest host basis: %v", err)
 	}
-	return &deltaFixture{fx: fx, repo: repo, rootID: rootID, basisState: state, basisDigest: digest, registry: NewProposalRegistry()}
+	return &deltaFixture{fx: fx, repo: repo, rootID: rootID, basisState: state, basisDigest: digest, sessionID: "test-session", registry: NewProposalRegistry()}
 }
 
 // add persists a delta and registers it as an open proposal.
 func (f *deltaFixture) add(t *testing.T, id string, delta *GitDelta) *retainedProposal {
 	t.Helper()
-	dir, err := persistGitDelta(context.Background(), f.repo, id, delta, "review for "+id)
+	dir, digest, err := persistGitDelta(context.Background(), f.repo, id, delta, "review for "+id, "wrote "+id, "", f.sessionID, f.rootID, f.basisState, f.basisDigest)
 	if err != nil {
 		t.Fatalf("persistGitDelta: %v", err)
 	}
 	p := &retainedProposal{
 		id:          id,
 		delta:       delta,
+		result:      "wrote " + id,
 		parentID:    f.rootID,
 		mgr:         f.fx.mgr,
 		repoPath:    f.repo,
 		basisState:  f.basisState,
 		basisDigest: f.basisDigest,
 		artifactDir: dir,
+		deltaDigest: digest,
 		world:       "container",
 	}
 	f.registry.add(p)

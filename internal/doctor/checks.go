@@ -216,32 +216,34 @@ func CheckDispatchWorld(cfg *config.Config, cfgErr error) Check {
 	}
 
 	// The runtime offers per-dispatch containers to a HOST session on Linux
-	// with an image configured; a container session shares its one container,
-	// and the proposal lane waits on the container settlement path.
+	// with an image configured; a container session shares its one container.
 	offered := cfg.Workspace.Backend != config.BackendContainerd &&
 		runtime.GOOS == "linux" && cfg.Workspace.Containerd.Image != ""
 	av := subagent.WorldAvailability{
 		Container:        offered,
 		ContainerOffered: offered,
+		ContainerRetains: offered,
 		ContainerReason:  "per-dispatch containers need workspace.containerd.image on a Linux host",
 		Worktree:         !shared,
 		Jail:             jailAvailable(),
 	}
-	req := func(lane string, retained bool) subagent.WorldRequest {
-		return subagent.WorldRequest{
-			Requested:   requested,
-			Lane:        lane,
-			Retained:    retained,
-			Containment: sc.Containment,
-			Network:     sc.Network,
-			// Grants are global; a restrictive set is what the resolver must
-			// honour. Role overrides are not resolved here (doctor reports
-			// the session default).
-			RestrictiveGrants: len(sc.Grants) > 0,
-		}
+	resolve := func(world string, grants []config.GrantConfig, lane string, retained bool) (subagent.WorldResolution, error) {
+		return subagent.ResolveWorld(subagent.WorldRequest{
+			Requested:         world,
+			Lane:              lane,
+			Retained:          retained,
+			Containment:       sc.Containment,
+			Network:           sc.Network,
+			RestrictiveGrants: len(grants) > 0,
+		}, av)
 	}
-	proposal, perr := subagent.ResolveWorld(req("proposal", true), av)
-	report, rerr := subagent.ResolveWorld(req("report", false), av)
+	describe := func(res subagent.WorldResolution) string {
+		out := string(res.Resolved)
+		if res.Degraded {
+			out += " (degraded: " + res.Reason + ")"
+		}
+		return out
+	}
 
 	if shared {
 		if requested == "container" {
@@ -250,38 +252,76 @@ func CheckDispatchWorld(cfg *config.Config, cfgErr error) Check {
 		return Check{Label: "Dispatch world", Status: "OK", Detail: "shared lane — no dispatch world (mode: shared)"}
 	}
 
+	proposal, perr := resolve(requested, sc.Grants, "proposal", true)
+	report, rerr := resolve(requested, sc.Grants, "report", false)
+
+	var detail string
 	switch requested {
 	case "container":
-		if perr == nil {
-			return Check{Label: "Dispatch world", Status: "OK", Detail: "container for every dispatch"}
+		if perr != nil {
+			return Check{Label: "Dispatch world", Status: "FAIL", Detail: perr.Error()}
 		}
-		if rerr == nil && report.Resolved == subagent.WorldContainer {
-			return Check{Label: "Dispatch world", Status: "WARN", Detail: "container for report lanes; proposal lanes fail closed until the container settlement path is wired: " + perr.Error()}
-		}
-		return Check{Label: "Dispatch world", Status: "FAIL", Detail: perr.Error()}
+		detail = "container for every dispatch"
 	case "worktree":
 		if perr != nil {
 			return Check{Label: "Dispatch world", Status: "FAIL", Detail: perr.Error()}
 		}
-		return Check{Label: "Dispatch world", Status: "OK", Detail: "worktree for every dispatch"}
+		detail = "worktree for every dispatch"
 	default: // auto
-		if perr == nil && proposal.Resolved == subagent.WorldContainer {
-			return Check{Label: "Dispatch world", Status: "OK", Detail: "container for every dispatch"}
-		}
-		detail := "auto → worktree for proposals"
-		if rerr == nil && report.Resolved == subagent.WorldContainer {
-			detail += "; container for report lanes"
-		} else if offered {
-			detail += "; report lanes also use the worktree"
-		}
-		if offered {
-			detail += " (proposal containers await settlement wiring)"
-		}
 		if perr != nil {
-			return Check{Label: "Dispatch world", Status: "FAIL", Detail: detail + ": " + perr.Error()}
+			return Check{Label: "Dispatch world", Status: "FAIL", Detail: perr.Error()}
 		}
-		return Check{Label: "Dispatch world", Status: "OK", Detail: detail}
+		detail = "auto → proposal " + describe(proposal)
+		if rerr != nil {
+			detail += "; report " + rerr.Error()
+		} else {
+			detail += "; report " + describe(report)
+		}
 	}
+
+	// Per-role overrides are part of the effective configuration. Resolving
+	// only the session default let a role-level `world: container` report
+	// healthy and then fail closed at dispatch.
+	var roleErrs []string
+	checked := 0
+	for role, rc := range sc.Roles {
+		if strings.TrimSpace(rc.World) == "" && len(rc.Grants) == 0 {
+			continue
+		}
+		// A shared-lane role has no world at all; its world/grants override
+		// is inert in the runtime (delegate skips world resolution), so
+		// checking it here would produce a false failure.
+		if subagent.DispatchLaneFor(subagent.SubAgentRole(role)) == subagent.LaneShared {
+			continue
+		}
+		checked++
+		roleWorld := rc.World
+		if strings.TrimSpace(roleWorld) == "" {
+			roleWorld = requested
+		}
+		grants := rc.Grants
+		if len(grants) == 0 {
+			grants = sc.Grants
+		}
+		roleProposal, err := resolve(roleWorld, grants, "proposal", true)
+		if err != nil {
+			roleErrs = append(roleErrs, fmt.Sprintf("role %s: %v", role, err))
+			continue
+		}
+		roleReport, err := resolve(roleWorld, grants, "report", false)
+		if err != nil {
+			roleErrs = append(roleErrs, fmt.Sprintf("role %s: %v", role, err))
+			continue
+		}
+		detail += fmt.Sprintf("; role %s: proposal %s, report %s", role, describe(roleProposal), describe(roleReport))
+	}
+	if len(roleErrs) > 0 {
+		return Check{Label: "Dispatch world", Status: "FAIL", Detail: detail + "; role overrides: " + strings.Join(roleErrs, "; ")}
+	}
+	if checked > 0 {
+		detail += fmt.Sprintf("; %d role override(s) checked", checked)
+	}
+	return Check{Label: "Dispatch world", Status: "OK", Detail: detail}
 }
 
 // jailAvailable reports whether a syscall jail is usable on this host.

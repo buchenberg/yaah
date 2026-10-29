@@ -228,13 +228,25 @@ func runDispatchContainerProposal(
 		env.Error = trimResult(strings.Join(notes, "; "))
 		return "", nil
 	}
-	dir, perr := persistGitDelta(ctx, rt.RepoPath, id, delta, review)
+	dir, manifestDigest, perr := persistGitDelta(ctx, rt.RepoPath, id, delta, review, result, bodyFailure, rt.SessionID, rt.RootScopeID, basisState, basisDigest)
 	if perr != nil {
 		notes = append(notes, "seal: persist delta: "+perr.Error())
 		env.Status = "error"
 		env.Result = trimResult(result)
 		env.Error = trimResult(strings.Join(notes, "; "))
 		return "", nil
+	}
+	if _, ferr := parent.AppendFact(ctx, SchemaProposalSealed, "proposal", map[string]any{
+		"proposal_id":     id,
+		"world":           string(subagent.WorldContainer),
+		"manifest_digest": manifestDigest,
+		"files":           delta.Paths(),
+		"basis_digest":    basisDigest,
+		"artifact_dir":    dir,
+	}); ferr != nil {
+		// The manifest is durable; a missing seal fact is a record gap, not a
+		// reason to throw the work away. Carry it to the caller visibly.
+		notes = append(notes, "trace: seal fact: "+ferr.Error())
 	}
 
 	rt.Proposals.add(&retainedProposal{
@@ -249,6 +261,7 @@ func runDispatchContainerProposal(
 		basisState:  basisState,
 		basisDigest: basisDigest,
 		artifactDir: dir,
+		deltaDigest: manifestDigest,
 		world:       string(subagent.WorldContainer),
 	})
 

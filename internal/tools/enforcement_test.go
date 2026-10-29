@@ -86,6 +86,11 @@ var fsExempt = map[string]string{
 	"git_delta.go:RemoveAll": "consume-once removes the proposal's own .yaah/proposals directory",
 	"git_delta.go:Stat":      "fsync skips artifacts that were not written and checks a path before opening",
 
+	"proposal_rehydrate.go:ReadDir":   "rehydration scans yaah's own .yaah/proposals bookkeeping before any dispatch workspace exists; it reads no project path",
+	"proposal_rehydrate.go:Stat":      "rehydration checks its own settlement markers under .yaah/proposals",
+	"proposal_rehydrate.go:RemoveAll": "rehydration consumes a settled artifact directory under .yaah/proposals after a crash between the marker and removal",
+	"proposal_rehydrate.go:ReadFile":  "rehydration reads the manifest, basis, and metadata it wrote under .yaah/proposals",
+
 	"role.go": "the role tool edits yaah's own role definitions and then reloads the process-wide role registry; role files are harness metadata, and the reload has no workspace view",
 
 	"availability.go:Stat": "GoToolAvailable walks up from a registry-curation root looking for go.mod to decide which Go tools to ship; it runs before any dispatch, when no workspace is injected yet",

@@ -285,8 +285,11 @@ buckets:
 | `missing` | An active child's worktree is gone |
 | `unadopted` | A recorded path is not a registered worktree of its repository |
 
-Nothing is deleted automatically. Use `yaah shepherd` to list leftovers and
-`yaah shepherd prune <path>` to delete one orphan after verifying ownership.
+Nothing is deleted automatically. Use `yaah shepherd` to list worktree
+leftovers and `yaah shepherd prune <path>` to delete one orphan after verifying
+ownership. `yaah shepherd containers` lists non-running per-dispatch
+containers; `yaah shepherd prune-container <id>` deletes one exact id after
+re-checking its label and task state.
 `yaah doctor` runs the same scan.
 
 ## Providers

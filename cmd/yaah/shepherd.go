@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent/recovery"
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/tools"
 )
 
 // shepherdCmd surfaces the supervision state's leftovers (adoption
@@ -24,7 +27,7 @@ import (
 // unmerged agent work, so nothing else may ever delete it).
 var shepherdCmd = &cobra.Command{
 	Use:   "shepherd",
-	Short: "List and prune orphaned supervision worktrees",
+	Short: "List and prune orphaned supervision worktrees and containers",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		report, cleanup, err := shepherdScan()
@@ -37,6 +40,85 @@ var shepherdCmd = &cobra.Command{
 		printShepherdReport(cmd.OutOrStdout(), report)
 		return nil
 	},
+}
+
+var shepherdContainersCmd = &cobra.Command{
+	Use:   "containers",
+	Short: "List orphaned per-dispatch containers",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		address, namespace, err := shepherdContainerTarget()
+		if err != nil {
+			return err
+		}
+		if namespace == "default" {
+			fmt.Fprintln(cmd.ErrOrStderr(), "warning: namespace \"default\" is shared by every containerd user; verify it is the one this workspace uses")
+		}
+		orphans, err := tools.ListOrphanContainers(context.Background(), address, namespace)
+		if err != nil {
+			return fmt.Errorf("shepherd: list containers: %w", err)
+		}
+		if len(orphans) == 0 {
+			fmt.Fprintln(cmd.OutOrStdout(), "no orphaned containers.")
+			return nil
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "orphaned containers (namespace %s):\n", namespace)
+		for _, o := range orphans {
+			fmt.Fprintf(cmd.OutOrStdout(), "  %s  %s  created %s — prune with `yaah shepherd prune-container %s`\n",
+				o.ID, o.Image, o.CreatedAt.Format(time.RFC3339), o.ID)
+		}
+		return nil
+	},
+}
+
+var shepherdPruneContainerCmd = &cobra.Command{
+	Use:   "prune-container <container-id>",
+	Short: "Delete one orphaned per-dispatch container (exact id)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		address, namespace, err := shepherdContainerTarget()
+		if err != nil {
+			return err
+		}
+		if namespace == "default" {
+			fmt.Fprintln(cmd.ErrOrStderr(), "warning: namespace \"default\" is shared by every containerd user; verify it is the one this workspace uses")
+		}
+		orphans, err := tools.ListOrphanContainers(context.Background(), address, namespace)
+		if err != nil {
+			return fmt.Errorf("shepherd: list containers: %w", err)
+		}
+		for _, o := range orphans {
+			if o.ID != args[0] {
+				continue
+			}
+			if err := tools.PruneContainer(context.Background(), address, namespace, o.ID); err != nil {
+				return fmt.Errorf("shepherd: prune-container %s: %w", o.ID, err)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "pruned container %s\n", o.ID)
+			return nil
+		}
+		return fmt.Errorf("shepherd: %s is not on the orphaned-container list — run `yaah shepherd containers`; only listed ids prune", args[0])
+	},
+}
+
+// shepherdContainerTarget resolves the daemon and namespace for the container
+// listing. The address is required: without it the containerd client has no
+// endpoint to dial, and an empty address must not silently become a different
+// daemon than the session used.
+func shepherdContainerTarget() (address, namespace string, err error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return "", "", fmt.Errorf("shepherd: load config: %w", err)
+	}
+	address = strings.TrimSpace(cfg.Workspace.Containerd.Address)
+	if address == "" {
+		return "", "", errors.New("shepherd: workspace.containerd.address is required to inspect containers")
+	}
+	namespace = strings.TrimSpace(cfg.Workspace.Containerd.Namespace)
+	if namespace == "" {
+		namespace = "default"
+	}
+	return address, namespace, nil
 }
 
 var shepherdPruneCmd = &cobra.Command{
@@ -185,6 +267,8 @@ func registeredWorktree(ctx context.Context, repo, name string) (bool, error) {
 }
 
 func init() {
+	shepherdCmd.AddCommand(shepherdContainersCmd)
 	shepherdCmd.AddCommand(shepherdPruneCmd)
+	shepherdCmd.AddCommand(shepherdPruneContainerCmd)
 	rootCmd.AddCommand(shepherdCmd)
 }

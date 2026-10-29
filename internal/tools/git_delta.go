@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	goatherd "github.com/buchenberg/goatherd-runtime"
 	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
@@ -596,44 +598,138 @@ func ensureProposalPathsExcluded(ctx context.Context, repoPath string) error {
 // persistGitDelta writes the manifest durably under the repository. Failure
 // fails the seal: a proposal the orchestrator cannot settle is worse than a
 // failed dispatch.
-func persistGitDelta(ctx context.Context, repoPath, id string, delta *GitDelta, review string) (string, error) {
+// proposalBasis is the host workspace state a container proposal was measured
+// against. Persisting it is what lets select re-check the premise after a
+// restart: the in-memory proposal cannot carry it across processes.
+type proposalBasis struct {
+	State  shepherdtrace.WorkspaceState `json:"state"`
+	Digest string                       `json:"digest"`
+}
+
+// proposalMeta is the small, restart-surviving record beside the manifest. The
+// id is stored because the directory name is sanitized; the parent scope keeps
+// one session's proposals out of another's registry.
+type proposalMeta struct {
+	ID             string `json:"id"`
+	SessionID      string `json:"session_id"`
+	ParentScopeID  string `json:"parent_scope_id"`
+	World          string `json:"world"`
+	Result         string `json:"result,omitempty"`
+	RunErr         string `json:"run_err,omitempty"`
+	ManifestDigest string `json:"manifest_digest"`
+}
+
+const (
+	proposalDeltaFile  = "delta.json"
+	proposalBasisFile  = "basis.json"
+	proposalMetaFile   = "meta.json"
+	proposalReviewFile = "review.diff"
+	proposalApplying   = "applying.json"
+	proposalSettled    = "settled.json"
+)
+
+// Runtime-level proposal facts (not kernel ABI): the manifest is a world
+// artifact, but its seal and settlement must still be legible in the causal
+// record. The digest in the fact names exactly which bytes were persisted.
+const (
+	SchemaProposalSealed  = "yaah.proposal.sealed.v1"
+	SchemaProposalSettled = "yaah.proposal.settled.v1"
+)
+
+// persistGitDelta writes the manifest and everything settlement needs to
+// survive a restart: the host basis and a small metadata record beside it. The
+// manifest digest is returned so the seal fact and later verification can name
+// exactly what was persisted. Failure fails the seal: a proposal the
+// orchestrator cannot settle is worse than a failed dispatch.
+func persistGitDelta(
+	ctx context.Context,
+	repoPath, id string,
+	delta *GitDelta,
+	review, result, runErr, sessionID, parentScopeID string,
+	basis shepherdtrace.WorkspaceState,
+	basisDigest string,
+) (dir, digest string, err error) {
 	if err := validateDelta(delta); err != nil {
-		return "", err
+		return "", "", err
+	}
+	if basisDigest == "" {
+		return "", "", errors.New("persist delta: the host basis digest is required")
+	}
+	computed, derr := basis.Digest()
+	if derr != nil {
+		return "", "", fmt.Errorf("persist delta: digest host basis: %w", derr)
+	}
+	if computed != basisDigest {
+		return "", "", fmt.Errorf("persist delta: host basis digest %s does not match the state (%s)", basisDigest, computed)
 	}
 	if err := ensureProposalPathsExcluded(ctx, repoPath); err != nil {
-		return "", fmt.Errorf("exclude proposal path from git: %w", err)
+		return "", "", fmt.Errorf("exclude proposal path from git: %w", err)
 	}
-	dir := proposalArtifactDir(repoPath, id)
+	dir = proposalArtifactDir(repoPath, id)
+	// The directory name is a sanitized id; two raw ids must never share one
+	// artifact directory and silently overwrite each other's metadata.
+	if existing, rerr := os.ReadFile(filepath.Join(dir, proposalMetaFile)); rerr == nil {
+		var meta proposalMeta
+		if json.Unmarshal(existing, &meta) == nil && meta.ID != "" && meta.ID != id {
+			return "", "", fmt.Errorf("proposal artifact directory %s already belongs to %s", dir, meta.ID)
+		}
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", fmt.Errorf("create proposal dir %s: %w", dir, err)
+		return "", "", fmt.Errorf("create proposal dir %s: %w", dir, err)
 	}
 	data, err := json.MarshalIndent(delta, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("marshal delta: %w", err)
+		return "", "", fmt.Errorf("marshal delta: %w", err)
 	}
-	deltaPath := filepath.Join(dir, "delta.json")
-	if err := atomicWriteFile(deltaPath, data, 0o600); err != nil {
-		return "", fmt.Errorf("write %s: %w", deltaPath, err)
+	sum := sha256.Sum256(data)
+	digest = fmt.Sprintf("%x", sum)
+	basisData, err := json.MarshalIndent(proposalBasis{State: basis, Digest: basisDigest}, "", "  ")
+	if err != nil {
+		return "", "", fmt.Errorf("marshal basis: %w", err)
+	}
+	metaData, err := json.MarshalIndent(proposalMeta{
+		ID:             id,
+		SessionID:      sessionID,
+		ParentScopeID:  parentScopeID,
+		World:          "container",
+		Result:         result,
+		RunErr:         runErr,
+		ManifestDigest: digest,
+	}, "", "  ")
+	if err != nil {
+		return "", "", fmt.Errorf("marshal proposal meta: %w", err)
+	}
+
+	written := []struct {
+		name string
+		data []byte
+	}{
+		{proposalDeltaFile, data},
+		{proposalBasisFile, basisData},
+		{proposalMetaFile, metaData},
 	}
 	if review != "" {
-		reviewPath := filepath.Join(dir, "review.diff")
-		if err := atomicWriteFile(reviewPath, []byte(review), 0o600); err != nil {
-			return "", fmt.Errorf("write %s: %w", reviewPath, err)
+		written = append(written, struct {
+			name string
+			data []byte
+		}{proposalReviewFile, []byte(review)})
+	}
+	for _, f := range written {
+		p := filepath.Join(dir, f.name)
+		if err := atomicWriteFile(p, f.data, 0o600); err != nil {
+			return "", "", fmt.Errorf("write %s: %w", p, err)
 		}
 	}
-	// A crash after the seal must leave a readable manifest, so sync the
-	// files and (best-effort) the directory. Directory fsync is not portable;
-	// its failure cannot make the manifest unreadable, so it is not fatal.
-	for _, p := range []string{deltaPath, filepath.Join(dir, "review.diff")} {
-		if _, statErr := os.Stat(p); statErr != nil {
-			continue
-		}
-		if err := syncFile(p); err != nil {
-			return "", fmt.Errorf("sync %s: %w", p, err)
+	// A crash after the seal must leave a readable manifest, so sync the files
+	// and (best-effort) the directory. Directory fsync is not portable; its
+	// failure cannot make the manifest unreadable, so it is not fatal.
+	for _, f := range written {
+		if err := syncFile(filepath.Join(dir, f.name)); err != nil {
+			return "", "", fmt.Errorf("sync %s: %w", filepath.Join(dir, f.name), err)
 		}
 	}
 	_ = syncDir(dir)
-	return dir, nil
+	return dir, digest, nil
 }
 
 // syncFile flushes one file's contents to stable storage. The handle is opened
@@ -673,7 +769,7 @@ func exportGitDelta(ctx context.Context, p *retainedProposal) (string, error) {
 	if err := os.MkdirAll(dst, 0o700); err != nil {
 		return "", err
 	}
-	for _, name := range []string{"delta.json", "review.diff"} {
+	for _, name := range []string{proposalDeltaFile, proposalBasisFile, proposalMetaFile, proposalReviewFile} {
 		src := filepath.Join(p.artifactDir, name)
 		data, err := os.ReadFile(src)
 		if errors.Is(err, fs.ErrNotExist) {
@@ -925,6 +1021,26 @@ func overlappingPaths(deltaPaths, hostPaths []string) []string {
 	return overlap
 }
 
+// writeProposalMarker records a settlement transition inside the artifact
+// directory. The applying marker makes a crash mid-settlement detectable on
+// rehydration; the settled marker makes a crash between the host write and the
+// directory removal harmless. Both are fsynced: a marker that only lives in the
+// page cache cannot serve that purpose.
+func writeProposalMarker(dir, name string, payload map[string]any) error {
+	if dir == "" {
+		return errors.New("no artifact directory")
+	}
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return err
+	}
+	p := filepath.Join(dir, name)
+	if err := atomicWriteFile(p, data, 0o600); err != nil {
+		return err
+	}
+	return syncFile(p)
+}
+
 // settleGitDeltaProposal settles a container proposal. The container is already
 // gone (destroyed at seal); the manifest is the proposal. select and apply write
 // the host tree, release exports the manifest, discard throws it away.
@@ -940,6 +1056,27 @@ func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retain
 		Files:      p.delta.Paths(),
 		World:      string(subagent.WorldContainer),
 	}
+	// The proposal directory must be invisible to git before select captures
+	// the host state; a new session may not have run the seal-time exclusion.
+	if err := ensureProposalPathsExcluded(ctx, p.repoPath); err != nil {
+		return "", fmt.Errorf("proposal %s: exclude proposal path: %w", p.id, err)
+	}
+	if err := writeProposalMarker(p.artifactDir, proposalApplying, map[string]any{
+		"proposal_id":     p.id,
+		"action":          action,
+		"manifest_digest": p.deltaDigest,
+	}); err != nil {
+		return "", fmt.Errorf("proposal %s: cannot record settlement start: %w", p.id, err)
+	}
+	applied := false
+	defer func() {
+		if !applied {
+			// The action failed before changing anything durable enough to
+			// consume the proposal; leave it retryable and drop the start
+			// marker so rehydration does not quarantine it.
+			_ = os.Remove(filepath.Join(p.artifactDir, proposalApplying))
+		}
+	}()
 
 	switch verb {
 	case goatherd.SettleSelect:
@@ -972,6 +1109,35 @@ func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retain
 		env.Retained = retained
 	case goatherd.SettleDiscard:
 		// Nothing to write; the manifest is simply consumed.
+	}
+	applied = true
+
+	// The settlement must be legible in the causal record even after the
+	// artifact directory is gone. Append to the host root scope: the dispatch
+	// scope is already discarded, and this is where a worktree settlement
+	// records its sealed output.
+	if p.mgr != nil && p.parentID != "" {
+		if scope, ok := p.mgr.Get(p.parentID); ok {
+			if _, ferr := scope.AppendFact(ctx, SchemaProposalSettled, "proposal", map[string]any{
+				"proposal_id":     p.id,
+				"action":          action,
+				"world":           string(subagent.WorldContainer),
+				"manifest_digest": p.deltaDigest,
+				"files":           p.delta.Paths(),
+			}); ferr != nil {
+				env.Notes = appendSettleNote(env.Notes, "trace: settle fact: "+ferr.Error())
+			}
+		} else {
+			env.Notes = appendSettleNote(env.Notes, "trace: settle fact skipped: host root scope is gone")
+		}
+	}
+
+	if err := writeProposalMarker(p.artifactDir, proposalSettled, map[string]any{
+		"proposal_id":     p.id,
+		"action":          action,
+		"manifest_digest": p.deltaDigest,
+	}); err != nil {
+		env.Notes = appendSettleNote(env.Notes, "settlement marker: "+err.Error())
 	}
 
 	// Consume-once: the proposal and its artifact directory go away together.

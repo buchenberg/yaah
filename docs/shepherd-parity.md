@@ -29,7 +29,7 @@ for the jail; it does not compose with one.
 
 | Session | World per dispatch | Authority | Settlement |
 |---|---|---|---|
-| local (default) | linked git worktree (`ForkIsolated`); report lanes may use a per-dispatch container under `world: auto` when `workspace.containerd.image` is set on Linux; proposal lanes may opt in with `world: container` | Landlock / winacl around the dispatch's shell children; the container boundary for a container world | sealed proposal (worktree); GitDelta manifest (container proposal, opt-in); none (report) |
+| local (default) | linked git worktree (`ForkIsolated`); report **and** proposal lanes may use a per-dispatch container under `world: auto` when `workspace.containerd.image` is set on Linux | Landlock / winacl around the dispatch's shell children; the container boundary for a container world | sealed proposal (worktree); GitDelta manifest (container proposal); none (report) |
 | containerd | the session's one container (shared) | the container boundary | none (`Retain` off) |
 
 The reference's grain is one world per **run**. yaah's run is a dispatch, so
@@ -58,9 +58,9 @@ agents:
 
 - `auto` (default) — try `container`, step down to `worktree` when the
   container world is unavailable **and** the fallback still satisfies every
-  declared requirement. Degradations are recorded and surfaced. A **proposal**
-  lane is the exception while manifest rehydration is pending: `auto` keeps it
-  on the worktree, and `container` opts in.
+  declared requirement. Degradations are recorded and surfaced. This applies to
+  report and proposal lanes alike; a container proposal is rehydrated from its
+  durable artifact after a restart.
 - `container` — fail closed. A dispatch that cannot get a container world does
   not run.
 - `worktree` — never container. The existing behaviour, made explicit.
@@ -130,7 +130,7 @@ Rule of thumb: **step down only along axes that were not required.**
 Three channels, same vocabulary as confinement:
 
 1. one typed trace fact per dispatch:
-   `yaah.subagent.world.v1 { requested, resolved, backend, reason, enforced }`
+   `yaah.subagent.world.v1 { requested, resolved, degraded, reason }`
 2. a warning line in the proposal envelope when the resolution differs from the
    request — the envelope shape and the four verbs never change;
 3. `yaah doctor` preflight, cached once per session (never per dispatch).
@@ -138,8 +138,10 @@ Three channels, same vocabulary as confinement:
 ### Recovery
 
 A crash mid-dispatch leaves a container and a snapshot. The world's identity
-(snapshot/lease name) is recorded with the scope so `yaah shepherd` can list
-and prune it. Unlike a worktree, a croft world is not addressable by path.
+labels the container so `yaah shepherd containers` can list it and
+`yaah shepherd prune-container <id>` can delete one exact id. Unlike a
+worktree, a croft world is not addressable by path; the exact container id is
+the handle.
 
 ### Cost
 
@@ -150,27 +152,28 @@ choice is part of the implementation, not a later optimisation: at
 
 ## Blockers and acceptance
 
-### Report-lane slice — shipped
+### Container dispatch worlds — shipped
 
-A host session can now give a **report** dispatch its own container world. The
-lane reuses the `workspace.containerd` stanza (image, namespace, address,
-snapshotter, `fifo_dir`) and the session container's copy-in contract: the
-repository is copied in at dispatch time, the body runs with the sandbox
-workspace as its substrate, and the scope and container are torn down
-afterwards. Nothing is sealed, so the report lane needs no settlement path.
+A host session can give a dispatch its own container world. The lane reuses the
+`workspace.containerd` stanza (image, namespace, address, snapshotter,
+`fifo_dir`) and the session container's copy-in contract: the repository is
+copied in at dispatch time, the body runs with the sandbox workspace as its
+substrate, and the scope and container are torn down afterwards. A report never
+seals; a proposal seals a `GitDelta` manifest before teardown.
 
 - Offered only in a host session (no session container) on Linux with
   `workspace.containerd.image` set.
-- `world: auto` prefers the container for report lanes; a **preflight** failure
+- `world: auto` prefers the container for both lanes; a **preflight** failure
   (open, probe, create, bootstrap) steps down to the worktree with
   `Degraded=true` and a reason naming the failure.
 - `world: container` fails closed on the same failure — a dispatch is never
   transparently re-run in another world.
 - The resolution is recorded as `yaah.subagent.world.v1`, and a degraded report
   carries the warning in its result. **In-run** failures still fail the dispatch.
-- Proposal lanes opt in with `world: container`; `auto` keeps them on the
-  worktree until manifest rehydration lands. An opted-in proposal seals a
-  `GitDelta` manifest before the container is destroyed.
+- A proposal seals a `GitDelta` manifest before the container is destroyed. The
+  manifest, host basis, and settlement markers under `.yaah/proposals/<id>/`
+  are rehydrated on the next session, so an interrupted dispatch does not strand
+  sealed work.
 - A restrictive `network` posture (`deny_all`/`broker`) is refused for a
   container world: the shell children are netns-bound, but `http`/`webfetch`
   execute in the yaah process on the host, which a container netns cannot
@@ -189,12 +192,13 @@ than as a kernel state. The container is destroyed at seal; the manifest is the
 proposal, so `select`, `apply`, `release`, and `discard` all work with no live
 world:
 
-- `world: auto` keeps a **proposal** on the worktree even when
-  `DispatchWorlds` is wired: the manifest cannot be rehydrated after a restart
-  yet, so automatic proposal containers would strand sealed work. `world:
-  container` opts in; a preflight failure there fails closed, and `auto` keeps
-  the worktree.
+- `world: auto` uses a container for a proposal when `DispatchWorlds` is wired;
+  a preflight failure degrades to the worktree, and an explicit `container`
+  fails closed.
 - report lanes use a container world under `auto`, because they never seal.
+- the manifest, the host basis it was measured against, and the settlement
+  markers survive a restart; `LoadProposalRegistry` rebuilds the session's open
+  proposals from them.
 
 Acceptance for retained container dispatches:
 
@@ -202,14 +206,11 @@ Acceptance for retained container dispatches:
 2. ~~A dispatch container can be settled onto the host~~ — done: `select`
    applies onto the dispatch basis, `apply` writes whole paths when disjoint,
    `release` exports the manifest, `discard` removes it.
-3. A crash mid-dispatch is recoverable or prunable by `yaah shepherd`: after a
-   seal the manifest is durable and there is no world to recover, but a
-   container orphaned before the seal is still the container runtime's to reap.
-   **Not met for post-seal recovery:** `.yaah/proposals/<id>/` survives a
-   restart, but the in-session registry is not rebuilt, so `proposal
-   list`/`show`/`select` cannot reach it. This is why proposal containers are
-   opt-in rather than selected by `auto`; the durability slice is tracked
-   separately.
+3. ~~Post-seal recovery~~ — done: `.yaah/proposals/<id>/` is scanned at startup,
+   scoped by durable session id; an `applying` marker quarantines an interrupted
+   settlement, and a `settled` marker consumes the artifact instead of
+   resurrecting it. A container orphaned **before** the seal is listed and
+   pruned by `yaah shepherd containers` / `prune-container <id>` (`yaah-vmje`).
 4. `yaah doctor` reports the resolution and the reason before the first run.
 
 ## Container settlement: `GitDelta`
@@ -247,19 +248,20 @@ exact, and applying it is a writer rather than a patch parser.
 ### Lifecycle
 
 The container is destroyed at seal: the proposal is the manifest, not a live
-snapshot, so there is no pinned croft state, no lease, and no orphan container
-to recover. The manifest is written durably (`.yaah/proposals/<id>/`) at seal,
-which is what makes a crash-surviving proposal possible without keeping the
-world alive. Total manifest size is capped; exceeding it fails the seal with a
-clear message rather than truncating.
+snapshot, so there is no pinned croft state, no lease, and no container to
+recover after a successful seal. A container orphaned before the seal is listed
+by `yaah shepherd containers` and pruned by exact id. The manifest is written
+durably (`.yaah/proposals/<id>/`) at seal, which is what makes a crash-surviving
+proposal possible without keeping the world alive. Total manifest size is
+capped; exceeding it fails the seal with a clear message rather than truncating.
 
 ### Acceptance
 
 1. A container proposal shows a diff and settles `select`/`apply`/`release`/
    `discard` onto the host tree.
 2. `apply` refuses overlapping paths; `select` refuses a moved host.
-3. The container is gone after seal; the manifest survives on disk across a
-   restart (in-session registry rehydration is not implemented yet).
+3. The container is gone after seal; the manifest, host basis, and settlement
+   markers survive on disk and rehydrate into the next session's registry.
 4. Report lanes are unchanged.
 5. Tests run without a daemon (sandbox fake + temp repos).
 
@@ -306,6 +308,12 @@ Roots outside the dispatch world (the motivating case was a read-only parent
 repo) are deliberately deferred: they would change the world seeding and
 validator contract, and read-only git already works inside a worktree without
 a grant.
+
+Container worlds do not lower grants. The croft adapter has no per-root
+writable-root shaping and the container boundary is whole-world, so a
+restrictive set refuses a container world: `auto` falls back to the worktree
+and an explicit `container` fails closed. This is the recorded decision, not a
+silent downgrade (`yaah-tqrv`).
 
 ## Ledger
 
