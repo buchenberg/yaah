@@ -73,6 +73,17 @@ func openDispatchWorld(ctx context.Context, rt RetainedRuntime) (*SessionSandbox
 		// A sibling is seeded from the session's snapshot, not the host tree:
 		// edits made in the session container are part of the dispatch's
 		// world, and the host copy may be stale.
+		//
+		// Probe releasability *before* Capture: Capture commits and pins a
+		// layer, so a guard afterwards would refuse after the pin already
+		// exists. The croft adapter implements ReleaseState; the fake does so
+		// as a no-op; any other isolated backend must provide one.
+		releaser, hasRelease := dw.SessionSandbox.sb.(interface {
+			ReleaseState(context.Context, shepherdtrace.WorkspaceState) error
+		})
+		if !hasRelease && dw.SessionSandbox.sb.Capabilities().Isolated {
+			return nil, fmt.Errorf("session backend %q captures state but does not expose ReleaseState", dw.SessionSandbox.sb.Backend())
+		}
 		state, err := dw.SessionSandbox.Capture(startCtx)
 		if err != nil {
 			return nil, fmt.Errorf("capture the session container state: %w", err)
@@ -80,15 +91,7 @@ func openDispatchWorld(ctx context.Context, rt RetainedRuntime) (*SessionSandbox
 		release := func() error {
 			// Capture pins a state. The sibling's active layer keeps its own
 			// lease; drop this transient pin once the state has been applied.
-			// An isolated backend that cannot release is refused rather than
-			// leaking a pin per report dispatch.
-			releaser, ok := dw.SessionSandbox.sb.(interface {
-				ReleaseState(context.Context, shepherdtrace.WorkspaceState) error
-			})
-			if !ok {
-				if dw.SessionSandbox.sb.Capabilities().Isolated {
-					return fmt.Errorf("session backend %q captures state but does not expose ReleaseState", dw.SessionSandbox.sb.Backend())
-				}
+			if !hasRelease {
 				return nil
 			}
 			return releaser.ReleaseState(context.WithoutCancel(startCtx), state)

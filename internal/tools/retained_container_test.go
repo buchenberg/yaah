@@ -312,3 +312,32 @@ func TestRetainedReport_ContainerSessionExplicitWorktreeFails(t *testing.T) {
 		t.Fatal("an explicit worktree in a container session must fail closed")
 	}
 }
+
+// noReleaseSandbox exposes only the Sandbox interface methods, hiding a
+// concrete backend's ReleaseState so the capture-releasability guard is
+// exercised.
+type noReleaseSandbox struct{ goatherdsandbox.Sandbox }
+
+func TestRetainedReport_ContainerSessionRequiresRelease(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	sessionOpen, _ := cleanOpener()
+	session, err := StartSessionSandbox(context.Background(), sessionTestConfig(), sessionOpen, "", nil)
+	if err != nil {
+		t.Fatalf("StartSessionSandbox: %v", err)
+	}
+	session.sb = noReleaseSandbox{session.sb}
+
+	dispatchOpen, _ := cleanOpener()
+	rt := containerReportRuntime(t, fx, repo, rootID, t.TempDir(), func(context.Context, string, SubAgentParams) (string, error) {
+		t.Fatal("a backend that cannot release a capture must not run")
+		return "", nil
+	}, "auto", dispatchOpen)
+	rt.DispatchWorlds.SessionSandbox = session
+	rt.World = "container"
+
+	if _, err := startRetainedRun(context.Background(), rt, "inspect", SubAgentParams{Role: "reviewer"}, 0, true); err == nil {
+		t.Fatal("a capturing backend without ReleaseState must fail closed")
+	} else if !strings.Contains(err.Error(), "ReleaseState") {
+		t.Fatalf("error = %q, want the release contract named", err)
+	}
+}
