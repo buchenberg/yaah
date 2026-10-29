@@ -1094,6 +1094,9 @@ func (p *retainedProposal) requireSessionUnmoved(ctx context.Context) error {
 	if p.session == nil {
 		return fmt.Errorf("proposal %s: no live session container to settle into", p.id)
 	}
+	if !p.session.Releasable() {
+		return fmt.Errorf("proposal %s: session backend cannot release a captured state", p.id)
+	}
 	state, err := p.session.Capture(ctx)
 	if err != nil {
 		return fmt.Errorf("proposal %s: select cannot capture the session state: %w", p.id, err)
