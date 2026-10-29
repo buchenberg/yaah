@@ -167,7 +167,9 @@ Normalization rules:
 - `steps` is assistant turns for yaah and the driver's API-call count for
   adapter arms; `null` when unavailable.
 - Cost comes from the single shared [pricing.json](pricing.json) table, never
-  from an arm's self-reported price. Override the table with `TB_PRICING` and
+  from an arm's self-reported price. The extractor selects the provider's
+  peak/off-peak tier from the run's start time (and records whether the tier
+  came from metadata or was assumed). Override the table with `TB_PRICING` and
   the default model (for old runs without model metadata) with `TB_MODEL`.
   Current rates are per million tokens and should be refreshed from the
   provider price sheet.

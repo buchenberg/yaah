@@ -2,11 +2,20 @@
   "currency": "USD",
   "unit": "per_million_tokens",
   "source": "DeepSeek API pricing, verified 2026-10-29: https://api-docs.deepseek.com/quick_start/pricing/",
-  "peak_hours_utc": ["01:00-04:00", "06:00-10:00", "Mon-Fri"],
   "models": {
     "deepseek-flash": {
-      "off_peak": {"input": 0.15, "output": 0.60, "cache_read": 0.003, "cache_write": 0.15},
-      "peak":     {"input": 0.30, "output": 1.20, "cache_read": 0.006, "cache_write": 0.30}
+      "off_peak": {
+        "input": 0.15,
+        "output": 0.6,
+        "cache_read": 0.003,
+        "cache_write": 0.15
+      },
+      "peak": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.006,
+        "cache_write": 0.3
+      }
     }
   }
 }

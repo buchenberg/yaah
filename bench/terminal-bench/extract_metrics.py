@@ -70,13 +70,20 @@ def pricing_key(model, pricing):
     return None
 
 
+def _nonneg_int(value):
+    try:
+        return max(int(value or 0), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def token_record(input_uncached, output, cache_read=0, cache_write=0, reasoning=None):
     return {
-        "input": max(int(input_uncached or 0), 0),
-        "output": max(int(output or 0), 0),
-        "reasoning": None if reasoning is None else max(int(reasoning), 0),
-        "cache_read": max(int(cache_read or 0), 0),
-        "cache_write": max(int(cache_write or 0), 0),
+        "input": _nonneg_int(input_uncached),
+        "output": _nonneg_int(output),
+        "reasoning": None if reasoning is None else _nonneg_int(reasoning),
+        "cache_read": _nonneg_int(cache_read),
+        "cache_write": _nonneg_int(cache_write),
     }
 
 
@@ -89,16 +96,20 @@ def pricing_period(metadata):
     """
     raw = (metadata or {}).get("start_time")
     if not raw:
-        return "off_peak"
+        return "off_peak", "assumed"
     try:
         started = datetime.datetime.fromisoformat(raw)
     except (TypeError, ValueError):
-        return "off_peak"
-    if started.tzinfo is not None:
+        return "off_peak", "assumed"
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=datetime.timezone.utc)
+        source = "metadata-naive-utc"
+    else:
         started = started.astimezone(datetime.timezone.utc)
+        source = "metadata"
     if started.weekday() < 5 and (1 <= started.hour < 4 or 6 <= started.hour < 10):
-        return "peak"
-    return "off_peak"
+        return "peak", source
+    return "off_peak", source
 
 
 def compute_cost(tokens, model, pricing, period="off_peak"):
@@ -111,8 +122,11 @@ def compute_cost(tokens, model, pricing, period="off_peak"):
     if isinstance(rates.get(period), dict):
         rates = rates[period]
     total = 0.0
-    for field in ("input", "output", "cache_read", "cache_write"):
-        total += float(rates.get(field, 0) or 0) * float(tokens.get(field, 0) or 0)
+    try:
+        for field in ("input", "output", "cache_read", "cache_write"):
+            total += float(rates.get(field, 0) or 0) * float(tokens.get(field, 0) or 0)
+    except (TypeError, ValueError):
+        return None, key
     return total / 1_000_000.0, key
 
 
@@ -165,26 +179,14 @@ def yaah_usage(runs_dir, run_id, task_id):
         return None
     con = sqlite3.connect(paths[0])
     try:
-        try:
-            row = con.execute(
-                "SELECT COALESCE(SUM(tokens_in),0), COALESCE(SUM(tokens_out),0),"
-                " COALESCE(SUM(tokens_cached),0),"
-                " COALESCE(SUM(sub_tokens_in),0), COALESCE(SUM(sub_tokens_out),0),"
-                " COUNT(*) FROM sessions"
-            ).fetchone()
-        except sqlite3.OperationalError:
-            # Older session rows predate one or more of the token columns.
-            try:
-                row = con.execute(
-                    "SELECT COALESCE(SUM(tokens_in),0), COALESCE(SUM(tokens_out),0),"
-                    " 0, COALESCE(SUM(sub_tokens_in),0),"
-                    " COALESCE(SUM(sub_tokens_out),0), COUNT(*) FROM sessions"
-                ).fetchone()
-            except sqlite3.OperationalError:
-                row = con.execute(
-                    "SELECT COALESCE(SUM(tokens_in),0), COALESCE(SUM(tokens_out),0),"
-                    " 0, 0, 0, COUNT(*) FROM sessions"
-                ).fetchone()
+        columns = {row[1] for row in con.execute("PRAGMA table_info(sessions)")}
+        def total(column):
+            return f"COALESCE(SUM({column}),0)" if column in columns else "0"
+        row = con.execute(
+            f"SELECT {total('tokens_in')}, {total('tokens_out')}, "
+            f"{total('tokens_cached')}, {total('sub_tokens_in')}, "
+            f"{total('sub_tokens_out')}, COUNT(*) FROM sessions"
+        ).fetchone()
         try:
             steps = con.execute(
                 "SELECT COUNT(*) FROM messages WHERE role = 'assistant'"
@@ -313,8 +315,12 @@ def usage_report_tokens(runs_dir, run_id, task_id):
         includes_cache = bool(report.get("prompt_includes_cache"))
         # The legacy "tokens_in" is prompt-includes-cache for every arm.
         prompt = raw_input if includes_cache else raw_input + cache_read + cache_write
-        input_uncached = max(raw_input - cache_read - cache_write, 0) if includes_cache else raw_input
-        steps = report.get("api_calls") or report.get("calls")
+        # `prompt_includes_cache` describes cache reads; cache writes are
+        # separate and must not be subtracted from uncached input.
+        input_uncached = max(raw_input - cache_read, 0) if includes_cache else raw_input
+        steps = report.get("api_calls")
+        if steps is None:
+            steps = report.get("calls")
         reasoning = report.get("reasoning_tokens")
         return {
             "tokens_in": prompt,
@@ -415,7 +421,7 @@ def main(argv):
         if not model:
             model = DEFAULT_MODEL
         effort = run_effort(metadata) or os.environ.get("TB_EFFORT")
-        period = pricing_period(metadata)
+        period, period_source = pricing_period(metadata)
         run_report = {
             "run_id": run_id,
             "arm": arm,
@@ -423,6 +429,7 @@ def main(argv):
             "model_source": model_source,
             "effort": effort,
             "pricing_period": period,
+            "pricing_period_source": period_source,
             "tasks": [],
         }
         if not as_json:
@@ -455,6 +462,7 @@ def main(argv):
                     "cost_usd": cost,
                     "pricing_model": price_key,
                     "pricing_period": period,
+                    "pricing_period_source": period_source,
                     "subagent_tokens": subagent_tokens,
                     "usage": usage,
                     "sub_usage_source": sub_source,
