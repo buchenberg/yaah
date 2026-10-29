@@ -336,6 +336,22 @@ restrictive set refuses a container world: `auto` falls back to the worktree
 and an explicit `container` fails closed. This is the recorded decision, not a
 silent downgrade (`yaah-tqrv`).
 
+## Review provenance
+
+A worktree proposal records the runtime's explicit review pair before it is
+settled: `goatherd.merge.proposed.v1` on the child owner path (changes, count,
+baseline digest, diff digest) and `goatherd.supervisor.decision.v1` on the
+parent owner path (`approved`, reason, action, child scope). The decision is
+written only when the sealed output settles, and its action names what
+happened (`selected`, `applied`, `discarded`, `released`). This is the
+settlement-shaped review the reference records; it does not adopt
+`CommitMerge`, which only applies to shared-sandbox children and has been
+removed upstream (`shepherd-runtime-go-s3u`).
+
+Container proposals have no live child scope, so their review evidence is the
+`yaah.proposal.sealed.v1` / `yaah.proposal.settled.v1` pair plus the manifest
+and envelope; the runtime merge-proposal pair does not apply.
+
 ## Ledger
 
 Pinned inputs (drift guard: `internal/parity`):
@@ -345,7 +361,7 @@ Pinned inputs (drift guard: `internal/parity`):
 | reference | Shepherd (Python) `v0.3.1` |
 | trace ABI | `shepherd2` abi.v0, golden vectors |
 | kernel | `goatherd-kernel v0.18.0` |
-| runtime | `goatherd-runtime v0.20.0` |
+| runtime | `goatherd-runtime v0.21.0` |
 | container world | `goatherd-runtime/sandbox/croft v0.2.0` / `goatherd-croft v0.9.1` |
 | containment | landlock v0.1.2, winacl v0.1.1, seatbelt v0.1.0 |
 | grants | world-relative RW/RO roots, disjoint (config, not tools) |

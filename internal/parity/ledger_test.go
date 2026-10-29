@@ -31,7 +31,7 @@ func TestLedgerPinsMatchGoMod(t *testing.T) {
 
 	pins := []string{
 		"github.com/buchenberg/goatherd-kernel v0.18.0",
-		"github.com/buchenberg/goatherd-runtime v0.20.0",
+		"github.com/buchenberg/goatherd-runtime v0.21.0",
 		"github.com/buchenberg/goatherd-runtime/sandbox/croft v0.2.0",
 		"github.com/buchenberg/goatherd-runtime/sandbox/landlock v0.1.2",
 		"github.com/buchenberg/goatherd-runtime/sandbox/winacl v0.1.1",
