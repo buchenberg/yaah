@@ -478,19 +478,26 @@ func (l *Loop) wireBackgroundHooks() {
 		return
 	}
 	l.BackgroundJobs.SetLoopHooks(
-		func(id, role, model, prompt string) {
-			evt := &SubAgentStartEvent{SubAgentID: id, Role: role, Model: model, Prompt: prompt}
+		func(id, role, model, prompt string, world tools.SubAgentWorld) {
+			evt := &SubAgentStartEvent{
+				SubAgentID: id, Role: role, Model: model, Prompt: prompt,
+				World: world.Resolved, WorldDegraded: world.Degraded, WorldReason: world.Reason,
+			}
 			if l.broker != nil && l.broker.TryPublishMustDeliver(evt) {
 				return
 			}
-			l.BackgroundJobs.NotifySessionStart(id, role, model, prompt)
+			l.BackgroundJobs.NotifySessionStart(id, role, model, prompt, world)
 		},
-		func(id, role, model, prompt, result string, dur time.Duration, err string) {
-			evt := &SubAgentEndEvent{SubAgentID: id, Role: role, Model: model, Prompt: prompt, Duration: dur, Error: err, Result: result}
+		func(id, role, model, prompt, result string, dur time.Duration, err string, world tools.SubAgentWorld) {
+			evt := &SubAgentEndEvent{
+				SubAgentID: id, Role: role, Model: model, Prompt: prompt,
+				Duration: dur, Error: err, Result: result,
+				World: world.Resolved, WorldDegraded: world.Degraded, WorldReason: world.Reason,
+			}
 			if l.broker != nil && l.broker.TryPublishMustDeliver(evt) {
 				return
 			}
-			l.BackgroundJobs.NotifySessionEnd(id, role, model, prompt, result, dur, err)
+			l.BackgroundJobs.NotifySessionEnd(id, role, model, prompt, result, dur, err, world)
 		},
 	)
 }

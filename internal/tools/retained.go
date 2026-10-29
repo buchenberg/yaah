@@ -355,6 +355,14 @@ func sessionContainerFallback(
 		Degraded:  true,
 		Reason:    reason,
 	})
+	// The body runs in the session container, not in the worktree the
+	// step-down may have named, so the dispatch event carries shared.
+	recordDispatchWorld(ctx, subagent.WorldResolution{
+		Requested: requested,
+		Resolved:  subagent.WorldShared,
+		Degraded:  true,
+		Reason:    reason,
+	})
 	runCtx := ctx
 	if timeout > 0 {
 		var cancel context.CancelFunc
@@ -442,6 +450,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		}
 		return "", fmt.Errorf("delegate: %w", werr)
 	}
+	recordDispatchWorld(ctx, worldRes)
 
 	// A container world serves both lanes. A report never seals, so the
 	// container is simply destroyed. A proposal seals a GitDelta manifest
@@ -490,6 +499,9 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 			}
 			return sessionContainerFallback(ctx, rt, prompt, subParams, timeout, worldRes.Requested, worldRes.Reason)
 		}
+		// The world changed (a preflight failure stepped auto down): the
+		// event must carry the world the dispatch actually runs in.
+		recordDispatchWorld(ctx, worldRes)
 	}
 
 	// The basis: the parent's workspace at dispatch. The proposal's delta is
@@ -716,6 +728,18 @@ func jailAvailable() bool {
 	}
 	ok, _ := backend.Available()
 	return ok
+}
+
+// recordDispatchWorld publishes the resolved world to the run context so the
+// start/end notifier reports the same world the dispatch actually got. The
+// write happens before the child body starts and before the runner fires the
+// start notifier, so a live view never sees an unresolved dispatch.
+func recordDispatchWorld(ctx context.Context, res subagent.WorldResolution) {
+	WriteSubAgentWorld(ctx, SubAgentWorld{
+		Resolved: string(res.Resolved),
+		Degraded: res.Degraded,
+		Reason:   res.Reason,
+	})
 }
 
 // recordWorldFact appends the resolved world to the dispatch's scope, so a

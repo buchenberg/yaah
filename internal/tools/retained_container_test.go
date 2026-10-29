@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 )
 
@@ -209,12 +210,18 @@ func TestRetainedReport_ContainerSessionSibling(t *testing.T) {
 		},
 	}
 
-	res, err := startRetainedRun(context.Background(), rt, "inspect", SubAgentParams{Role: "reviewer"}, 0, true)
+	var gotWorld SubAgentWorld
+	ctx := WithSubAgentWorldPtr(context.Background(), &gotWorld)
+
+	res, err := startRetainedRun(ctx, rt, "inspect", SubAgentParams{Role: "reviewer"}, 0, true)
 	if err != nil {
 		t.Fatalf("startRetainedRun: %v", err)
 	}
 	if res != "saw the session state" {
 		t.Fatalf("result = %q", res)
+	}
+	if gotWorld.Resolved != string(subagent.WorldContainer) || gotWorld.Degraded {
+		t.Errorf("sibling world = %+v, want container and not degraded", gotWorld)
 	}
 	if gotSeed != "from the session\n" {
 		t.Fatalf("sibling seed = %q, want the session container's state", gotSeed)
@@ -245,7 +252,10 @@ func TestRetainedReport_ContainerSessionFallsBackToSession(t *testing.T) {
 	rt := containerReportRuntime(t, fx, repo, rootID, t.TempDir(), run, "auto", nil)
 	rt.DispatchWorlds.SessionSandbox = &SessionSandbox{}
 
-	res, err := startRetainedRun(context.Background(), rt, "inspect", SubAgentParams{Role: "reviewer"}, 0, true)
+	var gotWorld SubAgentWorld
+	ctx := WithSubAgentWorldPtr(context.Background(), &gotWorld)
+
+	res, err := startRetainedRun(ctx, rt, "inspect", SubAgentParams{Role: "reviewer"}, 0, true)
 	if err != nil {
 		t.Fatalf("auto report must fall back to the session container: %v", err)
 	}
@@ -256,6 +266,9 @@ func TestRetainedReport_ContainerSessionFallsBackToSession(t *testing.T) {
 	}
 	if gotWS != nil {
 		t.Error("the session-container fallback must not inject a dispatch workspace")
+	}
+	if gotWorld.Resolved != string(subagent.WorldShared) || !gotWorld.Degraded || gotWorld.Reason == "" {
+		t.Errorf("fallback world = %+v, want shared and degraded with a reason", gotWorld)
 	}
 }
 

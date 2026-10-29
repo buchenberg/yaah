@@ -441,3 +441,30 @@ func TestClientCaps_compactionGate(t *testing.T) {
 		}
 	}
 }
+
+// TestView_subAgentWorldSuffix pins the per-dispatch world suffix on the
+// sub-agent chunks, including the inline degradation reason.
+func TestView_subAgentWorldSuffix(t *testing.T) {
+	var got []any
+	v := NewView()
+	v.SendTo("s", captureUpdate(&got), &agent.SubAgentStartEvent{Role: "dev", Prompt: "p", World: "worktree"})
+	v.SendTo("s", captureUpdate(&got), &agent.SubAgentEndEvent{
+		Role: "dev", World: "worktree", WorldDegraded: true, WorldReason: "no image",
+	})
+	if len(got) != 2 {
+		t.Fatalf("updates = %d, want 2", len(got))
+	}
+	textOf := func(u any) string {
+		m := decodeUpdate(t, u)
+		c, _ := m["content"].(map[string]any)
+		s, _ := c["text"].(string)
+		return s
+	}
+	start, end := textOf(got[0]), textOf(got[1])
+	if !strings.Contains(start, "worktree") {
+		t.Fatalf("start chunk = %q", start)
+	}
+	if !strings.Contains(end, "worktree (degraded: no image)") {
+		t.Fatalf("end chunk = %q", end)
+	}
+}

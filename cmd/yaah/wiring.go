@@ -36,6 +36,7 @@ import (
 	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
+	"github.com/buchenberg/yaah/internal/worldinfo"
 )
 
 func newAgentSession() (*agentSession, error) {
@@ -743,6 +744,12 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	containerSession := dispatchWorlds != nil && dispatchWorlds.SessionSandbox != nil
 	retainLane := retainedLaneActive(cfg.Agent.SubAgent.Mode, retainCapable, containerSession)
 
+	// Session-level posture for every UI (TUI info pane, REPL banner, web
+	// header, ACP _meta). One derivation shared with doctor, computed after
+	// the containment switch so the sandbox flag is final: the surfaces must
+	// describe the world a dispatch would actually get.
+	worldStatus := worldinfo.Derive(cfg, opts.WorkspaceRoot, sessionSandbox != nil)
+
 	taskTool := runner.NewDelegateTool(runner.DelegateToolOpts{
 		Provider:              provider,
 		ProviderName:          providerName,
@@ -1086,6 +1093,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		tracker:        tracker,
 		backgroundJobs: backgroundJobs,
 		sessionSandbox: sessionSandbox,
+		worldStatus:    worldStatus,
 		cwd:            cwd,
 		steerCh:        steerCh,
 		rootScopeID:    rootScopeID,
@@ -1148,23 +1156,29 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// the loop clears them, these fallbacks deliver the completion directly
 	// to the current view.
 	backgroundJobs.SetSessionHooks(
-		func(id, role, model, prompt string) {
+		func(id, role, model, prompt string, world jobs.SubAgentWorld) {
 			sess.dispatchEvent(&agent.SubAgentStartEvent{
-				SubAgentID: id,
-				Role:       role,
-				Model:      model,
-				Prompt:     prompt,
+				SubAgentID:    id,
+				Role:          role,
+				Model:         model,
+				Prompt:        prompt,
+				World:         world.Resolved,
+				WorldDegraded: world.Degraded,
+				WorldReason:   world.Reason,
 			})
 		},
-		func(id, role, model, prompt, result string, dur time.Duration, err string) {
+		func(id, role, model, prompt, result string, dur time.Duration, err string, world jobs.SubAgentWorld) {
 			sess.dispatchEvent(&agent.SubAgentEndEvent{
-				SubAgentID: id,
-				Role:       role,
-				Model:      model,
-				Prompt:     prompt,
-				Duration:   dur,
-				Error:      err,
-				Result:     result,
+				SubAgentID:    id,
+				Role:          role,
+				Model:         model,
+				Prompt:        prompt,
+				Duration:      dur,
+				Error:         err,
+				Result:        result,
+				World:         world.Resolved,
+				WorldDegraded: world.Degraded,
+				WorldReason:   world.Reason,
 			})
 		},
 	)

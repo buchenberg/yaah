@@ -11,7 +11,58 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/repl"
+	"github.com/buchenberg/yaah/internal/worldinfo"
 )
+
+// printWorldBanner writes the session's workspace/dispatch-world summary
+// under the provider line: the REPL's only surface for it. A zero status
+// (never derived) prints nothing, so older flows are unaffected.
+func printWorldBanner(s worldinfo.Status) {
+	for _, line := range worldBannerLines(s) {
+		fmt.Fprintf(os.Stderr, "  %s\n", Dim(line))
+	}
+	fmt.Fprintln(os.Stderr)
+}
+
+// worldBannerLines renders at most two dim lines. The dispatch ladder is the
+// session-level truth from worldinfo: it mirrors what a dispatch gets, not
+// what was configured.
+func worldBannerLines(s worldinfo.Status) []string {
+	if s.IsZero() {
+		return nil
+	}
+	workspace := s.Backend
+	if s.Isolated {
+		workspace += " · isolated"
+	}
+	if s.Root == "" {
+		workspace += " · unrestricted"
+	} else {
+		workspace += " · root " + s.Root
+	}
+	if s.Image != "" {
+		workspace += " · image " + s.Image
+	}
+	line1 := "workspace: " + workspace + " · mode: " + s.Mode
+
+	jail := "unavailable"
+	if s.JailOK {
+		jail = "available"
+	}
+	world := s.WorldReq + " → " + s.ProposalWorld
+	if s.Mode == "shared" {
+		world = "shared · no dispatch world"
+	} else if s.ReportWorld != s.ProposalWorld {
+		world = s.WorldReq + " → proposal " + s.ProposalWorld + " · report " + s.ReportWorld
+	}
+	line2 := "world: " + world +
+		" · containment: " + s.Containment + " · jail: " + jail +
+		" · network: " + s.Network
+	if s.Degraded && s.Reason != "" {
+		line2 += " (" + s.Reason + ")"
+	}
+	return []string{line1, line2}
+}
 
 // startREPL runs the interactive read-eval-print loop.
 // Builds infrastructure (config, provider, tools, DB, MCP) once per session
@@ -26,7 +77,8 @@ func startREPL() error {
 	}
 	defer sess.Close()
 
-	fmt.Fprintf(os.Stderr, "\n  %s %s/%s\n\n", Dim("provider:"), sess.ProviderName(), sess.ModelName())
+	fmt.Fprintf(os.Stderr, "\n  %s %s/%s\n", Dim("provider:"), sess.ProviderName(), sess.ModelName())
+	printWorldBanner(sess.WorldStatus())
 
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)

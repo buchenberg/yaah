@@ -60,8 +60,9 @@ func (t *App) AddToolEnd(id, summary, result string) {
 // AddSubAgentStart adds a sub-agent to the dedicated Subagents pane.
 // Sub-agents are not part of the conversation log; the pane is their only
 // display surface.
-func (t *App) AddSubAgentStart(id, role, task string) {
+func (t *App) AddSubAgentStart(id, role, task, world string) {
 	sb := subagent.New(id, role, task)
+	sb.SetWorld(world)
 	t.subAgents = append(t.subAgents, sb)
 	t.subAgentsBusy.Store(true)
 	t.renderBackgroundJobsPane()

@@ -8,6 +8,8 @@ import (
 	"github.com/buchenberg/yaah/internal/tui/components/contextinfo"
 	"github.com/buchenberg/yaah/internal/tui/components/mcpinfo"
 	"github.com/buchenberg/yaah/internal/tui/components/sessioninfo"
+	worldsection "github.com/buchenberg/yaah/internal/tui/components/worldinfo"
+	"github.com/buchenberg/yaah/internal/worldinfo"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -23,6 +25,7 @@ type State struct {
 	EphemeralMsg     string
 	SubAgents        SubAgentInfo
 	Embedding        EmbeddingInfo
+	World            worldinfo.Status
 	Pipeline         []string
 	AgentActive      bool
 	PromptTokens     int
@@ -79,6 +82,11 @@ func Format(s State, th *colors.Theme) string {
 
 	b.WriteString(contextinfo.Format(s.ContextTokens, s.ContextWindow, th))
 	b.WriteString("\n")
+
+	if !s.World.IsZero() {
+		b.WriteString(worldsection.Format(s.World, th))
+		b.WriteString("\n")
+	}
 
 	if s.PromptTokens > 0 || s.CompletionTokens > 0 {
 		b.WriteString(th.TagBold(th.Heading, "Usage\n"))

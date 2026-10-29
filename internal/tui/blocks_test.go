@@ -97,7 +97,7 @@ func TestAddSubAgentStartAndEnd(t *testing.T) {
 	ui := New("test")
 
 	// Sub-agents belong to the dedicated pane, not the conversation log.
-	ui.AddSubAgentStart("sub-1", "analyst", "Analyze the code")
+	ui.AddSubAgentStart("sub-1", "analyst", "Analyze the code", "")
 
 	if len(ui.conversationLog) != 0 {
 		t.Errorf("sub-agent must not add a conversation item, got %d", len(ui.conversationLog))
@@ -126,7 +126,7 @@ func TestAddSubAgentStartAndEnd(t *testing.T) {
 func TestAddSubAgentError(t *testing.T) {
 	ui := New("test")
 
-	ui.AddSubAgentStart("sub-1", "analyst", "Analyze the code")
+	ui.AddSubAgentStart("sub-1", "analyst", "Analyze the code", "")
 	ui.AddSubAgentError("sub-1")
 
 	if len(ui.subAgents) != 0 {
@@ -139,8 +139,8 @@ func TestAddSubAgentError(t *testing.T) {
 
 func TestAdvanceSubAgentSpinners(t *testing.T) {
 	ui := New("test")
-	ui.AddSubAgentStart("sub-1", "analyst", "Task 1")
-	ui.AddSubAgentStart("sub-2", "reviewer", "Task 2")
+	ui.AddSubAgentStart("sub-1", "analyst", "Task 1", "")
+	ui.AddSubAgentStart("sub-2", "reviewer", "Task 2", "")
 
 	before1 := ui.subAgents[0].SpinnerFrame()
 	before2 := ui.subAgents[1].SpinnerFrame()
@@ -227,5 +227,19 @@ func TestToggleAllTools(t *testing.T) {
 
 	if len(ui.conversationLog) != 2 {
 		t.Errorf("Expected 2 items in conversationLog, got %d", len(ui.conversationLog))
+	}
+}
+
+// TestAddSubAgentStartCarriesWorld pins the per-dispatch world on the pane
+// row: the label comes from the SubAgentStartEvent, not the session summary.
+func TestAddSubAgentStartCarriesWorld(t *testing.T) {
+	ui := New("test")
+	ui.AddSubAgentStart("sub-1", "developer", "Task", "worktree (degraded: no image)")
+	sb := ui.findSubAgent("sub-1")
+	if sb == nil {
+		t.Fatal("block not found")
+	}
+	if got := sb.World(); got != "worktree (degraded: no image)" {
+		t.Fatalf("World = %q", got)
 	}
 }

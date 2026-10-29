@@ -110,6 +110,7 @@ body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 .tool-summary{flex:1;min-width:0;color:var(--pico-muted-color);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tool-head .tool-summary::before{content:'—';margin-right:.35rem;color:var(--pico-muted-border-color)}
 .tool-model{flex-shrink:0;font-size:.72em;color:var(--pico-muted-color);border:1px solid var(--pico-muted-border-color);border-radius:4px;padding:.05rem .35rem;white-space:nowrap}
+.tool-world{flex-shrink:0;font-size:.72em;color:var(--pico-muted-color);border:1px dashed var(--pico-muted-border-color);border-radius:4px;padding:.05rem .35rem;white-space:nowrap}
 .tool-dur{flex-shrink:0;font-size:.75em;color:var(--pico-muted-color);margin-left:auto}
 .tool-err{color:var(--wui-err-text);font-weight:600}
 .tool-body{margin-top:.2rem}
@@ -234,6 +235,9 @@ dialog article{max-width:480px;min-width:min(320px,100%)}
         </div>
       </div>
     </div>
+    <div class="mcp-wrap" x-show="head.workspace">
+      <span class="mcp-badge" x-text="head.workspace + (head.isolated ? ' · isolated' : '')" :title="worldTitle()"></span>
+    </div>
     <div class="mcp-wrap" x-show="head.mcpServers && head.mcpServers.length">
       <span class="mcp-badge" role="button" tabindex="0" :aria-expanded="mcpOpen" @click="mcpOpen = !mcpOpen" @keydown.enter="mcpOpen = !mcpOpen" @keydown.space.prevent="mcpOpen = !mcpOpen" x-text="head.mcpServers.length + ' MCP'"></span>
       <div class="mcp-drop" x-show="mcpOpen" @click.outside="mcpOpen = false">
@@ -283,6 +287,7 @@ dialog article{max-width:480px;min-width:min(320px,100%)}
           <span class="tool-name" x-text="toolLabel(m)"></span>
           <span class="tool-summary" x-show="toolSummary(m)" x-text="toolSummary(m)"></span>
           <span class="tool-model" x-show="m.subModel" x-text="modelLabel(m.subModel)"></span>
+          <span class="tool-world" x-show="m.subWorld" x-text="m.subWorld"></span>
           <span class="tool-dur" x-show="!m.running && m.duration" x-text="m.duration"></span>
           <span class="tool-err" x-show="m.error" x-text="m.error"></span>
         </div>
@@ -505,7 +510,7 @@ document.addEventListener('alpine:init', () => {
       classOf(r) { return r === 'user' ? 'user' : r === 'error' ? 'err' : 'asst' },
       add(role, text) { this.msgs.push({id: ++_n, role, raw: text, html: role === 'asst' ? render(text) : esc(text), expanded: false, running: false}) },
       addTool(id, name, args, summary) {
-        const m = {id: ++_n, role: 'tool', name, args, summary, result: '', duration: '', error: '', running: true, expanded: false, subModel: ''}
+        const m = {id: ++_n, role: 'tool', name, args, summary, result: '', duration: '', error: '', running: true, expanded: false, subModel: '', subWorld: ''}
         this.msgs.push(m)
         if (id != null) this._tools[id] = m
         return m
@@ -534,6 +539,27 @@ document.addEventListener('alpine:init', () => {
           }
         }
         return model
+      },
+      // worldLabel renders a resolved dispatch world the same way the TUI,
+      // REPL, and ACP do: the bare world, plus an inline degradation.
+      worldLabel(w, degraded, reason) {
+        if (!w) return ''
+        if (!degraded) return w
+        return reason ? w + ' (degraded: ' + reason + ')' : w + ' (degraded)'
+      },
+      // worldTitle is the badge's hover text: the full posture without the
+      // containerd socket, deny patterns, or credentials.
+      worldTitle() {
+        const p = []
+        p.push('workspace: ' + this.head.workspace + (this.head.isolated ? ' (isolated)' : ''))
+        if (this.head.workspaceRoot) p.push('root: ' + this.head.workspaceRoot)
+        if (this.head.mode) p.push('mode: ' + this.head.mode)
+        if (this.head.containment) p.push('containment: ' + this.head.containment + ' · jail: ' + (this.head.jail ? 'available' : 'unavailable'))
+        if (this.head.network) p.push('network: ' + this.head.network)
+        if (this.head.world) p.push('world: ' + this.head.world + ' → ' + (this.head.worldResolved || ''))
+        if (this.head.worldReport) p.push('report world: ' + this.head.worldReport)
+        if (this.head.worldDegraded && this.head.worldReason) p.push(this.head.worldReason)
+        return p.join('\n')
       },
       // matchSubRow finds the running delegate tool row a
       // subagent.start/end event belongs to, by role + prompt. Truncated
@@ -586,8 +612,12 @@ document.addEventListener('alpine:init', () => {
             this.scroll(); break
           case 'subagent.start': {
             const row = this.matchSubRow(d.role, d.prompt)
-            if (row && d.model) row.subModel = d.model
-            this.status = 'sub-agent: ' + d.role + (d.model ? ' · ' + d.model : ''); break
+            const world = this.worldLabel(d.world, d.world_degraded, d.world_reason)
+            if (row) {
+              if (d.model) row.subModel = d.model
+              if (world) row.subWorld = world
+            }
+            this.status = 'sub-agent: ' + d.role + (d.model ? ' · ' + d.model : '') + (world ? ' · ' + world : ''); break
           }
           case 'subagent.end': {
             const row = this.matchSubRow(d.role, d.prompt)

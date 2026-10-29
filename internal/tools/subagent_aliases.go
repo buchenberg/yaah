@@ -14,6 +14,7 @@ type (
 	TaskRunner     = jobs.TaskRunner
 	SubAgentParams = jobs.SubAgentParams
 	Escalation     = jobs.Escalation
+	SubAgentWorld  = jobs.SubAgentWorld
 )
 
 const (
@@ -45,6 +46,22 @@ func WithSubAgentStartNotifier(ctx context.Context, fn func(model string)) conte
 
 func NotifySubAgentStart(ctx context.Context, model string) {
 	jobs.NotifySubAgentStart(ctx, model)
+}
+
+func WithSubAgentWorldPtr(ctx context.Context, ptr *SubAgentWorld) context.Context {
+	return jobs.WithSubAgentWorldPtr(ctx, ptr)
+}
+
+func WithSubAgentWorldWriter(ctx context.Context, write func(SubAgentWorld)) context.Context {
+	return jobs.WithSubAgentWorldWriter(ctx, write)
+}
+
+func WriteSubAgentWorld(ctx context.Context, w SubAgentWorld) {
+	jobs.WriteSubAgentWorld(ctx, w)
+}
+
+func SubAgentWorldFromContext(ctx context.Context) SubAgentWorld {
+	return jobs.SubAgentWorldFromContext(ctx)
 }
 
 func WithSubAgentUsage(ctx context.Context, usage *types.Usage) context.Context {

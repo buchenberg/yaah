@@ -198,9 +198,10 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 		send(sessionID, update)
 	case *agent.SubAgentStartEvent:
 		label := toolfmt.SubagentRoleLabel(e.Role)
+		world := worldChunkSuffix(e.World, e.WorldDegraded, e.WorldReason)
 		send(sessionID, ChunkUpdate{
 			SessionUpdate: UpdateAgentMessageChunk,
-			Content:       textContent(text("\n[sub-agent: %s] %s\n", label, e.Prompt)),
+			Content:       textContent(text("\n[sub-agent: %s] %s%s\n", label, e.Prompt, world)),
 		})
 	case *agent.SubAgentEndEvent:
 		label := toolfmt.SubagentRoleLabel(e.Role)
@@ -212,9 +213,10 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 		if e.Model != "" {
 			modelStr = " [" + e.Model + "]"
 		}
+		world := worldChunkSuffix(e.World, e.WorldDegraded, e.WorldReason)
 		send(sessionID, ChunkUpdate{
 			SessionUpdate: UpdateAgentMessageChunk,
-			Content:       textContent(text("[sub-agent: %s%s] %s\n", label, modelStr, status)),
+			Content:       textContent(text("[sub-agent: %s%s] %s%s\n", label, modelStr, status, world)),
 		})
 	case *agent.EscalationEvent:
 		send(sessionID, ChunkUpdate{
@@ -356,3 +358,13 @@ func (v *ViewWithWrite) Announce(callID string) {
 
 // compile-time check
 var _ agent.View = (*ViewWithWrite)(nil)
+
+// worldChunkSuffix renders the per-dispatch world for the sub-agent message
+// chunk. Empty when unresolved; the label matches the REPL/TUI/web text.
+func worldChunkSuffix(world string, degraded bool, reason string) string {
+	label := toolfmt.SubagentWorldLabel(world, degraded, reason)
+	if label == "" {
+		return ""
+	}
+	return " · " + label
+}

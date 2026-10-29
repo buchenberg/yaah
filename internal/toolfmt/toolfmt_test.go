@@ -332,3 +332,32 @@ func TestSummary(t *testing.T) {
 		}
 	})
 }
+
+func TestSubagentWorldLabel(t *testing.T) {
+	t.Run("empty world renders nothing", func(t *testing.T) {
+		if got := SubagentWorldLabel("", false, ""); got != "" {
+			t.Fatalf("got %q, want empty", got)
+		}
+	})
+	t.Run("plain world", func(t *testing.T) {
+		if got := SubagentWorldLabel("worktree", false, ""); got != "worktree" {
+			t.Fatalf("got %q", got)
+		}
+	})
+	t.Run("shared lane", func(t *testing.T) {
+		if got := SubagentWorldLabel("shared", false, ""); got != "shared" {
+			t.Fatalf("got %q", got)
+		}
+	})
+	t.Run("degraded with reason", func(t *testing.T) {
+		got := SubagentWorldLabel("worktree", true, "container world unavailable: no image")
+		if got != "worktree (degraded: container world unavailable: no image)" {
+			t.Fatalf("got %q", got)
+		}
+	})
+	t.Run("degraded without reason", func(t *testing.T) {
+		if got := SubagentWorldLabel("worktree", true, ""); got != "worktree (degraded)" {
+			t.Fatalf("got %q", got)
+		}
+	})
+}

@@ -27,8 +27,12 @@ func Format(blocks []*subagent.Block, th *colors.Theme) string {
 	var sb strings.Builder
 	for _, b := range running {
 		hex := th.RoleHex(b.Role())
-		sb.WriteString(fmt.Sprintf("  %s%s %s%s %s· %s%s",
-			th.ColorTag(hex), b.SpinnerFrame(), b.DisplayName(), th.ResetTag(),
+		world := ""
+		if w := b.World(); w != "" {
+			world = th.Tag(th.Dim, " · "+w)
+		}
+		sb.WriteString(fmt.Sprintf("  %s%s %s%s%s %s· %s%s",
+			th.ColorTag(hex), b.SpinnerFrame(), b.DisplayName(), world, th.ResetTag(),
 			th.SecondaryTag(), b.Elapsed().Truncate(time.Second).String(), th.ResetTag()))
 		sb.WriteString("\n")
 		sb.WriteString(fmt.Sprintf("    %s· %s%s",

@@ -413,6 +413,7 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 	v := &sseView{w: w}
 	v.provider = ws.sess.ProviderName()
 	v.model = ws.sess.ModelName()
+	v.world = worldHeaderOf(ws.sess.WorldStatus())
 	infos := ws.sess.MCPInfos()
 	v.mcpServers = make([]wireMCPServer, len(infos))
 	for i, info := range infos {

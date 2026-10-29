@@ -149,6 +149,7 @@ func (t *App) renderInfoPane() {
 			Enabled: t.embeddingEnabled,
 			Model:   t.embeddingModel,
 		},
+		World:            t.worldStatus,
 		Pipeline:         t.middlewarePipeline,
 		AgentActive:      t.agentActive,
 		PromptTokens:     promptTokens,

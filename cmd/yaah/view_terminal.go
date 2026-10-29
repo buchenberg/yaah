@@ -73,7 +73,8 @@ func (v *terminalView) HandleEvent(evt agent.Event) {
 			Dim("compacted"), pct, beforeK, afterK, Dim(e.Method))
 	case *agent.SubAgentStartEvent:
 		label := toolfmt.SubagentRoleLabel(e.Role)
-		fmt.Fprintf(os.Stderr, "\n╭─ sub-agent: %s · %s\n", Bold(label), e.Prompt)
+		world := worldSuffix(e.World, e.WorldDegraded, e.WorldReason)
+		fmt.Fprintf(os.Stderr, "\n╭─ sub-agent: %s · %s%s\n", Bold(label), e.Prompt, world)
 	case *agent.SubAgentEndEvent:
 		label := toolfmt.SubagentRoleLabel(e.Role)
 		status := "completed"
@@ -84,7 +85,8 @@ func (v *terminalView) HandleEvent(evt agent.Event) {
 		if e.Model != "" {
 			modelStr = " [" + Dim(e.Model) + "]"
 		}
-		fmt.Fprintf(os.Stderr, "╰─ sub-agent: %s%s · %s (%s)\n", Bold(label), modelStr, status, Dim(formatDuration(e.Duration)))
+		world := worldSuffix(e.World, e.WorldDegraded, e.WorldReason)
+		fmt.Fprintf(os.Stderr, "╰─ sub-agent: %s%s · %s%s (%s)\n", Bold(label), modelStr, status, world, Dim(formatDuration(e.Duration)))
 	case *agent.TitleSetEvent:
 		// Intentionally ignored: the terminal view has no session-title
 		// line; pickers read titles from the store.
@@ -112,4 +114,15 @@ func (v *terminalView) HandleEvent(evt agent.Event) {
 			fmt.Fprintln(os.Stderr)
 		}
 	}
+}
+
+// worldSuffix renders the per-dispatch world for a sub-agent border: empty
+// when unresolved, otherwise " · worktree" (dim), with the degradation
+// reason inline when present.
+func worldSuffix(world string, degraded bool, reason string) string {
+	label := toolfmt.SubagentWorldLabel(world, degraded, reason)
+	if label == "" {
+		return ""
+	}
+	return " · " + Dim(label)
 }

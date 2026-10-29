@@ -185,6 +185,21 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 	// edited mid-dispatch.
 	lane := t.laneFor(params.Role)
 
+	// A dispatch that never reaches the retained resolver has no world of its
+	// own: it runs on the session's tree. Publish that resolution so the
+	// start event names "shared" instead of falling back to the session-level
+	// summary. A background call has no dispatch writer yet — setupSubAgent
+	// installs one for foreground dispatches only — so carry the value on the
+	// launch context, which the manager seeds its job from.
+	if t.Retained == nil || lane == LaneShared {
+		world := SubAgentWorld{Resolved: "shared"}
+		if params.Background {
+			runCtx = WithSubAgentWorldPtr(runCtx, &world)
+		} else {
+			WriteSubAgentWorld(runCtx, world)
+		}
+	}
+
 	if params.Background {
 		if t.BackgroundJobs == nil {
 			return "", fmt.Errorf("delegate: background mode requested but not available")
@@ -204,7 +219,7 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 				return startRetainedRun(ctx, rt, prompt, sp, timeout, report)
 			}
 		}
-		jobID, err := t.BackgroundJobs.Launch(ctx, runner, params.Role, params.Description, params.Prompt, subParams, timeout)
+		jobID, err := t.BackgroundJobs.Launch(runCtx, runner, params.Role, params.Description, params.Prompt, subParams, timeout)
 		if err != nil {
 			return "", err
 		}

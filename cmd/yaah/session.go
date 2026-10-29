@@ -44,6 +44,7 @@ import (
 	processpkg "github.com/buchenberg/yaah/internal/process"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
+	"github.com/buchenberg/yaah/internal/worldinfo"
 )
 
 // Session is the stable contract between UI drivers and the shared
@@ -62,6 +63,10 @@ type Session interface {
 	ProviderName() string
 	ModelName() string
 	MCPInfos() []mcp.ServerInfo
+	// WorldStatus reports the session's workspace and dispatch-world
+	// posture for display. The zero value means it was never derived;
+	// surfaces hide the World section in that case.
+	WorldStatus() worldinfo.Status
 	Close()
 }
 
@@ -129,6 +134,12 @@ type agentSession struct {
 	// probed (D5), and created once at session start, and close() destroys
 	// it. Nil in local mode.
 	sessionSandbox *tools.SessionSandbox
+
+	// worldStatus is the session-level workspace/dispatch-world posture,
+	// derived once by the wiring after the containment switch. Read by every
+	// UI driver through WorldStatus; the zero value means it was never
+	// populated (surfaces hide the section).
+	worldStatus worldinfo.Status
 
 	// rootScopeID is the session's shepherd root scope (adoption plan
 	// A2): registered in the run registry against steerCh, so supervisor
@@ -429,6 +440,10 @@ func (s *agentSession) ProviderName() string {
 }
 func (s *agentSession) ModelName() string          { s.mu.RLock(); defer s.mu.RUnlock(); return s.modelName }
 func (s *agentSession) MCPInfos() []mcp.ServerInfo { return s.mcpInfos }
+
+// WorldStatus returns the derived workspace/dispatch-world posture. It is
+// immutable after session construction, so no lock is needed.
+func (s *agentSession) WorldStatus() worldinfo.Status { return s.worldStatus }
 
 // Model reports the provider and model the session currently runs on.
 // The ACP server reads it to publish the model picker's current value;
