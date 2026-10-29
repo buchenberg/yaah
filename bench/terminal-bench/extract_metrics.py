@@ -404,7 +404,7 @@ def opencode_usage(runs_dir, run_id, task_id):
             steps = (
                 sum(count for sid, count in messages if sid in session_ids)
                 if messages_available
-                else (stream_steps + stream_child_steps if streams else None)
+                else (((stream_steps + stream_child_steps) or None) if streams else None)
             )
 
             def bucket(row):
