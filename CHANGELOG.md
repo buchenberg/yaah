@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.118.0](https://github.com/buchenberg/yaah/compare/v0.117.1...v0.118.0) (2026-10-29)
+
+
+### Features
+
+* **proposal:** record review proposal and decision facts ([53407d7](https://github.com/buchenberg/yaah/commit/53407d780dac8d92533abbf153c88a1b4f79dda6))
+* **proposal:** record review proposal and decision facts ([e27a157](https://github.com/buchenberg/yaah/commit/e27a1572b80830d5138ee7e575e140349e59fff2))
+
+
+### Bug Fixes
+
+* **bench:** accept goatherd runtime settlement schemas in verifiers ([af0d6c6](https://github.com/buchenberg/yaah/commit/af0d6c65d9aef15d7d8d2e31d364957a9214078e))
+* **bench:** accept goatherd runtime settlement schemas in verifiers ([25d2ee9](https://github.com/buchenberg/yaah/commit/25d2ee966ae574939473a73a9671592272456540))
+* **bench:** account OpenCode child tokens and null DB fields ([35a32c0](https://github.com/buchenberg/yaah/commit/35a32c007ff8ffe5176423eca6c16c568aac656a))
+* **bench:** count stream child sessions and unknown steps accurately ([40b6347](https://github.com/buchenberg/yaah/commit/40b6347b77e83ecb19415c531c65db9750c76101))
+* **bench:** disambiguate recovery sealed-output helper and harden worktree check ([92a1c8f](https://github.com/buchenberg/yaah/commit/92a1c8f8ecb84465ac371b45ecce3c3b388520ab))
+* **bench:** harden metrics schema and update pricing ([cf5291b](https://github.com/buchenberg/yaah/commit/cf5291b03fb9e800237473cfbc89b2afbc537c27))
+* **bench:** keep child stream totals and distinguish unknown steps ([8a312fe](https://github.com/buchenberg/yaah/commit/8a312fe87e7bf6b66d10d56eb1a0fa8745dc9eb3))
+* **bench:** keep DB-path unknown steps consistent with stream fallback ([02d1615](https://github.com/buchenberg/yaah/commit/02d1615fb00a5c28a3ed42fae5acc0a88971e135))
+* **bench:** make OpenCode session DB authoritative ([6d5b0bb](https://github.com/buchenberg/yaah/commit/6d5b0bb49638ea6bc3ef7b245bc9efbfb9f7bdb2))
+* **bench:** tolerate infinite JSON values and case-insensitive columns ([4918b65](https://github.com/buchenberg/yaah/commit/4918b65a13d974a6e145eef606967469e01ede6d))
+* **proposal:** drain the seal-failure decision and bound its reason ([7f321cb](https://github.com/buchenberg/yaah/commit/7f321cb4903f0ebb9b82540bd0d2864fe21e0ddf))
+* **proposal:** join the review pair on seal failure and preserve caveats ([797cde3](https://github.com/buchenberg/yaah/commit/797cde3f03040407f0f3db62dedfa1181e68635f))
+
+
+### Tests
+
+* **proposal:** cover the seal-failure decision under cancellation ([cc9b73f](https://github.com/buchenberg/yaah/commit/cc9b73fda4085d6ad286c7916c9d07aa784f42eb))
+* **proposal:** exercise the seal-failure branch end to end ([b7a341d](https://github.com/buchenberg/yaah/commit/b7a341db9cd892ad4136766a5ff76dd7fc77c42d))
+
 ## [0.117.1](https://github.com/buchenberg/yaah/compare/v0.117.0...v0.117.1) (2026-10-29)
 
 
