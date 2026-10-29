@@ -5,7 +5,6 @@ import (
 	"sort"
 
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
-	"github.com/buchenberg/yaah/internal/types"
 )
 
 // traceSessionContext builds the immutable session-start context from the
@@ -31,17 +30,4 @@ func (l *Loop) traceSessionContext(step *pipeline.Step) pipeline.TraceSessionCon
 		ToolNames:     names,
 		PipelineNames: l.Config.PipelineNames,
 	}
-}
-
-// toolDefNames is the names-only projection used by tests and callers that
-// already have a ToolDef slice.
-func toolDefNames(defs []types.ToolDef) []string {
-	out := make([]string, 0, len(defs))
-	for _, d := range defs {
-		if d.Function.Name != "" {
-			out = append(out, d.Function.Name)
-		}
-	}
-	sort.Strings(out)
-	return out
 }
