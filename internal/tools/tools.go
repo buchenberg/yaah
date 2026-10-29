@@ -426,12 +426,17 @@ type FilesystemTool interface {
 }
 
 // HostOnlyTool marks a tool that legitimately belongs to the host machine and
-// cannot be isolated:
+// cannot be isolated. The membership of this set is declared by hostOnly() in
+// filesystem_tools.go; that marker is authoritative, and this comment only
+// explains the reasons so the two cannot drift apart:
 //
 //   - role manages sub-agent role files, which are harness configuration the
 //     host reads, not workspace content;
 //   - background_process drives the in-memory host process manager, and a
-//     container would need its own.
+//     container would need its own;
+//   - go_refactor reaches the host for its dependency view only — import
+//     resolution and gc export data — while project files come from the
+//     injected Workspace.
 //
 // These are not migration debt. Registering one in a registry whose workspace is
 // isolated is a wiring error, so the gate reports it separately from the

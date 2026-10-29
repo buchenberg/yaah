@@ -217,16 +217,26 @@ every method here is agent-typed (a missing `type` means exactly that).
 |---|---|
 | `openai-api-key` | An OpenAI-compatible key referenced from `~/.yaah/config.yaml` as `api_key: ${OPENAI_API_KEY}`; the default scaffold wires `${DEEPSEEK_API_KEY}` the same way |
 | `anthropic-api-key` | A native Anthropic key referenced as `api_key: ${ANTHROPIC_API_KEY}` |
-| `providers-config` | Whatever is already in `~/.yaah/config.yaml` under `providers.<name>.api_key`, or an OAuth token obtained through the web UI's login action (`POST /api/action` with `{"action":"login"}`); there is no `yaah login` CLI command |
+| `providers-config` | Whatever is already in `~/.yaah/config.yaml` under `providers.<name>.api_key`, or an OAuth token stored by one of yaah's three login entry points: the `yaah login [provider]` CLI command, the REPL `/login` slash command, or the web UI's login action (`POST /api/action` with `{"action":"login"}`) |
 
 ### Credential resolution and precedence (yaah-side, not ACP-side)
 
 For a given provider entry in `~/.yaah/config.yaml` (or
 `$YAAH_HOME/config.yaml`):
 
-1. `auth: oauth` wins: the OAuth token obtained through the web UI's
-   login action (`POST /api/action` with `{"action":"login"}`) is used
-   and `api_key` is ignored.
+1. `auth: oauth` wins: the stored OAuth token is used as the bearer
+   credential and `api_key` is ignored. The token comes from any of yaah's
+   three login entry points — the `yaah login [provider]` CLI command
+   (`cmd/yaah/login.go`), the REPL `/login` slash command
+   (`internal/repl/slash.go`), or the web UI's login action
+   (`POST /api/action` with `{"action":"login"}`, `cmd/yaah/web.go`).
+   All three run the same OAuth 2.0 device flow and write the same
+   per-provider token file (`oauth-<provider>.json` under the config
+   directory); `yaah logout [provider]` / `/logout` removes it. There is
+   no fallback from a missing OAuth token to `api_key`: an `auth: oauth`
+   provider with no stored token resolves to a stub whose calls fail with
+   a "run `yaah login`" error (`makeOAuthProvider`,
+   `cmd/yaah/provider_resolve.go`).
 2. Otherwise `api_key` is used after `${VAR}` substitution. Only the
    placeholders the config file itself references are expanded —
    `${OPENAI_API_KEY}`, `${ANTHROPIC_API_KEY}`, `${DEEPSEEK_API_KEY}`, and
@@ -340,8 +350,12 @@ Or the generic stdio client loop (any language; one JSON object per line):
   file system access that ACP allows agents to request from clients are
   not used; yaah's tools act in the session cwd only.
 - **Mode switching** — `session/set_mode` is acknowledged but does nothing;
-  modes are not part of the session result, and
-  `sessionCapabilities.modes`/`configOptions` are not advertised.
+  modes are not modeled and are not part of the session result, and the
+  mode picker is not advertised (`sessionCapabilities.modes` is absent from
+  the `initialize` response). This is only the mode picker: the model
+  picker **is** advertised as `configOptions` on the session results (when a
+  model catalog is wired) and is settable through
+  `session/set_config_option` (see [Protocol surface](#protocol-surface)).
 - **`additionalDirectories`** — not advertised; sessions act in the cwd
   the lifecycle request named.
 - **Compaction replay** — with the client advertising

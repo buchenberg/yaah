@@ -42,10 +42,12 @@ func (*BisectTool) filesystemTool()      {}
 //     reads, not workspace content;
 //   - background_process drives the in-memory host process manager, and a
 //     container would need its own;
-//   - go_refactor reads the filesystem through golang.org/x/tools
-//     (imports.Process, packages.Load), a path Workspace cannot intercept.
-//     Isolating it means reimplementing it on in-sandbox gofmt/goimports calls,
-//     not swapping calls.
+//   - go_refactor reaches the host only for its dependency view: import
+//     resolution in imports.Process and, for info, gc export data via
+//     importer.Default() belong to the toolchain rather than to the project.
+//     Every project file it reads or writes comes from the injected Workspace
+//     (ws.ReadFile / ws.ReadDir), so what keeps it here is dependency metadata,
+//     not source access.
 func (*RoleTool) hostOnly()              {}
 func (*BackgroundProcessTool) hostOnly() {}
 func (*GoRefactorTool) hostOnly()        {}
