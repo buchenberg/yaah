@@ -337,7 +337,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	// dispatching a proposal into a world it cannot settle.
 	if worldRes.Resolved == subagent.WorldContainer {
 		if !report {
-			return "", fmt.Errorf("delegate: a container dispatch world is report-lane only — a proposal must seal, which croft-dlb gates")
+			return "", fmt.Errorf("delegate: a container dispatch world is report-lane only — proposal settlement across git/croft worlds is not wired yet")
 		}
 		ss, perr := openDispatchWorld(ctx, rt)
 		if perr == nil {
@@ -519,13 +519,13 @@ func resolveDispatchWorld(rt RetainedRuntime, role string, report bool) (subagen
 	av := subagent.WorldAvailability{
 		// A per-dispatch container is created only where the session wired the
 		// setup: a host session with workspace.containerd.image on Linux.
-		// ContainerRetains stays false — sealing a container is croft-dlb's
-		// gate — so a proposal dispatch still refuses one and auto still
-		// degrades to the worktree with the reason below.
+		// ContainerRetains stays false — yaah's settlement path (git parent
+		// ↔ croft child) is not wired — so a proposal dispatch still refuses
+		// one and auto still degrades to the worktree with the reason below.
 		Container:        rt.ContainerWorlds,
 		ContainerOffered: rt.ContainerWorlds,
 		ContainerRetains: false,
-		ContainerReason:  "per-dispatch container worlds need workspace.containerd.image on a Linux host (proposal lanes stay gated on croft-dlb)",
+		ContainerReason:  "per-dispatch container worlds need workspace.containerd.image on a Linux host (proposal lanes await the container settlement path)",
 		Worktree:         true,
 		Jail:             jailAvailable(),
 	}

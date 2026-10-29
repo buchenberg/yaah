@@ -68,7 +68,7 @@ func TestResolveDispatchWorld(t *testing.T) {
 		if res.Resolved != "worktree" || !res.Degraded {
 			t.Fatalf("got %+v, want a degraded worktree", res)
 		}
-		if !strings.Contains(res.Reason, "croft-dlb") {
+		if !strings.Contains(res.Reason, "settlement") {
 			t.Fatalf("reason %q must name the blocker", res.Reason)
 		}
 	})

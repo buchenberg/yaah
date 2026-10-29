@@ -217,7 +217,7 @@ func CheckDispatchWorld(cfg *config.Config, cfgErr error) Check {
 
 	// The runtime offers per-dispatch containers to a HOST session on Linux
 	// with an image configured; a container session shares its one container,
-	// and the proposal lane stays gated on croft-dlb.
+	// and the proposal lane waits on the container settlement path.
 	offered := cfg.Workspace.Backend != config.BackendContainerd &&
 		runtime.GOOS == "linux" && cfg.Workspace.Containerd.Image != ""
 	av := subagent.WorldAvailability{
@@ -256,7 +256,7 @@ func CheckDispatchWorld(cfg *config.Config, cfgErr error) Check {
 			return Check{Label: "Dispatch world", Status: "OK", Detail: "container for every dispatch"}
 		}
 		if rerr == nil && report.Resolved == subagent.WorldContainer {
-			return Check{Label: "Dispatch world", Status: "WARN", Detail: "container for report lanes; proposal lanes fail closed until croft-dlb: " + perr.Error()}
+			return Check{Label: "Dispatch world", Status: "WARN", Detail: "container for report lanes; proposal lanes fail closed until the container settlement path is wired: " + perr.Error()}
 		}
 		return Check{Label: "Dispatch world", Status: "FAIL", Detail: perr.Error()}
 	case "worktree":
@@ -275,7 +275,7 @@ func CheckDispatchWorld(cfg *config.Config, cfgErr error) Check {
 			detail += "; report lanes also use the worktree"
 		}
 		if offered {
-			detail += " (proposal containers gated on croft-dlb)"
+			detail += " (proposal containers await settlement wiring)"
 		}
 		if perr != nil {
 			return Check{Label: "Dispatch world", Status: "FAIL", Detail: detail + ": " + perr.Error()}

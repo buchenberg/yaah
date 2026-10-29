@@ -142,7 +142,7 @@ func TestResolveWorld_DegradeReasonNamesTheBlocker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got.Reason, "croft-dlb") {
+	if !strings.Contains(got.Reason, "settlement") {
 		t.Fatalf("degradation reason %q must name the blocker", got.Reason)
 	}
 }

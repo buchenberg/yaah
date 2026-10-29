@@ -32,8 +32,8 @@ func TestLedgerPinsMatchGoMod(t *testing.T) {
 	pins := []string{
 		"github.com/buchenberg/goatherd-kernel v0.18.0",
 		"github.com/buchenberg/goatherd-runtime v0.20.0",
-		"github.com/buchenberg/goatherd-runtime/sandbox/croft v0.1.3",
-		"github.com/buchenberg/goatherd-croft v0.8.0",
+		"github.com/buchenberg/goatherd-runtime/sandbox/croft v0.2.0",
+		"github.com/buchenberg/goatherd-croft v0.9.1",
 	}
 	for _, pin := range pins {
 		module, version, ok := strings.Cut(pin, " ")
@@ -70,7 +70,7 @@ func TestLedgerNamesEveryWorld(t *testing.T) {
 // this guard makes it explicit rather than accidental.
 func TestLedgerRecordsBlockers(t *testing.T) {
 	ledger := read(t, ledgerPath)
-	for _, blocker := range []string{"croft-dlb", "seatbelt"} {
+	for _, blocker := range []string{"settlement wiring", "seatbelt"} {
 		if !strings.Contains(strings.ToLower(ledger), strings.ToLower(blocker)) {
 			t.Errorf("ledger must name the %q blocker while it is open", blocker)
 		}

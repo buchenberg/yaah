@@ -168,15 +168,20 @@ settlement.
 - The resolution is recorded as `yaah.subagent.world.v1`, and a degraded report
   carries the warning in its result. **In-run** failures still fail the dispatch.
 - Proposal lanes are unchanged: `world: container` refuses and `auto` degrades
-  to the worktree, because a container cannot seal until `croft-dlb`.
+  to the worktree, because container settlement is not wired yet.
 
-### Retained container worlds — gated on `croft-dlb`
+### Retained container worlds — waiting on settlement wiring
 
-`croft-dlb` is the gate for **retained** container worlds. `Capture` currently
-returns a sequence-keyed revision (`croft-seq-N`), so identical content
-captures differently and settlement's content-equality checks cannot hold.
+`croft-dlb` shipped (croft `v0.9.1`, adapter `v0.2.0`): unchanged captures
+return the previous state verbatim, and `ContentDigest` rides the kernel
+state's `Data`. Container capture is now digest-stable.
 
-Until it lands:
+What remains is yaah's settlement path, not croft. In a host session the parent
+root is a **git** sandbox while the dispatch world is a **croft** one;
+settlement's `select`/`apply` compare and merge workspace states within one
+backend. A container proposal therefore needs either a git-patchable delta that
+yaah settles onto the host tree, or a container root (hybrid mode). Until that
+is chosen:
 
 - `world: auto` resolves `container` → `worktree` for a **proposal** dispatch,
   with a recorded warning;
@@ -185,8 +190,9 @@ Until it lands:
 
 Acceptance for flipping `container` to available for **retained** dispatches:
 
-1. `Capture` is content-stable (identical content ⇒ identical digest).
-2. A dispatch container can be seeded, sealed, and settled `select` / `apply`.
+1. ~~`Capture` is content-stable~~ — done (croft-dlb).
+2. A dispatch container can be settled onto the host: `select` fast-forwards,
+   `apply` merges path-disjoint, `discard` removes the world.
 3. A crash mid-dispatch is recoverable or prunable by `yaah shepherd`.
 4. `yaah doctor` reports the resolution and the reason before the first run.
 
@@ -235,7 +241,7 @@ Pinned inputs (drift guard: `internal/parity`):
 | trace ABI | `shepherd2` abi.v0, golden vectors |
 | kernel | `goatherd-kernel v0.18.0` |
 | runtime | `goatherd-runtime v0.20.0` |
-| container world | `goatherd-runtime/sandbox/croft v0.1.3` / `goatherd-croft v0.8.0` |
+| container world | `goatherd-runtime/sandbox/croft v0.2.0` / `goatherd-croft v0.9.1` |
 | containment | landlock, winacl; seatbelt pending upstream |
 | grants | world-relative RW/RO roots, disjoint (config, not tools) |
 

@@ -63,7 +63,8 @@ type WorldAvailability struct {
 	// cannot provide it" (auto degrades with a warning).
 	ContainerOffered bool
 	// ContainerRetains reports that a container world can be sealed and
-	// settled. Gated on croft-dlb: croft states are sequence-keyed.
+	// settled. False until yaah's container settlement path (git parent ↔
+	// croft child) is wired; capture itself is digest-stable since croft-dlb.
 	ContainerRetains bool
 	// ContainerReason explains Container=false.
 	ContainerReason string
@@ -162,7 +163,7 @@ func containerRefusal(req WorldRequest, av WorldAvailability) string {
 		return "container worlds are unavailable on this host"
 	}
 	if req.Retained && !av.ContainerRetains {
-		return "container capture is not content-stable yet (croft-dlb), so a container world cannot be sealed and settled"
+		return "container settlement is not wired yet: the parent world is git and the dispatch world is croft"
 	}
 	// Restrictive grants are enforceable in a container only once the world
 	// adapter can lower them to mounts/roots. Until then the honest answer is

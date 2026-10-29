@@ -62,7 +62,7 @@ func TestCheckDispatchWorld(t *testing.T) {
 		if check.Status != "OK" {
 			t.Fatalf("got %+v, want OK", check)
 		}
-		if !strings.Contains(check.Detail, "container for report lanes") || !strings.Contains(check.Detail, "croft-dlb") {
+		if !strings.Contains(check.Detail, "container for report lanes") || !strings.Contains(check.Detail, "settlement") {
 			t.Fatalf("detail must name the lane split and the gate: %q", check.Detail)
 		}
 	})

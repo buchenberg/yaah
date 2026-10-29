@@ -13,10 +13,10 @@ import (
 
 // dispatch_container.go implements the report lane's per-dispatch container
 // world (yaah-ihfh.3). A report dispatch never seals, so it can use a container
-// even while croft's capture is sequence-keyed (croft-dlb): the world is created,
-// used, and destroyed, and nothing it produces is settled. A proposal dispatch
-// still resolves to the worktree, because a container world it cannot seal would
-// have no proposal to hand back.
+// without a settlement path: the world is created, used, and destroyed, and
+// nothing it produces is settled. A proposal dispatch still resolves to the
+// worktree, because a container proposal has no wired settlement path across
+// the git parent and the croft child.
 
 const (
 	// dispatchWorldStartTimeout bounds a per-dispatch container's preflight:
@@ -73,8 +73,7 @@ func openDispatchWorld(ctx context.Context, rt RetainedRuntime) (*SessionSandbox
 // runDispatchContainer runs one report dispatch inside its own container world.
 // The child scope is pure-causal (no worktree sandbox): the container is the
 // substrate, and it is owned by this call rather than by the scope — attaching
-// it to the scope would demand a capture contract croft cannot satisfy yet
-// (croft-dlb).
+// it to the scope would demand a settlement path that is not wired yet.
 //
 // The body runs with the sandbox's workspace in its context so the runner builds
 // the sub-agent's registry against the container; teardown discards the scope

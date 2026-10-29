@@ -726,8 +726,8 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// Per-dispatch container worlds (yaah-ihfh.3): a host session can give a
 	// REPORT dispatch its own container when a container image is configured,
 	// reusing the same workspace.containerd stanza the session container uses.
-	// The worktree stays every other dispatch's world — a proposal must seal,
-	// and a container cannot do that until croft-dlb — and a container session
+	// The worktree stays every other dispatch's world — a proposal must settle,
+	// and the git/croft settlement path is not wired yet — and a container session
 	// already runs every dispatch inside its one container. Off-Linux there is
 	// no containerd adapter, so nothing is offered and auto keeps the worktree.
 	var dispatchWorlds *tools.DispatchWorlds
