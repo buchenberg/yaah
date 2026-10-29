@@ -229,14 +229,19 @@ func TestApplyGitDelta(t *testing.T) {
 	if got, err := os.ReadFile(filepath.Join(root, "dir/added.sh")); err != nil || string(got) != "#!/bin/sh\n" {
 		t.Errorf("added file = %q, %v", got, err)
 	}
-	if info, err := os.Stat(filepath.Join(root, "dir/added.sh")); err != nil || info.Mode().Perm() != 0o755 {
-		t.Errorf("added mode = %v, %v, want 0755", info, err)
+	if info, err := os.Stat(filepath.Join(root, "dir/added.sh")); err != nil {
+		t.Errorf("added file stat: %v", err)
+	} else if runtime.GOOS != "windows" && info.Mode().Perm() != 0o755 {
+		// Windows has no Unix mode bits; chmod is a no-op and Go reports 0666.
+		t.Errorf("added mode = %v, want 0755", info.Mode().Perm())
 	}
 	if got, err := os.ReadFile(filepath.Join(root, "change.txt")); err != nil || string(got) != "after\n" {
 		t.Errorf("modified file = %q, %v", got, err)
 	}
-	if info, err := os.Stat(filepath.Join(root, "change.txt")); err != nil || info.Mode().Perm() != 0o755 {
-		t.Errorf("modified mode = %v, %v, want 0755", info, err)
+	if info, err := os.Stat(filepath.Join(root, "change.txt")); err != nil {
+		t.Errorf("modified file stat: %v", err)
+	} else if runtime.GOOS != "windows" && info.Mode().Perm() != 0o755 {
+		t.Errorf("modified mode = %v, want 0755", info.Mode().Perm())
 	}
 	if _, err := os.Stat(filepath.Join(root, "gone.txt")); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("deleted file still present (err=%v)", err)
