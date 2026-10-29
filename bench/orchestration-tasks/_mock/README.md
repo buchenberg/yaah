@@ -3,7 +3,7 @@
 This directory is the deterministic counterpart to the live-model
 orchestration tasks. A mock task uses the real yaah binary and the real task
 fixture, but its provider is a local OpenAI-compatible server that emits a
-task-specific transcript from `traps/<task>.json`.
+task-specific transcript from `traps/<task-id>.json`.
 
 The track exists for two jobs:
 
@@ -58,8 +58,8 @@ A trap has:
   `subagent_write`, `subagent_final`, `orchestrator_discard`,
   `orchestrator_write`, `orchestrator_final` for the first task);
 - `allowed_tools`: the tool calls the server may emit;
-- canned response fields (`delegate`, `fizzbuzz`, `developer_report`,
-  `answer_template`, `final`).
+- canned response fields (`delegate`, `fizzbuzz_path`, `fizzbuzz`,
+  `developer_report`, `answer_template`, `final`).
 
 The proposal id is not baked into the trap: the server reads it from the
 actual `delegate` tool result and substitutes it into the discard call and

@@ -33,15 +33,23 @@ def summarize(run_dir: Path) -> dict[str, Any]:
         _one(str(run_dir / "**" / "state.db"))
     )
     try:
-        tokens = list(
+        sessions = list(
             state.execute(
-                "SELECT tokens_in, tokens_out, tokens_cached, "
+                "SELECT id, tokens_in, tokens_out, tokens_cached, "
                 "sub_tokens_in, sub_tokens_out FROM sessions"
             )
         )
+        if len(sessions) != 1:
+            raise SystemExit(
+                f"{run_dir}: expected one session, got {len(sessions)}"
+            )
+        session_id = sessions[0][0]
+        tokens = [tuple(sessions[0][1:])]
         messages = list(
             state.execute(
-                "SELECT role, tool_name FROM messages ORDER BY idx"
+                "SELECT role, tool_name FROM messages "
+                "WHERE session_id = ? ORDER BY idx",
+                (session_id,),
             )
         )
     finally:

@@ -8,7 +8,7 @@ import server
 
 
 HERE = Path(__file__).resolve().parent
-TRAP = HERE / "traps" / "orch-settle-discard.json"
+TRAP = HERE / "traps" / "orch-settle-discard-mock.json"
 
 
 class MockProviderTest(unittest.TestCase):
@@ -76,6 +76,14 @@ class MockProviderTest(unittest.TestCase):
         self.assertEqual(events[-2]["choices"][0]["finish_reason"], "stop")
         self.assertEqual(events[-1]["usage"]["prompt_tokens"], 10)
         self.assertEqual(events[-1]["choices"], [])
+
+    def test_prompt_tokens_ignore_dynamic_proposal_ids(self):
+        first = {"messages": [{"content": "proposal:11:1"}]}
+        second = {"messages": [{"content": "proposal:999999:7"}]}
+        self.assertEqual(
+            server._stable_prompt_tokens(first),
+            server._stable_prompt_tokens(second),
+        )
 
 
 if __name__ == "__main__":

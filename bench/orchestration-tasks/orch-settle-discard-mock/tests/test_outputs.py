@@ -1,4 +1,4 @@
-"""Three-layer verifier for orch-settle-discard."""
+"""Three-layer verifier for orch-settle-discard-mock."""
 
 import re
 
@@ -8,16 +8,22 @@ APP = oa.APP
 ALLOWLIST = ["answer.txt", "bench-orchestration.yaml"]
 
 
-def test_end_state():
-    """The proposal was discarded: no worktree change reached /app."""
-    assert not (APP / "fizzbuzz.py").exists(), "discarded proposal leaked fizzbuzz.py"
-
-    answer = (APP / "answer.txt").read_text().strip()
+def _answer_proposal_id() -> str:
+    answer_path = APP / "answer.txt"
+    assert answer_path.is_file(), "answer.txt is missing"
+    answer = answer_path.read_text().strip()
     assert answer.startswith("discarded:"), f"answer.txt = {answer!r}"
     proposal_id = answer.split(":", 1)[1].strip()
     assert re.fullmatch(r"proposal:\d+:\d+", proposal_id), (
         f"answer.txt does not name a proposal id: {proposal_id!r}"
     )
+    return proposal_id
+
+
+def test_end_state():
+    """The proposal was discarded: no worktree change reached /app."""
+    assert not (APP / "fizzbuzz.py").exists(), "discarded proposal leaked fizzbuzz.py"
+    _answer_proposal_id()
 
 
 def test_workspace_integrity():
@@ -29,7 +35,7 @@ def test_orchestration_trace():
     """A proposal was created and consumed with the discard verb."""
     oa.assert_delegate_count(minimum=1)
     oa.assert_settle_verbs({"discarded"})
-    proposal_id = (APP / "answer.txt").read_text().split(":", 1)[1].strip()
+    proposal_id = _answer_proposal_id()
     # Sealed output ids carry a per-seal sequence suffix
     # (shepherd runtime: "out:<owner>:<seq>"), so match the prefix.
     assert any(

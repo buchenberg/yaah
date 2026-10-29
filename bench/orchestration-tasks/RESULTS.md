@@ -487,15 +487,18 @@ so the runtime's per-session id stays real rather than being faked.
 
 Two fixed runs, same commit, same fake key (`DEEPSEEK_API_KEY=mock`):
 
-- `2026-10-29__15-41-59`: **1/1**
-- `2026-10-29__15-42-43`: **1/1**
+- `2026-10-29__15-53-47`: **1/1**
+- `2026-10-29__15-54-31`: **1/1**
 
 `compare_runs.py` reports an exact match on verdict, message/tool sequence,
-token accounting, and trace record-schema counts. The token counts are 72,752
+token accounting, and trace record-schema counts. The token counts are 72,716
 input / 96 output / 10,842 sub-agent input / 32 sub-agent output in both
 runs; both trace stores carry the same 47 records across the same schemas.
-Only the runtime-generated proposal id (and timestamps) vary.
+Only the runtime-generated proposal id (and timestamps) vary. The server's
+usage estimate normalizes that id before measuring, so the token accounting
+does not move with it.
 
-Run with `SUITE=bench/orchestration-tasks/mock-suite.txt` and
-`DEEPSEEK_API_KEY=mock`; the mock service is a compose sidecar built from
-`_mock/` with a task-specific trap.
+Run with `DATASET=bench/orchestration-tasks`,
+`SUITE=bench/orchestration-tasks/mock-suite.txt`, and `DEEPSEEK_API_KEY=mock`;
+the mock service is a compose sidecar built from `_mock/` with a task-specific
+trap.

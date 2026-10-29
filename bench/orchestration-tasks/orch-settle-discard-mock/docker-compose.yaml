@@ -19,7 +19,7 @@ services:
       dockerfile: Dockerfile
     image: ${T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME}-mock
     environment:
-      - MOCK_TRAP=/traps/orch-settle-discard.json
+      - MOCK_TRAP=/traps/orch-settle-discard-mock.json
     expose:
       - "8080"
     healthcheck:

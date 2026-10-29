@@ -25,7 +25,9 @@ from typing import Any
 
 
 PROPOSAL_ID = re.compile(r'"proposal_id"\s*:\s*"([^"]+)"')
+PROPOSAL_ID_FOR_TOKENS = re.compile(r"proposal:\d+:\d+")
 WRITE_FIZZBUZZ = "fizzbuzz.py"
+MAX_BODY_BYTES = 16 * 1024 * 1024
 
 
 class TrapError(RuntimeError):
@@ -67,6 +69,17 @@ def _proposal_id(messages: list[dict[str, Any]]) -> str | None:
         if match:
             return match.group(1)
     return None
+
+
+def _stable_prompt_tokens(request: dict[str, Any]) -> int:
+    """Return a usage count that does not move with the runtime proposal id."""
+
+    # The proposal id is intentionally dynamic, so hashing the raw request
+    # would make mock token accounting differ between otherwise identical
+    # runs. Normalize it before the deterministic size estimate.
+    serialized = json.dumps(request, sort_keys=True)
+    normalized = PROPOSAL_ID_FOR_TOKENS.sub("proposal:0:0", serialized)
+    return max(1, len(normalized) // 4)
 
 
 def _classify(messages: list[dict[str, Any]]) -> str:
@@ -211,9 +224,14 @@ class MockHandler(BaseHTTPRequestHandler):
         if self.path not in ("/chat/completions", "/v1/chat/completions"):
             self._json(404, {"error": "not found"})
             return
+        events: list[dict[str, Any]] | None = None
         try:
             length = int(self.headers.get("Content-Length", "0"))
+            if length <= 0 or length > MAX_BODY_BYTES:
+                raise TrapError(f"invalid request body size: {length}")
             request = json.loads(self.rfile.read(length))
+            if not isinstance(request, dict):
+                raise TrapError("request body must be a JSON object")
             model = request.get("model")
             if model not in self.server.trap["model_allowlist"]:
                 raise TrapError(
@@ -224,7 +242,12 @@ class MockHandler(BaseHTTPRequestHandler):
             if not isinstance(messages, list):
                 raise TrapError("messages must be a list")
             kind = _classify(messages)
-            self.server._advance(kind)
+            expected = self.server._next_kind()
+            if kind != expected:
+                raise TrapError(
+                    f"request {self.server.step_index + 1}: got {kind!r}, "
+                    f"expected {expected!r}"
+                )
             content, tool_name, args = self.server._response(kind, messages)
             if (
                 tool_name is not None
@@ -233,14 +256,24 @@ class MockHandler(BaseHTTPRequestHandler):
                 raise TrapError(
                     f"tool {tool_name!r} is not in the task allowlist"
                 )
-            prompt_tokens = max(1, len(json.dumps(request)) // 4)
-            events = _stream_events(model, content, tool_name, args, prompt_tokens)
-            self.send_stream(events)
-        except TrapError as exc:
+            events = _stream_events(
+                model,
+                content,
+                tool_name,
+                args,
+                _stable_prompt_tokens(request),
+            )
+            # Advance only after the whole response validates: a rejected
+            # request must not consume a step from the transcript.
+            self.server._advance(kind)
+        except (TrapError, ValueError, TypeError) as exc:
             self._json(400, {"error": str(exc)})
+            return
         except Exception as exc:
             self.log_message("request failed: %s", exc)
             self._json(500, {"error": str(exc)})
+            return
+        self.send_stream(events)
 
 
 class MockServer(ThreadingHTTPServer):
@@ -314,7 +347,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--trap",
-        default=os.environ.get("MOCK_TRAP", "/traps/orch-settle-discard.json"),
+        default=os.environ.get("MOCK_TRAP", "/traps/orch-settle-discard-mock.json"),
         type=Path,
     )
     parser.add_argument("--port", type=int, default=8080)
