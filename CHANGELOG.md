@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.115.0](https://github.com/buchenberg/yaah/compare/v0.114.2...v0.115.0) (2026-10-29)
+
+
+### Features
+
+* **container:** retain proposals in container sessions ([67d94de](https://github.com/buchenberg/yaah/commit/67d94de25e919280669a455b83beb5b2c40335ce))
+
+
+### Bug Fixes
+
+* **container:** session select releases capture; avoid chmod; worldinfo ([3b057c6](https://github.com/buchenberg/yaah/commit/3b057c6dd435ed1319e8bcebeb633ce3ed3b09f6))
+* **doctor:** resolve proposal overrides in container sessions; guard session release ([56b8b05](https://github.com/buchenberg/yaah/commit/56b8b05ab6fc5df8e1705be38894f9aed2e4aa0f))
+
 ## [0.114.2](https://github.com/buchenberg/yaah/compare/v0.114.1...v0.114.2) (2026-10-29)
 
 
