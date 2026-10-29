@@ -845,3 +845,32 @@ func TestGitDeltaSettle_ApplyIgnoresPreExistingDirty(t *testing.T) {
 		t.Fatalf("content = %q", got)
 	}
 }
+
+// TestGitDelta_PathsSortedDeduped pins Paths()'s contract for manifests that
+// did not come from the producer (e.g. read from disk in a different order).
+func TestGitDelta_PathsSortedDeduped(t *testing.T) {
+	d := &GitDelta{Changes: []DeltaChange{
+		{Path: "z.txt"}, {Path: "a.txt"}, {Path: "z.txt"}, {Path: "m/n.txt"},
+	}}
+	got := d.Paths()
+	want := []string{"a.txt", "m/n.txt", "z.txt"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("Paths() = %v, want %v", got, want)
+	}
+}
+
+// TestNormalizeHostDiffPaths pins the collision guard's backend precondition:
+// only git's workdir-relative paths are comparable to manifest paths.
+func TestNormalizeHostDiffPaths(t *testing.T) {
+	got, err := normalizeHostDiffPaths("git", []string{"./src/a.go", "docs//b.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "src/a.go,docs/b.md" {
+		t.Fatalf("normalized = %v", got)
+	}
+
+	if _, err := normalizeHostDiffPaths("containerd", []string{"/workspace/a.go"}); err == nil {
+		t.Fatal("a non-git host backend must fail closed, not compare incomparable paths")
+	}
+}

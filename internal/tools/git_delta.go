@@ -84,16 +84,23 @@ type DeltaChange struct {
 	Content []byte `json:"content,omitempty"`
 }
 
-// Paths returns the manifest's changed paths, sorted and deduplicated as the
-// producer emitted them.
+// Paths returns the manifest's changed paths, sorted and deduplicated. The
+// producer emits them sorted, but a manifest read from disk or built by a
+// caller is not assumed to be.
 func (d *GitDelta) Paths() []string {
 	if d == nil || len(d.Changes) == 0 {
 		return nil
 	}
+	seen := make(map[string]bool, len(d.Changes))
 	paths := make([]string, 0, len(d.Changes))
 	for _, c := range d.Changes {
+		if seen[c.Path] {
+			continue
+		}
+		seen[c.Path] = true
 		paths = append(paths, c.Path)
 	}
+	sort.Strings(paths)
 	return paths
 }
 
@@ -501,6 +508,12 @@ func sandboxBlobSize(ctx context.Context, sb goatherdsandbox.Sandbox, root, sha 
 // readSandboxBlob reads a git blob as base64 inside the shell and decodes it in
 // Go. Raw binary on stdout can be mangled by an exec transport; base64 makes the
 // bytes explicit.
+// readSandboxBlob reads one blob as base64 over the sandbox transport.
+//
+// The producer currently costs two execs per changed file (a size probe, then
+// this read). A `git cat-file --batch` stream would return size and content in
+// one round trip; it is a worthwhile optimisation if proposals routinely carry
+// many small files, but not a correctness issue (the caps bound the cost).
 func readSandboxBlob(ctx context.Context, sb goatherdsandbox.Sandbox, root, sha string) ([]byte, error) {
 	if strings.TrimSpace(sha) == "" {
 		return nil, errors.New("empty blob sha")
@@ -833,11 +846,30 @@ func (p *retainedProposal) hostChangedSinceBasis(ctx context.Context) ([]string,
 	if err != nil {
 		return nil, err
 	}
-	return files, nil
+	return normalizeHostDiffPaths(sb.Backend(), files)
+}
+
+// normalizeHostDiffPaths maps a host sandbox's diff output onto repo-relative
+// slash paths for the collision guard. The git backend already reports
+// workdir-relative paths; a snapshot-style backend reports absolute in-sandbox
+// paths, which would compare unequal to every manifest path and silently empty
+// the overlap set. Refuse anything but git rather than fail open.
+func normalizeHostDiffPaths(backend string, paths []string) ([]string, error) {
+	if backend != "git" {
+		return nil, fmt.Errorf("host root backend is %q; basis-relative collision checks are only defined for the git backend", backend)
+	}
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		out = append(out, path.Clean(filepath.ToSlash(p)))
+	}
+	return out, nil
 }
 
 // hostChangedPaths lists the paths the host working tree has changed relative to
-// its HEAD, including untracked files. It is the input to apply's path-disjoint
+// its HEAD, including untracked files. It is a diagnostic/test helper, not
+// apply's guard: apply compares against the dispatch basis (hostChangedSinceBasis),
+// because pre-existing dirty paths are part of that basis. This helper's
+// --untracked-files=all view is therefore broader than the guard's view.
 // check. A repository git cannot read is an error: apply must fail closed rather
 // than write over unknown changes.
 func hostChangedPaths(ctx context.Context, repoPath string) ([]string, error) {
