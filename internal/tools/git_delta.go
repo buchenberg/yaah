@@ -637,9 +637,11 @@ func persistGitDelta(ctx context.Context, repoPath, id string, delta *GitDelta, 
 	return dir, nil
 }
 
-// syncFile flushes one file's contents to stable storage.
+// syncFile flushes one file's contents to stable storage. The handle is opened
+// read-write because Windows' FlushFileBuffers requires GENERIC_WRITE; a
+// read-only handle fails with "Access is denied".
 func syncFile(p string) error {
-	f, err := os.Open(p)
+	f, err := os.OpenFile(p, os.O_RDWR, 0)
 	if err != nil {
 		return err
 	}
