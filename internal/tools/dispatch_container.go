@@ -74,7 +74,7 @@ func openDispatchWorld(ctx context.Context, rt RetainedRuntime) (*SessionSandbox
 		// A sibling is seeded from the session's snapshot, not the host tree:
 		// edits made in the session container are part of the dispatch's
 		// world, and the host copy may be stale.
-		state, err := dw.SessionSandbox.sb.Capture(startCtx)
+		state, err := dw.SessionSandbox.Capture(startCtx)
 		if err != nil {
 			return nil, fmt.Errorf("capture the session container state: %w", err)
 		}

@@ -342,6 +342,41 @@ func (r *ProposalRegistry) listEnvelope() string {
 // result is the sub-agent's report text, the worktree is torn down
 // before returning, and no proposal is registered — a report-role
 // dispatch carries no delta to settle.
+// sessionContainerFallback runs a report dispatch in the container session
+// itself when a sibling world is unavailable or policy-refused. It records the
+// degradation on the root owner path and carries it into the report, so the
+// trace and the orchestrator both see the weaker world.
+func sessionContainerFallback(
+	ctx context.Context,
+	rt RetainedRuntime,
+	prompt string,
+	subParams jobs.SubAgentParams,
+	timeout time.Duration,
+	requested subagent.WorldKind,
+	reason string,
+) (string, error) {
+	if requested == "" {
+		requested = subagent.WorldAuto
+	}
+	recordWorldFact(ctx, rt.ScopeManager, rt.RootScopeID, subagent.WorldResolution{
+		Requested: requested,
+		Resolved:  subagent.WorldShared,
+		Degraded:  true,
+		Reason:    reason,
+	})
+	runCtx := ctx
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	result, err := rt.Runner(runCtx, prompt, subParams)
+	if err != nil {
+		return "", err
+	}
+	return retainedNote(result, "dispatch world degraded: "+reason), nil
+}
+
 func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, subParams jobs.SubAgentParams, timeout time.Duration, report bool) (string, error) {
 	if rt.Runner == nil {
 		return "", fmt.Errorf("delegate: sub-agent runner not configured")
@@ -382,8 +417,22 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	// here fails the dispatch; a degradation is recorded and carried into the
 	// envelope. The world is decided once, before the body starts: switching
 	// worlds after work exists would change the basis of the sealed output.
+	requested := strings.TrimSpace(rt.World)
+	if rt.WorldForRole != nil {
+		if w := strings.TrimSpace(rt.WorldForRole(subParams.Role)); w != "" {
+			requested = w
+		}
+	}
+	explicitContainer := strings.EqualFold(requested, "container")
+	containerSession := rt.DispatchWorlds != nil && rt.DispatchWorlds.SessionSandbox != nil
+
 	worldRes, werr := resolveDispatchWorld(rt, subParams.Role, report)
 	if werr != nil {
+		if containerSession && report && !explicitContainer {
+			// The session container is the predecessor world in the ladder;
+			// a report seals nothing, so it can run there unretained.
+			return sessionContainerFallback(ctx, rt, prompt, subParams, timeout, subagent.WorldAuto, werr.Error())
+		}
 		return "", fmt.Errorf("delegate: %w", werr)
 	}
 
@@ -428,23 +477,11 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		if werr != nil {
 			return "", werr
 		}
-		if rt.DispatchWorlds != nil && rt.DispatchWorlds.SessionSandbox != nil {
+		if containerSession {
 			if !report {
 				return "", fmt.Errorf("delegate: sibling container unavailable in a container session: %w", perr)
 			}
-			// Report lanes can still run in the session container: it is the
-			// predecessor world in the ladder, and a report seals nothing.
-			runCtx := ctx
-			if timeout > 0 {
-				var cancel context.CancelFunc
-				runCtx, cancel = context.WithTimeout(ctx, timeout)
-				defer cancel()
-			}
-			result, rerr := rt.Runner(runCtx, prompt, subParams)
-			if rerr != nil {
-				return "", rerr
-			}
-			return retainedNote(result, "dispatch world degraded: "+worldRes.Reason), nil
+			return sessionContainerFallback(ctx, rt, prompt, subParams, timeout, worldRes.Requested, worldRes.Reason)
 		}
 	}
 

@@ -36,6 +36,11 @@ type SessionSandbox struct {
 
 	destroyOnce sync.Once
 	destroyErr  error
+
+	// captureMu serializes snapshot captures among dispatches. Session tools
+	// still run concurrently, so a capture can interrupt a foreground command;
+	// callers use it at dispatch boundaries.
+	captureMu sync.Mutex
 }
 
 // StartSessionSandbox probes the configured image contract (D5) on a
@@ -109,6 +114,19 @@ func (s *SessionSandbox) Backend() string { return s.sb.Backend() }
 // Workspace returns the tool-facing substrate bound to the session sandbox.
 // Tools dispatch through it; they never see the sandbox itself.
 func (s *SessionSandbox) Workspace() Workspace { return s.ws }
+
+// Capture records the session container's current state, serialized against
+// other dispatch captures. The session task may be stopped and restarted by
+// the snapshot backend, so callers use this at a dispatch boundary rather than
+// in the middle of a foreground tool call.
+func (s *SessionSandbox) Capture(ctx context.Context) (shepherdtrace.WorkspaceState, error) {
+	s.captureMu.Lock()
+	defer s.captureMu.Unlock()
+	if s.sb == nil {
+		return shepherdtrace.WorkspaceState{}, errors.New("workspace: session sandbox is not initialized")
+	}
+	return s.sb.Capture(ctx)
+}
 
 // Destroy releases the session sandbox. It is idempotent and safe from
 // concurrent teardown paths (a failed startup that already destroyed, then

@@ -258,3 +258,31 @@ func TestRetainedReport_ContainerSessionFallsBackToSession(t *testing.T) {
 		t.Error("the session-container fallback must not inject a dispatch workspace")
 	}
 }
+
+// TestRetainedReport_ContainerSessionPolicyFallback pins the availability rule
+// for a policy-refused sibling (deny_all cannot be enforced in a container):
+// an auto report still runs in the session container, with the reason recorded.
+func TestRetainedReport_ContainerSessionPolicyFallback(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	var dispatched bool
+	run := func(context.Context, string, SubAgentParams) (string, error) {
+		dispatched = true
+		return "policy fallback report", nil
+	}
+	rt := containerReportRuntime(t, fx, repo, rootID, t.TempDir(), run, "auto", nil)
+	rt.DispatchWorlds.SessionSandbox = &SessionSandbox{}
+	rt.Network = "deny_all"
+
+	res, err := startRetainedRun(context.Background(), rt, "inspect", SubAgentParams{Role: "reviewer"}, 0, true)
+	if err != nil {
+		t.Fatalf("auto report must fall back to the session container: %v", err)
+	}
+	if !dispatched {
+		t.Fatal("the report body did not run")
+	}
+	for _, want := range []string{"policy fallback report", "degraded", "network"} {
+		if !strings.Contains(res, want) {
+			t.Errorf("result must contain %q, got:\n%s", want, res)
+		}
+	}
+}

@@ -1230,9 +1230,6 @@ func normalizeBrokerHosts(hosts []string) []string {
 	return out
 }
 
-// retainedMode reports whether agents.subagent.mode selects the retained-run
-// lane for delegate (Plan 7 Phase 2). The default (empty) is retained —
-// the parity default; "shared" is the explicit opt-out.
 // retainedLaneActive decides whether NewDelegateTool should build the retained
 // runtime. A local session additionally needs a capturable root sandbox; a
 // container session's root is pure-causal, and its report-lane siblings come
@@ -1244,6 +1241,9 @@ func retainedLaneActive(mode string, retainCapable, containerSession bool) bool 
 	return containerSession || retainCapable
 }
 
+// retainedMode reports whether agents.subagent.mode selects the retained-run
+// lane for delegate (Plan 7 Phase 2). The default (empty) is retained —
+// the parity default; "shared" is the explicit opt-out.
 func retainedMode(mode string) bool {
 	return !strings.EqualFold(strings.TrimSpace(mode), "shared")
 }
