@@ -286,132 +286,163 @@ def sub_session_usage(runs_dir, run_id, task_id):
     ], "final-turn"
 
 
-def opencode_usage(runs_dir, run_id, task_id):
-    """Read the OpenCode arm's JSON event stream, then the session DB fallback.
+def _safe_float(value):
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
 
-    The stream is authoritative for the root session's steps and token
-    buckets. Child sessions live in `session_v2` with a parent_id; their
-    tokens are reported separately so the same sub-agent rule applies to every
-    arm.
+
+def opencode_usage(runs_dir, run_id, task_id):
+    """Read OpenCode accounting from its session DB, with the event stream as
+    a fallback.
+
+    `session_v2` is authoritative when present: it includes the final assistant
+    step that the CLI can exit before flushing to stdout. Root and child
+    sessions are folded into the total buckets; `orch_*` stays the root share,
+    and `sub_*` is the child share. The JSON stream is only used when the DB
+    row is absent, and then child events are filtered by the root session id
+    when one was recorded.
     """
-    stream_paths = glob.glob(
+    streams = glob.glob(
         f"{runs_dir}/{run_id}/{task_id}/*/agent-logs/opencode-stdout.jsonl"
     )
-    steps = 0
-    input_tokens = output_tokens = reasoning_tokens = 0
-    cache_read = cache_write = 0
-    reported_cost = 0.0
+    session_files = glob.glob(
+        f"{runs_dir}/{run_id}/{task_id}/*/agent-logs/opencode-session.txt"
+    )
     root_session = ""
-    if stream_paths:
-        with open(stream_paths[0]) as f:
+    if session_files:
+        try:
+            root_session = Path(session_files[0]).read_text().strip()
+        except OSError:
+            pass
+
+    # Stream parsing is the fallback when the durable session row is missing.
+    stream_steps = 0
+    stream_input = stream_output = stream_reasoning = 0
+    stream_read = stream_write = 0
+    stream_cost = 0.0
+    if streams:
+        with open(streams[0]) as f:
             for line in f:
                 try:
                     event = json.loads(line)
                 except ValueError:
                     continue
+                event_session = event.get("sessionID") or ""
+                if root_session and event_session and event_session != root_session:
+                    # Child-session events are represented by the DB split.
+                    continue
                 part = event.get("part") or {}
-                root_session = root_session or event.get("sessionID") or ""
                 if event.get("type") != "step_finish":
                     continue
-                steps += 1
+                stream_steps += 1
                 tokens = part.get("tokens") or {}
-                input_tokens += _nonneg_int(tokens.get("input"))
-                output_tokens += _nonneg_int(tokens.get("output"))
-                reasoning_tokens += _nonneg_int(tokens.get("reasoning"))
+                stream_input += _nonneg_int(tokens.get("input"))
+                stream_output += _nonneg_int(tokens.get("output"))
+                stream_reasoning += _nonneg_int(tokens.get("reasoning"))
                 cache = tokens.get("cache") or {}
-                cache_read += _nonneg_int(cache.get("read"))
-                cache_write += _nonneg_int(cache.get("write"))
-                try:
-                    reported_cost += float(part.get("cost") or 0)
-                except (TypeError, ValueError):
-                    pass
+                stream_read += _nonneg_int(cache.get("read"))
+                stream_write += _nonneg_int(cache.get("write"))
+                stream_cost += _safe_float(part.get("cost"))
 
-    session_file = glob.glob(
-        f"{runs_dir}/{run_id}/{task_id}/*/agent-logs/opencode-session.txt"
-    )
-    if session_file:
-        try:
-            root_session = Path(session_file[0]).read_text().strip() or root_session
-        except OSError:
-            pass
-
-    sub_in = sub_out = 0
-    sub_sessions = 0
     db_paths = glob.glob(
         f"{runs_dir}/{run_id}/{task_id}/*/agent-logs/opencode-data/opencode/opencode.db"
     )
     if db_paths and root_session:
+        rows = []
+        messages = []
         try:
             con = sqlite3.connect(f"file:{db_paths[0]}?mode=ro", uri=True)
             rows = con.execute(
                 "SELECT id, parent_id, tokens_input, tokens_output, "
-                "tokens_reasoning, tokens_cache_read, tokens_cache_write FROM session_v2"
+                "tokens_reasoning, tokens_cache_read, tokens_cache_write, cost "
+                "FROM session_v2"
             ).fetchall()
+            try:
+                messages = con.execute(
+                    "SELECT session_id, COUNT(*) FROM session_message "
+                    "WHERE type = 'assistant' GROUP BY session_id"
+                ).fetchall()
+            except sqlite3.Error:
+                messages = []
             con.close()
-            by_parent = {}
-            for sid, parent, tin, tout, treason, tread, twrite in rows:
-                by_parent.setdefault(parent, []).append(
-                    (sid, tin, tout, treason, tread, twrite)
-                )
+        except sqlite3.Error:
+            rows = []
+        by_id = {row[0]: row for row in rows}
+        by_parent = {}
+        for row in rows:
+            by_parent.setdefault(row[1], []).append(row)
+        root = by_id.get(root_session)
+        if root:
+            child_rows = []
             stack = list(by_parent.get(root_session, []))
             while stack:
-                sid, tin, tout, treason, tread, twrite = stack.pop()
-                sub_sessions += 1
-                child_in = _nonneg_int(tin)
-                child_out = _nonneg_int(tout)
-                child_reason = _nonneg_int(treason)
-                child_read = _nonneg_int(tread)
-                child_write = _nonneg_int(twrite)
-                # session_v2 input is uncached. Fold children into the total
-                # token buckets; the sub_* counters keep the split explicit.
-                input_tokens += child_in
-                output_tokens += child_out
-                reasoning_tokens += child_reason
-                cache_read += child_read
-                cache_write += child_write
-                sub_in += child_in + child_read + child_write
-                sub_out += child_out
-                stack.extend(by_parent.get(sid, []))
-        except sqlite3.Error:
-            sub_in = sub_out = sub_sessions = 0
+                child = stack.pop()
+                child_rows.append(child)
+                stack.extend(by_parent.get(child[0], []))
+            session_ids = {root_session, *(r[0] for r in child_rows)}
+            steps = sum(count for sid, count in messages if sid in session_ids)
 
-    if steps == 0:
-        # Session DB fallback when the event stream was lost or empty.
-        if not db_paths or not root_session:
-            return None
-        try:
-            con = sqlite3.connect(f"file:{db_paths[0]}?mode=ro", uri=True)
-            row = con.execute(
-                "SELECT tokens_input, tokens_output, tokens_reasoning, "
-                "tokens_cache_read, tokens_cache_write, cost FROM session_v2 WHERE id = ?",
-                (root_session,),
-            ).fetchone()
-            con.close()
-        except sqlite3.Error:
-            return None
-        if not row:
-            return None
-        input_tokens = _nonneg_int(row[0])
-        output_tokens = _nonneg_int(row[1])
-        reasoning_tokens = _nonneg_int(row[2])
-        cache_read = _nonneg_int(row[3])
-        cache_write = _nonneg_int(row[4])
-        reported_cost = float(row[5] or 0)
-        steps = None
+            def bucket(row):
+                return (
+                    _nonneg_int(row[2]),
+                    _nonneg_int(row[3]),
+                    _nonneg_int(row[4]),
+                    _nonneg_int(row[5]),
+                    _nonneg_int(row[6]),
+                    _safe_float(row[7]),
+                )
 
+            r_in, r_out, r_reason, r_read, r_write, root_cost = bucket(root)
+            c_in = c_out = c_reason = c_read = c_write = 0
+            child_cost = 0.0
+            for child in child_rows:
+                ci, co, cr, cre, cw, cc = bucket(child)
+                c_in += ci
+                c_out += co
+                c_reason += cr
+                c_read += cre
+                c_write += cw
+                child_cost += cc
+            total_in = r_in + c_in
+            total_out = r_out + c_out
+            total_reason = r_reason + c_reason
+            total_read = r_read + c_read
+            total_write = r_write + c_write
+            sub_in = c_in + c_read + c_write
+            sub_out = c_out
+            return {
+                "tokens_in": total_in + total_read + total_write,
+                "tokens_out": total_out,
+                "tokens_cached": total_read,
+                "sub_tokens_in": sub_in,
+                "sub_tokens_out": sub_out,
+                "orch_tokens_in": r_in + r_read + r_write,
+                "orch_tokens_out": r_out,
+                "sessions": 1 + len(child_rows),
+                "steps": steps,
+                "reported_cost_usd": root_cost + child_cost,
+                "tokens": token_record(
+                    total_in, total_out, total_read, total_write, total_reason
+                ),
+            }
+
+    if not streams:
+        return None
     return {
-        "tokens_in": input_tokens + cache_read + cache_write,
-        "tokens_out": output_tokens,
-        "tokens_cached": cache_read,
-        "sub_tokens_in": sub_in,
-        "sub_tokens_out": sub_out,
-        "orch_tokens_in": input_tokens + cache_read + cache_write,
-        "orch_tokens_out": output_tokens,
-        "sessions": 1 + sub_sessions,
-        "steps": steps,
-        "reported_cost_usd": reported_cost,
+        "tokens_in": stream_input + stream_read + stream_write,
+        "tokens_out": stream_output,
+        "tokens_cached": stream_read,
+        "sub_tokens_in": 0,
+        "sub_tokens_out": 0,
+        "orch_tokens_in": stream_input + stream_read + stream_write,
+        "orch_tokens_out": stream_output,
+        "sessions": 1,
+        "steps": stream_steps,
+        "reported_cost_usd": stream_cost,
         "tokens": token_record(
-            input_tokens, output_tokens, cache_read, cache_write, reasoning_tokens
+            stream_input, stream_output, stream_read, stream_write, stream_reasoning
         ),
     }
 

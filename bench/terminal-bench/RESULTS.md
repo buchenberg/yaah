@@ -506,17 +506,19 @@ comparison: two tasks, one trial, off-peak pricing.
 
 | Metric | yaah | hermes | opencode |
 |---|---:|---:|---:|
-| Input, uncached | 25,066 | 24,268 | 6,910 |
-| Output | 5,968 | 2,245 | 1,504 |
-| Reasoning | n/a | 0 | 1,397 |
-| Cache read | 196,352 | 141,440 | 52,480 |
-| Steps | 13 | 13 | 8 |
+| Input, uncached | 25,066 | 24,268 | 7,704 |
+| Output | 5,968 | 2,245 | 2,031 |
+| Reasoning | n/a | 0 | 1,615 |
+| Cache read | 196,352 | 141,440 | 68,608 |
+| Steps | 13 | 13 | 10 |
 | Agent wall time | 52s | 50s | 34s |
-| Cost (off-peak) | $0.0079 | $0.0054 | $0.0029 |
+| Cost (off-peak) | $0.0079 | $0.0054 | $0.0035 |
 
 The OpenCode totals sum the two per-task smoke runs; the adapter was exercised
-one task per invocation. The normalized columns keep cache separate from
-input; `tokens_in` in the legacy totals still includes cache. Cost uses the shared price table, not an
+one task per invocation. OpenCode's durable `session_v2` row is authoritative
+(the CLI can exit before the final `step_finish` reaches stdout); the stream is
+the fallback. The normalized columns keep cache separate from input;
+`tokens_in` in the legacy totals still includes cache. Cost uses the shared price table, not an
 arm's self-reported price. All runs came from run metadata with no model field,
 so the extractor used its documented `TB_MODEL` fallback (`deepseek-flash`).
 
