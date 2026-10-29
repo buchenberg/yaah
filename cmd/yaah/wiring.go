@@ -809,12 +809,6 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		case subagent.LaneShared:
 			return tools.LaneShared
 		default:
-			if containerSession {
-				// A container session has no host worktree and no retained
-				// settlement target; proposal work stays on the session
-				// container under the shared lane.
-				return tools.LaneShared
-			}
 			return tools.LaneProposal
 		}
 	}

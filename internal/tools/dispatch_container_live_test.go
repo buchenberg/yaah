@@ -265,3 +265,96 @@ func TestLive_ContainerSessionSiblingReport(t *testing.T) {
 		t.Fatal("a report dispatch must not register a proposal")
 	}
 }
+
+// TestLive_ContainerSessionProposal settles a retained proposal into the
+// session container: the sibling runs a developer body, the manifest is
+// session-target, select changes the session workspace, and the host repo is
+// untouched.
+func TestLive_ContainerSessionProposal(t *testing.T) {
+	addr := strings.TrimSpace(os.Getenv(liveAddrEnv))
+	image := strings.TrimSpace(os.Getenv(liveImageEnv))
+	if addr == "" || image == "" {
+		t.Skipf("set %s and %s to run the container-session proposal verification", liveAddrEnv, liveImageEnv)
+	}
+	timeout, err := time.ParseDuration(liveActivationEnv(liveTimeoutEnv, "10m"))
+	if err != nil || timeout <= 0 {
+		timeout = 10 * time.Minute
+	}
+	cfg := config.WorkspaceConfig{
+		Backend: config.BackendContainerd,
+		Root:    liveActivationEnv(liveRootEnv, "/workspace"),
+		Containerd: config.ContainerdWorkspaceConfig{
+			Address:     addr,
+			Namespace:   liveActivationEnv(liveNamespaceEnv, "yaah-live"),
+			Image:       image,
+			Snapshotter: liveActivationEnv(liveSnapshotterEnv, ""),
+			FIFODir:     filepath.Join(t.TempDir(), "fifo"),
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	fx, repo, rootID := newSessionFixtures(t)
+	session, err := StartSessionSandbox(ctx, cfg, OpenContainerdWorkspaceSandbox, repo, nil)
+	if err != nil {
+		t.Fatalf("StartSessionSandbox: %v", err)
+	}
+	t.Cleanup(func() {
+		dctx, dcancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer dcancel()
+		if derr := session.Destroy(dctx); derr != nil {
+			t.Errorf("session destroy: %v", derr)
+		}
+	})
+
+	run := func(ctx context.Context, _ string, params SubAgentParams) (string, error) {
+		ws := DispatchWorkspace(ctx)
+		if ws == nil || ws.Local() {
+			return "", errors.New("a sibling proposal must run in a container workspace")
+		}
+		if err := ws.WriteFile(ctx, "out.txt", []byte("settled in the session\n"), 0o644); err != nil {
+			return "", err
+		}
+		return "wrote out.txt", nil
+	}
+	rt := RetainedRuntime{
+		Runner:          run,
+		RepoPath:        repo,
+		ScopeManager:    fx.mgr,
+		RootScopeID:     rootID,
+		WorktreeRoot:    t.TempDir(),
+		Proposals:       NewProposalRegistry(),
+		World:           "container",
+		ContainerWorlds: true,
+		Containment:     "auto",
+		Network:         "allow_all",
+		DispatchWorlds: &DispatchWorlds{
+			Config:         cfg,
+			Opener:         OpenContainerdWorkspaceSandbox,
+			SessionSandbox: session,
+		},
+	}
+	envelope, err := startRetainedRun(ctx, rt, "write out.txt", SubAgentParams{Role: "developer"}, timeout, false)
+	if err != nil {
+		t.Fatalf("startRetainedRun: %v", err)
+	}
+	if !strings.Contains(envelope, `"target":"session"`) {
+		t.Fatalf("envelope target: %s", envelope)
+	}
+	ps := rt.Proposals.all()
+	if len(ps) != 1 {
+		t.Fatalf("proposals = %d, want 1", len(ps))
+	}
+	if _, err := os.Stat(filepath.Join(repo, "out.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the host tree changed before settlement: %v", err)
+	}
+	if _, err := rt.Proposals.settleRetainedProposal(ctx, ps[0].id, "select"); err != nil {
+		t.Fatalf("select into session: %v", err)
+	}
+	got, err := session.Workspace().ReadFile(ctx, "out.txt")
+	if err != nil || string(got) != "settled in the session\n" {
+		t.Fatalf("session out.txt = %q, %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "out.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the host tree must stay untouched, stat err = %v", err)
+	}
+}

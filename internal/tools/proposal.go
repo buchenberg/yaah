@@ -30,7 +30,7 @@ type ProposalTool struct {
 func (*ProposalTool) Name() string { return "proposal" }
 
 func (*ProposalTool) Description() string {
-	return "Settle retained sub-agent proposals: select (fast-forward onto the dispatch basis), apply (path-disjoint), release, discard — plus list and show. A proposal is produced by delegate; the worktree lane merges three-way, the container lane settles a whole-path delta manifest."
+	return "Settle retained sub-agent proposals: select (fast-forward onto the dispatch basis), apply (path-disjoint), release, discard — plus list and show. A proposal is produced by delegate; the worktree lane merges three-way, the container lane settles a whole-path delta manifest (host-target writes the host tree; session-target writes the session container — use apply_out for the host)."
 }
 
 func (*ProposalTool) Schema() json.RawMessage {
@@ -85,6 +85,10 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 			// A container proposal's world is gone; the manifest is the
 			// proposal, and its review was captured with it.
 			env.World = string(subagent.WorldContainer)
+			env.Target = p.target
+			if env.Target == "" {
+				env.Target = "host"
+			}
 		}
 		env.Diff = clipDiff(p.reviewDiff())
 		env.Files = p.changedFiles()
