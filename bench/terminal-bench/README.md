@@ -168,7 +168,9 @@ Normalization rules:
   separate. The legacy `tokens_in` total still includes cache (for old
   tables and callers).
 - `reasoning` is `null` when the arm does not expose it; do not substitute
-  zero.
+  zero. When an arm reports reasoning separately, `output` excludes it and
+  the shared cost bills reasoning at the output rate; when the arm cannot
+  separate them, `reasoning` is null and `output` is the billed output.
 - `steps` is assistant turns for yaah and the driver's API-call count for
   adapter arms; `null` when unavailable.
 - Cost comes from the single shared [pricing.json](pricing.json) table, never

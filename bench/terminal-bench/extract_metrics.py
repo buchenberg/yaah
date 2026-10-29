@@ -344,23 +344,38 @@ def opencode_usage(runs_dir, run_id, task_id):
         try:
             con = sqlite3.connect(f"file:{db_paths[0]}?mode=ro", uri=True)
             rows = con.execute(
-                "SELECT id, parent_id, tokens_input, tokens_output FROM session_v2"
+                "SELECT id, parent_id, tokens_input, tokens_output, "
+                "tokens_reasoning, tokens_cache_read, tokens_cache_write FROM session_v2"
             ).fetchall()
             con.close()
             by_parent = {}
-            for sid, parent, tin, tout in rows:
-                by_parent.setdefault(parent, []).append((sid, tin or 0, tout or 0))
+            for sid, parent, tin, tout, treason, tread, twrite in rows:
+                by_parent.setdefault(parent, []).append(
+                    (sid, tin, tout, treason, tread, twrite)
+                )
             stack = list(by_parent.get(root_session, []))
             while stack:
-                sid, tin, tout = stack.pop()
+                sid, tin, tout, treason, tread, twrite = stack.pop()
                 sub_sessions += 1
-                sub_in += int(tin)
-                sub_out += int(tout)
+                child_in = _nonneg_int(tin)
+                child_out = _nonneg_int(tout)
+                child_reason = _nonneg_int(treason)
+                child_read = _nonneg_int(tread)
+                child_write = _nonneg_int(twrite)
+                # session_v2 input is uncached. Fold children into the total
+                # token buckets; the sub_* counters keep the split explicit.
+                input_tokens += child_in
+                output_tokens += child_out
+                reasoning_tokens += child_reason
+                cache_read += child_read
+                cache_write += child_write
+                sub_in += child_in + child_read + child_write
+                sub_out += child_out
                 stack.extend(by_parent.get(sid, []))
         except sqlite3.Error:
             sub_in = sub_out = sub_sessions = 0
 
-    if not (root_session and steps):
+    if steps == 0:
         # Session DB fallback when the event stream was lost or empty.
         if not db_paths or not root_session:
             return None
@@ -376,7 +391,12 @@ def opencode_usage(runs_dir, run_id, task_id):
             return None
         if not row:
             return None
-        input_tokens, output_tokens, reasoning_tokens, cache_read, cache_write, reported_cost = row
+        input_tokens = _nonneg_int(row[0])
+        output_tokens = _nonneg_int(row[1])
+        reasoning_tokens = _nonneg_int(row[2])
+        cache_read = _nonneg_int(row[3])
+        cache_write = _nonneg_int(row[4])
+        reported_cost = float(row[5] or 0)
         steps = None
 
     return {

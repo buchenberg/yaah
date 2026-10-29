@@ -119,6 +119,29 @@ class TokenNormalizationTest(unittest.TestCase):
         self.assertEqual(usage["tokens"]["reasoning"], 5)
         self.assertEqual(usage["tokens"]["cache_read"], 30)
 
+    def test_opencode_db_fallback_tolerates_nulls(self):
+        with tempfile.TemporaryDirectory() as root:
+            task_dir = os.path.join(root, "run", "hello-world", "trial", "agent-logs")
+            os.makedirs(os.path.join(task_dir, "opencode-data", "opencode"))
+            with open(os.path.join(task_dir, "opencode-session.txt"), "w") as f:
+                f.write("ses_root")
+            db = sqlite3.connect(
+                os.path.join(task_dir, "opencode-data", "opencode", "opencode.db")
+            )
+            db.execute(
+                "CREATE TABLE session_v2 (id TEXT, parent_id TEXT, "
+                "tokens_input INTEGER, tokens_output INTEGER, "
+                "tokens_reasoning INTEGER, tokens_cache_read INTEGER, "
+                "tokens_cache_write INTEGER, cost REAL)"
+            )
+            db.execute("INSERT INTO session_v2 VALUES ('ses_root', NULL, NULL, NULL, NULL, NULL, NULL, NULL)")
+            db.commit()
+            db.close()
+            usage = em.opencode_usage(root, "run", "hello-world")
+        self.assertEqual(usage["tokens"]["input"], 0)
+        self.assertEqual(usage["tokens_in"], 0)
+        self.assertIsNone(usage["steps"])
+
     def test_usage_report_splits_cached_prompt(self):
         with tempfile.TemporaryDirectory() as root:
             task_dir = os.path.join(root, "run", "hello-world", "trial", "agent-logs")
