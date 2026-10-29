@@ -45,7 +45,38 @@ func seedTestTraceStore(t *testing.T, dir string) string {
 				Mode:      shepherdtrace.Declaration,
 				SchemaRef: "yaah.execution.created.v1",
 				KindLabel: "turn:created",
-				Payload:   map[string]any{"turn": float64(0), "model": "test"},
+				Payload:   map[string]any{"turn": float64(0), "model": "test", "prompt": "run the tools"},
+			}},
+		}},
+	})
+
+	// Session context and assistant content are captured facts (yaah-o86).
+	store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+		AppendIntentID: owner + ":context",
+		Groups: []shepherdtrace.AppendGroup{{
+			TraceOwnerID:  owner,
+			CausalParents: turnReceipt.FactIDs,
+			FactDrafts: []shepherdtrace.RecordDraft{{
+				Mode:      shepherdtrace.Capture,
+				SchemaRef: "yaah.session.context.v1",
+				KindLabel: "session:context",
+				Payload:   map[string]any{"system_prompt": "seed system", "cwd": "/tmp/seed", "model": "test", "config_digest": "sha256:seed"},
+			}},
+		}},
+	})
+	store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+		AppendIntentID: owner + ":assistant",
+		Groups: []shepherdtrace.AppendGroup{{
+			TraceOwnerID:  owner,
+			CausalParents: turnReceipt.FactIDs,
+			FactDrafts: []shepherdtrace.RecordDraft{{
+				Mode:      shepherdtrace.Capture,
+				SchemaRef: "yaah.message.assistant.v1",
+				KindLabel: "assistant:message",
+				Payload: map[string]any{
+					"content":    "I will inspect the files.",
+					"tool_calls": []map[string]any{{"id": "call-1", "type": "function", "function": map[string]any{"name": "ls", "arguments": "{}"}}},
+				},
 			}},
 		}},
 	})
@@ -67,6 +98,11 @@ func seedTestTraceStore(t *testing.T, dir string) string {
 				}},
 			}},
 		})
+		capturePayload := map[string]any{"success": true, "duration": "1ms"}
+		if i == 0 {
+			capturePayload["tool_call_id"] = "call-1"
+			capturePayload["output"] = "file one\n"
+		}
 		capture := owner + ":result:" + string(rune('a'+i))
 		captReceipt, _ := store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
 			AppendIntentID: capture,
@@ -77,7 +113,7 @@ func seedTestTraceStore(t *testing.T, dir string) string {
 					Mode:      shepherdtrace.Capture,
 					SchemaRef: "yaah.tool." + name + ".v1.applied",
 					KindLabel: name + ":result",
-					Payload:   map[string]any{"success": true, "duration": "1ms"},
+					Payload:   capturePayload,
 				}},
 			}},
 		})
@@ -181,6 +217,15 @@ func TestTraceShow(t *testing.T) {
 	if !strings.Contains(output, "ok") {
 		t.Error("show should display ok status")
 	}
+	if !strings.Contains(output, "assistant:") || !strings.Contains(output, "I will inspect the files.") {
+		t.Errorf("show should display assistant content; got:\n%s", output)
+	}
+	if !strings.Contains(output, "output:") || !strings.Contains(output, "file one") {
+		t.Errorf("show should display tool output bodies; got:\n%s", output)
+	}
+	if !strings.Contains(output, "Context:") || !strings.Contains(output, "/tmp/seed") {
+		t.Errorf("show should display session context; got:\n%s", output)
+	}
 }
 
 func TestTraceProfile(t *testing.T) {
@@ -219,6 +264,12 @@ func TestTraceProfile(t *testing.T) {
 	}
 	if !strings.Contains(output, "SUCCESS") {
 		t.Error("profile should show tool stats")
+	}
+	if !strings.Contains(output, "assistant") || !strings.Contains(output, "I will inspect the files.") {
+		t.Errorf("profile should display assistant content; got:\n%s", output)
+	}
+	if !strings.Contains(output, "out") || !strings.Contains(output, "file one") {
+		t.Errorf("profile should display tool output bodies; got:\n%s", output)
 	}
 }
 
@@ -411,6 +462,30 @@ func TestFormatNum(t *testing.T) {
 		got := formatNum(tt.n)
 		if got != tt.want {
 			t.Errorf("formatNum(%d) = %q, want %q", tt.n, got, tt.want)
+		}
+	}
+}
+
+func TestTraceRebuild(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("YAAH_HOME", home)
+	dir := filepath.Join(home, "traces")
+	os.MkdirAll(dir, 0o755)
+	setTestTraceConfig(t, home, dir)
+	seedTestTraceStore(t, dir)
+
+	var buf bytes.Buffer
+	cmd := newShepherdTraceRebuildCmd()
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"sess-123"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{`"system_prompt": "seed system"`, `"role": "user"`, `"run the tools"`, `"role": "assistant"`, `"I will inspect the files."`, `"tool_call_id": "call-1"`, `"file one\n"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rebuild missing %q; got:\n%s", want, out)
 		}
 	}
 }

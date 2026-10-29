@@ -39,6 +39,10 @@ type ToolResult struct {
 	Result   string
 	Error    error
 	Duration time.Duration
+	// CallID is the provider's tool_call id. It joins the tool result to the
+	// assistant message that requested it, so a trace can rebuild the
+	// provider-shaped conversation without guessing from ordering alone.
+	CallID string
 
 	// Meta carries tool-observed supervision facts (see
 	// tools.WithSupervisionMeta); the trace middleware copies it into

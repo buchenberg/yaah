@@ -11,6 +11,7 @@ import (
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	"gopkg.in/yaml.v3"
 
+	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/prompts"
@@ -567,3 +568,121 @@ func TestBuildSubAgentSysPrompt_StablePrefixAcrossSiblings(t *testing.T) {
 		t.Errorf("sibling prompts must advertise their own worktrees:\n--a--\n%s\n--b--\n%s", a, b)
 	}
 }
+
+type transcriptProvider struct{}
+
+func (transcriptProvider) Send(context.Context, types.ChatRequest) (*types.ChatResponse, error) {
+	return &types.ChatResponse{
+		Choices: []types.Choice{{
+			Message: types.Message{
+				Role:               "assistant",
+				Content:            "sub-agent intermediate answer",
+				ReasoningContent:   "intermediate reasoning",
+				ReasoningSignature: "sub-sig",
+			},
+			FinishReason: "stop",
+		}},
+		Usage: types.Usage{TotalTokens: 9},
+	}, nil
+}
+
+// TestSubAgentTranscriptSurvivesProcessExit is acceptance criterion 3 for
+// yaah-o86: a sub-agent's assistant content is on disk under its synthetic
+// trace owner, and a fresh store handle can reconstruct it after the process
+// that ran the loop is gone.
+func TestSubAgentTranscriptSurvivesProcessExit(t *testing.T) {
+	initTestRoles(t)
+	path := filepath.Join(t.TempDir(), "trace.sqlite")
+	store, err := shepherdtrace.NewSQLiteTraceStore(path)
+	if err != nil {
+		t.Fatalf("open trace store: %v", err)
+	}
+	opts := taskRunnerOpts{
+		provider:      transcriptProvider{},
+		systemPrompt:  "BASE",
+		modelName:     "test-model",
+		parentSession: "sess-parent",
+		traceStore:    store,
+	}
+	runner := makeTaskRunner(opts, 0)
+	if _, err := runner(context.Background(), "do the thing", tools.SubAgentParams{Role: "analyst"}); err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+	if err := store.Close(context.Background()); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	reopened, err := shepherdtrace.NewSQLiteTraceStore(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer reopened.Close(context.Background())
+	slice, err := reopened.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "", 99999, shepherdtrace.ModeBoth)
+	if err != nil {
+		t.Fatalf("read owners: %v", err)
+	}
+	var owner string
+	for candidate := range slice.OwnerPaths {
+		if strings.HasPrefix(candidate, "sub-analyst-sess-parent-") {
+			owner = candidate
+			break
+		}
+	}
+	if owner == "" {
+		t.Fatalf("sub-agent trace owner missing from %v", slice.OwnerPaths)
+	}
+	transcript, err := pipeline.RebuildTranscript(context.Background(), reopened, owner)
+	if err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	var found bool
+	for _, msg := range transcript.Messages {
+		if msg.Role == "assistant" && msg.Content == "sub-agent intermediate answer" && msg.ReasoningSignature == "sub-sig" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("sub-agent assistant content missing from transcript: %#v", transcript.Messages)
+	}
+}
+
+func TestSubAgentRetainedContext(t *testing.T) {
+	ctx := context.Background()
+	worktree := subAgentRetainedContext(ctx, taskRunnerOpts{}, "developer", "/work/wt", &subAgentConfinement{Enforced: true}, nil)
+	if worktree.SubstrateRef != "yaah.substrate.worktree.v1" || worktree.Containment != shepherdtrace.ContainContained {
+		t.Errorf("worktree context = %#v", worktree)
+	}
+	if len(worktree.ActiveBindingRefs) != 1 || worktree.ActiveBindingRefs[0] != "role:developer" {
+		t.Errorf("active bindings = %v", worktree.ActiveBindingRefs)
+	}
+	host := subAgentRetainedContext(ctx, taskRunnerOpts{}, "developer", "", nil, nil)
+	if host.SubstrateRef != "yaah.substrate.host.v1" || host.Containment != shepherdtrace.ContainUncontained {
+		t.Errorf("host context = %#v", host)
+	}
+}
+
+func TestSubAgentTraceCWDMatchesAdvertisedWorld(t *testing.T) {
+	ws := &traceTestWorkspace{}
+	opts := taskRunnerOpts{workspace: ws}
+	if got := subAgentTraceCWD(opts, "/model/supplied"); got != "/sandbox/root" {
+		t.Errorf("isolated trace cwd = %q, want the sandbox workdir", got)
+	}
+	if got := subAgentTraceCWD(taskRunnerOpts{}, "/work/wt"); got != "/work/wt" {
+		t.Errorf("workdir trace cwd = %q", got)
+	}
+}
+
+func TestSubAgentRetainedContextContainer(t *testing.T) {
+	ws := &traceTestWorkspace{}
+	got := subAgentRetainedContext(context.Background(), taskRunnerOpts{workspace: ws}, "developer", "/model/supplied", nil, nil)
+	if got.SubstrateRef != "yaah.substrate.container.v1" {
+		t.Errorf("substrate = %q", got.SubstrateRef)
+	}
+	if got.Containment != shepherdtrace.ContainContained {
+		t.Errorf("containment = %q, want contained (runtime backend parity)", got.Containment)
+	}
+}
+
+type traceTestWorkspace struct{ tools.Workspace }
+
+func (*traceTestWorkspace) WorkDir() string { return "/sandbox/root" }

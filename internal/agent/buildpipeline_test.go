@@ -77,8 +77,8 @@ func TestBuildPipeline_OrchestratorUsesDefault(t *testing.T) {
 
 	names := l.buildPipeline().MiddlewareNames()
 
-	if slices.Contains(names, "shepherd_trace") {
-		t.Error("orchestrator pipeline must not contain shepherd_trace")
+	if !slices.Contains(names, "shepherd_trace") {
+		t.Error("orchestrator pipeline must include shepherd_trace so the session transcript is durable")
 	}
 	for _, name := range []string{"steer", "followup", "compaction", "approval", "inline_limit", "tool_concurrency", "loop_detection", "conflict_detect"} {
 		if !slices.Contains(names, name) {

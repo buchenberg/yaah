@@ -88,15 +88,25 @@ entirely — its sessions are named by the client's `session/new` and
 `session/load` requests.
 
 Session data lives in `~/.yaah/state.db` (or `$YAAH_HOME/state.db`).
-Shepherd execution traces, when enabled, record every tool call and turn
-boundary in a content-addressed store:
+Shepherd execution traces are always on and record the session context,
+every turn boundary, assistant content plus reasoning content/signature,
+tool calls, and tool output bodies in a content-addressed store. Free-text
+facts are capped at 64KiB and mark truncation; an oversized tool result that
+already spilled to disk carries its spill path:
 
 ```bash
 yaah shepherd-trace list
 yaah shepherd-trace show <session>
 yaah shepherd-trace show --latest
 yaah shepherd-trace profile <session>
+yaah shepherd-trace rebuild <session>              # JSON transcript
 ```
+
+`rebuild` is the crash-safe mirror: it reconstructs the provider-shaped
+messages from trace facts alone, so a run interrupted before `state.db`
+persisted its debounced write still has a recoverable transcript. Sub-agent
+traces use their synthetic owner IDs; `rebuild sub-<role>-...` works the same
+way and the owner mapping stays in `trace_owners`.
 
 ## MCP client
 

@@ -37,6 +37,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 			Result:   r.content,
 			Error:    r.err,
 			Duration: r.dur,
+			CallID:   r.callID,
 			Meta:     r.meta,
 		}
 		*messages = append(*messages, types.ToolResultMsg(r.callID, r.name, r.content))

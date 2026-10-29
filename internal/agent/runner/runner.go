@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -542,6 +543,8 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		tools.NotifySubAgentStart(ctx, subModel)
 
 		subTraceID := fmt.Sprintf("sub-%s-%s-%d", role, opts.parentSession, time.Now().UnixNano())
+		traceContext := subAgentRetainedContext(ctx, opts, role, params.Workdir, subConf, subReg)
+		traceCWD := subAgentTraceCWD(opts, params.Workdir)
 
 		// Persist the trace-owner mapping so Shepherd facts recorded under
 		// the synthetic sub-ID remain joinable to the parent session
@@ -644,6 +647,8 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			OtelVerbose:            opts.OtelVerbose,
 			SessionID:              subTraceID,
 			TraceStore:             opts.traceStore,
+			TraceCWD:               traceCWD,
+			RetainedContext:        traceContext,
 			SteerCh:                steerCh,
 			DestructiveGuard:       opts.guardCheck,
 
@@ -732,6 +737,56 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		}
 
 		return result, runErr
+	}
+}
+
+// subAgentTraceCWD mirrors buildSubAgentSysPrompt: the sandbox workdir wins
+// when a workspace is installed, because the isolated lane ignores a
+// model-supplied workdir and file tools resolve against the sandbox.
+func subAgentTraceCWD(opts taskRunnerOpts, workdir string) string {
+	if opts.workspace != nil {
+		return opts.workspace.WorkDir()
+	}
+	return workdir
+}
+
+// subAgentRetainedContext binds a sub-agent's transcript to the dispatch's
+// substrate, containment, and role tool belt. The kernel stamps it into every
+// fact envelope, so authority provenance is digest-bound rather than living
+// only in the mutable sessions.workspace_backend/session_prompt columns.
+func subAgentRetainedContext(ctx context.Context, opts taskRunnerOpts, role subagent.SubAgentRole, workdir string, conf *subAgentConfinement, reg *tools.Registry) *shepherdtrace.RetainedContext {
+	substrate := "yaah.substrate.host.v1"
+	containment := shepherdtrace.ContainUncontained
+	switch {
+	case tools.DispatchWorkspace(ctx) != nil, opts.workspace != nil:
+		substrate = "yaah.substrate.container.v1"
+		// Match the runtime's container backend, which reports contained
+		// (see sandboxfake's documented parity with containerd).
+		containment = shepherdtrace.ContainContained
+	case workdir != "":
+		substrate = "yaah.substrate.worktree.v1"
+		if conf != nil && conf.Enforced {
+			containment = shepherdtrace.ContainContained
+		}
+	}
+	if conf != nil && conf.Enforced && containment == shepherdtrace.ContainUncontained {
+		containment = shepherdtrace.ContainContained
+	}
+
+	var caps []string
+	if reg != nil {
+		for _, name := range reg.List() {
+			if name != "" {
+				caps = append(caps, types.ToolSchemaRef(name))
+			}
+		}
+	}
+	sort.Strings(caps)
+	return &shepherdtrace.RetainedContext{
+		SubstrateRef:          substrate,
+		Containment:           containment,
+		CapabilityWitnessRefs: caps,
+		ActiveBindingRefs:     []string{"role:" + string(role)},
 	}
 }
 

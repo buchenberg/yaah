@@ -3,6 +3,7 @@ package agent
 import (
 	"time"
 
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -55,6 +56,13 @@ func WithSessionID(id string) Option {
 // WithPersister sets the session persister.
 func WithPersister(p *SessionPersister) Option {
 	return func(l *Loop) { l.Persister = p }
+}
+
+// WithTraceStore sets the session-shared Shepherd trace store. The
+// orchestrator pipeline uses it for session-context, assistant, and tool-output
+// facts; nil leaves the shepherd_trace slot a noop.
+func WithTraceStore(store *shepherdtrace.SQLiteTraceStore) Option {
+	return func(l *Loop) { l.Config.TraceStore = store }
 }
 
 // WithHooks sets the hook emitter.

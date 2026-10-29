@@ -37,6 +37,18 @@ type ShepherdTraceMiddleware struct {
 	// Middleware built on the session-shared store (sub-agent pipelines)
 	// must not close it — the store outlives any single sub-agent loop.
 	ownsStore bool
+
+	// retainedContext, when set, is stamped onto every fact group this
+	// middleware appends. Sub-agents carry the dispatch's substrate,
+	// containment, and role tool belt; the orchestrator leaves it nil.
+	retainedContext *shepherdtrace.RetainedContext
+
+	// sessionContextRecorded makes the session-context fact a once-per-
+	// middleware record even though the loop calls RecordSessionContext
+	// every turn (the system prompt and tool belt can change after a
+	// compaction or a role switch, but the start-of-session context is the
+	// baseline the transcript rebuilds from).
+	sessionContextRecorded bool
 }
 
 var nextOrdinal atomic.Int64
@@ -53,6 +65,18 @@ func NewShepherdTraceMiddleware(store *shepherdtrace.SQLiteTraceStore, sessionID
 }
 
 func (m *ShepherdTraceMiddleware) Name() string { return "shepherd_trace" }
+
+// append is the single write path. It stamps the retained context (when set)
+// on every group, so authority provenance rides the fact envelope instead of a
+// mutable session column.
+func (m *ShepherdTraceMiddleware) append(ctx context.Context, batch shepherdtrace.AppendBatch) (shepherdtrace.AppendReceipt, error) {
+	if m.retainedContext != nil {
+		for i := range batch.Groups {
+			batch.Groups[i].RetainedContext = m.retainedContext
+		}
+	}
+	return m.store.Append(ctx, shepherdtrace.TrustedAppendContext, batch)
+}
 
 func (m *ShepherdTraceMiddleware) PrepareStep(ctx context.Context, step *Step) (*Step, error) {
 	return step, nil
@@ -85,6 +109,9 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 			"tool": r.Name,
 			"args": argsJSON,
 		}
+		if r.CallID != "" {
+			payload["call_id"] = r.CallID
+		}
 		// Tool-observed supervision facts ride the declaration so the
 		// advisory rules see what the tool saw (e.g. whether the write
 		// target already existed) instead of re-deriving it — the
@@ -94,7 +121,7 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 			// them, so a tool observation must not overwrite the
 			// envelope fields (or "cmd", set below for shells).
 			switch k {
-			case "tool", "args", "cmd":
+			case "tool", "args", "cmd", "call_id":
 				continue
 			}
 			payload[k] = v
@@ -115,7 +142,7 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 			}
 		}
 
-		receipt, err := m.store.Append(ctx, shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+		receipt, err := m.append(ctx, shepherdtrace.AppendBatch{
 			AppendIntentID: intentID,
 			Groups: []shepherdtrace.AppendGroup{{
 				TraceOwnerID:  m.sessionID,
@@ -138,12 +165,18 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 			"success":  r.Error == nil,
 			"duration": r.Duration.String(),
 		}
+		if r.CallID != "" {
+			capturePayload["tool_call_id"] = r.CallID
+		}
 		if r.Error != nil {
 			capturePayload["error"] = r.Error.Error()
 		}
+		for k, v := range traceToolOutput(r.Result) {
+			capturePayload[k] = v
+		}
 
 		captureIntentID := fmt.Sprintf("%s:result:%d", m.sessionID, m.ordinal)
-		captureReceipt, err := m.store.Append(ctx, shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+		captureReceipt, err := m.append(ctx, shepherdtrace.AppendBatch{
 			AppendIntentID: captureIntentID,
 			Groups: []shepherdtrace.AppendGroup{{
 				TraceOwnerID:  m.sessionID,
@@ -204,10 +237,15 @@ func (m *ShepherdTraceMiddleware) StartTurn(ctx context.Context, turnNumber int,
 	payload := m.turnPayload(turnNumber)
 	payload["model"] = model
 	if prompt != "" {
-		payload["prompt"] = prompt
+		text, truncated := capTraceText(prompt)
+		payload["prompt"] = text
+		payload["prompt_bytes"] = len(prompt)
+		if truncated {
+			payload["prompt_truncated"] = true
+		}
 	}
 
-	receipt, err := m.store.Append(ctx, shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+	receipt, err := m.append(ctx, shepherdtrace.AppendBatch{
 		AppendIntentID: intentID,
 		Groups: []shepherdtrace.AppendGroup{{
 			TraceOwnerID:  m.sessionID,
@@ -230,7 +268,7 @@ func (m *ShepherdTraceMiddleware) StartTurn(ctx context.Context, turnNumber int,
 	startPayload := m.turnPayload(turnNumber)
 	startPayload["model"] = model
 	captureIntentID := fmt.Sprintf("%s:turn_start:%d", m.sessionID, m.ordinal)
-	captureReceipt, err := m.store.Append(ctx, shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+	captureReceipt, err := m.append(ctx, shepherdtrace.AppendBatch{
 		AppendIntentID: captureIntentID,
 		Groups: []shepherdtrace.AppendGroup{{
 			TraceOwnerID:  m.sessionID,
@@ -265,7 +303,7 @@ func (m *ShepherdTraceMiddleware) EndTurn(ctx context.Context, turnNumber int, p
 	payload["completion_tokens"] = completionTokens
 
 	intentID := fmt.Sprintf("%s:turn_done:%d", m.sessionID, m.ordinal)
-	receipt, err := m.store.Append(ctx, shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+	receipt, err := m.append(ctx, shepherdtrace.AppendBatch{
 		AppendIntentID: intentID,
 		Groups: []shepherdtrace.AppendGroup{{
 			TraceOwnerID:  m.sessionID,
@@ -298,10 +336,16 @@ func (m *ShepherdTraceMiddleware) FailTurn(ctx context.Context, turnNumber int, 
 
 	payload := m.turnPayload(turnNumber)
 	payload["success"] = false
-	payload["error"] = err.Error()
+	errText := err.Error()
+	if capped, truncated := capTraceText(errText); truncated {
+		payload["error"] = capped
+		payload["error_truncated"] = true
+	} else {
+		payload["error"] = errText
+	}
 
 	intentID := fmt.Sprintf("%s:turn_fail:%d", m.sessionID, m.ordinal)
-	receipt, aerr := m.store.Append(ctx, shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+	receipt, aerr := m.append(ctx, shepherdtrace.AppendBatch{
 		AppendIntentID: intentID,
 		Groups: []shepherdtrace.AppendGroup{{
 			TraceOwnerID:  m.sessionID,

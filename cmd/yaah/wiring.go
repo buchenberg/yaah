@@ -541,9 +541,9 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// session's root scope (shepherd-adoption plan D1) must exist when
 	// the runner closure is constructed, since every sub-agent scope
 	// forks from it and the supervisor's tree should mirror the dispatch
-	// tree. The orchestrator pipeline no longer hosts shepherd_trace, so
+	// tree. The orchestrator and sub-agent pipelines share this store, so
 	// this is the single initialization point for the supervisor tools
-	// and sub-agent trace middleware.
+	// and both trace middlewares.
 	var scopeMgr *goatherd.ScopeManager
 	var traceStore *shepherdtrace.SQLiteTraceStore
 	var traceBus *shepherdtrace.EffectBus
@@ -728,8 +728,8 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// a container image can give a REPORT dispatch its own sibling container.
 	// In a host session the sibling copies the host repository in; in a
 	// container session it is seeded from the session container's captured
-	// state. Proposal lanes stay unretained in a container session and are
-	// routed shared; a host session keeps the GitDelta proposal path.
+	// state. In a container session both report and proposal lanes use a
+	// sibling; a host session keeps the host-settled GitDelta path.
 	var dispatchWorlds *tools.DispatchWorlds
 	if runtime.GOOS == "linux" && cfg.Workspace.Containerd.Image != "" {
 		dispatchWorlds = &tools.DispatchWorlds{

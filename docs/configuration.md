@@ -291,7 +291,7 @@ rather than retrying a request that cannot succeed.
 | `raw_compaction_threshold` | 0.5 | Same, but ignores cached tokens |
 | `compact_max_messages` | 0 (off) | Force compaction above N messages |
 | `directives` | — | Policy statements injected into the orchestrator prompt only |
-| `shepherd_trace_path` | ~/.yaah/trace.db | Path to the Shepherd trace store **file**. Tracing is always on — this only relocates the store |
+| `shepherd_trace_path` | ~/.yaah/trace.db | Path to the Shepherd trace store **file**. Tracing is always on — this only relocates the store. Facts include the session context (system prompt, cwd, model/config fingerprint), assistant content plus reasoning signature, and tool output bodies capped at 64KiB with truncation markers/spill refs |
 | `retained_repo_path` | cwd | Repository retained worktrees are cut from |
 | `retained_worktree_root` | .yaah/shepherd-worktrees | Parent directory for retained worktrees |
 | `retained_worktree_bootstrap` | — | Command run inside each retained worktree, e.g. `npm ci` |
