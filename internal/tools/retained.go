@@ -333,15 +333,6 @@ func (r *ProposalRegistry) listEnvelope() string {
 	return string(data)
 }
 
-// startRetainedRun dispatches one sub-agent into an isolated worktree and seals
-// its delta into a proposal, returning the proposal envelope. A body error still
-// yields a sealed (partial) proposal, exactly as the review fork does; only a
-// provisioning or sealing failure has no output.
-// startRetainedRun runs one retained dispatch. When report is set
-// (yaah-7yf), the isolation is kept but the sealing is skipped: the
-// result is the sub-agent's report text, the worktree is torn down
-// before returning, and no proposal is registered — a report-role
-// dispatch carries no delta to settle.
 // sessionContainerFallback runs a report dispatch in the container session
 // itself when a sibling world is unavailable or policy-refused. It records the
 // degradation on the root owner path and carries it into the report, so the
@@ -377,6 +368,15 @@ func sessionContainerFallback(
 	return retainedNote(result, "dispatch world degraded: "+reason), nil
 }
 
+// startRetainedRun dispatches one sub-agent into an isolated worktree and seals
+// its delta into a proposal, returning the proposal envelope. A body error still
+// yields a sealed (partial) proposal, exactly as the review fork does; only a
+// provisioning or sealing failure has no output.
+//
+// When report is set (yaah-7yf), the isolation is kept but the sealing is
+// skipped: the result is the sub-agent's report text, the world is torn down
+// before returning, and no proposal is registered — a report-role dispatch
+// carries no delta to settle.
 func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, subParams jobs.SubAgentParams, timeout time.Duration, report bool) (string, error) {
 	if rt.Runner == nil {
 		return "", fmt.Errorf("delegate: sub-agent runner not configured")
@@ -423,15 +423,22 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 			requested = w
 		}
 	}
-	explicitContainer := strings.EqualFold(requested, "container")
+	explicitWorld := strings.EqualFold(requested, "container") || strings.EqualFold(requested, "worktree")
+	requestedKind := subagent.WorldKind(strings.ToLower(strings.TrimSpace(requested)))
+	if requestedKind == "" {
+		requestedKind = subagent.WorldAuto
+	}
 	containerSession := rt.DispatchWorlds != nil && rt.DispatchWorlds.SessionSandbox != nil
 
 	worldRes, werr := resolveDispatchWorld(rt, subParams.Role, report)
 	if werr != nil {
-		if containerSession && report && !explicitContainer {
+		// Only an unavailable world is a ladder fact we may degrade from. A
+		// typo'd world or an explicit worktree/container request is a
+		// configuration error and must surface.
+		if containerSession && report && !explicitWorld && errors.Is(werr, subagent.ErrWorldUnavailable) {
 			// The session container is the predecessor world in the ladder;
 			// a report seals nothing, so it can run there unretained.
-			return sessionContainerFallback(ctx, rt, prompt, subParams, timeout, subagent.WorldAuto, werr.Error())
+			return sessionContainerFallback(ctx, rt, prompt, subParams, timeout, requestedKind, werr.Error())
 		}
 		return "", fmt.Errorf("delegate: %w", werr)
 	}

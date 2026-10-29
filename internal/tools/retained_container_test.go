@@ -286,3 +286,29 @@ func TestRetainedReport_ContainerSessionPolicyFallback(t *testing.T) {
 		}
 	}
 }
+
+func TestRetainedReport_ContainerSessionUnknownWorldDoesNotFallback(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	run := func(context.Context, string, SubAgentParams) (string, error) {
+		t.Fatal("an unknown world must not run")
+		return "", nil
+	}
+	rt := containerReportRuntime(t, fx, repo, rootID, t.TempDir(), run, "podman", nil)
+	rt.DispatchWorlds.SessionSandbox = &SessionSandbox{}
+	if _, err := startRetainedRun(context.Background(), rt, "inspect", SubAgentParams{Role: "reviewer"}, 0, true); err == nil {
+		t.Fatal("an unknown world must surface as an error, not fall back")
+	}
+}
+
+func TestRetainedReport_ContainerSessionExplicitWorktreeFails(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	run := func(context.Context, string, SubAgentParams) (string, error) {
+		t.Fatal("an unavailable explicit worktree must not run")
+		return "", nil
+	}
+	rt := containerReportRuntime(t, fx, repo, rootID, t.TempDir(), run, "worktree", nil)
+	rt.DispatchWorlds.SessionSandbox = &SessionSandbox{}
+	if _, err := startRetainedRun(context.Background(), rt, "inspect", SubAgentParams{Role: "reviewer"}, 0, true); err == nil {
+		t.Fatal("an explicit worktree in a container session must fail closed")
+	}
+}
