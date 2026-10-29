@@ -99,6 +99,10 @@ type RetainedRuntime struct {
 	// opener, and the resolved copy-in deny list. Nil when this session cannot
 	// offer one, in which case a report dispatch runs in the worktree world.
 	DispatchWorlds *DispatchWorlds
+
+	// sealOutput overrides the seal call in tests. Production leaves it nil
+	// and seals through ScopeManager.Seal.
+	sealOutput func(ctx context.Context, scopeID string) (*goatherd.RetainedOutput, error)
 }
 
 // DispatchWorlds carries what a per-dispatch container world needs. The
@@ -630,7 +634,11 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 
 	// Seal even after a body error: the partial work is reviewable. A seal
 	// failure is surfaced, never dropped.
-	output, sealErr := mgr.Seal(ctx, scopeID)
+	seal := mgr.Seal
+	if rt.sealOutput != nil {
+		seal = rt.sealOutput
+	}
+	output, sealErr := seal(ctx, scopeID)
 	var notes []string
 	if reviewErr != nil {
 		notes = append(notes, "review proposal: "+reviewErr.Error())

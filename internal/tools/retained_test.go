@@ -1025,3 +1025,40 @@ func TestRecordFailedReviewDecision_SurvivesCancellation(t *testing.T) {
 		t.Errorf("action = %v, want seal_failed", decisions[0].Body.Payload["action"])
 	}
 }
+
+func TestStartRetainedRun_SealFailureClosesReviewPair(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	rt := RetainedRuntime{
+		Runner:       writingRunner(t, "out.txt").run(),
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+		Proposals:    NewProposalRegistry(),
+		sealOutput: func(context.Context, string) (*goatherd.RetainedOutput, error) {
+			return nil, errors.New("forced seal failure")
+		},
+	}
+	res, err := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 0, false)
+	if err != nil {
+		t.Fatalf("startRetainedRun: %v", err)
+	}
+	env := decodeProposalEnvelope(t, res)
+	if env.Status != "error" || !strings.Contains(env.Error, "forced seal failure") {
+		t.Fatalf("envelope = %+v, want an error naming the seal failure", env)
+	}
+	root, ok := fx.mgr.Get(rootID)
+	if !ok {
+		t.Fatal("root scope missing")
+	}
+	decisions := findRetainedFacts(t, fx.store, root.OwnerID(), goatherd.SchemaSupervisorDecision)
+	if len(decisions) != 1 {
+		t.Fatalf("decision facts = %d, want 1", len(decisions))
+	}
+	if fmt.Sprint(decisions[0].Body.Payload["action"]) != "seal_failed" {
+		t.Errorf("decision action = %v, want seal_failed", decisions[0].Body.Payload["action"])
+	}
+	if fmt.Sprint(decisions[0].Body.Payload["approved"]) != "false" {
+		t.Errorf("decision approved = %v, want false", decisions[0].Body.Payload["approved"])
+	}
+}
