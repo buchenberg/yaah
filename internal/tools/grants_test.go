@@ -120,6 +120,9 @@ func TestReadOnlyGrants_DenyAllWrites(t *testing.T) {
 	if !strings.Contains(res.Stdout+res.Stderr, "no writable root") {
 		t.Errorf("the refusal must explain the read-only grant set, got %+v", res)
 	}
+	if _, statErr := os.Stat(filepath.Join(world, "a.txt")); !os.IsNotExist(statErr) {
+		t.Fatalf("the refused write must not land (stat err = %v)", statErr)
+	}
 
 	if res, err := ws.Exec(context.Background(), ExecRequest{
 		Command: "sh", Args: []string{"-c", "echo ok > " + filepath.Join(scratch, "tmp.txt")},

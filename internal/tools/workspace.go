@@ -157,9 +157,12 @@ func NewConfinedLocalWorkspace(pv *PathValidator, backend containment.Backend, p
 	return &localWorkspace{pv: pv, confiner: backend, placement: placement, network: network}
 }
 
-// WithWritableRoots narrows the jail to the given roots (yaah-ihfh.2). Empty
-// keeps the legacy single root: the workspace's working directory. The roots
-// are absolute and already checked to live inside the world (ResolveGrants).
+// WithWritableRoots narrows the jail to the given roots (yaah-ihfh.2). A nil
+// or empty slice is meaningful: the caller declared a grant set with no
+// writable root (all-readonly), so writes in the world are denied and only the
+// housekeeping scratch stays writable. The legacy single root is the *absence*
+// of a call — not an empty call. Roots are absolute and already checked to
+// live inside the world (ResolveGrants).
 func (w *localWorkspace) WithWritableRoots(roots []string) *localWorkspace {
 	clone := *w
 	clone.writableRoots = append([]string(nil), roots...)

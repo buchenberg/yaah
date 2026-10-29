@@ -1729,8 +1729,10 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 	// rather than silently downgraded.
 	ws := tools.NewConfinedLocalWorkspace(pv, backend, placement, network)
 	if grants.Restrictive() {
-		// Only a declared set narrows the roots; the empty case keeps the
-		// legacy single-root workspace (and its hint path).
+		// Only a declared set narrows the roots; an undeclared set keeps the
+		// legacy single-root workspace (and its hint path). A declared
+		// all-readonly set passes an empty list, which WithWritableRoots
+		// treats as "nothing writable".
 		ws = ws.WithWritableRoots(grants.Writable)
 	}
 
