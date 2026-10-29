@@ -99,11 +99,12 @@ func TestLive_DispatchContainerProposal(t *testing.T) {
 
 	// Teardown failures are caveats on a still-proposal envelope, not errors:
 	// a leaked container or stranded scope must fail this acceptance test.
+	// An explicit container request never degrades (ResolveWorld fails closed
+	// instead of returning a degraded container), so a warning cannot appear.
 	var parsed struct {
-		Status  string `json:"status"`
-		Error   string `json:"error"`
-		Notes   string `json:"notes"`
-		Warning string `json:"warning"`
+		Status string `json:"status"`
+		Error  string `json:"error"`
+		Notes  string `json:"notes"`
 	}
 	if err := json.Unmarshal([]byte(envelope), &parsed); err != nil {
 		t.Fatalf("parse proposal envelope: %v", err)
@@ -113,9 +114,6 @@ func TestLive_DispatchContainerProposal(t *testing.T) {
 	}
 	if parsed.Error != "" {
 		t.Fatalf("dispatch reported an error: %s", parsed.Error)
-	}
-	if parsed.Warning != "" {
-		t.Fatalf("an explicit container request degraded: %s", parsed.Warning)
 	}
 	if parsed.Notes != "" {
 		t.Fatalf("dispatch teardown left a caveat (container or scope left behind): %s", parsed.Notes)
