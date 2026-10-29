@@ -1,7 +1,11 @@
 package providers
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -15,7 +19,7 @@ func TestLowerMessage_AssistantContentNull(t *testing.T) {
 		ToolCalls: []types.ToolCall{{ID: "c1", Type: "function", Function: types.ToolCallFn{Name: "read", Arguments: "{}"}}},
 	}
 
-	w := lowerMessage(msg, false)
+	w := lowerMessage(msg, lowerOptions{})
 	if w.Content != nil {
 		t.Errorf("assistant with only tool_calls should have nil content, got %q", *w.Content)
 	}
@@ -31,7 +35,7 @@ func TestLowerMessage_AssistantContentNull(t *testing.T) {
 func TestLowerMessage_AssistantContentPresent(t *testing.T) {
 	msg := types.Message{Role: "assistant", Content: "hello"}
 
-	w := lowerMessage(msg, false)
+	w := lowerMessage(msg, lowerOptions{})
 	if w.Content == nil || *w.Content != "hello" {
 		t.Errorf("assistant with text should have content, got %v", w.Content)
 	}
@@ -40,7 +44,7 @@ func TestLowerMessage_AssistantContentPresent(t *testing.T) {
 func TestLowerMessage_AssistantEmptyContentNoToolCalls(t *testing.T) {
 	msg := types.Message{Role: "assistant", Content: ""}
 
-	w := lowerMessage(msg, false)
+	w := lowerMessage(msg, lowerOptions{})
 	if w.Content == nil || *w.Content != "" {
 		t.Errorf("assistant with no tool_calls should have empty-string content, got %v", w.Content)
 	}
@@ -49,7 +53,7 @@ func TestLowerMessage_AssistantEmptyContentNoToolCalls(t *testing.T) {
 func TestLowerMessage_ThinkingModeAlwaysSetsReasoning(t *testing.T) {
 	msg := types.Message{Role: "assistant", Content: "hi", ReasoningContent: ""}
 
-	w := lowerMessage(msg, true)
+	w := lowerMessage(msg, lowerOptions{ThinkingMode: true})
 	if w.ReasoningContent == nil {
 		t.Fatal("thinking mode should always set reasoning_content on assistant")
 	}
@@ -68,7 +72,7 @@ func TestLowerMessage_ThinkingModeAlwaysSetsReasoning(t *testing.T) {
 func TestLowerMessage_NonThinkingOmitsEmptyReasoning(t *testing.T) {
 	msg := types.Message{Role: "assistant", Content: "hi", ReasoningContent: ""}
 
-	w := lowerMessage(msg, false)
+	w := lowerMessage(msg, lowerOptions{})
 	if w.ReasoningContent != nil {
 		t.Errorf("non-thinking mode should omit empty reasoning_content, got %q", *w.ReasoningContent)
 	}
@@ -77,7 +81,7 @@ func TestLowerMessage_NonThinkingOmitsEmptyReasoning(t *testing.T) {
 func TestLowerMessage_NonThinkingPreservesReasoning(t *testing.T) {
 	msg := types.Message{Role: "assistant", Content: "hi", ReasoningContent: "let me think"}
 
-	w := lowerMessage(msg, false)
+	w := lowerMessage(msg, lowerOptions{})
 	if w.ReasoningContent == nil || *w.ReasoningContent != "let me think" {
 		t.Errorf("non-thinking mode should preserve non-empty reasoning_content")
 	}
@@ -86,7 +90,7 @@ func TestLowerMessage_NonThinkingPreservesReasoning(t *testing.T) {
 func TestLowerMessage_UserContentAlwaysPresent(t *testing.T) {
 	msg := types.Message{Role: "user", Content: ""}
 
-	w := lowerMessage(msg, false)
+	w := lowerMessage(msg, lowerOptions{})
 	if w.Content == nil {
 		t.Fatal("user message should always have content set")
 	}
@@ -102,7 +106,7 @@ func TestLowerRequest_ThinkingMode(t *testing.T) {
 		},
 	}
 
-	wire := lowerRequest(req, true, false, true)
+	wire := lowerRequest(req, lowerOptions{ThinkingMode: true, AllowPromotion: true})
 
 	if wire.Messages[1].ReasoningContent == nil || *wire.Messages[1].ReasoningContent != "thinking..." {
 		t.Error("first assistant should preserve reasoning")
@@ -176,7 +180,7 @@ func TestCopilotMode_LowerMessages(t *testing.T) {
 		{Role: "user", Content: "hello"},
 	}
 
-	out := lowerMessages(msgs, false, true, true)
+	out := lowerMessages(msgs, lowerOptions{CopilotMode: true, AllowPromotion: true})
 
 	if len(out) != 1 {
 		t.Fatalf("Copilot mode should merge system into user, expected 1 msg got %d", len(out))
@@ -234,7 +238,7 @@ func TestLowerRequest_explicitThinkingFalseIsNotPromoted(t *testing.T) {
 		},
 	}
 
-	wire := lowerRequest(req, c.resolveThinkingMode(req.Model), c.CopilotMode, !c.thinkingExplicit(req.Model))
+	wire := lowerRequest(req, c.lowerOptions(req.Model))
 	if wire.Messages[0].ReasoningContent != nil {
 		t.Error("explicit thinking:false must not be promoted by history")
 	}
@@ -242,7 +246,7 @@ func TestLowerRequest_explicitThinkingFalseIsNotPromoted(t *testing.T) {
 	// Without an override the history promotion still applies, so the guard
 	// above does not disable the heuristic for unconfigured models.
 	req.Model = "unconfigured-model"
-	wire = lowerRequest(req, c.resolveThinkingMode(req.Model), c.CopilotMode, !c.thinkingExplicit(req.Model))
+	wire = lowerRequest(req, c.lowerOptions(req.Model))
 	if wire.Messages[0].ReasoningContent == nil {
 		t.Error("unconfigured model should still promote on history")
 	}
@@ -259,7 +263,7 @@ func TestLowerRequest_suppressReasoning(t *testing.T) {
 		ReasoningSignature: "sig",
 	}}
 
-	plain := lowerRequest(types.ChatRequest{Model: "m", Messages: history}, true, false, true)
+	plain := lowerRequest(types.ChatRequest{Model: "m", Messages: history}, lowerOptions{ThinkingMode: true, AllowPromotion: true})
 	body, err := json.Marshal(plain)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -272,7 +276,7 @@ func TestLowerRequest_suppressReasoning(t *testing.T) {
 		Model:             "m",
 		Messages:          history,
 		SuppressReasoning: true,
-	}, true, false, true)
+	}, lowerOptions{ThinkingMode: true, AllowPromotion: true})
 	body, err = json.Marshal(suppressed)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -281,5 +285,127 @@ func TestLowerRequest_suppressReasoning(t *testing.T) {
 		if strings.Contains(string(body), field) {
 			t.Errorf("suppressed request still carries %q: %s", field, body)
 		}
+	}
+}
+
+// TestLowerRequest_cacheControlRequiresOptIn pins yaah-2dgd: cache_control is
+// an Anthropic wire concept. An OpenAI-compatible body must never carry it
+// unless the provider opted in, because strict endpoints (Mistral, ZAI/GLM)
+// reject the unknown field with 422 extra_forbidden.
+func TestLowerRequest_cacheControlRequiresOptIn(t *testing.T) {
+	req := types.ChatRequest{
+		Model: "mistral-large-latest",
+		Messages: []types.Message{
+			{Role: "system", Content: "sys", CacheControl: &types.CacheControl{Type: "ephemeral"}},
+			{Role: "user", Content: "hi"},
+			{Role: "tool", Content: "ok", ToolCallID: "1", Name: "echo", CacheControl: &types.CacheControl{Type: "ephemeral"}},
+		},
+	}
+
+	t.Run("default strips cache_control", func(t *testing.T) {
+		wire := lowerRequest(req, lowerOptions{})
+		for i, m := range wire.Messages {
+			if m.CacheControl != nil {
+				t.Errorf("message %d kept CacheControl", i)
+			}
+		}
+		body, err := json.Marshal(wire)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if strings.Contains(string(body), "cache_control") {
+			t.Fatalf("OpenAI-compatible body must not carry cache_control: %s", body)
+		}
+	})
+
+	t.Run("opt-in emits cache_control", func(t *testing.T) {
+		body, err := json.Marshal(lowerRequest(req, lowerOptions{CacheControl: true}))
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if !strings.Contains(string(body), `"cache_control":{"type":"ephemeral"}`) {
+			t.Fatalf("opted-in provider should still emit cache_control: %s", body)
+		}
+	})
+}
+
+// TestOpenAIClient_SendStreamGatesCacheControl is the streaming half of the
+// same gate: the Mistral 422 that started yaah-2dgd arrived on the SSE path,
+// so the request body captured from SendStream must obey the same per-provider
+// opt-in.
+func TestOpenAIClient_SendStreamGatesCacheControl(t *testing.T) {
+	capture := func(t *testing.T, optIn bool) string {
+		t.Helper()
+		var got string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			b, _ := io.ReadAll(r.Body)
+			got = string(b)
+			w.Header().Set("Content-Type", "text/event-stream")
+			io.WriteString(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"}}]}\n\n")
+			io.WriteString(w, "data: [DONE]\n\n")
+		}))
+		defer srv.Close()
+
+		c := NewOpenAIClient(srv.URL, "k", 5)
+		c.SupportsCacheControl = optIn
+		chunks, errs := c.SendStream(context.Background(), types.ChatRequest{
+			Model: "mistral-large-latest",
+			Messages: []types.Message{
+				{Role: "system", Content: "sys", CacheControl: &types.CacheControl{Type: "ephemeral"}},
+				types.UserMsg("hi"),
+			},
+		})
+		for range chunks {
+		}
+		for err := range errs {
+			if err != nil {
+				t.Fatalf("SendStream() error: %v", err)
+			}
+		}
+		return got
+	}
+
+	if body := capture(t, false); strings.Contains(body, "cache_control") {
+		t.Errorf("unopted streaming client leaked cache_control: %s", body)
+	}
+	if body := capture(t, true); !strings.Contains(body, "cache_control") {
+		t.Errorf("opted-in streaming client dropped cache_control: %s", body)
+	}
+}
+
+// TestOpenAIClient_SendGatesCacheControl proves the seam end to end: a body
+// already stamped by PromptCachingMiddleware leaves an unopted client without
+// the field, and the provider opt-in restores it.
+func TestOpenAIClient_SendGatesCacheControl(t *testing.T) {
+	capture := func(t *testing.T, optIn bool) string {
+		t.Helper()
+		var got string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			b, _ := io.ReadAll(r.Body)
+			got = string(b)
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
+		}))
+		defer srv.Close()
+
+		c := NewOpenAIClient(srv.URL, "k", 5)
+		c.SupportsCacheControl = optIn
+		if _, err := c.Send(context.Background(), types.ChatRequest{
+			Model: "mistral-large-latest",
+			Messages: []types.Message{
+				{Role: "system", Content: "sys", CacheControl: &types.CacheControl{Type: "ephemeral"}},
+				types.UserMsg("hi"),
+			},
+		}); err != nil {
+			t.Fatalf("Send() error: %v", err)
+		}
+		return got
+	}
+
+	if body := capture(t, false); strings.Contains(body, "cache_control") {
+		t.Errorf("unopted client leaked cache_control: %s", body)
+	}
+	if body := capture(t, true); !strings.Contains(body, "cache_control") {
+		t.Errorf("opted-in client dropped cache_control: %s", body)
 	}
 }

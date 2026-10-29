@@ -41,6 +41,14 @@ type OpenAIClient struct {
 	// own cap. Zero leaves the field unset so the provider's own default
 	// applies (the historical behaviour for OpenAI-compatible endpoints).
 	DefaultMaxTokens int
+
+	// SupportsCacheControl lets this client emit Anthropic-style
+	// cache_control breakpoints on outbound messages. cache_control is not
+	// part of the OpenAI Chat wire format: strict compatible endpoints
+	// (Mistral, ZAI/GLM) answer 422 extra_forbidden when it appears, so the
+	// capability is opt-in per provider (config `supports_cache_control`)
+	// rather than implied by agents.default.prompt_caching.
+	SupportsCacheControl bool
 }
 
 // NewOpenAIClient creates a new client targeting baseURL (e.g. "https://api.openai.com").
@@ -85,6 +93,16 @@ func (c *OpenAIClient) thinkingExplicit(model string) bool {
 	return ok && v != nil
 }
 
+// lowerOptions assembles the lowering switches for a request to model.
+func (c *OpenAIClient) lowerOptions(model string) lowerOptions {
+	return lowerOptions{
+		ThinkingMode:   c.resolveThinkingMode(model),
+		CopilotMode:    c.CopilotMode,
+		AllowPromotion: !c.thinkingExplicit(model),
+		CacheControl:   c.SupportsCacheControl,
+	}
+}
+
 // applyDefaultMaxTokens fills an unset output cap from the provider's
 // configured default. A zero default keeps the request untouched so the
 // server applies its own model-specific limit.
@@ -115,7 +133,7 @@ func (c *OpenAIClient) OutputTokenCeiling(req types.ChatRequest) int {
 // Send posts a ChatRequest to the provider and returns the parsed ChatResponse.
 func (c *OpenAIClient) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
 	c.applyDefaultMaxTokens(&req)
-	body, err := json.Marshal(lowerRequest(req, c.resolveThinkingMode(req.Model), c.CopilotMode, !c.thinkingExplicit(req.Model)))
+	body, err := json.Marshal(lowerRequest(req, c.lowerOptions(req.Model)))
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
@@ -153,14 +171,14 @@ func (c *OpenAIClient) Send(ctx context.Context, req types.ChatRequest) (*types.
 			withRequestDetail(len(req.Messages), strings.Join(roles, ","), req.Model)
 	}
 
-	var result types.ChatResponse
-	if err := json.Unmarshal(respBody, &result); err != nil {
+	result, err := decodeChatResponse(respBody)
+	if err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
 	// OpenAI-compatible prompt_tokens include cache reads.
 	result.Usage.PromptIncludesCache = true
 
-	return &result, nil
+	return result, nil
 }
 
 // ListModels fetches the available model IDs from the provider's /v1/models endpoint.

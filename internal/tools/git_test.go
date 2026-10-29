@@ -113,12 +113,20 @@ func TestGitTool_branchDangerIsArgumentAware(t *testing.T) {
 		{"all", `{"action":"branch","flags":["-a"]}`, false},
 		{"remote listing", `{"action":"branch","flags":["-r"]}`, false},
 		{"list", `{"action":"branch","flags":["--list"]}`, false},
-		{"short list flag", `{"action":"branch","flags":["-l"]}`, false},
-		{"short list with pattern", `{"action":"branch","flags":["-l"],"paths":["feat*"]}`, false},
+		// -l is version-dependent --list (git >= 2.16) / --create-reflog
+		// (git <= 2.15), where `git branch -l <name>` created a branch;
+		// the guard refuses rather than guessing the workspace's git.
+		{"short list flag refused", `{"action":"branch","flags":["-l"]}`, true},
+		{"short list with pattern refused", `{"action":"branch","flags":["-l"],"paths":["feat*"]}`, true},
 		{"contains with value", `{"action":"branch","flags":["--contains","x"]}`, false},
 		{"contains value via paths", `{"action":"branch","flags":["--contains"],"paths":["main"]}`, false},
 		{"contains equals form", `{"action":"branch","flags":["--contains=main"]}`, false},
 		{"merged with value", `{"action":"branch","flags":["--merged","main"]}`, false},
+		{"points-at with value", `{"action":"branch","flags":["--points-at","HEAD"]}`, false},
+		{"merged does not swallow a following delete", `{"action":"branch","flags":["--merged","-D"],"paths":["victim"]}`, true},
+		{"points-at does not swallow a following delete", `{"action":"branch","flags":["--points-at","-D"],"paths":["victim"]}`, true},
+		{"flag-like value is classified, not swallowed", `{"action":"branch","flags":["--sort","-refname"]}`, true},
+		{"attached dash value stays read-only", `{"action":"branch","flags":["--sort=-committerdate"]}`, false},
 		{"show-current", `{"action":"branch","flags":["--show-current"]}`, false},
 		{"list pattern", `{"action":"branch","flags":["--list"],"paths":["feat*"]}`, false},
 		{"delete forced", `{"action":"branch","flags":["-D","feature"]}`, true},
@@ -197,6 +205,10 @@ func TestValidateActionFlags_branch(t *testing.T) {
 		{name: "no flags"},
 		{name: "listing", flags: []string{"--list", "-a"}, want: []string{"--list", "-a"}},
 		{name: "contains with value", flags: []string{"--contains", "main"}, want: []string{"--contains", "main"}},
+		{name: "short -l refused (version-dependent meaning)", flags: []string{"-l"}, wantErr: true},
+		{name: "delete riding a value flag is classified, not swallowed", flags: []string{"--merged", "-D"}, want: []string{"--merged", "-D"}},
+		{name: "flag-like value refused as unknown option", flags: []string{"--contains", "-Z"}, wantErr: true},
+		{name: "attached dash value accepted", flags: []string{"--sort=-committerdate"}, want: []string{"--sort=-committerdate"}},
 		// Branch names travel in `paths`, so a mutating option arrives bare:
 		// -D and -m take no value flag, only positional refs.
 		{name: "delete forced", flags: []string{"-D"}, want: []string{"-D"}},

@@ -419,6 +419,50 @@ func TestResolve_preservesReasoningReplay(t *testing.T) {
 	}
 }
 
+// TestResolve_preservesSupportsCacheControl pins the same wiring gap as
+// TestResolve_preservesReasoningReplay for the cache_control opt-in
+// (yaah-2dgd): Resolve builds a fresh Provider, so a field it forgets is
+// silently false at the client and the provider keeps or drops cache_control
+// for the wrong reason.
+func TestResolve_preservesSupportsCacheControl(t *testing.T) {
+	if Resolve(Provider{APIKey: "k"}).SupportsCacheControl {
+		t.Error("supports_cache_control must default to false")
+	}
+	if got := Resolve(Provider{SupportsCacheControl: true, APIKey: "k"}); !got.SupportsCacheControl {
+		t.Error("Resolve dropped supports_cache_control")
+	}
+}
+
+// TestLoad_supportsCacheControlParses pins the YAML key itself: a wrong tag
+// would leave every provider un-opted-in and cache_control silently absent.
+func TestLoad_supportsCacheControlParses(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("YAAH_HOME", tmp)
+	content := `
+providers:
+  strict:
+    base_url: https://example.com
+    api_key: k
+  caching:
+    base_url: https://example.com
+    api_key: k
+    supports_cache_control: true
+`
+	if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.Providers["strict"].SupportsCacheControl {
+		t.Error("omitting supports_cache_control must leave the provider opted out")
+	}
+	if !cfg.Providers["caching"].SupportsCacheControl {
+		t.Error("supports_cache_control: true did not reach the provider")
+	}
+}
+
 // TestLoad_compactionModelParses pins the yaah-v378.4 rename: the key lives
 // under agents.default and must land in Defaults.CompactionModel.
 func TestLoad_compactionModelParses(t *testing.T) {

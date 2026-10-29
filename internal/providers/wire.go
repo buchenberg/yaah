@@ -50,21 +50,41 @@ type wireRequest struct {
 	ReasoningEffort string                `json:"reasoning_effort,omitempty"`
 }
 
+// lowerOptions carries the switches the OpenAI-compatible lowering applies to
+// one request. It is a struct rather than a row of positional booleans so that
+// call sites state intent and cannot silently transpose two flags.
+type lowerOptions struct {
+	// ThinkingMode always emits reasoning_content on assistant messages.
+	ThinkingMode bool
+	// CopilotMode merges system messages into the conversation.
+	CopilotMode bool
+	// AllowPromotion lets conversation history promote ThinkingMode.
+	AllowPromotion bool
+	// CacheControl permits Anthropic-style cache_control breakpoints on the
+	// outbound messages. cache_control is an Anthropic wire concept, not an
+	// OpenAI one: strict compatible endpoints (Mistral, ZAI/GLM) answer 422
+	// extra_forbidden when it appears. It is therefore opt-in per provider
+	// (config `supports_cache_control`) and never implied by the
+	// agents.default.prompt_caching knob, which only decides whether the
+	// middleware stamps breakpoints — not whether the wire may carry them.
+	CacheControl bool
+}
+
 // lowerMessages converts internal messages to wire format.
 //
-// thinkingMode is resolved from the model registry or config override.
+// Thinking mode is resolved from the model registry or config override.
 // Additionally, if ANY assistant message in the conversation carries
 // reasoning content, thinking mode is forced on for the entire request —
 // this catches models not yet in the registry (e.g. new DeepSeek variants)
 // and ensures reasoning_content is always present on every assistant message.
-// allowPromotion gates the history-based promotion below. Config is the source
-// of truth: when a per-model `thinking:` is declared, an explicit false must
-// NOT be overridden just because history happens to carry reasoning.
-func lowerMessages(msgs []types.Message, thinkingMode bool, copilotMode bool, allowPromotion bool) []wireMessage {
-	if copilotMode {
+// opts.AllowPromotion gates the history-based promotion below. Config is the
+// source of truth: when a per-model `thinking:` is declared, an explicit false
+// must NOT be overridden just because history happens to carry reasoning.
+func lowerMessages(msgs []types.Message, opts lowerOptions) []wireMessage {
+	if opts.CopilotMode {
 		msgs = mergeSystemMessages(msgs)
 	}
-	if !thinkingMode && !allowPromotion {
+	if !opts.ThinkingMode && !opts.AllowPromotion {
 		// Explicit `thinking: false`. The else-branch in lowerMessage would
 		// still emit any non-empty reasoning from history, so clear it on a
 		// copy — config is authoritative, and sending the field to a model
@@ -77,17 +97,17 @@ func lowerMessages(msgs []types.Message, thinkingMode bool, copilotMode bool, al
 		}
 		msgs = out
 	}
-	if !thinkingMode && allowPromotion {
+	if !opts.ThinkingMode && opts.AllowPromotion {
 		for _, m := range msgs {
 			if m.Role == "assistant" && m.ReasoningContent != "" {
-				thinkingMode = true
+				opts.ThinkingMode = true
 				break
 			}
 		}
 	}
 	out := make([]wireMessage, len(msgs))
 	for i, m := range msgs {
-		out[i] = lowerMessage(m, thinkingMode)
+		out[i] = lowerMessage(m, opts)
 	}
 	return out
 }
@@ -116,14 +136,19 @@ func mergeSystemMessages(msgs []types.Message) []types.Message {
 	return out
 }
 
-func lowerMessage(m types.Message, thinkingMode bool) wireMessage {
+func lowerMessage(m types.Message, opts lowerOptions) wireMessage {
 	w := wireMessage{
-		Role:         m.Role,
-		Refusal:      m.Refusal,
-		ToolCalls:    lowerToolCalls(m.ToolCalls),
-		ToolCallID:   m.ToolCallID,
-		Name:         m.Name,
-		CacheControl: m.CacheControl,
+		Role:       m.Role,
+		Refusal:    m.Refusal,
+		ToolCalls:  lowerToolCalls(m.ToolCalls),
+		ToolCallID: m.ToolCallID,
+		Name:       m.Name,
+	}
+	// cache_control only reaches the wire for providers that opted in;
+	// every other OpenAI-compatible endpoint would reject the unknown
+	// message field outright.
+	if opts.CacheControl {
+		w.CacheControl = m.CacheControl
 	}
 
 	switch m.Role {
@@ -137,7 +162,7 @@ func lowerMessage(m types.Message, thinkingMode bool) wireMessage {
 
 		// Thinking-mode providers require reasoning_content on every
 		// assistant message. Always set it (even empty) when active.
-		if thinkingMode {
+		if opts.ThinkingMode {
 			rc := m.ReasoningContent
 			w.ReasoningContent = &rc
 		} else if m.ReasoningContent != "" {
@@ -169,20 +194,20 @@ func lowerToolCalls(calls []types.ToolCall) []wireToolCall {
 	return out
 }
 
-// lowerRequest converts a types.ChatRequest into the wire-format request
-// body, applying message lowering with the given thinking mode and copilot mode.
-func lowerRequest(req types.ChatRequest, thinkingMode bool, copilotMode bool, allowPromotion bool) wireRequest {
+// lowerRequest converts a types.ChatRequest into the wire-format request body,
+// applying message lowering with the client's resolved options.
+func lowerRequest(req types.ChatRequest, opts lowerOptions) wireRequest {
 	if req.SuppressReasoning {
 		// The provider rejected reasoning_content for this model. Dropping
-		// thinkingMode clears the history fields, and allowPromotion stays
+		// thinkingMode clears the history fields, and AllowPromotion stays
 		// off so lowerMessage does not re-add them as "" — an empty value is
 		// still a present field, so resending it would repeat the rejection.
-		thinkingMode = false
-		allowPromotion = false
+		opts.ThinkingMode = false
+		opts.AllowPromotion = false
 	}
 	return wireRequest{
 		Model:           req.Model,
-		Messages:        lowerMessages(req.Messages, thinkingMode, copilotMode, allowPromotion),
+		Messages:        lowerMessages(req.Messages, opts),
 		Tools:           req.Tools,
 		ToolChoice:      req.ToolChoice,
 		Temperature:     req.Temperature,

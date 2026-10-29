@@ -2,6 +2,7 @@ package yaah
 
 import (
 	"log/slog"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -98,16 +99,74 @@ func makeProvider(name string, p config.Provider) (agent.Provider, bool) {
 	}
 	switch r.API {
 	case "anthropic":
-		client := providers.NewAnthropicClient(r.BaseURL, r.APIKey, r.TimeoutSeconds)
-		client.DefaultMaxTokens = r.MaxTokens
-		client.ReasoningReplay = r.ReasoningReplay
-		return client, true
+		return newAnthropicProvider(r, r.APIKey), true
 	default:
-		client := providers.NewOpenAIClient(r.BaseURL, r.APIKey, r.TimeoutSeconds)
-		client.ExtraHeaders = r.Headers
-		client.DefaultMaxTokens = r.MaxTokens
-		applyThinkingOverrides(client, r)
-		return client, true
+		return newOpenAICompatProvider(r, r.APIKey), true
+	}
+}
+
+// newAnthropicProvider builds the native (or Anthropic-compatible) Messages API
+// client from a resolved provider config.
+func newAnthropicProvider(r config.Provider, apiKey string) *providers.AnthropicClient {
+	client := providers.NewAnthropicClient(r.BaseURL, apiKey, r.TimeoutSeconds)
+	client.DefaultMaxTokens = r.MaxTokens
+	client.ReasoningReplay = r.ReasoningReplay
+	return client
+}
+
+// newOpenAICompatProvider builds an OpenAI-compatible client from a resolved
+// provider config and is the ONE place that applies provider policy, so the
+// api_key and OAuth paths cannot drift apart. Copilot is derived here exactly
+// once: it drives both the system-message merge (CopilotMode) and the implicit
+// cache_control opt-in below.
+func newOpenAICompatProvider(r config.Provider, apiKey string) *providers.OpenAIClient {
+	client := providers.NewOpenAIClient(r.BaseURL, apiKey, r.TimeoutSeconds)
+	client.ExtraHeaders = r.Headers
+	client.DefaultMaxTokens = r.MaxTokens
+	client.CopilotMode = isCopilotEndpoint(r)
+	// Copilot is the one OpenAI-compatible endpoint already accepting
+	// cache_control breakpoints in practice, so it keeps emitting them;
+	// every other OpenAI-shaped provider must opt in explicitly.
+	client.SupportsCacheControl = r.SupportsCacheControl || client.CopilotMode
+	applyThinkingOverrides(client, r)
+	return client
+}
+
+// isCopilotEndpoint reports whether the provider talks to GitHub Copilot. The
+// API name is authoritative, but Copilot is also configured with a plain
+// api_key + base_url by hand, so the host is checked too — missing it would
+// silently disable both the system-message merge and the cache_control opt-in.
+// The host is parsed and compared on dot boundaries: a substring match would
+// also fire for a lookalike like api-githubcopilot.com.attacker.example and
+// hand an arbitrary endpoint Copilot's cache_control opt-in.
+func isCopilotEndpoint(r config.Provider) bool {
+	if r.API == "copilot" {
+		return true
+	}
+	u, err := url.Parse(r.BaseURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == "githubcopilot.com" || strings.HasSuffix(host, ".githubcopilot.com")
+}
+
+// cacheControlOptedIn reports whether the provider sends cache_control: only
+// providers that opted in (supports_cache_control, or Copilot which sets it)
+// do; the loop's prompt_caching breakpoints reach the wire only then.
+func cacheControlOptedIn(prov agent.Provider) bool {
+	oc, ok := prov.(*providers.OpenAIClient)
+	return !ok || oc.SupportsCacheControl
+}
+
+// warnPromptCachingNotOptedIn emits a one-time warning when prompt_caching is
+// enabled but the resolved provider has not opted in: the setting then caches
+// nothing, and without the warning a caching-enabled config silently sends
+// plain messages with no trace of why.
+func warnPromptCachingNotOptedIn(cfg *config.Config, name string, prov agent.Provider) {
+	if cfg.Agent.Default.PromptCaching && !cacheControlOptedIn(prov) {
+		slog.Warn("prompt_caching is enabled but this provider has not opted in to cache_control; prompt caching is not sent",
+			"provider", name)
 	}
 }
 
@@ -125,17 +184,9 @@ func makeOAuthProvider(name string, r config.Provider) (agent.Provider, bool) {
 
 	switch r.API {
 	case "anthropic":
-		client := providers.NewAnthropicClient(r.BaseURL, token.AccessToken, r.TimeoutSeconds)
-		client.DefaultMaxTokens = r.MaxTokens
-		client.ReasoningReplay = r.ReasoningReplay
-		return client, true
+		return newAnthropicProvider(r, token.AccessToken), true
 	default:
-		client := providers.NewOpenAIClient(r.BaseURL, token.AccessToken, r.TimeoutSeconds)
-		client.ExtraHeaders = r.Headers
-		client.DefaultMaxTokens = r.MaxTokens
-		client.CopilotMode = r.API == "copilot" || strings.Contains(r.BaseURL, "githubcopilot.com")
-		applyThinkingOverrides(client, r)
-		return client, true
+		return newOpenAICompatProvider(r, token.AccessToken), true
 	}
 }
 
@@ -261,6 +312,7 @@ func resolveProvider(cfg *config.Config) agent.Provider {
 	providerName := resolveProviderName(cfg)
 	if p, ok := cfg.Providers[providerName]; ok {
 		if prov, ok2 := makeProvider(providerName, p); ok2 {
+			warnPromptCachingNotOptedIn(cfg, providerName, prov)
 			return prov
 		}
 	}
@@ -274,6 +326,7 @@ func resolveProvider(cfg *config.Config) agent.Provider {
 	for _, name := range names {
 		p := cfg.Providers[name]
 		if prov, ok := makeProvider(name, p); ok {
+			warnPromptCachingNotOptedIn(cfg, name, prov)
 			return prov
 		}
 	}

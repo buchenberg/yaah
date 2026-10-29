@@ -28,6 +28,16 @@ type Provider struct {
 	// endpoints that reject valid thinking replay.
 	ReasoningReplay string `yaml:"reasoning_replay,omitempty"`
 
+	// SupportsCacheControl opts this provider into Anthropic-style
+	// cache_control breakpoints on the OpenAI-compatible wire. cache_control
+	// is an Anthropic concept: strict OpenAI-compatible endpoints (Mistral,
+	// ZAI/GLM) reject it as an unknown field (422 extra_forbidden), so only
+	// providers that accept it should set this. It is independent of
+	// agents.default.prompt_caching, which merely decides whether the
+	// middleware stamps breakpoints. The native Anthropic API ignores this
+	// key: cache_control is always legal there.
+	SupportsCacheControl bool `yaml:"supports_cache_control,omitempty"`
+
 	// MaxTokens caps the output tokens for every request this provider
 	// serves when the request does not set its own cap. Anthropic-
 	// compatible reasoning endpoints count thinking tokens against this
@@ -538,9 +548,11 @@ func Resolve(p Provider) Provider {
 		Headers:         p.Headers,
 		MaxTokens:       p.MaxTokens,
 		ReasoningReplay: p.ReasoningReplay,
-		OAuthClientID:   SubstituteEnv(p.OAuthClientID),
-		OAuthScope:      SubstituteEnv(p.OAuthScope),
-		OAuthDomain:     SubstituteEnv(p.OAuthDomain),
+
+		SupportsCacheControl: p.SupportsCacheControl,
+		OAuthClientID:        SubstituteEnv(p.OAuthClientID),
+		OAuthScope:           SubstituteEnv(p.OAuthScope),
+		OAuthDomain:          SubstituteEnv(p.OAuthDomain),
 	}
 }
 

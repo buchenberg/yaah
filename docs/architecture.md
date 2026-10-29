@@ -300,7 +300,7 @@ Sub-agent concurrency is enforced on `Loop.subAgentSem` (see
 
 #### PromptCachingMiddleware (`pipeline/promptcaching.go`)
 
-Injects Anthropic `cache_control: {type: "ephemeral"}` breakpoints on system messages and tool results in `PrepareStep`. When `PromptCaching` is `true`, the system message and the last tool result before a user turn are marked for caching. The `CacheControl` field uses `omitempty` so it is a no-op for non-Anthropic providers.
+Injects Anthropic `cache_control: {type: "ephemeral"}` breakpoints on system messages and tool results in `PrepareStep`. When `PromptCaching` is `true`, the system message and the last tool result before a user turn are marked for caching. The middleware only decides **whether breakpoints are stamped** — never whether they are legal on the wire. `cache_control` is an Anthropic wire concept, not an OpenAI one, so the OpenAI-compatible client emits it only for providers that opt in via the `supports_cache_control` provider key (GitHub Copilot is opted in implicitly); the native Anthropic client always emits it. Strict compatible endpoints such as Mistral and ZAI/GLM answer `422 extra_forbidden` for the unknown field, which is why the gate lives in `lowerMessage`'s `lowerOptions.CacheControl` rather than in the middleware or in `omitempty`.
 
 ---
 
