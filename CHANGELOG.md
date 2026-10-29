@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.117.0](https://github.com/buchenberg/yaah/compare/v0.116.0...v0.117.0) (2026-10-29)
+
+
+### Features
+
+* **trace:** record session content facts and rebuild transcripts ([1c035c2](https://github.com/buchenberg/yaah/commit/1c035c25095581e6a182909eb54c7ab96ad0d90a))
+
+
+### Bug Fixes
+
+* **trace:** drop unused tool-name helper (staticcheck U1000) ([9b5b282](https://github.com/buchenberg/yaah/commit/9b5b282fc16683e57460e9ff31bf6eee668df913))
+* **trace:** match advertised cwd and runtime containment class ([d90217d](https://github.com/buchenberg/yaah/commit/d90217debfc9f1464f70bc10a0e809471968e4bc))
+* **trace:** wire orchestrator store and address review findings ([f705320](https://github.com/buchenberg/yaah/commit/f705320a1b40daa6cb9912497db8015141d83a6b))
+
+
+### Documentation
+
+* **trace:** put helper comments on the right functions ([3a14ee7](https://github.com/buchenberg/yaah/commit/3a14ee7c86451de1d2a8559989523095f91afc43))
+
 ## [0.116.0](https://github.com/buchenberg/yaah/compare/v0.115.0...v0.116.0) (2026-10-29)
 
 
