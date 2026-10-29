@@ -484,3 +484,38 @@ Verdict: floor cut confirmed; trimmed-run totals 787K / 536K / 565K vs
 724K pre-trim (mean 630K, −13%), with trial 3 the first to also carry the
 sed removal. Keep both trims; the tracking table carries all three trials
 until more runs accumulate.
+
+## Baseline smoke + common metrics (2026-10-29, deepseek-flash)
+
+First run using the shared `terminal-bench.metrics.v1` extractor and
+[pricing.json](pricing.json). This is a **baseline**, not a capability
+comparison: two tasks, one trial, off-peak pricing.
+
+- Harness pin: `d28711d`
+- yaah: `53407d7`, run `2026-10-29__11-39-32`
+- hermes-agent 0.19.0, run `2026-10-29__11-42-33`
+- Model: `deepseek-flash`; effort: default; price tier: off-peak
+
+| Task | yaah | hermes |
+|---|---|---|
+| hello-world | resolved | resolved |
+| broken-python | resolved | resolved |
+| **Resolved** | **2/2** | **2/2** |
+
+| Metric | yaah | hermes |
+|---|---:|---:|
+| Input, uncached | 25,066 | 24,268 |
+| Output | 5,968 | 2,245 |
+| Cache read | 196,352 | 141,440 |
+| Steps | 13 | 13 |
+| Agent wall time | 52s | 50s |
+| Cost (off-peak) | $0.0079 | $0.0054 |
+
+The normalized columns keep cache separate from input; `tokens_in` in the
+legacy totals still includes cache. Cost uses the shared price table, not an
+arm's self-reported price. Both runs came from old-style run metadata with no
+model field, so the extractor used its documented `TB_MODEL` fallback
+(`deepseek-flash`).
+
+Raw metrics are emitted by `extract_metrics.py --json` for the run IDs above;
+append future run IDs here rather than rewriting this section.

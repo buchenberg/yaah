@@ -125,18 +125,59 @@ The persisted `yaah-home/config.yaml` keeps the `${DEEPSEEK_API_KEY}`
 placeholder — no literal secret is written anywhere under the mounted
 agent-logs; yaah resolves the key from the session environment.
 
-Per-task metrics (verdict, agent wall time, yaah token accounting
-summed from the state.dbs) for one or more runs:
+Per-task metrics (verdict, agent wall time, token accounting, and — when a
+model price is known — cost) for one or more runs:
 
 ```bash
 python3 extract_metrics.py ~/Code/Agentic/Frameworks/terminal-bench/runs <run-id> [run-id ...]
 ```
 
+`--json` emits the common `terminal-bench.metrics.v1` record used by all arms:
+
+```json
+{
+  "schema": "terminal-bench.metrics.v1",
+  "runs": [{
+    "arm": "yaah",
+    "model": "deepseek-flash",
+    "effort": null,
+    "tasks": [{
+      "task_id": "hello-world",
+      "resolved": true,
+      "tokens": {
+        "input": 0, "output": 0, "reasoning": null,
+        "cache_read": 0, "cache_write": 0
+      },
+      "cost_usd": 0.0,
+      "steps": 0,
+      "wall_time_s": 0,
+      "subagent_tokens": 0
+    }]
+  }]
+}
+```
+
+Normalization rules:
+
+- `input` is uncached prompt tokens; `cache_read` and `cache_write` are
+  separate. The legacy `tokens_in` total still includes cache (for old
+  tables and callers).
+- `reasoning` is `null` when the arm does not expose it; do not substitute
+  zero.
+- `steps` is assistant turns for yaah and the driver's API-call count for
+  adapter arms; `null` when unavailable.
+- Cost comes from the single shared [pricing.json](pricing.json) table, never
+  from an arm's self-reported price. Override the table with `TB_PRICING` and
+  the default model (for old runs without model metadata) with `TB_MODEL`.
+  Current rates are per million tokens and should be refreshed from the
+  provider price sheet.
+- `subagent_tokens` is the total child input+output; the detailed split is in
+  `usage.sub_tokens_in/out` and `--subs`.
+
 For runs that dispatch sub-agents, the extractor splits the session total into
 the orchestrator share and the sub-agent share (`sub_tokens_in/out`, with
 `orchestrator = total - sub`). `--subs` prints the per-role breakdown from
-`yaah.subagent.usage.v1` trace facts, and `--json` emits the same data for
-scripted reports. Orchestration-suite records live in
+`yaah.subagent.usage.v1` trace facts. Orchestration-suite records live in
 `../orchestration-tasks/RESULTS.md`.
 
 ## Podman gotchas
