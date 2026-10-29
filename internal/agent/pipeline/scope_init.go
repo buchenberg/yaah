@@ -17,9 +17,8 @@ const defaultBusBuffer = 64
 
 // InitShepherdInfrastructure creates the session-wide Shepherd trace store,
 // effect bus, and scope manager. Called once from wiring — tracing is
-// integral, so this always runs — and the orchestrator pipeline no longer
-// hosts shepherd_trace, so this is the single initialization point shared
-// by the SupervisorTool and the sub-agent trace middleware. tracePath is
+// integral, so this always runs — and both the orchestrator and sub-agent
+// pipelines host shepherd_trace through this shared store. tracePath is
 // the store file itself, not its parent directory.
 func InitShepherdInfrastructure(tracePath string, busBuffer int) (*shepherdtrace.SQLiteTraceStore, *shepherdtrace.EffectBus, *goatherd.ScopeManager, error) {
 	traceDir := filepath.Dir(tracePath)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
@@ -450,5 +451,188 @@ func TestTraceMiddleware_MetaRidesDeclaration(t *testing.T) {
 	}
 	if rec.Body.Payload["file_existed"] != false {
 		t.Errorf("declaration payload file_existed = %v, want false", rec.Body.Payload["file_existed"])
+	}
+}
+
+func recordPayload(t *testing.T, slice shepherdtrace.Slice, kind, schema string) map[string]any {
+	t.Helper()
+	for _, id := range slice.FactIDs() {
+		rec, ok := slice.FactsByID[id].(shepherdtrace.Record)
+		if !ok {
+			continue
+		}
+		if rec.View.KindLabel == kind && rec.Envelope.SchemaRef == schema {
+			return rec.Body.Payload
+		}
+	}
+	t.Fatalf("no %s fact with schema %s", kind, schema)
+	return nil
+}
+
+func TestTraceMiddleware_RecordsContentFactsAndRebuilds(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "trace.sqlite")
+	store, err := shepherdtrace.NewSQLiteTraceStore(path)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	owner := "sess-content"
+	m := NewShepherdTraceMiddleware(store, owner)
+	m.SetTurnContext("turn-1")
+	m.StartTurn(context.Background(), 0, "test-model", "read the file")
+	m.RecordSessionContext(context.Background(), TraceSessionContext{
+		SystemPrompt: "you are a test agent",
+		CWD:          "/tmp/work",
+		Model:        "test-model",
+		Provider:     "test-provider",
+		ToolNames:    []string{"read", "bash"},
+	})
+	m.RecordAssistant(context.Background(), &types.Message{
+		Role:               "assistant",
+		Content:            "I will read it.",
+		ReasoningContent:   "need the file",
+		ReasoningSignature: "sig-123",
+		ToolCalls: []types.ToolCall{{
+			ID:   "call-1",
+			Type: "function",
+			Function: types.ToolCallFn{
+				Name:      "read",
+				Arguments: `{"file":"a.go"}`,
+			},
+		}},
+	}, 0)
+	if _, err := m.PostTool(context.Background(), []ToolResult{{
+		Name:   "read",
+		Args:   `{"file":"a.go"}`,
+		Result: "package main\n",
+		CallID: "call-1",
+	}}, &Step{}); err != nil {
+		t.Fatalf("PostTool: %v", err)
+	}
+	m.EndTurn(context.Background(), 0, 10, 20)
+
+	slice, err := store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, owner, 999, shepherdtrace.ModeBoth)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	assistant := recordPayload(t, slice, "assistant:message", "yaah.message.assistant.v1")
+	if assistant["content"] != "I will read it." {
+		t.Errorf("content = %v", assistant["content"])
+	}
+	if assistant["reasoning_signature"] != "sig-123" {
+		t.Errorf("signature = %v", assistant["reasoning_signature"])
+	}
+	toolResult := recordPayload(t, slice, "read:result", "yaah.tool.read.v1.applied")
+	if toolResult["output"] != "package main\n" || toolResult["tool_call_id"] != "call-1" {
+		t.Errorf("tool result payload = %#v", toolResult)
+	}
+	ctxPayload := recordPayload(t, slice, "session:context", "yaah.session.context.v1")
+	if ctxPayload["system_prompt"] != "you are a test agent" || ctxPayload["cwd"] != "/tmp/work" {
+		t.Errorf("session context = %#v", ctxPayload)
+	}
+
+	transcript := RebuildTranscriptFromSlice(slice, owner)
+	if transcript.SystemPrompt != "you are a test agent" {
+		t.Errorf("rebuilt system prompt = %q", transcript.SystemPrompt)
+	}
+	if len(transcript.Messages) != 4 {
+		t.Fatalf("messages = %d (%#v), want system+user+assistant+tool", len(transcript.Messages), transcript.Messages)
+	}
+	if transcript.Messages[0].Role != "system" || transcript.Messages[1].Content != "read the file" {
+		t.Errorf("prefix = %#v", transcript.Messages[:2])
+	}
+	if got := transcript.Messages[2]; got.Role != "assistant" || got.ReasoningSignature != "sig-123" || len(got.ToolCalls) != 1 {
+		t.Errorf("assistant = %#v", got)
+	}
+	if got := transcript.Messages[3]; got.Role != "tool" || got.ToolCallID != "call-1" || got.Content != "package main\n" {
+		t.Errorf("tool = %#v", got)
+	}
+
+	// The store must be readable from a fresh handle: this is the
+	// after-process-exit proof, not just an in-memory reconstruction.
+	if err := store.Close(context.Background()); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	reopened, err := shepherdtrace.NewSQLiteTraceStore(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer reopened.Close(context.Background())
+	again, err := RebuildTranscript(context.Background(), reopened, owner)
+	if err != nil {
+		t.Fatalf("rebuild after reopen: %v", err)
+	}
+	if len(again.Messages) != 4 || again.Messages[3].Content != "package main\n" {
+		t.Fatalf("after reopen = %#v", again.Messages)
+	}
+}
+
+func TestTraceMiddleware_ContentCaps(t *testing.T) {
+	m := newTestTraceMiddleware(t)
+	big := strings.Repeat("x", tracePayloadMaxBytes+500)
+	m.RecordAssistant(context.Background(), &types.Message{Role: "assistant", Content: big}, 0)
+	m.RecordSessionContext(context.Background(), TraceSessionContext{SystemPrompt: big, CWD: "/tmp"})
+	slice, err := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	assistant := recordPayload(t, slice, "assistant:message", "yaah.message.assistant.v1")
+	if assistant["content_truncated"] != true {
+		t.Errorf("assistant truncation flag = %v", assistant["content_truncated"])
+	}
+	if got := fmt.Sprint(assistant["content_bytes"]); got != fmt.Sprint(len(big)) {
+		t.Errorf("content_bytes = %v, want %d", got, len(big))
+	}
+	ctxPayload := recordPayload(t, slice, "session:context", "yaah.session.context.v1")
+	if ctxPayload["system_prompt_truncated"] != true {
+		t.Errorf("system prompt truncation flag = %v", ctxPayload["system_prompt_truncated"])
+	}
+}
+
+func TestTraceMiddleware_ToolOutputSpillReference(t *testing.T) {
+	m := newTestTraceMiddleware(t)
+	result := "partial\n...[output truncated at 1 lines / 999 bytes — full output at /tmp/spill/1-tool.txt. To read portions, use the read tool]..."
+	if _, err := m.PostTool(context.Background(), []ToolResult{{Name: "read", Args: `{}`, Result: result, CallID: "c1"}}, &Step{}); err != nil {
+		t.Fatalf("PostTool: %v", err)
+	}
+	slice, err := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 99, shepherdtrace.ModeBoth)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	payload := recordPayload(t, slice, "read:result", "yaah.tool.read.v1.applied")
+	if payload["output_spill"] != "/tmp/spill/1-tool.txt" {
+		t.Errorf("output_spill = %v", payload["output_spill"])
+	}
+	if payload["output_truncated"] != true {
+		t.Errorf("output_truncated = %v", payload["output_truncated"])
+	}
+}
+
+func TestTraceMiddleware_StampsRetainedContext(t *testing.T) {
+	m := newTestTraceMiddleware(t)
+	m.retainedContext = &shepherdtrace.RetainedContext{
+		SubstrateRef:          "yaah.substrate.worktree.v1",
+		Containment:           shepherdtrace.ContainContained,
+		CapabilityWitnessRefs: []string{"yaah.tool.read.v1"},
+		ActiveBindingRefs:     []string{"role:developer"},
+	}
+	if _, err := m.PostTool(context.Background(), []ToolResult{{Name: "read", Args: `{}`, Result: "ok", CallID: "c1"}}, &Step{}); err != nil {
+		t.Fatalf("PostTool: %v", err)
+	}
+	slice, err := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 99, shepherdtrace.ModeBoth)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	for _, id := range slice.FactIDs() {
+		ref := slice.FactsByID[id].GetView().ContextRef
+		if ref == "" {
+			t.Fatalf("fact %s has no context ref", id)
+		}
+		rc, ok := slice.ContextsByID[ref]
+		if !ok {
+			t.Fatalf("context %s missing", ref)
+		}
+		if rc.SubstrateRef != "yaah.substrate.worktree.v1" || rc.Containment != shepherdtrace.ContainContained {
+			t.Errorf("context = %#v", rc)
+		}
 	}
 }

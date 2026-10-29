@@ -108,6 +108,12 @@ type PipelineConfig struct {
 	// Nil when tracing is disabled.
 	TraceStore *shepherdtrace.SQLiteTraceStore
 
+	// RetainedContext, when set, is stamped onto every fact group this
+	// middleware appends. Sub-agents use it to bind their transcript to the
+	// dispatch's substrate, containment, and role tool belt without relying
+	// on mutable session columns (yaah-o86).
+	RetainedContext *shepherdtrace.RetainedContext
+
 	// DestructiveGuard is the supervision service's synchronous
 	// pre-dispatch check (adoption plan B2): a non-empty return denies
 	// the tool call before execution. Nil means the guard is disabled —
@@ -169,6 +175,22 @@ func buildToolConcurrency(cfg PipelineConfig) Middleware {
 	return NewToolConcurrencyMiddleware(cfg.MaxToolConcurrency)
 }
 
+// buildShepherdTrace is shared by the orchestrator and sub-agent pipelines.
+// Both write through the session-shared store; nil store/session falls back to
+// the noop slot so the pipeline shape stays stable.
+func buildShepherdTrace(cfg PipelineConfig) Middleware {
+	store := cfg.TraceStore
+	if store == nil || cfg.SessionID == "" {
+		return &noopShepherdTraceMiddleware{}
+	}
+	return &ShepherdTraceMiddleware{
+		store:           store,
+		sessionID:       cfg.SessionID,
+		ordinal:         int(nextOrdinal.Add(1 << 20)),
+		retainedContext: cfg.RetainedContext,
+	}
+}
+
 var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 	"steer": func(cfg PipelineConfig) Middleware {
 		return &SteerMiddleware{ch: cfg.Steer, onDrain: cfg.SteerDrain}
@@ -219,6 +241,7 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 	},
 	"permission":       buildPermission,
 	"tool_concurrency": buildToolConcurrency,
+	"shepherd_trace":   buildShepherdTrace,
 	"prompt_caching":   func(cfg PipelineConfig) Middleware { return &PromptCachingMiddleware{enabled: cfg.PromptCaching} },
 	"soft_prune": func(cfg PipelineConfig) Middleware {
 		return &SoftPruneMiddleware{pruner: cfg.Pruner, emit: cfg.PruneHooks.Emit, otel: cfg.PruneHooks.Otel}
@@ -253,22 +276,9 @@ var subAgentBuilders = map[string]func(PipelineConfig) Middleware{
 		return &SteerMiddleware{ch: cfg.Steer}
 	},
 	"tool_concurrency": buildToolConcurrency,
+	"shepherd_trace":   buildShepherdTrace,
 	"evidence_guard": func(cfg PipelineConfig) Middleware {
 		return NewEvidenceGuardMiddleware(cfg.EvidenceGuardNudge, cfg.EvidenceGuardHalt)
-	},
-	"shepherd_trace": func(cfg PipelineConfig) Middleware {
-		// Sub-agents write through the session-shared store instead of
-		// opening their own SQLite connection — concurrent writers on
-		// the same trace.sqlite stall on busy_timeout.
-		store := cfg.TraceStore
-		if store == nil || cfg.SessionID == "" {
-			return &noopShepherdTraceMiddleware{}
-		}
-		return &ShepherdTraceMiddleware{
-			store:     store,
-			sessionID: cfg.SessionID,
-			ordinal:   int(nextOrdinal.Add(1 << 20)),
-		}
 	},
 }
 
@@ -296,6 +306,7 @@ var defaultPipelineNames = []string{
 	"approval",
 	"inline_limit",
 	"tool_concurrency",
+	"shepherd_trace",
 	"loop_detection",
 	"intent_loop",
 	"evidence_guard",

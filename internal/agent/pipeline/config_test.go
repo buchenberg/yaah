@@ -12,12 +12,12 @@ import (
 	"github.com/buchenberg/yaah/internal/types"
 )
 
-func TestPipeline_OrchestratorNoTraceBuilder(t *testing.T) {
-	if _, ok := builtinBuilders["shepherd_trace"]; ok {
-		t.Error("builtinBuilders still contains shepherd_trace — orchestrator tracing was removed")
+func TestPipeline_OrchestratorTraceBuilder(t *testing.T) {
+	if _, ok := builtinBuilders["shepherd_trace"]; !ok {
+		t.Error("builtinBuilders is missing shepherd_trace — the orchestrator transcript is part of the trace (yaah-o86)")
 	}
-	if slices.Contains(defaultPipelineNames, "shepherd_trace") {
-		t.Error("defaultPipelineNames still contains shepherd_trace")
+	if !slices.Contains(defaultPipelineNames, "shepherd_trace") {
+		t.Error("defaultPipelineNames is missing shepherd_trace")
 	}
 }
 
@@ -244,10 +244,13 @@ func TestPipeline_ToolConcurrencyNilFallsBackToConfig(t *testing.T) {
 	}
 }
 
-func TestNewFromConfig_NoShepherdTrace(t *testing.T) {
+func TestNewFromConfig_ShepherdTraceNoopWithoutStore(t *testing.T) {
 	pipe := NewFromConfig(PipelineConfig{SessionID: "test-session"})
 	if tmw := pipe.ShepherdTraceMiddleware(); tmw != nil {
-		t.Error("orchestrator pipeline must not contain shepherd_trace")
+		t.Error("without a trace store the orchestrator slot should be a noop")
+	}
+	if pipe.Find("shepherd_trace") == nil {
+		t.Error("orchestrator pipeline should still carry the shepherd_trace slot")
 	}
 	// The rest of the default pipeline is intact.
 	for _, name := range []string{"steer", "followup", "compaction", "approval", "inline_limit", "tool_concurrency", "loop_detection", "evidence_guard", "conflict_detect"} {

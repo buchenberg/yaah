@@ -193,8 +193,9 @@ func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
 			}
 		},
 
-		SessionID:  l.Config.SessionID,
-		TraceStore: l.Config.TraceStore,
+		SessionID:       l.Config.SessionID,
+		TraceStore:      l.Config.TraceStore,
+		RetainedContext: l.Config.RetainedContext,
 		// The blocking pre-dispatch guard (adoption plan B2) rides the
 		// sub-agent pipeline; the orchestrator pipeline ignores it.
 		DestructiveGuard: l.Config.DestructiveGuard,
@@ -320,6 +321,10 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 			}
 			messages = step.Messages
 
+			if traceMw != nil {
+				traceMw.RecordSessionContext(ctx, l.traceSessionContext(step))
+			}
+
 			if err := l.guardContextBeforeCall(turnCtx, &messages, &req, turnSpan); err != nil {
 				if traceMw != nil {
 					traceMw.FailTurn(ctx, iter, err)
@@ -382,6 +387,9 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 			l.State.LastResponseModel = result.ResponseModel
 			messages = append(messages, msg)
 			l.Persister.Persist(msg)
+			if traceMw != nil {
+				traceMw.RecordAssistant(ctx, &msg, iter)
+			}
 
 			observability.RecordLLMCall(turnCtx, time.Since(llmStart), result.Usage.PromptTokens, result.Usage.CompletionTokens)
 

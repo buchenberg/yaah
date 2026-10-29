@@ -230,6 +230,15 @@ type LoopConfig struct {
 	OtelVerbose              bool
 	SystemPrompt             string
 	SystemPromptOverride     string
+	// TraceCWD is the working directory recorded in the session-context
+	// fact. Sub-agent loops set it to their dispatch workdir (or sandbox
+	// workdir) so the trace names the tree the model actually saw, not the
+	// orchestration process's cwd.
+	TraceCWD string
+	// RetainedContext, when set, is stamped onto every Shepherd fact group
+	// for this loop. Sub-agents bind their transcript to the dispatch
+	// substrate, containment, and role tool belt (yaah-o86).
+	RetainedContext *shepherdtrace.RetainedContext
 
 	// IsSubAgent marks loops created by NewSubAgentLoop. Sub-agent loops
 	// build the curated sub-agent middleware pipeline instead of the

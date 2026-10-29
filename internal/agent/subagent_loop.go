@@ -94,6 +94,15 @@ type SubAgentConfig struct {
 	// pipeline's shepherd_trace middleware writes through it. Nil when
 	// tracing is disabled.
 	TraceStore *shepherdtrace.SQLiteTraceStore
+
+	// TraceCWD is the working directory recorded in the session-context
+	// fact. Empty falls back to the process cwd.
+	TraceCWD string
+
+	// RetainedContext binds the sub-agent's transcript to its dispatch
+	// substrate, containment, and role tool belt. The runner builds it from
+	// the resolved world and registry; nil leaves the kernel default.
+	RetainedContext *shepherdtrace.RetainedContext
 }
 
 // NewSubAgentLoop creates a Loop optimized for sub-agent execution.
@@ -146,6 +155,8 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 			PipelineDisabled:       cfg.PipelineDisabled,
 			WrapUpThreshold:        cfg.WrapUpThreshold,
 			SessionID:              cfg.SessionID,
+			TraceCWD:               cfg.TraceCWD,
+			RetainedContext:        cfg.RetainedContext,
 			IsSubAgent:             true,
 			DestructiveGuard:       cfg.DestructiveGuard,
 			TraceStore:             cfg.TraceStore,

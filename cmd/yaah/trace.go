@@ -6,10 +6,12 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -27,6 +29,7 @@ func newShepherdTraceCmd() *cobra.Command {
 	cmd.AddCommand(newShepherdTraceListCmd())
 	cmd.AddCommand(newShepherdTraceShowCmd())
 	cmd.AddCommand(newShepherdTraceProfileCmd())
+	cmd.AddCommand(newShepherdTraceRebuildCmd())
 
 	return cmd
 }
@@ -128,51 +131,70 @@ func newShepherdTraceShowCmd() *cobra.Command {
 				return nil
 			}
 
-			captureStatusByParent := make(map[string]string)
+			captureByParent := make(map[string]captureRecord)
+			var sessionContext map[string]any
 			for _, factID := range slice.FactIDs() {
 				fact := slice.FactsByID[factID]
-				if fact.GetEnvelope().Mode == shepherdtrace.Capture {
-					parents := fact.GetEnvelope().CausedByIDs
-					if len(parents) > 0 {
-						parentID := parents[0]
-						captureStatusByParent[parentID] = captureStatus(fact)
-					}
+				rec, ok := fact.(shepherdtrace.Record)
+				if !ok {
+					continue
+				}
+				if rec.Envelope.Mode == shepherdtrace.Capture && rec.View.KindLabel == "session:context" && sessionContext == nil {
+					sessionContext = rec.Body.Payload
+				}
+				if rec.Envelope.Mode != shepherdtrace.Capture {
+					continue
+				}
+				if len(rec.Envelope.CausedByIDs) > 0 {
+					captureByParent[rec.Envelope.CausedByIDs[0]] = readCapturePayload(fact)
 				}
 			}
 
 			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-			fmt.Fprintf(w, "Session: %s\n\n", sessionID)
+			fmt.Fprintf(w, "Session: %s\n", sessionID)
+			if sessionContext != nil {
+				fmt.Fprintf(w, "Context: %s\n", traceContextSummary(sessionContext))
+			}
+			fmt.Fprintln(w)
 			fmt.Fprintln(w, "#\tTOOL\tARGS\tSTATUS")
 
 			num := 0
 			for _, factID := range slice.FactIDs() {
 				fact := slice.FactsByID[factID]
-				if fact.GetEnvelope().Mode != shepherdtrace.Declaration {
+				rec, ok := fact.(shepherdtrace.Record)
+				if !ok {
+					continue
+				}
+				if rec.Envelope.Mode == shepherdtrace.Capture && rec.View.KindLabel == "assistant:message" {
+					fmt.Fprintf(w, "   assistant: %s\n", assistantSummary(rec.Body.Payload))
+					continue
+				}
+				if rec.Envelope.Mode != shepherdtrace.Declaration || rec.View.KindLabel == "turn:created" {
 					continue
 				}
 
 				num++
-				tool := fact.GetView().KindLabel
+				tool := rec.View.KindLabel
 				argsJSON := ""
-				if rec, ok := fact.(shepherdtrace.Record); ok {
-					if args, ok2 := rec.Body.Payload["args"]; ok2 {
-						switch a := args.(type) {
-						case json.RawMessage:
-							argsJSON = truncateString(string(a), 60)
-						case string:
-							argsJSON = truncateString(a, 60)
-						default:
-							b, _ := json.Marshal(a)
-							argsJSON = truncateString(string(b), 60)
-						}
-					}
+				if args, ok2 := rec.Body.Payload["args"]; ok2 {
+					argsJSON = truncateString(traceValueString(args), 60)
 				}
 
 				status := "pending"
-				if s, ok := captureStatusByParent[factID]; ok {
-					status = s
+				cap := captureByParent[factID]
+				switch {
+				case cap.errMsg != "":
+					status = "error"
+				case cap.success:
+					status = "ok"
 				}
 				fmt.Fprintf(w, "%d\t%s\t%s\t%s\n", num, tool, argsJSON, status)
+				if cap.output != "" {
+					fmt.Fprintf(w, "   output: %s\n", truncateString(oneLine(cap.output), 200))
+				}
+				if cap.outputSpill != "" {
+					fmt.Fprintf(w, "   spill: %s\n", cap.outputSpill)
+				}
 			}
 			w.Flush()
 			return nil
@@ -250,16 +272,19 @@ func newShepherdTraceProfileCmd() *cobra.Command {
 			}
 
 			type toolRecord struct {
-				name     string
-				args     string
-				duration string
-				success  bool
-				errMsg   string
+				name        string
+				args        string
+				duration    string
+				success     bool
+				errMsg      string
+				output      string
+				outputSpill string
 			}
 			type turnRecord struct {
 				number           int
 				status           string
 				tools            []toolRecord
+				assistant        []string
 				promptTokens     int
 				completionTokens int
 			}
@@ -269,11 +294,17 @@ func newShepherdTraceProfileCmd() *cobra.Command {
 
 			for _, factID := range slice.FactIDs() {
 				fact := slice.FactsByID[factID]
+				rec, isRecord := fact.(shepherdtrace.Record)
+				kind := fact.GetView().KindLabel
+				if fact.GetEnvelope().Mode == shepherdtrace.Capture && kind == "assistant:message" && current != nil {
+					if isRecord {
+						current.assistant = append(current.assistant, assistantSummary(rec.Body.Payload))
+					}
+					continue
+				}
 				if fact.GetEnvelope().Mode != shepherdtrace.Declaration {
 					continue
 				}
-
-				kind := fact.GetView().KindLabel
 
 				if kind == "turn:created" {
 					cap := captureByParent[factID]
@@ -298,15 +329,16 @@ func newShepherdTraceProfileCmd() *cobra.Command {
 
 				cap := captureByParent[factID]
 				tool := toolRecord{
-					name:     kind,
-					success:  cap.success,
-					errMsg:   cap.errMsg,
-					duration: cap.duration,
+					name:        kind,
+					success:     cap.success,
+					errMsg:      cap.errMsg,
+					duration:    cap.duration,
+					output:      cap.output,
+					outputSpill: cap.outputSpill,
 				}
-				if rec, ok := fact.(shepherdtrace.Record); ok {
+				if isRecord {
 					if args, ok2 := rec.Body.Payload["args"]; ok2 {
-						b, _ := json.Marshal(args)
-						tool.args = truncateString(string(b), 50)
+						tool.args = truncateString(traceValueString(args), 50)
 					}
 				}
 				current.tools = append(current.tools, tool)
@@ -382,6 +414,12 @@ func newShepherdTraceProfileCmd() *cobra.Command {
 						dur = " " + dur
 					}
 					fmt.Fprintf(w, "  %s\t%s%s\t%s\n", tool.name, tool.args, dur, status)
+					if tool.output != "" {
+						fmt.Fprintf(w, "    out\t%s\n", truncateString(oneLine(tool.output), 120))
+					}
+				}
+				for _, assistant := range t.assistant {
+					fmt.Fprintf(w, "  assistant\t%s\n", assistant)
 				}
 			}
 
@@ -417,6 +455,8 @@ type captureRecord struct {
 	turnStatus       string
 	promptTokens     int
 	completionTokens int
+	output           string
+	outputSpill      string
 }
 
 func readCapturePayload(fact shepherdtrace.VisibleRecord) captureRecord {
@@ -438,6 +478,12 @@ func readCapturePayload(fact shepherdtrace.VisibleRecord) captureRecord {
 		success:  success,
 		errMsg:   errMsg,
 		duration: duration,
+	}
+	if out, ok2 := rec.Body.Payload["output"].(string); ok2 {
+		cr.output = out
+	}
+	if spill, ok2 := rec.Body.Payload["output_spill"].(string); ok2 {
+		cr.outputSpill = spill
 	}
 
 	kind := rec.View.KindLabel
@@ -530,4 +576,141 @@ func truncateString(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// newShepherdTraceRebuildCmd reconstructs one owner's conversation from trace
+// facts alone. It is the acceptance proof for yaah-o86: a crash between a turn
+// and state.db's debounced write no longer loses the transcript.
+func newShepherdTraceRebuildCmd() *cobra.Command {
+	var outPath string
+	cmd := &cobra.Command{
+		Use:   "rebuild [session-id]",
+		Short: "Reconstruct a session transcript from trace facts",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			store, err := openShepherdTraceStore()
+			if err != nil {
+				return err
+			}
+			defer store.Close(cmd.Context())
+
+			var sessionID string
+			if len(args) > 0 {
+				sessionID = args[0]
+			} else {
+				slice, err := store.ReadOwnerPrefix(cmd.Context(), shepherdtrace.TrustedReadContext, "", 99999, shepherdtrace.ModeDeclarationsOnly)
+				if err != nil {
+					return fmt.Errorf("read traces: %w", err)
+				}
+				if len(slice.OwnerPaths) == 0 {
+					fmt.Fprintln(cmd.OutOrStdout(), "No trace sessions found.")
+					return nil
+				}
+				owners := make([]string, 0, len(slice.OwnerPaths))
+				for owner := range slice.OwnerPaths {
+					owners = append(owners, owner)
+				}
+				sort.Sort(sort.Reverse(sort.StringSlice(owners)))
+				sessionID = owners[0]
+			}
+
+			transcript, err := pipeline.RebuildTranscript(cmd.Context(), store, sessionID)
+			if err != nil {
+				return err
+			}
+			raw, err := json.MarshalIndent(transcript, "", "  ")
+			if err != nil {
+				return err
+			}
+			raw = append(raw, '\n')
+			if outPath != "" {
+				if err := os.WriteFile(outPath, raw, 0o600); err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "wrote %s (%d messages)\n", outPath, len(transcript.Messages))
+				return nil
+			}
+			_, err = cmd.OutOrStdout().Write(raw)
+			return err
+		},
+	}
+	cmd.Flags().StringVar(&outPath, "out", "", "write the transcript JSON to this file instead of stdout")
+	return cmd
+}
+
+func traceValueString(v any) string {
+	if v == nil {
+		return ""
+	}
+	switch x := v.(type) {
+	case json.RawMessage:
+		return string(x)
+	case string:
+		return x
+	default:
+		b, _ := json.Marshal(x)
+		return string(b)
+	}
+}
+
+func traceContextSummary(payload map[string]any) string {
+	parts := make([]string, 0, 3)
+	if cwd := traceValueString(payload["cwd"]); cwd != "" {
+		parts = append(parts, "cwd="+cwd)
+	}
+	if model := traceValueString(payload["model"]); model != "" {
+		parts = append(parts, "model="+model)
+	}
+	if digest := traceValueString(payload["config_digest"]); digest != "" {
+		parts = append(parts, "config="+digest)
+	}
+	if len(parts) == 0 {
+		return "(recorded)"
+	}
+	return strings.Join(parts, " ")
+}
+
+func assistantSummary(payload map[string]any) string {
+	content := traceValueString(payload["content"])
+	if calls, ok := payload["tool_calls"]; ok && calls != nil {
+		names := toolCallNamesFromPayload(calls)
+		if content != "" {
+			content += " "
+		}
+		if len(names) > 0 {
+			content += "[tool calls: " + strings.Join(names, ", ") + "]"
+		}
+	}
+	if content == "" {
+		if reasoning := traceValueString(payload["reasoning_content"]); reasoning != "" {
+			content = "(reasoning) " + reasoning
+		}
+	}
+	return truncateString(oneLine(content), 200)
+}
+
+func toolCallNamesFromPayload(v any) []string {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	var calls []struct {
+		Function struct {
+			Name string `json:"name"`
+		} `json:"function"`
+	}
+	if json.Unmarshal(raw, &calls) != nil {
+		return nil
+	}
+	names := make([]string, 0, len(calls))
+	for _, c := range calls {
+		if c.Function.Name != "" {
+			names = append(names, c.Function.Name)
+		}
+	}
+	return names
+}
+
+func oneLine(s string) string {
+	return strings.Join(strings.Fields(strings.ReplaceAll(s, "\n", " ")), " ")
 }
