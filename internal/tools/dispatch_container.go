@@ -78,9 +78,7 @@ func openDispatchWorld(ctx context.Context, rt RetainedRuntime) (*SessionSandbox
 		// layer, so a guard afterwards would refuse after the pin already
 		// exists. The croft adapter implements ReleaseState; the fake does so
 		// as a no-op; any other isolated backend must provide one.
-		releaser, hasRelease := dw.SessionSandbox.sb.(interface {
-			ReleaseState(context.Context, shepherdtrace.WorkspaceState) error
-		})
+		hasRelease := dw.SessionSandbox.Releasable()
 		if !hasRelease && dw.SessionSandbox.sb.Capabilities().Isolated {
 			return nil, fmt.Errorf("session backend %q captures state but does not expose ReleaseState", dw.SessionSandbox.sb.Backend())
 		}
@@ -94,12 +92,11 @@ func openDispatchWorld(ctx context.Context, rt RetainedRuntime) (*SessionSandbox
 			if !hasRelease {
 				return nil
 			}
-			return releaser.ReleaseState(context.WithoutCancel(startCtx), state)
+			return dw.SessionSandbox.ReleaseCapture(context.WithoutCancel(startCtx), state)
 		}
 		ss, err := StartSessionSandbox(startCtx, dw.Config, dw.Opener, "", dw.Deny)
 		if err != nil {
-			_ = release()
-			return nil, err
+			return nil, errors.Join(err, release())
 		}
 		if err := ss.sb.Apply(startCtx, state); err != nil {
 			dctx, dcancel := context.WithTimeout(context.WithoutCancel(ctx), dispatchWorldDestroyTimeout)

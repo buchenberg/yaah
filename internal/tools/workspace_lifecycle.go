@@ -128,6 +128,36 @@ func (s *SessionSandbox) Capture(ctx context.Context) (shepherdtrace.WorkspaceSt
 	return s.sb.Capture(ctx)
 }
 
+// Releasable reports whether this session's backend can drop a captured
+// state's lease. Callers probe this before Capture, which commits and pins a
+// layer.
+func (s *SessionSandbox) Releasable() bool {
+	if s.sb == nil {
+		return false
+	}
+	_, ok := s.sb.(interface {
+		ReleaseState(context.Context, shepherdtrace.WorkspaceState) error
+	})
+	return ok
+}
+
+// ReleaseCapture drops a state captured by Capture, serialized with captures
+// so a release cannot race another dispatch's snapshot operation.
+func (s *SessionSandbox) ReleaseCapture(ctx context.Context, state shepherdtrace.WorkspaceState) error {
+	s.captureMu.Lock()
+	defer s.captureMu.Unlock()
+	if s.sb == nil {
+		return errors.New("workspace: session sandbox is not initialized")
+	}
+	releaser, ok := s.sb.(interface {
+		ReleaseState(context.Context, shepherdtrace.WorkspaceState) error
+	})
+	if !ok {
+		return fmt.Errorf("workspace: session backend %q does not expose ReleaseState", s.sb.Backend())
+	}
+	return releaser.ReleaseState(ctx, state)
+}
+
 // Destroy releases the session sandbox. It is idempotent and safe from
 // concurrent teardown paths (a failed startup that already destroyed, then
 // session close): the first call does the work, later calls return its
