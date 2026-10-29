@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.114.2](https://github.com/buchenberg/yaah/compare/v0.114.1...v0.114.2) (2026-10-29)
+
+
+### Documentation
+
+* fix stale claims from the 2026-06 doc audit (P1 batch) ([72c2486](https://github.com/buchenberg/yaah/commit/72c2486aed7d6fad084ea3cef6bbce5ec5ca1dec))
+* fix stale claims from the 2026-06 doc audit (P1 batch) ([2120b08](https://github.com/buchenberg/yaah/commit/2120b0806e8140836fc2a63bccb7a6b5c1397115))
+
 ## [0.114.1](https://github.com/buchenberg/yaah/compare/v0.114.0...v0.114.1) (2026-10-29)
 
 
