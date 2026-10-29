@@ -196,6 +196,56 @@ Acceptance for flipping `container` to available for **retained** dispatches:
 3. A crash mid-dispatch is recoverable or prunable by `yaah shepherd`.
 4. `yaah doctor` reports the resolution and the reason before the first run.
 
+## Container settlement: `GitDelta`
+
+A proposal from a container world cannot use the kernel's state-based
+settlement: the parent root is a git sandbox and the dispatch world is croft,
+so there is no shared state language to compare or merge. The cross-backend
+artifact is a **change manifest**, not a text patch:
+
+```
+GitDelta = []Change{ Path, Kind(add|modify|delete), Mode, Content }
+```
+
+It is Shepherd's `Changeset`: whole-path post-images, produced with git
+plumbing inside the container against the baseline commit the bootstrap already
+creates (`commitContainerBaseline`). A text patch is deliberately rejected —
+its context/fuzz and binary handling are the fidelity traps; the manifest is
+exact, and applying it is a writer rather than a patch parser.
+
+### Semantics (reference-faithful)
+
+- **Basis** — the in-container baseline commit (the synthetic commit for a
+  dirty host tree; HEAD for a clean one). The host's git state at dispatch is
+  captured for the `select` precondition.
+- **`select`** — capture the host state again; equal ⇒ apply the manifest
+  (fast-forward). A moved host fails closed.
+- **`apply`** — only when the manifest's paths are disjoint from the host's
+  changes since the basis. Whole-path replacement/deletion; no 3-way, no hunk
+  merge, no content synthesis.
+- **`release`** — persist the manifest under the proposal's retention path and
+  drop the world.
+- **`discard`** — drop the manifest and the world.
+- Consume-once, same envelope and verbs as the worktree lane.
+
+### Lifecycle
+
+The container is destroyed at seal: the proposal is the manifest, not a live
+snapshot, so there is no pinned croft state, no lease, and no orphan container
+to recover. The manifest is written durably (`.yaah/proposals/<id>/`) at seal,
+which is what makes a crash-surviving proposal possible without keeping the
+world alive. Total manifest size is capped; exceeding it fails the seal with a
+clear message rather than truncating.
+
+### Acceptance
+
+1. A container proposal shows a diff and settles `select`/`apply`/`release`/
+   `discard` onto the host tree.
+2. `apply` refuses overlapping paths; `select` refuses a moved host.
+3. The container is gone after seal; the manifest survives a restart.
+4. Report lanes are unchanged.
+5. Tests run without a daemon (sandbox fake + temp repos).
+
 ## Decision records
 
 ### D8 — the orchestrator is not a retained run (yaah-ihfh.4)
@@ -215,6 +265,15 @@ A dispatch is yaah's run. When containers are available, a proposal dispatch
 gets its own container world; a report or shared dispatch gets one only where
 it adds value (report: yes; shared: no, by definition). The session world is
 never the dispatch world.
+
+### D11 — container settlement is a change manifest (yaah-ihfh.3)
+
+A container proposal settles as a `GitDelta` manifest (whole-path
+post-images), not a text patch and not a croft state. The reasons: the parent
+and child worlds do not share a state language; a manifest is exact where a
+patch is contextual; path-disjoint whole-path application is the reference's
+"no content synthesis" rule; and destroying the container at seal removes the
+pinning/recovery problem entirely.
 
 ### D10 — grants are world-relative (yaah-ihfh.2)
 
