@@ -77,7 +77,33 @@ sudo uses root's module cache, so the first run re-downloads modules. The
 `-timeout` above is the Go test bound; the session itself is bounded by
 `YAAH_LIVE_CONTAINERD_TIMEOUT` (default `10m`).
 
+## Dispatch-container live test
+
+`TestLive_DispatchContainerProposal` exercises the per-dispatch container
+proposal lane: resolve `world: container`, create a dispatch container, run the
+body inside it, seal a `GitDelta` manifest, destroy the container, and settle the
+manifest onto the host with `select`.
+
+Unlike `TestLive_ActivatedSession`, this test does **not** need root. The
+invoking user only needs access to the containerd socket (the `containerd`
+group, or an ACL). It uses the same environment knobs; the address and image are
+still required:
+
+```bash
+env YAAH_LIVE_CONTAINERD_ADDR=/run/containerd/containerd.sock \
+    YAAH_LIVE_CONTAINERD_IMAGE=docker.io/library/yaah-workspace:latest \
+    go test ./internal/tools/ -run TestLive_DispatchContainerProposal \
+    -count=1 -timeout 15m -v
+```
+
+It proves a real dispatch container world is not fiction: the body runs
+`local=false` inside the container, the manifest is persisted under
+`.yaah/proposals/<id>/`, the host tree is unchanged before settlement, and
+`select` consumes the artifact and lands the post-image.
+
 ## Environment knobs
+
+The knobs below apply to both live tests.
 
 | Knob | Required | Default | Meaning |
 |---|---|---|---|
