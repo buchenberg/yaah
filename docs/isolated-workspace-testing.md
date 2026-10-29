@@ -96,7 +96,7 @@ env YAAH_LIVE_CONTAINERD_ADDR=/run/containerd/containerd.sock \
     -count=1 -timeout 15m -v
 ```
 
-It proves the report of a real dispatch world is not fiction: the body runs
+It proves a real dispatch container world is not fiction: the body runs
 `local=false` inside the container, the manifest is persisted under
 `.yaah/proposals/<id>/`, the host tree is unchanged before settlement, and
 `select` consumes the artifact and lands the post-image.

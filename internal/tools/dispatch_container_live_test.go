@@ -12,6 +12,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -94,6 +95,30 @@ func TestLive_DispatchContainerProposal(t *testing.T) {
 	}
 	if !strings.Contains(envelope, `"world":"container"`) {
 		t.Fatalf("envelope does not name the container world: %s", envelope)
+	}
+
+	// Teardown failures are caveats on a still-proposal envelope, not errors:
+	// a leaked container or stranded scope must fail this acceptance test.
+	var parsed struct {
+		Status  string `json:"status"`
+		Error   string `json:"error"`
+		Notes   string `json:"notes"`
+		Warning string `json:"warning"`
+	}
+	if err := json.Unmarshal([]byte(envelope), &parsed); err != nil {
+		t.Fatalf("parse proposal envelope: %v", err)
+	}
+	if parsed.Status != "proposal" {
+		t.Fatalf("envelope status = %q, want proposal (%s)", parsed.Status, envelope)
+	}
+	if parsed.Error != "" {
+		t.Fatalf("dispatch reported an error: %s", parsed.Error)
+	}
+	if parsed.Warning != "" {
+		t.Fatalf("an explicit container request degraded: %s", parsed.Warning)
+	}
+	if parsed.Notes != "" {
+		t.Fatalf("dispatch teardown left a caveat (container or scope left behind): %s", parsed.Notes)
 	}
 
 	proposals := rt.Proposals.all()
