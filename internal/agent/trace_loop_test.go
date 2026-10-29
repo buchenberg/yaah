@@ -62,3 +62,15 @@ func TestLoopWritesReconstructableTranscript(t *testing.T) {
 		t.Errorf("assistant = %#v", got)
 	}
 }
+
+func TestLoopBuilderCarriesTraceStore(t *testing.T) {
+	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close(context.Background())
+	loop := (&LoopBuilder{TraceStore: store, SessionID: "sess-builder"}).Build(LoopBuildOptions{})
+	if loop.Config.TraceStore != store {
+		t.Fatal("LoopBuilder dropped the trace store")
+	}
+}

@@ -28,7 +28,9 @@ type TraceTranscript struct {
 // A sub-agent owner works the same way: its synthetic ID is the owner, and
 // the parent/session mapping remains in memory.trace_owners.
 func RebuildTranscript(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, ownerID string) (*TraceTranscript, error) {
-	slice, err := store.ReadOwnerPrefix(ctx, shepherdtrace.TrustedReadContext, ownerID, 1_000_000, shepherdtrace.ModeBoth)
+	// through is an ordinal bound, not a row count. Use the largest int so a
+	// long-lived owner never silently loses facts to an arbitrary ceiling.
+	slice, err := store.ReadOwnerPrefix(ctx, shepherdtrace.TrustedReadContext, ownerID, int(^uint(0)>>1), shepherdtrace.ModeBoth)
 	if err != nil {
 		return nil, fmt.Errorf("read trace %s: %w", ownerID, err)
 	}
@@ -40,6 +42,7 @@ func RebuildTranscript(ctx context.Context, store *shepherdtrace.SQLiteTraceStor
 func RebuildTranscriptFromSlice(slice shepherdtrace.Slice, ownerID string) *TraceTranscript {
 	out := &TraceTranscript{SessionID: ownerID}
 	contextSeen := false
+	lastUserTurnID := ""
 	for _, factID := range ownerFactIDs(slice, ownerID) {
 		fact, ok := slice.FactsByID[factID]
 		if !ok {
@@ -63,8 +66,20 @@ func RebuildTranscriptFromSlice(slice shepherdtrace.Slice, ownerID string) *Trac
 			}
 		case record.Envelope.Mode == shepherdtrace.Declaration && kind == "turn:created":
 			prompt := payloadString(payload, "prompt")
-			if prompt != "" && !lastUserMessageIs(out.Messages, prompt) {
+			turnID := payloadString(payload, "turn_id")
+			// StartTurn runs once per tool iteration with the same userInput.
+			// The turn id is stable for the whole Run, so one user message per
+			// Run is the faithful reconstruction; a resumed Run has a new id.
+			switch {
+			case turnID != "" && turnID == lastUserTurnID:
+				// same interaction, later iteration
+			case prompt == "":
+				// nothing to add
+			case turnID == "" && lastUserMessageIs(out.Messages, prompt):
+				// legacy trace without a turn id: avoid back-to-back duplicates
+			default:
 				out.Messages = append(out.Messages, types.UserMsg(prompt))
+				lastUserTurnID = turnID
 			}
 		case record.Envelope.Mode == shepherdtrace.Capture && kind == "assistant:message":
 			msg := types.Message{
@@ -106,7 +121,16 @@ func ownerFactIDs(slice shepherdtrace.Slice, ownerID string) []string {
 	if ids, ok := slice.OwnerPaths[ownerID]; ok {
 		return ids
 	}
-	return slice.FactIDs()
+	// A caller can hand us an unfiltered slice. Never let another owner's
+	// messages leak into this transcript: filter by the fact view instead of
+	// falling back to every fact in the store.
+	var ids []string
+	for _, id := range slice.FactIDs() {
+		if view := slice.FactsByID[id].GetView(); view != nil && view.TraceOwnerID == ownerID {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 func lastUserMessageIs(messages []types.Message, content string) bool {

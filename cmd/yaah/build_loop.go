@@ -232,6 +232,7 @@ func (s *agentSession) loopBuilder(
 		SystemPrompt:               s.mainPrompt,
 		Messages:                   msgs,
 		SessionID:                  s.sessionID,
+		TraceStore:                 s.traceStore,
 		Persister:                  persister,
 		Hooks:                      hooks,
 		Steer:                      s.steerCh,

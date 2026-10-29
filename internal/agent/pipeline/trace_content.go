@@ -50,7 +50,7 @@ func (m *ShepherdTraceMiddleware) RecordAssistant(ctx context.Context, msg *type
 	if m.store == nil || m.sessionID == "" || msg == nil {
 		return
 	}
-	if msg.Content == "" && msg.ReasoningContent == "" && len(msg.ToolCalls) == 0 {
+	if msg.Content == "" && msg.ReasoningContent == "" && msg.ReasoningSignature == "" && msg.Refusal == "" && len(msg.ToolCalls) == 0 {
 		return
 	}
 	ctx = context.WithoutCancel(ctx)
@@ -139,7 +139,6 @@ func (m *ShepherdTraceMiddleware) RecordSessionContext(ctx context.Context, in T
 	if m.store == nil || m.sessionID == "" || m.sessionContextRecorded {
 		return
 	}
-	m.sessionContextRecorded = true
 	ctx = context.WithoutCancel(ctx)
 	m.ordinal++
 
@@ -201,6 +200,7 @@ func (m *ShepherdTraceMiddleware) RecordSessionContext(ctx context.Context, in T
 		slog.Debug("shepherd_trace: session context failed", "err", err)
 		return
 	}
+	m.sessionContextRecorded = true
 	m.lastFactIDs = receipt.FactIDs
 }
 

@@ -417,6 +417,9 @@ func newShepherdTraceProfileCmd() *cobra.Command {
 					if tool.output != "" {
 						fmt.Fprintf(w, "    out\t%s\n", truncateString(oneLine(tool.output), 120))
 					}
+					if tool.outputSpill != "" {
+						fmt.Fprintf(w, "    spill\t%s\n", tool.outputSpill)
+					}
 				}
 				for _, assistant := range t.assistant {
 					fmt.Fprintf(w, "  assistant\t%s\n", assistant)

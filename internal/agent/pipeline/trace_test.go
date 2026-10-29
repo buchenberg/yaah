@@ -636,3 +636,49 @@ func TestTraceMiddleware_StampsRetainedContext(t *testing.T) {
 		}
 	}
 }
+
+func TestRebuildTranscript_DedupesPromptAcrossIterations(t *testing.T) {
+	m := newTestTraceMiddleware(t)
+	m.SetTurnContext("run-1")
+	m.StartTurn(context.Background(), 0, "m", "same prompt")
+	m.RecordAssistant(context.Background(), &types.Message{
+		Role: "assistant",
+		ToolCalls: []types.ToolCall{{
+			ID: "call-1", Type: "function",
+			Function: types.ToolCallFn{Name: "read", Arguments: `{}`},
+		}},
+	}, 0)
+	if _, err := m.PostTool(context.Background(), []ToolResult{{Name: "read", Args: `{}`, Result: "body", CallID: "call-1"}}, &Step{}); err != nil {
+		t.Fatalf("PostTool: %v", err)
+	}
+	m.StartTurn(context.Background(), 1, "m", "same prompt")
+	m.RecordAssistant(context.Background(), &types.Message{Role: "assistant", Content: "done"}, 1)
+
+	slice, err := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	transcript := RebuildTranscriptFromSlice(slice, "test-session")
+	users := 0
+	for _, msg := range transcript.Messages {
+		if msg.Role == "user" {
+			users++
+		}
+	}
+	if users != 1 {
+		t.Fatalf("user messages = %d, want 1: %#v", users, transcript.Messages)
+	}
+}
+
+func TestTraceMiddleware_RecordsRefusalOnlyAssistant(t *testing.T) {
+	m := newTestTraceMiddleware(t)
+	m.RecordAssistant(context.Background(), &types.Message{Role: "assistant", Refusal: "I cannot help with that."}, 0)
+	slice, err := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 99, shepherdtrace.ModeBoth)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	payload := recordPayload(t, slice, "assistant:message", "yaah.message.assistant.v1")
+	if payload["refusal"] != "I cannot help with that." {
+		t.Errorf("refusal = %v", payload["refusal"])
+	}
+}
