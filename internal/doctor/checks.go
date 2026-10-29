@@ -209,42 +209,79 @@ func CheckDispatchWorld(cfg *config.Config, cfgErr error) Check {
 		return Check{Label: "Dispatch world", Status: "WARN", Detail: "config not loaded"}
 	}
 	sc := cfg.Agent.SubAgent
-	lane, retained := "proposal", true
-	if strings.ToLower(strings.TrimSpace(sc.Mode)) == "shared" {
-		// A shared-lane dispatch has no world at all; resolving it as a
-		// proposal would report a fake failure.
-		lane, retained = "shared", false
-	}
-	av := subagent.WorldAvailability{
-		// The per-dispatch container lane is not shipped yet (croft-dlb).
-		Container:        false,
-		ContainerOffered: false,
-		ContainerReason:  "per-dispatch container worlds are not implemented yet (yaah-ihfh.3, blocked on croft-dlb)",
-		Worktree:         retained,
-		Jail:             jailAvailable(),
-	}
-	res, err := subagent.ResolveWorld(subagent.WorldRequest{
-		Requested:   sc.World,
-		Lane:        lane,
-		Retained:    retained,
-		Containment: sc.Containment,
-		Network:     sc.Network,
-	}, av)
-	if err != nil {
-		return Check{Label: "Dispatch world", Status: "FAIL", Detail: err.Error()}
-	}
+	shared := strings.ToLower(strings.TrimSpace(sc.Mode)) == "shared"
 	requested := strings.TrimSpace(sc.World)
 	if requested == "" {
 		requested = "auto"
 	}
-	if res.Resolved == subagent.WorldShared {
+
+	// The runtime offers per-dispatch containers to a HOST session on Linux
+	// with an image configured; a container session shares its one container,
+	// and the proposal lane stays gated on croft-dlb.
+	offered := cfg.Workspace.Backend != config.BackendContainerd &&
+		runtime.GOOS == "linux" && cfg.Workspace.Containerd.Image != ""
+	av := subagent.WorldAvailability{
+		Container:        offered,
+		ContainerOffered: offered,
+		ContainerReason:  "per-dispatch containers need workspace.containerd.image on a Linux host",
+		Worktree:         !shared,
+		Jail:             jailAvailable(),
+	}
+	req := func(lane string, retained bool) subagent.WorldRequest {
+		return subagent.WorldRequest{
+			Requested:   requested,
+			Lane:        lane,
+			Retained:    retained,
+			Containment: sc.Containment,
+			Network:     sc.Network,
+			// Grants are global; a restrictive set is what the resolver must
+			// honour. Role overrides are not resolved here (doctor reports
+			// the session default).
+			RestrictiveGrants: len(sc.Grants) > 0,
+		}
+	}
+	proposal, perr := subagent.ResolveWorld(req("proposal", true), av)
+	report, rerr := subagent.ResolveWorld(req("report", false), av)
+
+	if shared {
+		if requested == "container" {
+			return Check{Label: "Dispatch world", Status: "FAIL", Detail: "mode: shared has no dispatch world — container is unreachable"}
+		}
 		return Check{Label: "Dispatch world", Status: "OK", Detail: "shared lane — no dispatch world (mode: shared)"}
 	}
-	detail := fmt.Sprintf("%s → %s; container lane not shipped (croft-dlb)", requested, res.Resolved)
-	if res.Degraded {
-		return Check{Label: "Dispatch world", Status: "WARN", Detail: detail + " — " + res.Reason}
+
+	switch requested {
+	case "container":
+		if perr == nil {
+			return Check{Label: "Dispatch world", Status: "OK", Detail: "container for every dispatch"}
+		}
+		if rerr == nil && report.Resolved == subagent.WorldContainer {
+			return Check{Label: "Dispatch world", Status: "WARN", Detail: "container for report lanes; proposal lanes fail closed until croft-dlb: " + perr.Error()}
+		}
+		return Check{Label: "Dispatch world", Status: "FAIL", Detail: perr.Error()}
+	case "worktree":
+		if perr != nil {
+			return Check{Label: "Dispatch world", Status: "FAIL", Detail: perr.Error()}
+		}
+		return Check{Label: "Dispatch world", Status: "OK", Detail: "worktree for every dispatch"}
+	default: // auto
+		if perr == nil && proposal.Resolved == subagent.WorldContainer {
+			return Check{Label: "Dispatch world", Status: "OK", Detail: "container for every dispatch"}
+		}
+		detail := "auto → worktree for proposals"
+		if rerr == nil && report.Resolved == subagent.WorldContainer {
+			detail += "; container for report lanes"
+		} else if offered {
+			detail += "; report lanes also use the worktree"
+		}
+		if offered {
+			detail += " (proposal containers gated on croft-dlb)"
+		}
+		if perr != nil {
+			return Check{Label: "Dispatch world", Status: "FAIL", Detail: detail + ": " + perr.Error()}
+		}
+		return Check{Label: "Dispatch world", Status: "OK", Detail: detail}
 	}
-	return Check{Label: "Dispatch world", Status: "OK", Detail: detail}
 }
 
 // jailAvailable reports whether a syscall jail is usable on this host.

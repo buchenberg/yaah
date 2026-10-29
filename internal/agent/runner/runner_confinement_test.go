@@ -488,3 +488,21 @@ func TestBuildSubAgentRegistry_RefusedJailStillOmitsHostNetworkTools(t *testing.
 		}
 	}
 }
+
+// TestResolveSubAgentConfinement_RestrictiveGrantsNeedAJail pins the honesty
+// rule for world-relative grants: a declared set cannot run with containment
+// off (the whole host would be writable) instead of being silently ignored.
+func TestResolveSubAgentConfinement_RestrictiveGrantsNeedAJail(t *testing.T) {
+	pv := tools.NewPathValidator(t.TempDir(), false, nil)
+	pv.WorkDir = pv.WorkspaceRoot
+	grants := []config.GrantConfig{{Path: "src", Access: "readwrite"}}
+
+	for _, setting := range []string{"off", "none", "advisory"} {
+		_, _, err := resolveSubAgentConfinement(pv,
+			config.SubAgentConfig{Containment: setting, Grants: grants},
+			"", t.TempDir(), allowAllNetwork())
+		if err == nil {
+			t.Errorf("containment=%q with restrictive grants must fail closed, not run unconfined", setting)
+		}
+	}
+}

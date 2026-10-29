@@ -1688,29 +1688,31 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 		}
 	}
 
-	if placement == "" || workdir == "" {
-		return nil, nil, nil
-	}
-
-	// Resolve the declared grants against this dispatch's world. An empty set
-	// keeps the legacy single root. A restrictive set is only honest where the
-	// jail can enforce it: advisory placement would silently grant the whole
-	// world, so it refuses instead.
+	// Resolve the declared grants before any early return: a restrictive set
+	// is unenforceable without a jail, and `containment: off` must refuse it
+	// rather than run unconfined with the whole host writable.
 	grantSet := cfg.Grants
 	if rc, ok := cfg.Roles[string(role)]; ok && len(rc.Grants) > 0 {
 		grantSet = rc.Grants
 	}
-	grants, gerr := tools.ResolveGrants(grantSet, workdir)
-	if gerr != nil {
-		return nil, nil, gerr
+	var grants tools.DispatchGrants
+	if workdir != "" {
+		var gerr error
+		grants, gerr = tools.ResolveGrants(grantSet, workdir)
+		if gerr != nil {
+			return nil, nil, gerr
+		}
 	}
-	if grants.Restrictive() {
-		if placement == containment.PlacementAdvisory {
-			return nil, nil, fmt.Errorf("grants: restrictive grants need a jail; containment is %q", requested)
-		}
-		if !available && placement != containment.PlacementPaddock {
-			return nil, nil, fmt.Errorf("grants: restrictive grants need a syscall jail, which this host cannot establish")
-		}
+	if grants.Restrictive() && placement == "" {
+		return nil, nil, fmt.Errorf("grants: restrictive grants need a jail, but containment is %q — set containment: auto or paddock", requested)
+	}
+
+	if placement == "" || workdir == "" {
+		return nil, nil, nil
+	}
+
+	if grants.Restrictive() && !available && placement != containment.PlacementPaddock {
+		return nil, nil, fmt.Errorf("grants: restrictive grants need a syscall jail, which this host cannot establish")
 	}
 
 	rec, confine := confinementRecord(requested, placement, available, backend, workdir, network)
@@ -1725,7 +1727,12 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 	// The write jail, with the configured egress posture. A restrictive posture
 	// the host cannot enforce fails closed inside the backend, so it is surfaced
 	// rather than silently downgraded.
-	ws := tools.NewConfinedLocalWorkspace(pv, backend, placement, network).WithWritableRoots(grants.Writable)
+	ws := tools.NewConfinedLocalWorkspace(pv, backend, placement, network)
+	if grants.Restrictive() {
+		// Only a declared set narrows the roots; the empty case keeps the
+		// legacy single-root workspace (and its hint path).
+		ws = ws.WithWritableRoots(grants.Writable)
+	}
 
 	// Redirect housekeeping writes into the worktree (the one writable root):
 	// HOME, TMPDIR, and the build caches. The scratch is scrubbed before the
