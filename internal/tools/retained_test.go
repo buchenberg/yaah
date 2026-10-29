@@ -984,3 +984,44 @@ func TestRetained_ReviewProvenanceDiscard(t *testing.T) {
 		t.Errorf("decision action = %v, want %s", decisions[0].Body.Payload["action"], goatherd.SettleDiscard)
 	}
 }
+
+func TestRecordFailedReviewDecision_SurvivesCancellation(t *testing.T) {
+	fx, _, rootID := newSessionFixtures(t)
+	parent, ok := fx.mgr.Get(rootID)
+	if !ok {
+		t.Fatal("root scope missing")
+	}
+	child, err := fx.mgr.Fork(rootID, "review-fail-child", nil)
+	if err != nil {
+		t.Fatalf("fork: %v", err)
+	}
+	proposal := &goatherd.MergeProposal{
+		ChildScopeID: child.ID(),
+		Changes:      []goatherd.ProposedChange{{Path: "out.txt", Kind: goatherd.ChangeCreate}},
+	}
+	factID, err := fx.mgr.RecordMergeProposal(context.Background(), proposal)
+	if err != nil {
+		t.Fatalf("RecordMergeProposal: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	longErr := errors.New(strings.Repeat("seal failed detail ", 1000))
+	if err := recordFailedReviewDecision(ctx, fx.mgr, proposal, factID, longErr); err != nil {
+		t.Fatalf("recordFailedReviewDecision on a cancelled context: %v", err)
+	}
+	decisions := findRetainedFacts(t, fx.store, parent.OwnerID(), goatherd.SchemaSupervisorDecision)
+	if len(decisions) != 1 {
+		t.Fatalf("decision facts = %d, want 1", len(decisions))
+	}
+	reason := fmt.Sprint(decisions[0].Body.Payload["reason"])
+	if !strings.Contains(reason, "seal failed") {
+		t.Errorf("reason = %q, want seal failure", reason)
+	}
+	if len(reason) > noteBudget+len(truncationMarker)+len("seal failed: ") {
+		t.Errorf("reason length = %d, want it bounded by noteBudget", len(reason))
+	}
+	if fmt.Sprint(decisions[0].Body.Payload["action"]) != "seal_failed" {
+		t.Errorf("action = %v, want seal_failed", decisions[0].Body.Payload["action"])
+	}
+}

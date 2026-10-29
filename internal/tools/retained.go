@@ -661,16 +661,8 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		// discard it rather than strand it. There is nothing to settle, but
 		// close the review pair with a failed decision so the proposal fact is
 		// not left as an unexplained orphan.
-		if reviewProposal != nil && reviewFactID != "" {
-			reason := "seal failed"
-			if sealErr != nil {
-				reason += ": " + truncateAt(sealErr.Error(), noteBudget)
-			}
-			// The run context may be exactly what failed; the terminal decision
-			// must still land, like the other audit facts.
-			if _, derr := mgr.RecordMergeDecision(context.WithoutCancel(ctx), reviewProposal, false, reason, "seal_failed", reviewFactID); derr != nil {
-				notes = append(notes, "review decision: "+derr.Error())
-			}
+		if derr := recordFailedReviewDecision(ctx, mgr, reviewProposal, reviewFactID, sealErr); derr != nil {
+			notes = append(notes, "review decision: "+derr.Error())
 		}
 		if scope, gok := mgr.Get(scopeID); gok {
 			_ = parent.Discard(scope)
@@ -1137,6 +1129,23 @@ func recordRetainedReview(ctx context.Context, mgr *goatherd.ScopeManager, scope
 		return nil, "", fmt.Errorf("record merge proposal: %w", err)
 	}
 	return proposal, factID, nil
+}
+
+// recordFailedReviewDecision closes a review pair whose seal failed. The run
+// context may be exactly what failed, so the terminal decision must not inherit
+// its cancellation; the reason is bounded like every other envelope caveat.
+func recordFailedReviewDecision(ctx context.Context, mgr *goatherd.ScopeManager, proposal *goatherd.MergeProposal, factID string, sealErr error) error {
+	if proposal == nil || factID == "" {
+		return nil
+	}
+	reason := "seal failed"
+	if sealErr != nil {
+		reason += ": " + truncateAt(sealErr.Error(), noteBudget)
+	}
+	if _, err := mgr.RecordMergeDecision(context.WithoutCancel(ctx), proposal, false, reason, "seal_failed", factID); err != nil {
+		return fmt.Errorf("record merge decision: %w", err)
+	}
+	return nil
 }
 
 // recordReviewDecision writes the verdict half of the provenance pair. select
