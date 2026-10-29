@@ -201,6 +201,66 @@ restores to the state before it instead of losing the whole attempt
 untracked content: scratch files, freshly authored roles, and sub-agent output
 survive it, and anything that cannot be moved back is reported rather than lost.
 
+### Session topology, lanes, and dispatch worlds
+
+A session runs on one of two substrates, each dispatch picks a lane from its
+role's output contract, and the lane resolves a world.
+
+**Local vs container session.**
+
+```mermaid
+flowchart LR
+  subgraph Local["local session"]
+    LO["orchestrator"]
+    LW["host workspace<br/>--workspace root · or unrestricted"]
+    LD["dispatch world<br/>worktree · sibling container"]
+    LO -->|"delegate"| LD
+    LD -->|"proposal / report"| LO
+    LW --- LD
+  end
+  subgraph Container["containerd session"]
+    CO["orchestrator + tools"]
+    CS["session container<br/>image · root"]
+    CO -->|"proposal lane · shared"| CS
+    CO -->|"report lane"| SIB["sibling container"]
+    SIB -->|"report"| CO
+  end
+```
+
+**Lane selection** (`agents.subagent.mode: retained`, the default).
+
+```mermaid
+flowchart TD
+  D["delegate(role, task)"] --> Q{"role output"}
+  Q -->|"report · read-only tools"| S["shared lane<br/>session tree"]
+  Q -->|"report · may mutate"| RR["retained report<br/>isolated · nothing sealed"]
+  Q -->|"proposal (default)"| RP["retained proposal<br/>isolated · sealed delta"]
+  RP -->|"container session"| S
+```
+
+**World resolution for a retained dispatch.**
+
+```mermaid
+flowchart TD
+  R["retained dispatch"] --> M{"agents.subagent.mode"}
+  M -->|"shared"| SH["shared · session tree"]
+  M -->|"retained"| T{"session substrate"}
+  T -->|"container session"| CS["proposal → shared (session container)<br/>report → sibling container"]
+  T -->|"local session"| W{"agents.subagent.world"}
+  W -->|"auto"| A{"container offered?<br/>Linux + image"}
+  A -->|"yes"| C["container"]
+  A -->|"no"| WT["worktree<br/>degraded when the offer failed"]
+  W -->|"worktree"| WT
+  W -->|"container"| C
+```
+
+`auto` prefers a per-dispatch container when the host offers one and otherwise
+uses a git worktree; an explicit `worktree` or `container` the host cannot
+provide fails the dispatch instead of silently weakening it. `yaah doctor` and
+every interactive UI report the resolved posture. The knobs are in
+[configuration.md](./docs/configuration.md#retained-worktrees-and-turn-checkpoints)
+and the role contract in [sub-agents.md](./docs/sub-agents.md).
+
 ### Confinement and egress
 
 Where the host can jail, the jail is real — Landlock on Linux, winacl on
