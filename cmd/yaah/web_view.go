@@ -269,9 +269,12 @@ func (v *sseView) HandleEvent(evt agent.Event) {
 			World: e.World, WorldDegraded: e.WorldDegraded, WorldReason: e.WorldReason,
 		}
 	case *agent.SubAgentEndEvent:
+		// The end frame deliberately carries no world: the browser can only
+		// correlate a sub-agent to a tool row heuristically, and the start
+		// frame already owns that label. Sending it here let an end frame
+		// stamp a concurrent dispatch's world onto a different row.
 		we = sseWireEvent{Type: "subagent.end", Role: e.Role, Model: e.Model,
-			Prompt: e.Prompt, Ms: e.Duration.Milliseconds(), Error: e.Error,
-			World: e.World, WorldDegraded: e.WorldDegraded, WorldReason: e.WorldReason}
+			Prompt: e.Prompt, Ms: e.Duration.Milliseconds(), Error: e.Error}
 	case *agent.EscalationEvent:
 		we = sseWireEvent{Type: "ctrl.status",
 			Text: fmt.Sprintf("ESCALATION [%s] %s: %s", e.Severity, e.SubAgentRole, e.Summary)}

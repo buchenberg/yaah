@@ -250,7 +250,9 @@ func TestSSEHeaderZeroWorldHidesBadge(t *testing.T) {
 }
 
 // TestSSESubAgentWorldFrames pins the per-dispatch world on the sub-agent
-// frames the browser uses for its row chip.
+// frames the browser uses for its row chip. It rides the start frame only:
+// the client cannot correlate an end frame to a row reliably, so an end-frame
+// world could land on a concurrent dispatch's row.
 func TestSSESubAgentWorldFrames(t *testing.T) {
 	buf := newSyncBuffer()
 	v := &sseView{w: buf}
@@ -260,8 +262,10 @@ func TestSSESubAgentWorldFrames(t *testing.T) {
 	if !strings.Contains(frames, `"type":"subagent.start"`) || !strings.Contains(frames, `"world":"container"`) {
 		t.Fatalf("start frame = %s", frames)
 	}
-	if !strings.Contains(frames, `"world":"worktree"`) || !strings.Contains(frames, `"world_degraded":true`) || !strings.Contains(frames, `"world_reason":"no image"`) {
-		t.Fatalf("end frame = %s", frames)
+	for _, unwanted := range []string{`"world":"worktree"`, `"world_degraded":true`, `"world_reason":"no image"`} {
+		if strings.Contains(frames, unwanted) {
+			t.Fatalf("end frame must not carry %s: %s", unwanted, frames)
+		}
 	}
 }
 
