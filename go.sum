@@ -57,6 +57,8 @@ github.com/buchenberg/goatherd-runtime/sandbox/croft v0.2.0 h1:79Sluas7nt8xl4pG5
 github.com/buchenberg/goatherd-runtime/sandbox/croft v0.2.0/go.mod h1:Ks/O80PIvS0oQVgjD4xHbI+CKgDxCiXJlTRwKSHui0o=
 github.com/buchenberg/goatherd-runtime/sandbox/landlock v0.1.2 h1:IyUEHKkKEjuRIY2A+jRgWcS1jAMfLexoZUnbXT/JnBQ=
 github.com/buchenberg/goatherd-runtime/sandbox/landlock v0.1.2/go.mod h1:+BvNWiBJCejWm5S42FJSS8ZxUybwStuItd1YDKzPvEA=
+github.com/buchenberg/goatherd-runtime/sandbox/seatbelt v0.1.0 h1:n+wV1keUY9pjNsntYpAdmiZ/VoUjcuSn+jqef1Xfd+U=
+github.com/buchenberg/goatherd-runtime/sandbox/seatbelt v0.1.0/go.mod h1:sNo6/uh/Bq/Oc7Z3DTrCJBUERkceJRunNQ+Egqsudcs=
 github.com/buchenberg/goatherd-runtime/sandbox/winacl v0.1.1 h1:4dEiWznbIJ4eh7Vqpas7X8a7A+vlXjLN6sQcRrAtCq4=
 github.com/buchenberg/goatherd-runtime/sandbox/winacl v0.1.1/go.mod h1:Ic1CLX5NtMF0gnKWux/l0LfPM7+uYH/SOINFBvEudEU=
 github.com/buchenberg/tviewmd v0.3.1 h1:vRxdZ8Ly0duL43+v/LFNlGPVop74kgg9pROBOQGpT+8=

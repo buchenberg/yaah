@@ -348,7 +348,7 @@ func CheckDispatchWorld(cfg *config.Config, cfgErr error) Check {
 
 // CheckContainment reports the sub-agent syscall-jail capability (Plan 7 Phase
 // 3): whether a containment backend is available here (Landlock on Linux,
-// winacl on Windows), and how agents.subagent's
+// winacl on Windows, Seatbelt on macOS), and how agents.subagent's
 // mode + containment will use it. A `paddock` placement on a host with no
 // backend fails closed, so it is surfaced as a FAIL rather than discovered at
 // dispatch.

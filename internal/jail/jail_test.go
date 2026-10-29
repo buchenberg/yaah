@@ -8,6 +8,7 @@ import (
 
 	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 	"github.com/buchenberg/goatherd-runtime/sandbox/landlock"
+	"github.com/buchenberg/goatherd-runtime/sandbox/seatbelt"
 )
 
 type fakeBackend struct {
@@ -45,22 +46,23 @@ func TestBackendFollowsDetectorEntry(t *testing.T) {
 			t.Errorf("backendFor(%q) with a nil entry: = %v, want nil", goos, b)
 		}
 	}
-	// A table missing the host entirely, e.g. macOS, selects nothing.
+	// A table missing darwin selects nothing, exactly like any other absent
+	// entry; production's table now has one.
 	if b := backendFor("darwin", present); b != nil {
 		t.Errorf("backendFor(%q): = %v, want nil — no detector entry", "darwin", b)
 	}
 }
 
-// TestDetectorKeySet pins the exact production table: exactly the two members
-// the containment family ships. A removed key would silently demote a
-// platform to advisory; this names the drift.
+// TestDetectorKeySet pins the exact production table: the three members the
+// containment family ships. A removed key would silently demote a platform to
+// advisory; this names the drift.
 func TestDetectorKeySet(t *testing.T) {
 	got := make([]string, 0, len(detectors))
 	for k := range detectors {
 		got = append(got, k)
 	}
 	sort.Strings(got)
-	want := []string{"linux", "windows"}
+	want := []string{"darwin", "linux", "windows"}
 	if !slices.Equal(got, want) {
 		t.Errorf("detectors keys = %v, want exactly %v", got, want)
 	}
@@ -80,6 +82,10 @@ func TestBackendOnThisHost(t *testing.T) {
 		// Windows asserts itself in the runner/doctor confinement tests: the
 		// placement resolution exercises the winacl path end to end on CI.
 		return
+	case "darwin":
+		if got, want := Backend() != nil, seatbelt.Detect() != nil; got != want {
+			t.Errorf("Backend() != nil = %v, want %v (the host's Seatbelt availability)", got, want)
+		}
 	default:
 		if Backend() != nil {
 			t.Errorf("Backend() = %v on %s, want nil (no detector entry)", Backend(), runtime.GOOS)

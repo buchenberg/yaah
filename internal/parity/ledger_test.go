@@ -33,6 +33,9 @@ func TestLedgerPinsMatchGoMod(t *testing.T) {
 		"github.com/buchenberg/goatherd-kernel v0.18.0",
 		"github.com/buchenberg/goatherd-runtime v0.20.0",
 		"github.com/buchenberg/goatherd-runtime/sandbox/croft v0.2.0",
+		"github.com/buchenberg/goatherd-runtime/sandbox/landlock v0.1.2",
+		"github.com/buchenberg/goatherd-runtime/sandbox/winacl v0.1.1",
+		"github.com/buchenberg/goatherd-runtime/sandbox/seatbelt v0.1.0",
 		"github.com/buchenberg/goatherd-croft v0.9.1",
 	}
 	for _, pin := range pins {
@@ -65,15 +68,14 @@ func TestLedgerNamesEveryWorld(t *testing.T) {
 	}
 }
 
-// TestLedgerRecordsBlockers pins the upstream blocker that keeps part of the
-// parity epic open. Dropping the claim when it lands is deliberate, and this
-// guard makes it explicit rather than accidental. Container settlement is no
-// longer a blocker: it ships as the GitDelta manifest (§Container settlement).
-func TestLedgerRecordsBlockers(t *testing.T) {
-	ledger := read(t, ledgerPath)
-	for _, blocker := range []string{"seatbelt"} {
-		if !strings.Contains(strings.ToLower(ledger), strings.ToLower(blocker)) {
-			t.Errorf("ledger must name the %q blocker while it is open", blocker)
+// TestLedgerNamesTheContainmentFamily pins the family's members. Dropping a
+// platform from the ledger while it ships is a documentation defect; the pin
+// list above catches the module version drift.
+func TestLedgerNamesTheContainmentFamily(t *testing.T) {
+	ledger := strings.ToLower(read(t, ledgerPath))
+	for _, member := range []string{"landlock", "winacl", "seatbelt"} {
+		if !strings.Contains(ledger, member) {
+			t.Errorf("ledger does not name the %q containment member", member)
 		}
 	}
 }
