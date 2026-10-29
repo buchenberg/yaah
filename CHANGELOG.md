@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.117.1](https://github.com/buchenberg/yaah/compare/v0.117.0...v0.117.1) (2026-10-29)
+
+
+### Documentation
+
+* **storage:** include refusal and clarify argument caps ([eb6e74a](https://github.com/buchenberg/yaah/commit/eb6e74af53e3069318771937a140b12a1b241809))
+* **storage:** record the state.db/trace.db two-tier contract ([1229278](https://github.com/buchenberg/yaah/commit/1229278d87f6459b9f8aa9e76392394aceac99c5))
+* **storage:** record the state.db/trace.db two-tier contract ([82bf9a3](https://github.com/buchenberg/yaah/commit/82bf9a3889416bd938386c80fda7654a0a992048))
+
 ## [0.117.0](https://github.com/buchenberg/yaah/compare/v0.116.0...v0.117.0) (2026-10-29)
 
 
