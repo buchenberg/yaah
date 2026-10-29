@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
@@ -36,6 +37,11 @@ type SessionSandbox struct {
 
 	destroyOnce sync.Once
 	destroyErr  error
+
+	// captureMu serializes snapshot captures among dispatches. Session tools
+	// still run concurrently, so a capture can interrupt a foreground command;
+	// callers use it at dispatch boundaries.
+	captureMu sync.Mutex
 }
 
 // StartSessionSandbox probes the configured image contract (D5) on a
@@ -109,6 +115,54 @@ func (s *SessionSandbox) Backend() string { return s.sb.Backend() }
 // Workspace returns the tool-facing substrate bound to the session sandbox.
 // Tools dispatch through it; they never see the sandbox itself.
 func (s *SessionSandbox) Workspace() Workspace { return s.ws }
+
+// Capture records the session container's current state, serialized against
+// other dispatch captures. The session task may be stopped and restarted by
+// the snapshot backend, so callers use this at a dispatch boundary rather than
+// in the middle of a foreground tool call.
+func (s *SessionSandbox) Capture(ctx context.Context) (shepherdtrace.WorkspaceState, error) {
+	s.captureMu.Lock()
+	defer s.captureMu.Unlock()
+	if s.sb == nil {
+		return shepherdtrace.WorkspaceState{}, errors.New("workspace: session sandbox is not initialized")
+	}
+	return s.sb.Capture(ctx)
+}
+
+// Releasable reports whether this session's backend can drop a captured
+// state's lease. Callers probe this before Capture, which commits and pins a
+// layer.
+func (s *SessionSandbox) Releasable() bool {
+	if s.sb == nil {
+		return false
+	}
+	_, ok := s.sb.(interface {
+		ReleaseState(context.Context, shepherdtrace.WorkspaceState) error
+	})
+	return ok
+}
+
+// ReleaseCapture drops a state captured by Capture, serialized with captures
+// so a release cannot race another dispatch's snapshot operation.
+func (s *SessionSandbox) ReleaseCapture(ctx context.Context, state shepherdtrace.WorkspaceState) error {
+	s.captureMu.Lock()
+	defer s.captureMu.Unlock()
+	if s.sb == nil {
+		return errors.New("workspace: session sandbox is not initialized")
+	}
+	releaser, ok := s.sb.(interface {
+		ReleaseState(context.Context, shepherdtrace.WorkspaceState) error
+	})
+	if !ok {
+		return fmt.Errorf("workspace: session backend %q does not expose ReleaseState", s.sb.Backend())
+	}
+	// The caller passes a cancel-stripped context so a completed dispatch can
+	// still clean up. Bound the backend call here: a wedged release must not
+	// hold captureMu past every later dispatch's own timeout.
+	releaseCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	return releaser.ReleaseState(releaseCtx, state)
+}
 
 // Destroy releases the session sandbox. It is idempotent and safe from
 // concurrent teardown paths (a failed startup that already destroyed, then

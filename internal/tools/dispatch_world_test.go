@@ -217,3 +217,27 @@ func TestWorldFactPayloadShape(t *testing.T) {
 		t.Errorf("payload = %v", got)
 	}
 }
+
+func TestResolveDispatchWorld_ContainerSessionSibling(t *testing.T) {
+	rt := RetainedRuntime{
+		World:           "auto",
+		ContainerWorlds: true,
+		Containment:     "auto",
+		Network:         "allow_all",
+		DispatchWorlds: &DispatchWorlds{
+			SessionSandbox: &SessionSandbox{},
+		},
+	}
+
+	report, err := resolveDispatchWorld(rt, "reviewer", true)
+	if err != nil {
+		t.Fatalf("report dispatch: %v", err)
+	}
+	if report.Resolved != subagent.WorldContainer {
+		t.Fatalf("report resolved = %q, want container", report.Resolved)
+	}
+
+	if _, err := resolveDispatchWorld(rt, "developer", false); err == nil {
+		t.Fatal("a container-session proposal must not resolve to a worktree or a retained container")
+	}
+}

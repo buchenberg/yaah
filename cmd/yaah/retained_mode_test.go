@@ -23,3 +23,25 @@ func TestRetainedMode(t *testing.T) {
 		}
 	}
 }
+
+func TestRetainedLaneActive(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		mode             string
+		retainCapable    bool
+		containerSession bool
+		want             bool
+	}{
+		{"local capable", "retained", true, false, true},
+		{"local uncapturable", "retained", false, false, false},
+		{"container session report lane", "retained", false, true, true},
+		{"shared mode local", "shared", true, false, false},
+		{"shared mode container", "shared", false, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := retainedLaneActive(tc.mode, tc.retainCapable, tc.containerSession); got != tc.want {
+				t.Errorf("retainedLaneActive(%q, %v, %v) = %v, want %v", tc.mode, tc.retainCapable, tc.containerSession, got, tc.want)
+			}
+		})
+	}
+}

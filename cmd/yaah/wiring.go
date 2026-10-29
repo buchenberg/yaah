@@ -723,21 +723,25 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	}
 	egressBroker = broker
 
-	// Per-dispatch container worlds (yaah-ihfh.3): a host session can give a
-	// REPORT dispatch its own container when a container image is configured,
-	// reusing the same workspace.containerd stanza the session container uses.
-	// The worktree stays every other dispatch's world — a proposal must settle,
-	// and the git/croft settlement path is not wired yet — and a container session
-	// already runs every dispatch inside its one container. Off-Linux there is
-	// no containerd adapter, so nothing is offered and auto keeps the worktree.
+	// Per-dispatch container worlds (yaah-ihfh.3, yaah-a7ks): a Linux host with
+	// a container image can give a REPORT dispatch its own sibling container.
+	// In a host session the sibling copies the host repository in; in a
+	// container session it is seeded from the session container's captured
+	// state. Proposal lanes stay unretained in a container session and are
+	// routed shared; a host session keeps the GitDelta proposal path.
 	var dispatchWorlds *tools.DispatchWorlds
-	if sessionSandbox == nil && runtime.GOOS == "linux" && cfg.Workspace.Containerd.Image != "" {
+	if runtime.GOOS == "linux" && cfg.Workspace.Containerd.Image != "" {
 		dispatchWorlds = &tools.DispatchWorlds{
 			Config: cfg.Workspace,
 			Opener: tools.OpenContainerdWorkspaceSandbox,
 			Deny:   deny,
 		}
+		if sessionSandbox != nil {
+			dispatchWorlds.SessionSandbox = sessionSandbox
+		}
 	}
+	containerSession := dispatchWorlds != nil && dispatchWorlds.SessionSandbox != nil
+	retainLane := retainedLaneActive(cfg.Agent.SubAgent.Mode, retainCapable, containerSession)
 
 	taskTool := runner.NewDelegateTool(runner.DelegateToolOpts{
 		Provider:              provider,
@@ -770,11 +774,12 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		ResolveProviderByName: resolveProviderByName,
 
 		// Retained lane (Plan 7 Phase 2): default on in local mode, where a
-		// sub-agent's work comes back as a proposal. Isolated mode keeps the
-		// container as the substrate (no host worktrees), and
-		// agents.subagent.mode: shared is the opt-out.
+		// sub-agent's work comes back as a proposal. A container session builds
+		// the runtime too, for report-lane sibling worlds; its proposal lane is
+		// routed shared below because there is no host worktree to settle into.
+		// agents.subagent.mode: shared remains the opt-out.
 		SubNetwork:           subNetwork,
-		Retain:               sessionSandbox == nil && retainedMode(cfg.Agent.SubAgent.Mode) && retainCapable,
+		Retain:               retainLane,
 		RetainedRepoPath:     cfg.Agent.Default.RetainedRepoPath,
 		RetainedWorktreeRoot: cfg.Agent.Default.RetainedWorktreeRoot,
 		RetainedBootstrap:    cfg.Agent.Default.RetainedWorktreeBootstrap,
@@ -797,6 +802,12 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		case subagent.LaneShared:
 			return tools.LaneShared
 		default:
+			if containerSession {
+				// A container session has no host worktree and no retained
+				// settlement target; proposal work stays on the session
+				// container under the shared lane.
+				return tools.LaneShared
+			}
 			return tools.LaneProposal
 		}
 	}
@@ -1217,6 +1228,17 @@ func normalizeBrokerHosts(hosts []string) []string {
 		}
 	}
 	return out
+}
+
+// retainedLaneActive decides whether NewDelegateTool should build the retained
+// runtime. A local session additionally needs a capturable root sandbox; a
+// container session's root is pure-causal, and its report-lane siblings come
+// from the session container, so retainCapable does not apply there.
+func retainedLaneActive(mode string, retainCapable, containerSession bool) bool {
+	if !retainedMode(mode) {
+		return false
+	}
+	return containerSession || retainCapable
 }
 
 // retainedMode reports whether agents.subagent.mode selects the retained-run

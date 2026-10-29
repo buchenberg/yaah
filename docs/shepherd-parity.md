@@ -30,7 +30,7 @@ for the jail; it does not compose with one.
 | Session | World per dispatch | Authority | Settlement |
 |---|---|---|---|
 | local (default) | linked git worktree (`ForkIsolated`); report **and** proposal lanes may use a per-dispatch container under `world: auto` when `workspace.containerd.image` is set on Linux | Landlock / winacl around the dispatch's shell children; the container boundary for a container world | sealed proposal (worktree); GitDelta manifest (container proposal); none (report) |
-| containerd | the session's one container (shared) | the container boundary | none (`Retain` off) |
+| containerd | report lanes may use a per-dispatch sibling container (seeded from the session's captured state); proposal lanes stay on the session container | the container boundary | none (proposals unretained; reports unretained) |
 
 The reference's grain is one world per **run**. yaah's run is a dispatch, so
 parity means one world per **dispatch**.
@@ -161,8 +161,9 @@ copied in at dispatch time, the body runs with the sandbox workspace as its
 substrate, and the scope and container are torn down afterwards. A report never
 seals; a proposal seals a `GitDelta` manifest before teardown.
 
-- Offered only in a host session (no session container) on Linux with
-  `workspace.containerd.image` set.
+- Offered in a host session, and in a container session for **report** lanes,
+  on Linux with `workspace.containerd.image` set. A container-session sibling
+  is seeded from the session container's captured state, not a stale host copy.
 - `world: auto` prefers the container for both lanes; a **preflight** failure
   (open, probe, create, bootstrap) steps down to the worktree with
   `Degraded=true` and a reason naming the failure.
@@ -178,6 +179,9 @@ seals; a proposal seals a `GitDelta` manifest before teardown.
   container world: the shell children are netns-bound, but `http`/`webfetch`
   execute in the yaah process on the host, which a container netns cannot
   cover. `allow_all` is the only posture a container world accepts.
+- **Container-session proposals stay unretained on the session container** and
+  are routed shared: there is no host worktree and no retained settlement
+  target. This is the recorded behavior (`yaah-a7ks`), not a silent fallback.
 
 ### Retained container worlds — shipped as a change manifest
 

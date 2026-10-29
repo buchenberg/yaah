@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -52,22 +53,70 @@ func dispatchWorldPreflightFailure(res subagent.WorldResolution, cause error) (s
 }
 
 // openDispatchWorld runs the container preflight for one dispatch: probe the
-// image contract, create the sandbox, and copy the host tree in. It returns a
-// live sandbox on success; every failure path destroys whatever was opened
-// (StartSessionSandbox owns that contract).
-//
-// The host repository is the copy-in source, exactly as the session container
-// seeds from the session's working tree.
+// image contract, create the sandbox, and seed it. In a host session the
+// source is the host repository; in a container session it is the session
+// container's captured state, so a sibling sees the session's current world
+// rather than a stale host copy. It returns a live sandbox on success; every
+// failure path destroys whatever was opened.
 func openDispatchWorld(ctx context.Context, rt RetainedRuntime) (*SessionSandbox, error) {
 	dw := rt.DispatchWorlds
 	if dw == nil || dw.Opener == nil {
 		return nil, fmt.Errorf("no per-dispatch container setup is wired for this session")
 	}
+	startCtx, cancel := context.WithTimeout(ctx, dispatchWorldStartTimeout)
+	defer cancel()
+
+	if dw.SessionSandbox != nil {
+		if dw.SessionSandbox.sb == nil {
+			return nil, fmt.Errorf("the container session has no sandbox to seed from")
+		}
+		// A sibling is seeded from the session's snapshot, not the host tree:
+		// edits made in the session container are part of the dispatch's
+		// world, and the host copy may be stale.
+		//
+		// Probe releasability *before* Capture: Capture commits and pins a
+		// layer, so a guard afterwards would refuse after the pin already
+		// exists. The croft adapter implements ReleaseState; the fake does so
+		// as a no-op; any other isolated backend must provide one.
+		hasRelease := dw.SessionSandbox.Releasable()
+		if !hasRelease && dw.SessionSandbox.sb.Capabilities().Isolated {
+			return nil, fmt.Errorf("session backend %q captures state but does not expose ReleaseState", dw.SessionSandbox.sb.Backend())
+		}
+		state, err := dw.SessionSandbox.Capture(startCtx)
+		if err != nil {
+			return nil, fmt.Errorf("capture the session container state: %w", err)
+		}
+		release := func() error {
+			// Capture pins a state. The sibling's active layer keeps its own
+			// lease; drop this transient pin once the state has been applied.
+			if !hasRelease {
+				return nil
+			}
+			return dw.SessionSandbox.ReleaseCapture(context.WithoutCancel(startCtx), state)
+		}
+		ss, err := StartSessionSandbox(startCtx, dw.Config, dw.Opener, "", dw.Deny)
+		if err != nil {
+			return nil, errors.Join(err, release())
+		}
+		if err := ss.sb.Apply(startCtx, state); err != nil {
+			dctx, dcancel := context.WithTimeout(context.WithoutCancel(ctx), dispatchWorldDestroyTimeout)
+			defer dcancel()
+			destroyErr := ss.Destroy(dctx)
+			releaseErr := release()
+			return nil, errors.Join(fmt.Errorf("seed the sibling container from the session state: %w", err), destroyErr, releaseErr)
+		}
+		if err := release(); err != nil {
+			dctx, dcancel := context.WithTimeout(context.WithoutCancel(ctx), dispatchWorldDestroyTimeout)
+			defer dcancel()
+			_ = ss.Destroy(dctx)
+			return nil, fmt.Errorf("release the session capture: %w", err)
+		}
+		return ss, nil
+	}
+
 	if rt.RepoPath == "" {
 		return nil, fmt.Errorf("no repository to seed the dispatch container from")
 	}
-	startCtx, cancel := context.WithTimeout(ctx, dispatchWorldStartTimeout)
-	defer cancel()
 	return StartSessionSandbox(startCtx, dw.Config, dw.Opener, rt.RepoPath, dw.Deny)
 }
 
