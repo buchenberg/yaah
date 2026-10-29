@@ -660,3 +660,29 @@ func TestSubAgentRetainedContext(t *testing.T) {
 		t.Errorf("host context = %#v", host)
 	}
 }
+
+func TestSubAgentTraceCWDMatchesAdvertisedWorld(t *testing.T) {
+	ws := &traceTestWorkspace{}
+	opts := taskRunnerOpts{workspace: ws}
+	if got := subAgentTraceCWD(opts, "/model/supplied"); got != "/sandbox/root" {
+		t.Errorf("isolated trace cwd = %q, want the sandbox workdir", got)
+	}
+	if got := subAgentTraceCWD(taskRunnerOpts{}, "/work/wt"); got != "/work/wt" {
+		t.Errorf("workdir trace cwd = %q", got)
+	}
+}
+
+func TestSubAgentRetainedContextContainer(t *testing.T) {
+	ws := &traceTestWorkspace{}
+	got := subAgentRetainedContext(context.Background(), taskRunnerOpts{workspace: ws}, "developer", "/model/supplied", nil, nil)
+	if got.SubstrateRef != "yaah.substrate.container.v1" {
+		t.Errorf("substrate = %q", got.SubstrateRef)
+	}
+	if got.Containment != shepherdtrace.ContainContained {
+		t.Errorf("containment = %q, want contained (runtime backend parity)", got.Containment)
+	}
+}
+
+type traceTestWorkspace struct{ tools.Workspace }
+
+func (*traceTestWorkspace) WorkDir() string { return "/sandbox/root" }

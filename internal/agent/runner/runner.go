@@ -544,10 +544,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 
 		subTraceID := fmt.Sprintf("sub-%s-%s-%d", role, opts.parentSession, time.Now().UnixNano())
 		traceContext := subAgentRetainedContext(ctx, opts, role, params.Workdir, subConf, subReg)
-		traceCWD := params.Workdir
-		if traceCWD == "" && opts.workspace != nil {
-			traceCWD = opts.workspace.WorkDir()
-		}
+		traceCWD := subAgentTraceCWD(opts, params.Workdir)
 
 		// Persist the trace-owner mapping so Shepherd facts recorded under
 		// the synthetic sub-ID remain joinable to the parent session
@@ -747,20 +744,32 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 // substrate, containment, and role tool belt. The kernel stamps it into every
 // fact envelope, so authority provenance is digest-bound rather than living
 // only in the mutable sessions.workspace_backend/session_prompt columns.
+func subAgentTraceCWD(opts taskRunnerOpts, workdir string) string {
+	// Mirror buildSubAgentSysPrompt: the sandbox workdir wins when a
+	// workspace is installed, because the isolated lane ignores a
+	// model-supplied workdir and file tools resolve against the sandbox.
+	if opts.workspace != nil {
+		return opts.workspace.WorkDir()
+	}
+	return workdir
+}
+
 func subAgentRetainedContext(ctx context.Context, opts taskRunnerOpts, role subagent.SubAgentRole, workdir string, conf *subAgentConfinement, reg *tools.Registry) *shepherdtrace.RetainedContext {
 	substrate := "yaah.substrate.host.v1"
 	containment := shepherdtrace.ContainUncontained
 	switch {
 	case tools.DispatchWorkspace(ctx) != nil, opts.workspace != nil:
 		substrate = "yaah.substrate.container.v1"
-		containment = shepherdtrace.ContainFull
+		// Match the runtime's container backend, which reports contained
+		// (see sandboxfake's documented parity with containerd).
+		containment = shepherdtrace.ContainContained
 	case workdir != "":
 		substrate = "yaah.substrate.worktree.v1"
 		if conf != nil && conf.Enforced {
 			containment = shepherdtrace.ContainContained
 		}
 	}
-	if conf != nil && conf.Enforced && containment != shepherdtrace.ContainFull {
+	if conf != nil && conf.Enforced && containment == shepherdtrace.ContainUncontained {
 		containment = shepherdtrace.ContainContained
 	}
 
