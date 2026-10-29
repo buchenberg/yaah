@@ -337,7 +337,7 @@ Sub-agents use their own curated pipeline and per-role directives.
 | `output_limit` | 51200 | Byte cap on sub-agent reports; 0 = built-in 50 KiB cap |
 | `json_mode` | false | Force structured JSON output |
 | `mode` | `retained` | Dispatch lane — `retained` (isolated worktree + proposal) or `shared` (direct to host) |
-| `world` | `auto` | Dispatch world — `auto` (per-dispatch container for report and proposal dispatches when `workspace.containerd.image` is set on Linux, else the worktree, recording any degradation), `worktree` (never container), `container` (fails closed if unavailable). A proposal seals a GitDelta manifest and destroys its container at seal; a report never seals. Orthogonal to `mode`. See [shepherd-parity.md](./shepherd-parity.md#dispatch-worlds) |
+| `world` | `auto` | Dispatch world — `auto` (per-dispatch container for report and proposal dispatches in a host session when `workspace.containerd.image` is set on Linux, else the worktree, recording any degradation; in a container session, report lanes use a sibling container and proposal lanes stay shared/unretained), `worktree` (never container), `container` (fails closed if unavailable). A proposal seals a GitDelta manifest and destroys its container at seal; a report never seals. Orthogonal to `mode`. See [shepherd-parity.md](./shepherd-parity.md#dispatch-worlds) |
 | `roles.<name>.world` | — | Per-role world override (`auto` / `worktree` / `container`); empty inherits `agents.subagent.world` |
 | `grants` | `[]` | Per-dispatch write authority — a list of `{path, access}` roots relative to the dispatch world. `readwrite` roots are writable, `readonly` roots are declared but denied writes; roots must be disjoint. Empty = the whole world (legacy) |
 | `roles.<name>.grants` | — | Per-role grant set; empty inherits `agents.subagent.grants` |
@@ -437,8 +437,10 @@ The `containerd` stanza is also the per-dispatch container's config: in a
 lets a **report-lane** sub-agent dispatch run in its own container instead of a
 worktree, and gives a **proposal-lane** dispatch the same world. A report
 container is created at dispatch time and destroyed afterwards; it never seals.
-A proposal container seals a `GitDelta` change manifest before it is destroyed,
-and `select`/`apply` settle that manifest onto the host. The manifest, the host
+A host-session proposal container seals a `GitDelta` change manifest before it is
+destroyed, and `select`/`apply` settle that manifest onto the host. In a
+container session, report lanes get a sibling container seeded from the session's
+captured state; proposal lanes stay on the session container and are unretained. The manifest, the host
 basis it was measured against, and the settlement transition markers live under
 `.yaah/proposals/<id>/`, so a restarted session rehydrates the open proposal and
 `proposal list`/`show`/`select` can reach it. A preflight failure (open, probe,

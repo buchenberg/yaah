@@ -52,22 +52,43 @@ func dispatchWorldPreflightFailure(res subagent.WorldResolution, cause error) (s
 }
 
 // openDispatchWorld runs the container preflight for one dispatch: probe the
-// image contract, create the sandbox, and copy the host tree in. It returns a
-// live sandbox on success; every failure path destroys whatever was opened
-// (StartSessionSandbox owns that contract).
-//
-// The host repository is the copy-in source, exactly as the session container
-// seeds from the session's working tree.
+// image contract, create the sandbox, and seed it. In a host session the
+// source is the host repository; in a container session it is the session
+// container's captured state, so a sibling sees the session's current world
+// rather than a stale host copy. It returns a live sandbox on success; every
+// failure path destroys whatever was opened.
 func openDispatchWorld(ctx context.Context, rt RetainedRuntime) (*SessionSandbox, error) {
 	dw := rt.DispatchWorlds
 	if dw == nil || dw.Opener == nil {
 		return nil, fmt.Errorf("no per-dispatch container setup is wired for this session")
 	}
+	startCtx, cancel := context.WithTimeout(ctx, dispatchWorldStartTimeout)
+	defer cancel()
+
+	if dw.SessionSandbox != nil {
+		// A sibling is seeded from the session's snapshot, not the host tree:
+		// edits made in the session container are part of the dispatch's
+		// world, and the host copy may be stale.
+		state, err := dw.SessionSandbox.sb.Capture(startCtx)
+		if err != nil {
+			return nil, fmt.Errorf("capture the session container state: %w", err)
+		}
+		ss, err := StartSessionSandbox(startCtx, dw.Config, dw.Opener, "", dw.Deny)
+		if err != nil {
+			return nil, err
+		}
+		if err := ss.sb.Apply(startCtx, state); err != nil {
+			dctx, dcancel := context.WithTimeout(context.WithoutCancel(ctx), dispatchWorldDestroyTimeout)
+			defer dcancel()
+			_ = ss.Destroy(dctx)
+			return nil, fmt.Errorf("seed the sibling container from the session state: %w", err)
+		}
+		return ss, nil
+	}
+
 	if rt.RepoPath == "" {
 		return nil, fmt.Errorf("no repository to seed the dispatch container from")
 	}
-	startCtx, cancel := context.WithTimeout(ctx, dispatchWorldStartTimeout)
-	defer cancel()
 	return StartSessionSandbox(startCtx, dw.Config, dw.Opener, rt.RepoPath, dw.Deny)
 }
 

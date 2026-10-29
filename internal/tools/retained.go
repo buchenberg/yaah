@@ -118,6 +118,11 @@ type DispatchWorlds struct {
 	// substrates must copy the same files in, or a secret readable in one
 	// world would be absent from the other.
 	Deny []string
+	// SessionSandbox is the container session's own sandbox when this dispatch
+	// setup belongs to a container session. Its current state seeds each
+	// sibling container; a nil value means the host tree is the source (the
+	// local-session lane).
+	SessionSandbox *SessionSandbox
 }
 
 // proposalEnvelope is the JSON the orchestrator receives from a retained
@@ -354,6 +359,9 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	if rt.Proposals == nil {
 		return "", fmt.Errorf("delegate: retained mode needs a proposal registry — runner.NewDelegateTool creates one per session")
 	}
+	if rt.DispatchWorlds != nil && rt.DispatchWorlds.SessionSandbox != nil && !report {
+		return "", fmt.Errorf("delegate: container-session proposals stay unretained on the session container; route the role shared")
+	}
 	parent, ok := mgr.Get(rt.RootScopeID)
 	if !ok {
 		return "", fmt.Errorf("delegate: root scope %s not found", rt.RootScopeID)
@@ -419,6 +427,9 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		worldRes, werr = dispatchWorldPreflightFailure(worldRes, perr)
 		if werr != nil {
 			return "", werr
+		}
+		if rt.DispatchWorlds != nil && rt.DispatchWorlds.SessionSandbox != nil && worldRes.Resolved == subagent.WorldWorktree {
+			return "", fmt.Errorf("delegate: sibling container unavailable in a container session: %w", perr)
 		}
 	}
 
@@ -586,26 +597,38 @@ func resolveDispatchWorld(rt RetainedRuntime, role string, report bool) (subagen
 		lane = "report"
 	}
 
-	// Container proposals are durable: the manifest, host basis, and
-	// settlement transition markers live under .yaah/proposals, and
-	// LoadProposalRegistry rebuilds them on the next session. That is what
-	// lets `auto` use a container for a proposal too, not just a report.
-	containerRetains := rt.DispatchWorlds != nil
+	// Container proposals in a host session are durable: the manifest, host
+	// basis, and settlement transition markers live under .yaah/proposals,
+	// and LoadProposalRegistry rebuilds them on the next session. A container
+	// session gets sibling worlds for REPORT lanes only; its proposals stay
+	// on the session container, unretained, and are routed shared before this
+	// resolver runs.
+	containerSession := rt.DispatchWorlds != nil && rt.DispatchWorlds.SessionSandbox != nil
+	containerRetains := rt.DispatchWorlds != nil && !containerSession
 	containerOffered := rt.ContainerWorlds
 	retainsReason := ""
-	if !containerRetains {
+	if containerSession {
+		retainsReason = "container-session proposals remain unretained; report lanes use sibling containers"
+	} else if !containerRetains {
 		retainsReason = "container settlement is unavailable in this session: no per-dispatch container setup is wired"
+	}
+	worktree := !containerSession
+	worktreeReason := ""
+	if containerSession {
+		worktreeReason = "a container session has no host worktree; report lanes use a sibling container"
 	}
 
 	av := subagent.WorldAvailability{
 		// A per-dispatch container is created only where the session wired the
-		// setup: a host session with workspace.containerd.image on Linux.
+		// setup: a Linux host with workspace.containerd.image on session or
+		// dispatch config.
 		Container:              rt.ContainerWorlds,
 		ContainerOffered:       containerOffered,
 		ContainerRetains:       containerRetains,
 		ContainerRetainsReason: retainsReason,
-		ContainerReason:        "per-dispatch container worlds need workspace.containerd.image on a Linux host, and a wired dispatch setup for container settlement",
-		Worktree:               true,
+		ContainerReason:        "per-dispatch container worlds need workspace.containerd.image on a Linux host, and a wired dispatch setup",
+		Worktree:               worktree,
+		WorktreeReason:         worktreeReason,
 		Jail:                   jailAvailable(),
 	}
 

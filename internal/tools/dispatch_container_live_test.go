@@ -180,3 +180,88 @@ func assertProposalFact(t *testing.T, fx *sessionFixtures, rootID, schema string
 	}
 	t.Fatalf("no %s fact on the root owner path", schema)
 }
+
+// TestLive_ContainerSessionSiblingReport proves a sibling container in a
+// container session is seeded from the session's captured state, not the host
+// tree, and that the session container survives the dispatch.
+func TestLive_ContainerSessionSiblingReport(t *testing.T) {
+	addr := strings.TrimSpace(os.Getenv(liveAddrEnv))
+	image := strings.TrimSpace(os.Getenv(liveImageEnv))
+	if addr == "" || image == "" {
+		t.Skipf("set %s and %s to run the container-session sibling verification", liveAddrEnv, liveImageEnv)
+	}
+
+	timeout, err := time.ParseDuration(liveActivationEnv(liveTimeoutEnv, "10m"))
+	if err != nil || timeout <= 0 {
+		timeout = 10 * time.Minute
+	}
+	cfg := config.WorkspaceConfig{
+		Backend: config.BackendContainerd,
+		Root:    liveActivationEnv(liveRootEnv, "/workspace"),
+		Containerd: config.ContainerdWorkspaceConfig{
+			Address:     addr,
+			Namespace:   liveActivationEnv(liveNamespaceEnv, "yaah-live"),
+			Image:       image,
+			Snapshotter: liveActivationEnv(liveSnapshotterEnv, ""),
+			FIFODir:     filepath.Join(t.TempDir(), "fifo"),
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	fx, repo, rootID := newSessionFixtures(t)
+	session, err := StartSessionSandbox(ctx, cfg, OpenContainerdWorkspaceSandbox, repo, nil)
+	if err != nil {
+		t.Fatalf("StartSessionSandbox: %v", err)
+	}
+	t.Cleanup(func() {
+		dctx, dcancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer dcancel()
+		if derr := session.Destroy(dctx); derr != nil {
+			t.Errorf("session destroy: %v", derr)
+		}
+	})
+	if err := session.Workspace().WriteFile(ctx, "session-seed.txt", []byte("only in the session container\n"), 0o644); err != nil {
+		t.Fatalf("seed session workspace: %v", err)
+	}
+
+	run := func(ctx context.Context, _ string, params SubAgentParams) (string, error) {
+		ws := DispatchWorkspace(ctx)
+		if ws == nil || ws.Local() {
+			return "", errors.New("a sibling dispatch must run in a container workspace")
+		}
+		data, err := ws.ReadFile(ctx, "session-seed.txt")
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	}
+	rt := RetainedRuntime{
+		Runner:          run,
+		RepoPath:        repo,
+		ScopeManager:    fx.mgr,
+		RootScopeID:     rootID,
+		WorktreeRoot:    t.TempDir(),
+		Proposals:       NewProposalRegistry(),
+		World:           "auto",
+		ContainerWorlds: true,
+		Containment:     "auto",
+		Network:         "allow_all",
+		DispatchWorlds: &DispatchWorlds{
+			Config:         cfg,
+			Opener:         OpenContainerdWorkspaceSandbox,
+			SessionSandbox: session,
+		},
+	}
+
+	got, err := startRetainedRun(ctx, rt, "read the session seed", SubAgentParams{Role: "reviewer"}, timeout, true)
+	if err != nil {
+		t.Fatalf("startRetainedRun: %v", err)
+	}
+	if got != "only in the session container\n" {
+		t.Fatalf("sibling report = %q, want the session container's state", got)
+	}
+	if len(rt.Proposals.all()) != 0 {
+		t.Fatal("a report dispatch must not register a proposal")
+	}
+}

@@ -157,3 +157,77 @@ func TestRetainedReport_ContainerPreflightFailsClosed(t *testing.T) {
 		t.Errorf("a failed explicit container must not fall back to a worktree; %s holds %d entries", worktreeRoot, len(entries))
 	}
 }
+
+// TestRetainedReport_ContainerSessionSibling proves the container-session
+// slice: a report dispatch gets its own sibling container seeded from the
+// session container's captured state, while the session sandbox stays alive.
+func TestRetainedReport_ContainerSessionSibling(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+
+	sessionOpen, sessionFakes := cleanOpener()
+	session, err := StartSessionSandbox(context.Background(), sessionTestConfig(), sessionOpen, "", nil)
+	if err != nil {
+		t.Fatalf("StartSessionSandbox(session): %v", err)
+	}
+	if err := session.sb.WriteFile(context.Background(), "seed.txt", []byte("from the session\n"), 0o644); err != nil {
+		t.Fatalf("seed session workspace: %v", err)
+	}
+	sessionOpened := sessionFakes()
+	if len(sessionOpened) != 2 {
+		t.Fatalf("session opener calls = %d, want 2", len(sessionOpened))
+	}
+
+	dispatchOpen, dispatchFakes := cleanOpener()
+	var gotSeed string
+	run := func(ctx context.Context, _ string, params SubAgentParams) (string, error) {
+		ws := DispatchWorkspace(ctx)
+		if ws == nil || ws.Local() {
+			return "", errors.New("a sibling dispatch must run in a container workspace")
+		}
+		data, err := ws.ReadFile(ctx, "seed.txt")
+		if err != nil {
+			return "", err
+		}
+		gotSeed = string(data)
+		return "saw the session state", nil
+	}
+	rt := RetainedRuntime{
+		Runner:          run,
+		RepoPath:        repo,
+		ScopeManager:    fx.mgr,
+		RootScopeID:     rootID,
+		WorktreeRoot:    t.TempDir(),
+		Proposals:       NewProposalRegistry(),
+		World:           "auto",
+		ContainerWorlds: true,
+		Containment:     "auto",
+		Network:         "allow_all",
+		DispatchWorlds: &DispatchWorlds{
+			Config:         sessionTestConfig(),
+			Opener:         dispatchOpen,
+			SessionSandbox: session,
+		},
+	}
+
+	res, err := startRetainedRun(context.Background(), rt, "inspect", SubAgentParams{Role: "reviewer"}, 0, true)
+	if err != nil {
+		t.Fatalf("startRetainedRun: %v", err)
+	}
+	if res != "saw the session state" {
+		t.Fatalf("result = %q", res)
+	}
+	if gotSeed != "from the session\n" {
+		t.Fatalf("sibling seed = %q, want the session container's state", gotSeed)
+	}
+	if len(rt.Proposals.all()) != 0 {
+		t.Fatal("a report dispatch must not register a proposal")
+	}
+	if sessionOpened[1].Destroyed() {
+		t.Error("the session container must survive a report dispatch")
+	}
+	for i, sb := range dispatchFakes() {
+		if !sb.Destroyed() {
+			t.Errorf("dispatch sandbox %d must be destroyed", i)
+		}
+	}
+}
