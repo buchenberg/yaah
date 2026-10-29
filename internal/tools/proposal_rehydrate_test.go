@@ -2,7 +2,9 @@ package tools
 
 import (
 	"context"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -174,11 +176,80 @@ func TestPersistGitDelta_RefusesCollidingArtifactDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := rehydrateDelta()
-	if _, _, err := persistGitDelta(context.Background(), f.repo, "proposal:1:2", first, "", "", "", f.sessionID, f.rootID, f.basisState, f.basisDigest); err != nil {
+	if _, _, err := persistGitDelta(context.Background(), f.repo, "proposal:1:2", first, "", "", "", f.sessionID, f.rootID, "host", f.basisState, f.basisDigest); err != nil {
 		t.Fatalf("first persist: %v", err)
 	}
 	// This id sanitizes to the same directory segment as proposal:1:2.
-	if _, _, err := persistGitDelta(context.Background(), f.repo, "proposal-1-2", first, "", "", "", f.sessionID, f.rootID, f.basisState, f.basisDigest); err == nil {
+	if _, _, err := persistGitDelta(context.Background(), f.repo, "proposal-1-2", first, "", "", "", f.sessionID, f.rootID, "host", f.basisState, f.basisDigest); err == nil {
 		t.Fatal("a colliding id must not overwrite the existing artifact")
+	}
+}
+
+// memWorkspace is the minimal Workspace surface applyGitDeltaWorkspace uses.
+type memWorkspace struct {
+	Workspace
+	files map[string][]byte
+}
+
+func (w *memWorkspace) ResolvePath(p string) (string, error)                { return path.Join("/workspace", p), nil }
+func (w *memWorkspace) MkdirAll(context.Context, string, fs.FileMode) error { return nil }
+func (w *memWorkspace) WriteFile(_ context.Context, p string, data []byte, _ fs.FileMode) error {
+	w.files[p] = append([]byte(nil), data...)
+	return nil
+}
+func (w *memWorkspace) Remove(_ context.Context, p string) error {
+	delete(w.files, p)
+	return nil
+}
+func (w *memWorkspace) Stat(context.Context, string) (fs.FileInfo, error) {
+	return nil, fs.ErrNotExist
+}
+
+func TestApplyGitDeltaWorkspace(t *testing.T) {
+	ws := &memWorkspace{files: map[string][]byte{"/workspace/gone.txt": []byte("old")}}
+	delta := &GitDelta{Changes: []DeltaChange{
+		{Path: "added.txt", Kind: deltaKindAdd, Mode: 0o644, Content: []byte("new\n")},
+		{Path: "gone.txt", Kind: deltaKindDelete, Mode: 0o644},
+	}}
+	if err := applyGitDeltaWorkspace(context.Background(), ws, delta); err != nil {
+		t.Fatalf("applyGitDeltaWorkspace: %v", err)
+	}
+	if got := string(ws.files["/workspace/added.txt"]); got != "new\n" {
+		t.Errorf("added = %q", got)
+	}
+	if _, ok := ws.files["/workspace/gone.txt"]; ok {
+		t.Error("deleted path remains")
+	}
+}
+
+func TestLoadProposalRegistry_SessionTargetNotRehydrated(t *testing.T) {
+	f := newDeltaFixture(t)
+	if _, _, err := persistGitDelta(context.Background(), f.repo, "proposal:session", rehydrateDelta(), "", "", "", f.sessionID, f.rootID, "session", f.basisState, f.basisDigest); err != nil {
+		t.Fatalf("persist: %v", err)
+	}
+	reg, warnings := LoadProposalRegistry(f.repo, f.fx.mgr, f.rootID, f.sessionID)
+	if len(reg.all()) != 0 {
+		t.Fatal("a session-target proposal must not rehydrate into a new session")
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "session-lifetime") {
+		t.Fatalf("warnings = %v, want a session-lifetime warning", warnings)
+	}
+}
+
+func TestLoadProposalRegistry_SessionTargetSettledConsumed(t *testing.T) {
+	f := newDeltaFixture(t)
+	dir, _, err := persistGitDelta(context.Background(), f.repo, "proposal:session-settled", rehydrateDelta(), "", "", "", f.sessionID, f.rootID, "session", f.basisState, f.basisDigest)
+	if err != nil {
+		t.Fatalf("persist: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, proposalSettled), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reg, warnings := LoadProposalRegistry(f.repo, f.fx.mgr, f.rootID, f.sessionID)
+	if len(reg.all()) != 0 || len(warnings) != 0 {
+		t.Fatalf("got %d proposals, warnings %v; want consumed silently", len(reg.all()), warnings)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("settled session artifact should be removed, stat err = %v", err)
 	}
 }

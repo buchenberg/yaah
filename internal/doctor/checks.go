@@ -213,7 +213,6 @@ func CheckDispatchWorld(cfg *config.Config, cfgErr error) Check {
 	isolated := cfg.Workspace.Backend == config.BackendContainerd
 	shared := worldinfo.Mode(cfg) == "shared"
 	requested := worldinfo.RequestedWorld(cfg)
-	containerSession := worldinfo.ContainerSession(cfg, isolated)
 
 	// The raw ladder and the host availability live in worldinfo, so doctor,
 	// the session banner, and the per-dispatch resolver cannot drift. Role
@@ -258,18 +257,14 @@ func CheckDispatchWorld(cfg *config.Config, cfgErr error) Check {
 		if rerr != nil {
 			return Check{Label: "Dispatch world", Status: "FAIL", Detail: rerr.Error()}
 		}
-		if proposal.Resolved == subagent.WorldShared {
-			detail = "container for report dispatches; proposals stay on the session container (shared)"
-		} else {
-			detail = "container for every dispatch"
-		}
+		detail = "container for every dispatch"
 	case "worktree":
 		if perr != nil {
 			return Check{Label: "Dispatch world", Status: "FAIL", Detail: perr.Error()}
 		}
 		if rerr != nil {
-			// A container session has no host worktree: the proposal lane is
-			// routed shared, but a report lane cannot run one.
+			// A container session has no host worktree: neither lane can
+			// resolve one.
 			return Check{Label: "Dispatch world", Status: "FAIL", Detail: rerr.Error()}
 		}
 		detail = "worktree for every dispatch"
@@ -297,12 +292,8 @@ func CheckDispatchWorld(cfg *config.Config, cfgErr error) Check {
 		lane := subagent.DispatchLaneFor(subagent.SubAgentRole(role))
 		// A shared-lane role has no world at all; its world/grants override
 		// is inert in the runtime (delegate skips world resolution), so
-		// checking it here would produce a false failure. A container
-		// session routes every non-report role shared as well.
+		// checking it here would produce a false failure.
 		if lane == subagent.LaneShared {
-			continue
-		}
-		if containerSession && lane != subagent.LaneRetainedReport {
 			continue
 		}
 		checked++
@@ -313,17 +304,6 @@ func CheckDispatchWorld(cfg *config.Config, cfgErr error) Check {
 		grants := rc.Grants
 		if len(grants) == 0 {
 			grants = sc.Grants
-		}
-		if containerSession {
-			// Only report lanes reach the retained runtime in a container
-			// session; the proposal lane is routed shared by the wiring.
-			roleReport, err := resolve(roleWorld, grants, "report", false)
-			if err != nil {
-				roleErrs = append(roleErrs, fmt.Sprintf("role %s: %v", role, err))
-				continue
-			}
-			detail += fmt.Sprintf("; role %s: report %s", role, describe(roleReport))
-			continue
 		}
 		roleProposal, err := resolve(roleWorld, grants, "proposal", true)
 		if err != nil {

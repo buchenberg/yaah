@@ -30,7 +30,7 @@ for the jail; it does not compose with one.
 | Session | World per dispatch | Authority | Settlement |
 |---|---|---|---|
 | local (default) | linked git worktree (`ForkIsolated`); report **and** proposal lanes may use a per-dispatch container under `world: auto` when `workspace.containerd.image` is set on Linux | Landlock / winacl around the dispatch's shell children; the container boundary for a container world | sealed proposal (worktree); GitDelta manifest (container proposal); none (report) |
-| containerd | report lanes may use a per-dispatch sibling container (seeded from the session's captured state); proposal lanes stay on the session container | the container boundary | none (proposals unretained; reports unretained) |
+| containerd | report **and** proposal lanes may use a per-dispatch sibling container (seeded from the session's captured state); a proposal settles into the session container | the container boundary | GitDelta manifest applied to the session container (proposals); none (reports) |
 
 The reference's grain is one world per **run**. yaah's run is a dispatch, so
 parity means one world per **dispatch**.
@@ -161,9 +161,9 @@ copied in at dispatch time, the body runs with the sandbox workspace as its
 substrate, and the scope and container are torn down afterwards. A report never
 seals; a proposal seals a `GitDelta` manifest before teardown.
 
-- Offered in a host session, and in a container session for **report** lanes,
-  on Linux with `workspace.containerd.image` set. A container-session sibling
-  is seeded from the session container's captured state, not a stale host copy.
+- Offered in a host session and in a container session (both lanes) on Linux
+  with `workspace.containerd.image` set. A container-session sibling is seeded
+  from the session container's captured state, not a stale host copy.
 - `world: auto` prefers the container for both lanes; a **preflight** failure
   (open, probe, create, bootstrap) steps down to the worktree with
   `Degraded=true` and a reason naming the failure.
@@ -171,17 +171,18 @@ seals; a proposal seals a `GitDelta` manifest before teardown.
   transparently re-run in another world.
 - The resolution is recorded as `yaah.subagent.world.v1`, and a degraded report
   carries the warning in its result. **In-run** failures still fail the dispatch.
-- A proposal seals a `GitDelta` manifest before the container is destroyed. The
-  manifest, host basis, and settlement markers under `.yaah/proposals/<id>/`
-  are rehydrated on the next session, so an interrupted dispatch does not strand
-  sealed work.
+- A proposal seals a `GitDelta` manifest before the container is destroyed. In
+  a host session the manifest settles onto the host git tree and is rehydrated
+  after a restart; in a container session it settles into the **session
+  container** and is session-lifetime (see below).
 - A restrictive `network` posture (`deny_all`/`broker`) is refused for a
   container world: the shell children are netns-bound, but `http`/`webfetch`
   execute in the yaah process on the host, which a container netns cannot
   cover. `allow_all` is the only posture a container world accepts.
-- **Container-session proposals stay unretained on the session container** and
-  are routed shared: there is no host worktree and no retained settlement
-  target. This is the recorded behavior (`yaah-a7ks`), not a silent fallback.
+- **Container-session proposals settle into the session container.** The host
+  tree is untouched; `apply_out` remains the explicit host bridge. The
+  manifest and basis are persisted for audit, but a session-target proposal is
+  not rehydrated into a new session container (the parent world is gone).
 
 ### Retained container worlds — shipped as a change manifest
 
@@ -197,12 +198,14 @@ proposal, so `select`, `apply`, `release`, and `discard` all work with no live
 world:
 
 - `world: auto` uses a container for a proposal when `DispatchWorlds` is wired;
-  a preflight failure degrades to the worktree, and an explicit `container`
-  fails closed.
+  a preflight failure degrades to the worktree (host session) or fails closed
+  when there is no worktree (container session).
 - report lanes use a container world under `auto`, because they never seal.
-- the manifest, the host basis it was measured against, and the settlement
-  markers survive a restart; `LoadProposalRegistry` rebuilds the session's open
-  proposals from them.
+- host-target manifests, their host basis, and settlement markers survive a
+  restart; `LoadProposalRegistry` rebuilds those proposals.
+- session-target manifests are file-durable but **not** rehydrated after a
+  restart: their parent session container is gone. The artifact is left for
+  audit with a warning.
 
 Acceptance for retained container dispatches:
 
@@ -216,6 +219,10 @@ Acceptance for retained container dispatches:
    resurrecting it. A container orphaned **before** the seal is listed and
    pruned by `yaah shepherd containers` / `prune-container <id>` (`yaah-vmje`).
 4. `yaah doctor` reports the resolution and the reason before the first run.
+5. ~~Container-session proposals settle into the session container~~ — done:
+   `select`/`apply` write through the session workspace, `select` requires the
+   session digest to equal the dispatch basis, `apply` is path-disjoint since
+   that basis, and the host tree is untouched until `apply_out`.
 
 ## Container settlement: `GitDelta`
 
@@ -297,6 +304,16 @@ and child worlds do not share a state language; a manifest is exact where a
 patch is contextual; path-disjoint whole-path application is the reference's
 "no content synthesis" rule; and destroying the container at seal removes the
 pinning/recovery problem entirely.
+
+### D12 — container-session proposals settle into the session (yaah-a7ks.1)
+
+A container-session proposal targets the **session container**, not the host
+git tree. The sibling is seeded from the session capture; the manifest applies
+through the session workspace; `select` requires the session digest to equal
+the dispatch basis and `apply` is path-disjoint since that basis. The host stays
+untouched until `apply_out`. This artifact is session-lifetime: after the
+session container is gone, the manifest is audit material, not a rehydratable
+proposal. That is the deliberate weaker tier, not an accident.
 
 ### D10 — grants are world-relative (yaah-ihfh.2)
 

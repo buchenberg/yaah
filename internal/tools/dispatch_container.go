@@ -58,17 +58,18 @@ func dispatchWorldPreflightFailure(res subagent.WorldResolution, cause error) (s
 // container's captured state, so a sibling sees the session's current world
 // rather than a stale host copy. It returns a live sandbox on success; every
 // failure path destroys whatever was opened.
-func openDispatchWorld(ctx context.Context, rt RetainedRuntime) (*SessionSandbox, error) {
+func openDispatchWorld(ctx context.Context, rt RetainedRuntime) (*SessionSandbox, shepherdtrace.WorkspaceState, string, error) {
+	var noBasis shepherdtrace.WorkspaceState
 	dw := rt.DispatchWorlds
 	if dw == nil || dw.Opener == nil {
-		return nil, fmt.Errorf("no per-dispatch container setup is wired for this session")
+		return nil, noBasis, "", fmt.Errorf("no per-dispatch container setup is wired for this session")
 	}
 	startCtx, cancel := context.WithTimeout(ctx, dispatchWorldStartTimeout)
 	defer cancel()
 
 	if dw.SessionSandbox != nil {
 		if dw.SessionSandbox.sb == nil {
-			return nil, fmt.Errorf("the container session has no sandbox to seed from")
+			return nil, noBasis, "", fmt.Errorf("the container session has no sandbox to seed from")
 		}
 		// A sibling is seeded from the session's snapshot, not the host tree:
 		// edits made in the session container are part of the dispatch's
@@ -80,11 +81,15 @@ func openDispatchWorld(ctx context.Context, rt RetainedRuntime) (*SessionSandbox
 		// as a no-op; any other isolated backend must provide one.
 		hasRelease := dw.SessionSandbox.Releasable()
 		if !hasRelease && dw.SessionSandbox.sb.Capabilities().Isolated {
-			return nil, fmt.Errorf("session backend %q captures state but does not expose ReleaseState", dw.SessionSandbox.sb.Backend())
+			return nil, noBasis, "", fmt.Errorf("session backend %q captures state but does not expose ReleaseState", dw.SessionSandbox.sb.Backend())
 		}
 		state, err := dw.SessionSandbox.Capture(startCtx)
 		if err != nil {
-			return nil, fmt.Errorf("capture the session container state: %w", err)
+			return nil, noBasis, "", fmt.Errorf("capture the session container state: %w", err)
+		}
+		digest, derr := state.Digest()
+		if derr != nil {
+			return nil, noBasis, "", fmt.Errorf("digest the session container state: %w", derr)
 		}
 		release := func() error {
 			// Capture pins a state. The sibling's active layer keeps its own
@@ -96,28 +101,29 @@ func openDispatchWorld(ctx context.Context, rt RetainedRuntime) (*SessionSandbox
 		}
 		ss, err := StartSessionSandbox(startCtx, dw.Config, dw.Opener, "", dw.Deny)
 		if err != nil {
-			return nil, errors.Join(err, release())
+			return nil, noBasis, "", errors.Join(err, release())
 		}
 		if err := ss.sb.Apply(startCtx, state); err != nil {
 			dctx, dcancel := context.WithTimeout(context.WithoutCancel(ctx), dispatchWorldDestroyTimeout)
 			defer dcancel()
 			destroyErr := ss.Destroy(dctx)
 			releaseErr := release()
-			return nil, errors.Join(fmt.Errorf("seed the sibling container from the session state: %w", err), destroyErr, releaseErr)
+			return nil, noBasis, "", errors.Join(fmt.Errorf("seed the sibling container from the session state: %w", err), destroyErr, releaseErr)
 		}
 		if err := release(); err != nil {
 			dctx, dcancel := context.WithTimeout(context.WithoutCancel(ctx), dispatchWorldDestroyTimeout)
 			defer dcancel()
 			_ = ss.Destroy(dctx)
-			return nil, fmt.Errorf("release the session capture: %w", err)
+			return nil, noBasis, "", fmt.Errorf("release the session capture: %w", err)
 		}
-		return ss, nil
+		return ss, state, digest, nil
 	}
 
 	if rt.RepoPath == "" {
-		return nil, fmt.Errorf("no repository to seed the dispatch container from")
+		return nil, noBasis, "", fmt.Errorf("no repository to seed the dispatch container from")
 	}
-	return StartSessionSandbox(startCtx, dw.Config, dw.Opener, rt.RepoPath, dw.Deny)
+	ss, err := StartSessionSandbox(startCtx, dw.Config, dw.Opener, rt.RepoPath, dw.Deny)
+	return ss, noBasis, "", err
 }
 
 // runDispatchContainer runs one report dispatch inside its own container world.
@@ -204,8 +210,14 @@ func runDispatchContainerProposal(
 	basisDigest string,
 ) (out string, runErr error) {
 	recordDispatchWorld(ctx, res)
+	target := "host"
+	var session *SessionSandbox
+	if rt.DispatchWorlds != nil && rt.DispatchWorlds.SessionSandbox != nil {
+		target = "session"
+		session = rt.DispatchWorlds.SessionSandbox
+	}
 	id := fmt.Sprintf("proposal:%d:%d", time.Now().UnixNano(), proposalSeq.Add(1))
-	env := proposalEnvelope{ProposalID: id, Next: proposalVerbs(), World: string(res.Resolved)}
+	env := proposalEnvelope{ProposalID: id, Next: proposalVerbs(), World: string(res.Resolved), Target: target}
 	if res.Degraded {
 		env.Warning = "dispatch world degraded: " + res.Reason
 	}
@@ -279,7 +291,7 @@ func runDispatchContainerProposal(
 		env.Error = trimResult(strings.Join(notes, "; "))
 		return "", nil
 	}
-	dir, manifestDigest, perr := persistGitDelta(ctx, rt.RepoPath, id, delta, review, result, bodyFailure, rt.SessionID, rt.RootScopeID, basisState, basisDigest)
+	dir, manifestDigest, perr := persistGitDelta(ctx, rt.RepoPath, id, delta, review, result, bodyFailure, rt.SessionID, rt.RootScopeID, target, basisState, basisDigest)
 	if perr != nil {
 		notes = append(notes, "seal: persist delta: "+perr.Error())
 		env.Status = "error"
@@ -290,6 +302,7 @@ func runDispatchContainerProposal(
 	if _, ferr := parent.AppendFact(ctx, SchemaProposalSealed, "proposal", map[string]any{
 		"proposal_id":     id,
 		"world":           string(subagent.WorldContainer),
+		"target":          target,
 		"manifest_digest": manifestDigest,
 		"files":           delta.Paths(),
 		"basis_digest":    basisDigest,
@@ -314,6 +327,8 @@ func runDispatchContainerProposal(
 		artifactDir: dir,
 		deltaDigest: manifestDigest,
 		world:       string(subagent.WorldContainer),
+		target:      target,
+		session:     session,
 	})
 
 	env.Status = "proposal"

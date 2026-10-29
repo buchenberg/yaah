@@ -614,6 +614,7 @@ type proposalMeta struct {
 	SessionID      string `json:"session_id"`
 	ParentScopeID  string `json:"parent_scope_id"`
 	World          string `json:"world"`
+	Target         string `json:"target"`
 	Result         string `json:"result,omitempty"`
 	RunErr         string `json:"run_err,omitempty"`
 	ManifestDigest string `json:"manifest_digest"`
@@ -645,7 +646,7 @@ func persistGitDelta(
 	ctx context.Context,
 	repoPath, id string,
 	delta *GitDelta,
-	review, result, runErr, sessionID, parentScopeID string,
+	review, result, runErr, sessionID, parentScopeID, target string,
 	basis shepherdtrace.WorkspaceState,
 	basisDigest string,
 ) (dir, digest string, err error) {
@@ -692,6 +693,7 @@ func persistGitDelta(
 		SessionID:      sessionID,
 		ParentScopeID:  parentScopeID,
 		World:          "container",
+		Target:         target,
 		Result:         result,
 		RunErr:         runErr,
 		ManifestDigest: digest,
@@ -1041,13 +1043,111 @@ func writeProposalMarker(dir, name string, payload map[string]any) error {
 	return syncFile(p)
 }
 
+// applyGitDeltaWorkspace applies a manifest to a sandbox workspace instead of
+// the host tree. Whole-path post-images only; the workspace's ResolvePath
+// enforces the container root, and no host filesystem primitive is used.
+func applyGitDeltaWorkspace(ctx context.Context, ws Workspace, delta *GitDelta) error {
+	if err := validateDelta(delta); err != nil {
+		return err
+	}
+	for _, change := range delta.Changes {
+		rel, err := safeDeltaPath(change.Path)
+		if err != nil {
+			return err
+		}
+		abs, err := ws.ResolvePath(rel)
+		if err != nil {
+			return fmt.Errorf("resolve %s: %w", change.Path, err)
+		}
+		switch change.Kind {
+		case deltaKindDelete:
+			if err := ws.Remove(ctx, abs); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return fmt.Errorf("delete %s: %w", change.Path, err)
+			}
+		case deltaKindAdd, deltaKindModify:
+			parent := path.Dir(abs)
+			// Never chmod an existing parent: sandboxWorkspace.MkdirAll
+			// unconditionally applies its mode, while the host os.MkdirAll
+			// leaves existing directories alone. Only create when missing.
+			if _, statErr := ws.Stat(ctx, parent); statErr != nil {
+				if !errors.Is(statErr, fs.ErrNotExist) {
+					return fmt.Errorf("stat parent for %s: %w", change.Path, statErr)
+				}
+				if err := ws.MkdirAll(ctx, parent, 0o755); err != nil {
+					return fmt.Errorf("create parent for %s: %w", change.Path, err)
+				}
+			}
+			if err := ws.WriteFile(ctx, abs, change.Content, change.Mode.Perm()); err != nil {
+				return fmt.Errorf("write %s: %w", change.Path, err)
+			}
+		default:
+			return fmt.Errorf("unknown change kind %q", change.Kind)
+		}
+	}
+	return nil
+}
+
+// requireSessionUnmoved enforces select's precondition for a session-target
+// proposal: the session container must still digest to the basis captured at
+// dispatch.
+func (p *retainedProposal) requireSessionUnmoved(ctx context.Context) error {
+	if p.session == nil {
+		return fmt.Errorf("proposal %s: no live session container to settle into", p.id)
+	}
+	if !p.session.Releasable() {
+		return fmt.Errorf("proposal %s: session backend cannot release a captured state", p.id)
+	}
+	state, err := p.session.Capture(ctx)
+	if err != nil {
+		return fmt.Errorf("proposal %s: select cannot capture the session state: %w", p.id, err)
+	}
+	digest, digErr := state.Digest()
+	releaseErr := p.session.ReleaseCapture(context.WithoutCancel(ctx), state)
+	if digErr != nil {
+		return fmt.Errorf("proposal %s: select cannot digest the session state: %w", p.id, digErr)
+	}
+	if releaseErr != nil {
+		return fmt.Errorf("proposal %s: select cannot release the session capture: %w", p.id, releaseErr)
+	}
+	if digest != p.basisDigest {
+		return fmt.Errorf("proposal %s: the session container moved since the dispatch; select applies only onto the dispatch basis — use apply, or discard", p.id)
+	}
+	return nil
+}
+
+// sessionChangedSinceBasis lists the session-container paths changed after the
+// dispatch basis, normalized to workspace-relative slash paths.
+func (p *retainedProposal) sessionChangedSinceBasis(ctx context.Context) ([]string, error) {
+	if p.session == nil {
+		return nil, fmt.Errorf("proposal %s: no live session container to settle into", p.id)
+	}
+	_, files, err := p.session.sb.Diff(ctx, p.basisState, 0)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(files))
+	for _, f := range files {
+		out = append(out, path.Clean(filepath.ToSlash(p.session.rootRel(f))))
+	}
+	return out, nil
+}
+
 // settleGitDeltaProposal settles a container proposal. The container is already
 // gone (destroyed at seal); the manifest is the proposal. select and apply write
-// the host tree, release exports the manifest, discard throws it away.
+// the host tree for a host-target proposal, or the session container for a
+// session-target one; release exports the manifest and discard drops it.
 func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retainedProposal, action string) (string, error) {
 	verb, ok := settlementVerb(action)
 	if !ok {
 		return "", fmt.Errorf("proposal: unknown action %q (select, apply, release, discard)", action)
+	}
+	target := p.target
+	if target == "" {
+		target = "host"
+	}
+	sessionTarget := target == "session"
+	if sessionTarget && p.session == nil {
+		return "", fmt.Errorf("proposal %s: session target has no live session container", p.id)
 	}
 	env := proposalEnvelope{
 		Status:     "settled",
@@ -1055,11 +1155,15 @@ func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retain
 		Action:     action,
 		Files:      p.delta.Paths(),
 		World:      string(subagent.WorldContainer),
+		Target:     target,
 	}
-	// The proposal directory must be invisible to git before select captures
-	// the host state; a new session may not have run the seal-time exclusion.
-	if err := ensureProposalPathsExcluded(ctx, p.repoPath); err != nil {
-		return "", fmt.Errorf("proposal %s: exclude proposal path: %w", p.id, err)
+	if !sessionTarget {
+		// The proposal directory must be invisible to git before select
+		// captures the host state; a new session may not have run the
+		// seal-time exclusion. A session target never captures host git.
+		if err := ensureProposalPathsExcluded(ctx, p.repoPath); err != nil {
+			return "", fmt.Errorf("proposal %s: exclude proposal path: %w", p.id, err)
+		}
 	}
 	if err := writeProposalMarker(p.artifactDir, proposalApplying, map[string]any{
 		"proposal_id":     p.id,
@@ -1080,25 +1184,47 @@ func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retain
 
 	switch verb {
 	case goatherd.SettleSelect:
-		if err := p.requireHostUnmoved(ctx); err != nil {
+		var err error
+		if sessionTarget {
+			err = p.requireSessionUnmoved(ctx)
+		} else {
+			err = p.requireHostUnmoved(ctx)
+		}
+		if err != nil {
 			return "", err
 		}
-		if err := applyGitDelta(ctx, p.repoPath, p.delta); err != nil {
+		if sessionTarget {
+			err = applyGitDeltaWorkspace(ctx, p.session.Workspace(), p.delta)
+		} else {
+			err = applyGitDelta(ctx, p.repoPath, p.delta)
+		}
+		if err != nil {
 			return "", fmt.Errorf("proposal %s: select: %w", p.id, err)
 		}
 	case goatherd.SettleApply:
-		// Changes *since the dispatch basis*, not everything dirty: the host
+		// Changes *since the dispatch basis*, not everything dirty: the parent
 		// is allowed to arrive at settlement already dirty (the basis captured
 		// that state), and only work done after the dispatch can collide.
-		changed, err := p.hostChangedSinceBasis(ctx)
+		var changed []string
+		var err error
+		if sessionTarget {
+			changed, err = p.sessionChangedSinceBasis(ctx)
+		} else {
+			changed, err = p.hostChangedSinceBasis(ctx)
+		}
 		if err != nil {
-			return "", fmt.Errorf("proposal %s: apply: cannot determine the host's changes since the dispatch, refusing to write: %w", p.id, err)
+			return "", fmt.Errorf("proposal %s: apply: cannot determine the parent's changes since the dispatch, refusing to write: %w", p.id, err)
 		}
 		if overlap := overlappingPaths(p.delta.Paths(), changed); len(overlap) > 0 {
-			return "", fmt.Errorf("proposal %s: the host changed paths this proposal also changes (%s); apply is path-disjoint only — resolve the overlap, then apply or discard",
+			return "", fmt.Errorf("proposal %s: the parent changed paths this proposal also changes (%s); apply is path-disjoint only — resolve the overlap, then apply or discard",
 				p.id, strings.Join(overlap, ", "))
 		}
-		if err := applyGitDelta(ctx, p.repoPath, p.delta); err != nil {
+		if sessionTarget {
+			err = applyGitDeltaWorkspace(ctx, p.session.Workspace(), p.delta)
+		} else {
+			err = applyGitDelta(ctx, p.repoPath, p.delta)
+		}
+		if err != nil {
 			return "", fmt.Errorf("proposal %s: apply: %w", p.id, err)
 		}
 	case goatherd.SettleRelease:
@@ -1122,6 +1248,7 @@ func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retain
 				"proposal_id":     p.id,
 				"action":          action,
 				"world":           string(subagent.WorldContainer),
+				"target":          target,
 				"manifest_digest": p.deltaDigest,
 				"files":           p.delta.Paths(),
 			}); ferr != nil {
@@ -1184,11 +1311,15 @@ func (p *retainedProposal) requireHostUnmoved(ctx context.Context) error {
 // gitDeltaSettleOutcome renders the typed Outcome for a container settlement.
 func gitDeltaSettleOutcome(verb goatherd.SettlementAction, env proposalEnvelope) Outcome {
 	oc := Outcome{Scope: strings.Join(env.Files, ", "), Record: "proposal " + env.ProposalID, Notes: env.Notes}
+	where := "the host tree"
+	if env.Target == "session" {
+		where = "the session container"
+	}
 	switch verb {
 	case goatherd.SettleSelect:
-		oc.Work = "container delta landed on the host tree"
+		oc.Work = "container delta landed on " + where
 	case goatherd.SettleApply:
-		oc.Work = "container delta applied path-disjoint onto the host tree"
+		oc.Work = "container delta applied path-disjoint onto " + where
 	case goatherd.SettleRelease:
 		oc.Work = "container delta exported; the container world was destroyed at seal"
 		oc.Record = "retained " + env.Retained

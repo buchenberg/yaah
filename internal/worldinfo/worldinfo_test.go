@@ -116,18 +116,15 @@ func TestDeriveContainerSession(t *testing.T) {
 	cfg.Workspace.Backend = config.BackendContainerd
 	cfg.Workspace.Containerd.Image = "registry.example/yaah:1"
 	s := Derive(cfg, "", true)
-	if s.ProposalWorld != "shared" {
-		t.Fatalf("ProposalWorld = %q, want shared (container-session proposals are routed shared)", s.ProposalWorld)
-	}
-	if s.ReportWorld != "container" {
-		t.Fatalf("ReportWorld = %q, want container", s.ReportWorld)
+	if s.ProposalWorld != "container" || s.ReportWorld != "container" {
+		t.Fatalf("resolved = %q/%q, want container/container", s.ProposalWorld, s.ReportWorld)
 	}
 }
 
-// TestDeriveContainerSessionReportErrorSurfaces pins the report-lane error
-// rule: a shared proposal lane must not hide the report lane's failure, or the
-// surfaces render "unavailable" with no explanation.
-func TestDeriveContainerSessionReportErrorSurfaces(t *testing.T) {
+// TestDeriveContainerSessionUnavailable pins the no-worktree error: a
+// container session cannot satisfy an explicit worktree request in either
+// lane, and the reason reaches the surfaces.
+func TestDeriveContainerSessionUnavailable(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("per-dispatch containers are offered on Linux only")
 	}
@@ -136,11 +133,8 @@ func TestDeriveContainerSessionReportErrorSurfaces(t *testing.T) {
 	cfg.Workspace.Containerd.Image = "registry.example/yaah:1"
 	cfg.Agent.SubAgent.World = "worktree"
 	s := Derive(cfg, "", true)
-	if s.ProposalWorld != "shared" {
-		t.Fatalf("ProposalWorld = %q, want shared", s.ProposalWorld)
-	}
-	if s.ReportWorld != "unavailable" {
-		t.Fatalf("ReportWorld = %q, want unavailable", s.ReportWorld)
+	if s.ProposalWorld != "unavailable" || s.ReportWorld != "unavailable" {
+		t.Fatalf("resolved = %q/%q, want unavailable/unavailable", s.ProposalWorld, s.ReportWorld)
 	}
 	if !s.Degraded || s.Reason == "" {
 		t.Fatalf("report-lane error not surfaced: %+v", s)

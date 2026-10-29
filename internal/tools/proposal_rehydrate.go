@@ -113,6 +113,9 @@ func loadGitDeltaProposal(dir, repoPath string, mgr *goatherd.ScopeManager, root
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return nil, "", fmt.Errorf("check applying marker: %w", err)
 	}
+	if meta.Target == "session" {
+		return nil, fmt.Sprintf("proposal %s: session-target proposals are session-lifetime (the container they settle into is gone) — not rehydrated", meta.ID), nil
+	}
 
 	deltaData, err := os.ReadFile(filepath.Join(dir, proposalDeltaFile))
 	if err != nil {

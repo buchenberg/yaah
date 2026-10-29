@@ -148,6 +148,8 @@ type proposalEnvelope struct {
 	// World is the resolved dispatch world ("worktree" or "container"). It is
 	// absent on a shared-lane dispatch, which has no world.
 	World string `json:"world,omitempty"`
+	// Target names where settlement writes: host or session.
+	Target string `json:"target,omitempty"`
 	// Warning carries a world degradation: the dispatch ran, but not in the
 	// world that was asked for. The envelope shape and the settlement verbs do
 	// not change; only this line does.
@@ -179,16 +181,22 @@ type retainedProposal struct {
 	parentID string
 	mgr      *goatherd.ScopeManager
 
-	// Container-lane settlement state. repoPath is the host repository the
-	// manifest settles onto; basisDigest is the host workspace state captured
-	// before the copy-in, which select compares against; artifactDir is the
-	// durable proposal directory; world records the lane for envelopes.
+	// Container-lane settlement state. repoPath is the host repository that
+	// holds the durable artifacts (and is the settlement target for a host
+	// proposal); basisDigest is the parent workspace state captured before the
+	// dispatch; artifactDir is the durable proposal directory; target is
+	// "host" or "session"; world records the lane for envelopes.
 	repoPath    string
 	basisState  shepherdtrace.WorkspaceState
 	basisDigest string
 	artifactDir string
 	deltaDigest string
 	world       string
+	// target is "host" for a host-git settlement or "session" for a manifest
+	// that settles into the container session's workspace. session is the
+	// live world for the latter; a session-target proposal is not rehydrated.
+	target  string
+	session *SessionSandbox
 }
 
 // changedFiles is the proposal's file list, whichever lane produced it.
@@ -282,6 +290,7 @@ func (r *ProposalRegistry) all() []*retainedProposal {
 type proposalSummary struct {
 	ProposalID string   `json:"proposal_id"`
 	Files      []string `json:"files"`
+	Target     string   `json:"target,omitempty"`
 }
 
 // summaries renders the open proposals as prose, for a human reader.
@@ -319,7 +328,11 @@ func (r *ProposalRegistry) listEnvelope() string {
 		if files == nil {
 			files = []string{}
 		}
-		list = append(list, proposalSummary{ProposalID: p.id, Files: files})
+		target := p.target
+		if target == "" {
+			target = "host"
+		}
+		list = append(list, proposalSummary{ProposalID: p.id, Files: files, Target: target})
 	}
 	env := struct {
 		Status    string            `json:"status"`
@@ -402,9 +415,6 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	if rt.Proposals == nil {
 		return "", fmt.Errorf("delegate: retained mode needs a proposal registry — runner.NewDelegateTool creates one per session")
 	}
-	if rt.DispatchWorlds != nil && rt.DispatchWorlds.SessionSandbox != nil && !report {
-		return "", fmt.Errorf("delegate: container-session proposals stay unretained on the session container; route the role shared")
-	}
 	parent, ok := mgr.Get(rt.RootScopeID)
 	if !ok {
 		return "", fmt.Errorf("delegate: root scope %s not found", rt.RootScopeID)
@@ -459,7 +469,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	if worldRes.Resolved == subagent.WorldContainer {
 		var basis shepherdtrace.WorkspaceState
 		var basisDigest string
-		if !report {
+		if !report && !containerSession {
 			// The select precondition is the host workspace state captured
 			// before the copy-in. Proposal bookkeeping is excluded from git
 			// first: the manifest lives in the host tree, and writing it after
@@ -479,10 +489,13 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 			}
 			basisDigest = digest
 		}
-		ss, perr := openDispatchWorld(ctx, rt)
+		ss, seedBasis, seedDigest, perr := openDispatchWorld(ctx, rt)
 		if perr == nil {
 			if report {
 				return runDispatchContainer(ctx, rt, parent, prompt, subParams, timeout, worldRes, ss)
+			}
+			if containerSession {
+				basis, basisDigest = seedBasis, seedDigest
 			}
 			return runDispatchContainerProposal(ctx, rt, parent, prompt, subParams, timeout, worldRes, ss, basis, basisDigest)
 		}
@@ -668,25 +681,22 @@ func resolveDispatchWorld(rt RetainedRuntime, role string, report bool) (subagen
 		lane = "report"
 	}
 
-	// Container proposals in a host session are durable: the manifest, host
-	// basis, and settlement transition markers live under .yaah/proposals,
-	// and LoadProposalRegistry rebuilds them on the next session. A container
-	// session gets sibling worlds for REPORT lanes only; its proposals stay
-	// on the session container, unretained, and are routed shared before this
-	// resolver runs.
+	// A host-session container proposal settles onto the host git tree. A
+	// container-session proposal settles into the session container; its
+	// manifest is session-lifetime (see the session-target decision in
+	// docs/shepherd-parity.md). Both lanes get a sibling world when the setup
+	// is wired.
 	containerSession := rt.DispatchWorlds != nil && rt.DispatchWorlds.SessionSandbox != nil
-	containerRetains := rt.DispatchWorlds != nil && !containerSession
+	containerRetains := rt.DispatchWorlds != nil
 	containerOffered := rt.ContainerWorlds
 	retainsReason := ""
-	if containerSession {
-		retainsReason = "container-session proposals remain unretained; report lanes use sibling containers"
-	} else if !containerRetains {
+	if !containerRetains {
 		retainsReason = "container settlement is unavailable in this session: no per-dispatch container setup is wired"
 	}
 	worktree := !containerSession
 	worktreeReason := ""
 	if containerSession {
-		worktreeReason = "a container session has no host worktree; report lanes use a sibling container"
+		worktreeReason = "a container session has no host worktree; dispatches use a sibling container"
 	}
 
 	av := subagent.WorldAvailability{

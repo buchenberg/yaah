@@ -237,7 +237,11 @@ func TestResolveDispatchWorld_ContainerSessionSibling(t *testing.T) {
 		t.Fatalf("report resolved = %q, want container", report.Resolved)
 	}
 
-	if _, err := resolveDispatchWorld(rt, "developer", false); err == nil {
-		t.Fatal("a container-session proposal must not resolve to a worktree or a retained container")
+	proposal, err := resolveDispatchWorld(rt, "developer", false)
+	if err != nil {
+		t.Fatalf("proposal dispatch: %v", err)
+	}
+	if proposal.Resolved != subagent.WorldContainer {
+		t.Fatalf("proposal resolved = %q, want container", proposal.Resolved)
 	}
 }

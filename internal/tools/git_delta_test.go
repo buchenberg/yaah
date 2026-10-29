@@ -368,7 +368,7 @@ func newDeltaFixtureWith(t *testing.T, prep func(repo string)) *deltaFixture {
 // add persists a delta and registers it as an open proposal.
 func (f *deltaFixture) add(t *testing.T, id string, delta *GitDelta) *retainedProposal {
 	t.Helper()
-	dir, digest, err := persistGitDelta(context.Background(), f.repo, id, delta, "review for "+id, "wrote "+id, "", f.sessionID, f.rootID, f.basisState, f.basisDigest)
+	dir, digest, err := persistGitDelta(context.Background(), f.repo, id, delta, "review for "+id, "wrote "+id, "", f.sessionID, f.rootID, "host", f.basisState, f.basisDigest)
 	if err != nil {
 		t.Fatalf("persistGitDelta: %v", err)
 	}
@@ -384,6 +384,7 @@ func (f *deltaFixture) add(t *testing.T, id string, delta *GitDelta) *retainedPr
 		artifactDir: dir,
 		deltaDigest: digest,
 		world:       "container",
+		target:      "host",
 	}
 	f.registry.add(p)
 	return p

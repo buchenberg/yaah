@@ -93,7 +93,6 @@ func TestWorldInfoParityWithRuntimeLadder(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			isContainerSession := tc.isolated && tc.container
 			rt := RetainedRuntime{
 				World:       tc.cfg.Agent.SubAgent.World,
 				Containment: tc.cfg.Agent.SubAgent.Containment,
@@ -113,16 +112,10 @@ func TestWorldInfoParityWithRuntimeLadder(t *testing.T) {
 
 			res := worldinfo.Resolve(tc.cfg, tc.isolated)
 
-			// The proposal lane only reaches the runtime ladder in a host
-			// session; a container session routes it shared in the wiring.
-			if !isContainerSession {
-				want, wantErr := resolveDispatchWorld(rt, "developer", false)
-				assertSameResolution(t, "proposal", res.Proposal, res.ProposalErr, want, wantErr)
-			} else if res.Proposal.Resolved != subagent.WorldShared || res.ProposalErr != nil {
-				t.Fatalf("container-session proposal = %+v, err %v; want shared", res.Proposal, res.ProposalErr)
-			}
+			want, wantErr := resolveDispatchWorld(rt, "developer", false)
+			assertSameResolution(t, "proposal", res.Proposal, res.ProposalErr, want, wantErr)
 
-			want, wantErr := resolveDispatchWorld(rt, "developer", true)
+			want, wantErr = resolveDispatchWorld(rt, "developer", true)
 			assertSameResolution(t, "report", res.Report, res.ReportErr, want, wantErr)
 		})
 	}
