@@ -1,6 +1,8 @@
 package yaah
 
 import (
+	"os"
+
 	"github.com/buchenberg/yaah/internal/doctor"
 	"github.com/spf13/cobra"
 )
@@ -11,6 +13,11 @@ var doctorCmd = &cobra.Command{
 	Short: "Diagnose config, environment, and system health",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Per-role dispatch-world checks need the role profiles (output
+		// lane, tool belt), and doctor does not otherwise build a session.
+		cwd, _ := os.Getwd()
+		rebuildDefaultRoleRegistry(cwd)
+
 		checks := doctor.RunChecks(doctor.Options{DirectiveOverrides: sessionOptionsFromFlags().DirectiveOverrides})
 		for _, c := range checks {
 			cmd.Printf("  [%s]  %s\n", doctor.StatusLabel(c.Status), c.Label)
