@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.112.0](https://github.com/buchenberg/yaah/compare/v0.111.0...v0.112.0) (2026-10-29)
+
+
+### Features
+
+* **container:** sibling report worlds in container sessions ([2f80b38](https://github.com/buchenberg/yaah/commit/2f80b387d8c7bbe05f4e6b6807b9f4fdf88c0338))
+* **container:** sibling report worlds in container sessions ([2341831](https://github.com/buchenberg/yaah/commit/2341831b6f69ca3abfcf343ae1412ca3895f645d))
+
+
+### Bug Fixes
+
+* **container:** bound the serialized capture release ([e9700de](https://github.com/buchenberg/yaah/commit/e9700deb8bd36d93b16a5cc67d11fbab6b44a145))
+* **container:** make container-session sibling worlds reachable ([b91d39d](https://github.com/buchenberg/yaah/commit/b91d39d34f812c19fd19a6a57db82432315b350b))
+* **container:** only degrade unavailable worlds; restore dispatch docs ([b587af6](https://github.com/buchenberg/yaah/commit/b587af687c58c4a958ac287cb00ee7de9a1fe0e1))
+* **container:** policy fallback, synchronized capture, lane docs ([a4cbabb](https://github.com/buchenberg/yaah/commit/a4cbabba4a49c5ac87c2b156ed49ed631db66511))
+* **container:** probe capture releasability before capturing ([ea603b6](https://github.com/buchenberg/yaah/commit/ea603b6851e513c70115c0e59a1737e4b471a060))
+* **container:** require a releasable capture for isolated session backends ([848acdf](https://github.com/buchenberg/yaah/commit/848acdf14deef34245da9379856886c27faa7441))
+* **container:** serialize capture release and join create failures ([f0b86f0](https://github.com/buchenberg/yaah/commit/f0b86f0eef84c4bc45fa2ef3fa5702c67d2b522e))
+
 ## [0.111.0](https://github.com/buchenberg/yaah/compare/v0.110.1...v0.111.0) (2026-10-29)
 
 
