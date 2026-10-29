@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.114.0](https://github.com/buchenberg/yaah/compare/v0.113.0...v0.114.0) (2026-10-29)
+
+
+### Features
+
+* **jail:** enable macOS Seatbelt containment ([2b3c02e](https://github.com/buchenberg/yaah/commit/2b3c02eceb953c3425ccfb5217459394869d044a))
+
+
+### Tests
+
+* **parity:** pin landlock and winacl versions too ([ae62f9d](https://github.com/buchenberg/yaah/commit/ae62f9df57efef9734eec2dc210e2b7739cd3b8d))
+
 ## [0.113.0](https://github.com/buchenberg/yaah/compare/v0.112.0...v0.113.0) (2026-10-29)
 
 
