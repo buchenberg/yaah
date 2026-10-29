@@ -337,7 +337,7 @@ Sub-agents use their own curated pipeline and per-role directives.
 | `output_limit` | 51200 | Byte cap on sub-agent reports; 0 = built-in 50 KiB cap |
 | `json_mode` | false | Force structured JSON output |
 | `mode` | `retained` | Dispatch lane — `retained` (isolated worktree + proposal) or `shared` (direct to host) |
-| `world` | `auto` | Dispatch world — `auto` (per-dispatch container for report-lane dispatches when `workspace.containerd.image` is set on Linux, else the worktree, recording any degradation; **proposal** lanes stay on the worktree until manifest rehydration lands), `worktree` (never container), `container` (opt in; a proposal seals a GitDelta manifest, a report runs in a container; fails closed if unavailable). Orthogonal to `mode`. See [shepherd-parity.md](./shepherd-parity.md#dispatch-worlds) |
+| `world` | `auto` | Dispatch world — `auto` (per-dispatch container for report and proposal dispatches when `workspace.containerd.image` is set on Linux, else the worktree, recording any degradation), `worktree` (never container), `container` (fails closed if unavailable). A proposal seals a GitDelta manifest and destroys its container at seal; a report never seals. Orthogonal to `mode`. See [shepherd-parity.md](./shepherd-parity.md#dispatch-worlds) |
 | `roles.<name>.world` | — | Per-role world override (`auto` / `worktree` / `container`); empty inherits `agents.subagent.world` |
 | `grants` | `[]` | Per-dispatch write authority — a list of `{path, access}` roots relative to the dispatch world. `readwrite` roots are writable, `readonly` roots are declared but denied writes; roots must be disjoint. Empty = the whole world (legacy) |
 | `roles.<name>.grants` | — | Per-role grant set; empty inherits `agents.subagent.grants` |
@@ -428,23 +428,22 @@ everything runs on the host filesystem, as it always has.
 | `root` | `/workspace` | Containment root inside the sandbox. Must be absolute and not `/` when a container sandbox is in effect (`backend: containerd`, or `containerd.image` set in a local session) — config validation refuses otherwise |
 | `containerd.address` | containerd's own default | containerd socket or endpoint; supports `${ENV_VAR}` substitution |
 | `containerd.namespace` | `default` | containerd namespace for the session's containers |
-| `containerd.image` | (required for `containerd`) | Base image. Must satisfy the tool contract (sh, GNU stat/find, git, rg, base64, Go toolchain) — verified at startup. In a `local` session, setting it also enables per-dispatch container worlds: report lanes use one under `world: auto`; proposal lanes opt in with `world: container` (see below) |
+| `containerd.image` | (required for `containerd`) | Base image. Must satisfy the tool contract (sh, GNU stat/find, git, rg, base64, Go toolchain) — verified at startup. In a `local` session, setting it also enables per-dispatch container worlds for both report and proposal lanes under `world: auto` (see below) |
 | `containerd.snapshotter` | `overlayfs` | containerd snapshotter plugin |
 | `containerd.fifo_dir` | `<yaah home>/containerd-fifo` | Directory the containerd *client* creates the task/exec stdio FIFOs in. containerd's own default (`/run/containerd/fifo`) is root-only, so the yaah default keeps unprivileged sessions working; must be absolute. Avoids a predictable name under the shared temp dir, which another local user could pre-create |
 
 The `containerd` stanza is also the per-dispatch container's config: in a
 `local` session (where `backend` stays `local`), setting `containerd.image`
 lets a **report-lane** sub-agent dispatch run in its own container instead of a
-worktree, and lets a **proposal-lane** dispatch opt in with
-`world: container`. A report container is created at dispatch time and
-destroyed afterwards; it never seals. A proposal container seals a `GitDelta`
-change manifest before it is destroyed, and `select`/`apply` settle that
-manifest onto the host. Proposal containers are opt-in, not `auto`, until
-persisted manifests can be rehydrated across restarts: the manifest survives
-under `.yaah/proposals/<id>/`, but `proposal list`/`show`/`select` cannot see it
-after a restart. A preflight failure (open, probe, create, bootstrap) degrades
-`world: auto` to the worktree with a recorded warning; `world: container` fails
-closed. A restrictive `network` posture (`deny_all`/`broker`) is refused for a
+worktree, and gives a **proposal-lane** dispatch the same world. A report
+container is created at dispatch time and destroyed afterwards; it never seals.
+A proposal container seals a `GitDelta` change manifest before it is destroyed,
+and `select`/`apply` settle that manifest onto the host. The manifest, the host
+basis it was measured against, and the settlement transition markers live under
+`.yaah/proposals/<id>/`, so a restarted session rehydrates the open proposal and
+`proposal list`/`show`/`select` can reach it. A preflight failure (open, probe,
+create, bootstrap) degrades `world: auto` to the worktree with a recorded
+warning; `world: container` fails closed. A restrictive `network` posture (`deny_all`/`broker`) is refused for a
 container world because `http`/`webfetch` run in this process, outside the
 container. This path is Linux-only, like the `containerd` backend itself.
 

@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	"github.com/buchenberg/yaah/internal/config"
 )
 
@@ -119,6 +120,8 @@ func TestLive_DispatchContainerProposal(t *testing.T) {
 		t.Fatalf("dispatch teardown left a caveat (container or scope left behind): %s", parsed.Notes)
 	}
 
+	assertProposalFact(t, fx, rootID, SchemaProposalSealed)
+
 	proposals := rt.Proposals.all()
 	if len(proposals) != 1 {
 		t.Fatalf("proposals = %d, want 1", len(proposals))
@@ -150,4 +153,30 @@ func TestLive_DispatchContainerProposal(t *testing.T) {
 	if string(got) != "hello from the container\n" {
 		t.Errorf("host smoke.txt = %q", got)
 	}
+	assertProposalFact(t, fx, rootID, SchemaProposalSettled)
+}
+
+// assertProposalFact checks the durable causal record for one proposal fact on
+// the session root's owner path. The live lane is the only place both the seal
+// and settle facts are produced by the real dispatch path.
+func assertProposalFact(t *testing.T, fx *sessionFixtures, rootID, schema string) {
+	t.Helper()
+	parent, ok := fx.mgr.Get(rootID)
+	if !ok {
+		t.Fatalf("root scope %s not found", rootID)
+	}
+	slice, err := fx.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, parent.OwnerID(), 999, shepherdtrace.ModeBoth)
+	if err != nil {
+		t.Fatalf("read trace owner %s: %v", parent.OwnerID(), err)
+	}
+	for _, id := range slice.FactIDs() {
+		rec, ok := slice.FactsByID[id]
+		if !ok {
+			continue
+		}
+		if rec.GetEnvelope().SchemaRef == schema {
+			return
+		}
+	}
+	t.Fatalf("no %s fact on the root owner path", schema)
 }

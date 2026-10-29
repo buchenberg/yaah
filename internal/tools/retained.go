@@ -51,6 +51,10 @@ type RetainedRuntime struct {
 	// RootScopeID is the session's root scope — the fork parent, and the merge
 	// target a settlement applies to. Required.
 	RootScopeID string
+	// SessionID is the durable session identity. Container proposals persist
+	// it so a resumed session can rehydrate its own artifacts without another
+	// session in the same repository claiming them.
+	SessionID string
 	// WorktreeRoot is the parent directory for retained worktrees. Empty
 	// defaults to ".yaah/shepherd-worktrees" inside the repository working
 	// tree (project-local).
@@ -178,6 +182,7 @@ type retainedProposal struct {
 	basisState  shepherdtrace.WorkspaceState
 	basisDigest string
 	artifactDir string
+	deltaDigest string
 	world       string
 }
 
@@ -581,20 +586,14 @@ func resolveDispatchWorld(rt RetainedRuntime, role string, report bool) (subagen
 		lane = "report"
 	}
 
-	// Rollout gate (yaah-ihfh.3): automatic proposal containers would seal a
-	// manifest that the in-memory registry cannot rehydrate after a restart.
-	// Keep `auto` on the worktree until that durability work lands; an explicit
-	// `world: container` (session or role) opts in. Report lanes are unaffected
-	// because they never seal.
-	explicitContainer := strings.EqualFold(strings.TrimSpace(requested), "container")
-	proposalAuto := !report && !explicitContainer
-	containerRetains := rt.DispatchWorlds != nil && !proposalAuto
-	containerOffered := rt.ContainerWorlds && !proposalAuto
+	// Container proposals are durable: the manifest, host basis, and
+	// settlement transition markers live under .yaah/proposals, and
+	// LoadProposalRegistry rebuilds them on the next session. That is what
+	// lets `auto` use a container for a proposal too, not just a report.
+	containerRetains := rt.DispatchWorlds != nil
+	containerOffered := rt.ContainerWorlds
 	retainsReason := ""
-	switch {
-	case proposalAuto && rt.DispatchWorlds != nil:
-		retainsReason = "proposal container worlds are opt-in while manifest rehydration is pending; set agents.subagent.world: container (or a per-role world override) to use one"
-	case !containerRetains:
+	if !containerRetains {
 		retainsReason = "container settlement is unavailable in this session: no per-dispatch container setup is wired"
 	}
 
@@ -648,14 +647,19 @@ func recordWorldFact(ctx context.Context, mgr *goatherd.ScopeManager, scopeID st
 	if !ok {
 		return
 	}
-	payload := map[string]any{
+	if _, err := scope.AppendFact(ctx, "yaah.subagent.world.v1", "world", worldFactPayload(res)); err != nil {
+		slog.Debug("world fact: append failed", "scope", scope.ID(), "err", err)
+	}
+}
+
+// worldFactPayload is the recorded shape of a dispatch-world resolution. Kept
+// separate so the ledger and a test can pin the same key set.
+func worldFactPayload(res subagent.WorldResolution) map[string]any {
+	return map[string]any{
 		"requested": string(res.Requested),
 		"resolved":  string(res.Resolved),
 		"degraded":  res.Degraded,
 		"reason":    res.Reason,
-	}
-	if _, err := scope.AppendFact(ctx, "yaah.subagent.world.v1", "world", payload); err != nil {
-		slog.Debug("world fact: append failed", "scope", scope.ID(), "err", err)
 	}
 }
 

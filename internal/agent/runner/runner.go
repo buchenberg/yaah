@@ -198,14 +198,28 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 		// property of construction: any composition path that builds the tool
 		// gets its own registry, and startRetainedRun refuses one without it
 		// (yaah-yox). The caller hands this same registry to ProposalTool.
+		//
+		// Container proposals persist their manifest and host basis under
+		// <repo>/.yaah/proposals. Rehydrate this session's entries so a
+		// restart does not strand a sealed proposal; bad artifacts are
+		// reported and skipped rather than guessed at.
+		repoPath := opts.RetainedRepoPath
+		if repoPath == "" {
+			repoPath, _ = os.Getwd()
+		}
+		proposals, warnings := tools.LoadProposalRegistry(repoPath, opts.ScopeManager, opts.RootScopeID, opts.SessionID)
+		for _, warning := range warnings {
+			slog.Warn("proposal rehydration", "warning", warning)
+		}
 		tool.Retained = &tools.RetainedRuntime{
 			Runner:            runnerFn,
-			RepoPath:          opts.RetainedRepoPath,
+			RepoPath:          repoPath,
 			ScopeManager:      opts.ScopeManager,
 			RootScopeID:       opts.RootScopeID,
+			SessionID:         opts.SessionID,
 			WorktreeRoot:      opts.RetainedWorktreeRoot,
 			WorktreeBootstrap: opts.RetainedBootstrap,
-			Proposals:         tools.NewProposalRegistry(),
+			Proposals:         proposals,
 			World:             opts.SubCfg.World,
 			WorldForRole: func(role string) string {
 				if rc, ok := opts.SubCfg.Roles[role]; ok {

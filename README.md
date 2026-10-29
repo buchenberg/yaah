@@ -287,7 +287,7 @@ yaah memory add|search            # persistent memory
 yaah skill list|show|create|edit  # skills
 yaah mcp list|add|remove          # MCP servers
 yaah sessions list|show|delete    # inspect stored conversations
-yaah shepherd [prune <path>]      # inspect/clean crashed worktrees
+yaah shepherd [containers | prune <path> | prune-container <id>]  # inspect/clean crashed worktrees and containers
 yaah shepherd-trace list|show|profile
 yaah update                       # update the binary
 yaah version

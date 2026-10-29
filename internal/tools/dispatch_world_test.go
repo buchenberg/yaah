@@ -59,7 +59,7 @@ func TestResolveDispatchWorld(t *testing.T) {
 		}
 	})
 
-	t.Run("a wired dispatch setup keeps an auto proposal on the worktree", func(t *testing.T) {
+	t.Run("a wired dispatch setup lets an auto proposal use the container", func(t *testing.T) {
 		rt := RetainedRuntime{
 			World:           "auto",
 			ContainerWorlds: true,
@@ -71,12 +71,12 @@ func TestResolveDispatchWorld(t *testing.T) {
 		if err != nil {
 			t.Fatalf("resolveDispatchWorld: %v", err)
 		}
-		if res.Resolved != subagent.WorldWorktree || res.Degraded {
-			t.Fatalf("got %+v, want an undegraded worktree (proposal containers are opt-in)", res)
+		if res.Resolved != subagent.WorldContainer || res.Degraded {
+			t.Fatalf("got %+v, want an undegraded container", res)
 		}
 	})
 
-	t.Run("explicit container opts a proposal into the container world", func(t *testing.T) {
+	t.Run("explicit container keeps a proposal on the container world", func(t *testing.T) {
 		rt := RetainedRuntime{
 			World:           "container",
 			ContainerWorlds: true,
@@ -93,14 +93,17 @@ func TestResolveDispatchWorld(t *testing.T) {
 		}
 	})
 
-	t.Run("auto proposals stay silent while the lane is opt-in", func(t *testing.T) {
+	t.Run("a shipped lane reports a missing setup as a degradation", func(t *testing.T) {
 		rt := RetainedRuntime{World: "auto", ContainerWorlds: true, Containment: "auto", Network: "allow_all"}
 		res, err := resolveDispatchWorld(rt, "developer", false)
 		if err != nil {
 			t.Fatalf("resolveDispatchWorld: %v", err)
 		}
-		if res.Resolved != "worktree" || res.Degraded {
-			t.Fatalf("got %+v, want an undegraded worktree", res)
+		if res.Resolved != "worktree" || !res.Degraded {
+			t.Fatalf("got %+v, want a degraded worktree", res)
+		}
+		if !strings.Contains(res.Reason, "settlement") {
+			t.Fatalf("reason %q must name the blocker", res.Reason)
 		}
 	})
 
@@ -191,4 +194,26 @@ func TestDispatchWorldPreflightFailure(t *testing.T) {
 			t.Errorf("error = %q, want it to name the world", err)
 		}
 	})
+}
+
+// TestWorldFactPayloadShape pins the trace fact's key set to the parity ledger.
+func TestWorldFactPayloadShape(t *testing.T) {
+	got := worldFactPayload(subagent.WorldResolution{
+		Requested: subagent.WorldAuto,
+		Resolved:  subagent.WorldWorktree,
+		Degraded:  true,
+		Reason:    "container unavailable",
+	})
+	want := map[string]bool{"requested": true, "resolved": true, "degraded": true, "reason": true}
+	if len(got) != len(want) {
+		t.Fatalf("payload keys = %v, want %v", got, want)
+	}
+	for k := range got {
+		if !want[k] {
+			t.Errorf("unexpected world-fact key %q", k)
+		}
+	}
+	if got["requested"] != "auto" || got["resolved"] != "worktree" || got["degraded"] != true {
+		t.Errorf("payload = %v", got)
+	}
 }
