@@ -210,7 +210,8 @@ def settled_actions() -> set[str]:
             """
             SELECT DISTINCT json_extract(r.body_json, '$.action')
             FROM records r
-            WHERE r.schema_ref = 'shepherd.run_output.settled.v1'
+            WHERE r.schema_ref IN ('shepherd.run_output.settled.v1',
+                                   'goatherd.run_output.settled.v1')
             """
         ).fetchall()
     finally:
@@ -224,7 +225,8 @@ def settled_output_ids() -> set[str]:
     try:
         rows = conn.execute(
             "SELECT DISTINCT json_extract(body_json, '$.output_id') FROM records "
-            "WHERE schema_ref = 'shepherd.run_output.settled.v1'"
+            "WHERE schema_ref IN ('shepherd.run_output.settled.v1', "
+            "'goatherd.run_output.settled.v1')"
         ).fetchall()
     finally:
         conn.close()
@@ -247,7 +249,8 @@ def sealed_output_count() -> int:
     try:
         rows = conn.execute(
             "SELECT COUNT(DISTINCT json_extract(body_json, '$.output_id')) FROM records "
-            "WHERE schema_ref = 'shepherd.run_output.sealed.v1'"
+            "WHERE schema_ref IN ('shepherd.run_output.sealed.v1', "
+            "'goatherd.run_output.sealed.v1')"
         ).fetchall()
     finally:
         conn.close()
@@ -567,14 +570,3 @@ def recovered_scope_exists(owner: str, path: Path) -> bool:
         ):
             return True
     return False
-
-
-def runtime_sealed_output_count() -> int:
-    """Count sealed outputs in the runtime (goatherd) schema family."""
-    conn = _connect(TRACE_DB)
-    try:
-        return conn.execute(
-            "SELECT COUNT(*) FROM records WHERE schema_ref = 'goatherd.run_output.sealed.v1'"
-        ).fetchone()[0]
-    finally:
-        conn.close()
