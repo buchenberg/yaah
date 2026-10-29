@@ -27,4 +27,4 @@ def test_workspace_integrity():
 
 def test_recovery_trace():
     assert oa.recovered_scope_exists("sub-recovery", WT)
-    assert oa.sealed_output_count() >= 1
+    assert oa.runtime_sealed_output_count() >= 1

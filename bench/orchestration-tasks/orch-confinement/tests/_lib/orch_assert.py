@@ -527,10 +527,14 @@ def assert_message_count_below(maximum: int) -> None:
 
 def worktree_registered(path: Path) -> bool:
     """Whether path is registered as a git worktree of /app."""
-    try:
-        out = _git("worktree", "list", "--porcelain")
-    except Exception:
+    proc = subprocess.run(
+        ["git", "-C", str(APP), "worktree", "list", "--porcelain"],
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
         return False
+    out = proc.stdout.decode(errors="replace")
     target = str(path.resolve())
     for line in out.splitlines():
         if line.startswith("worktree ") and str(Path(line[len("worktree "):]).resolve()) == target:
@@ -553,18 +557,20 @@ def recovered_scope_exists(owner: str, path: Path) -> bool:
         ).fetchall()
     finally:
         conn.close()
-    target = str(path)
+    target = str(path.resolve())
     for isolated, child_owner, sandbox_path in rows:
         if (
             str(isolated).lower() in ("1", "true")
             and child_owner == owner
-            and sandbox_path == target
+            and sandbox_path
+            and str(Path(sandbox_path).resolve()) == target
         ):
             return True
     return False
 
 
-def sealed_output_count() -> int:
+def runtime_sealed_output_count() -> int:
+    """Count sealed outputs in the runtime (goatherd) schema family."""
     conn = _connect(TRACE_DB)
     try:
         return conn.execute(
