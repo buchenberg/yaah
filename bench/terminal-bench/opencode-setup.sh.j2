@@ -1,0 +1,33 @@
+#!/bin/sh
+# OpenCode install script for Terminal-Bench task containers.
+# Rendered by the agent adapter; runs with setup-env.sh already sourced
+# (DEEPSEEK_API_KEY, OPENCODE_MODEL, XDG_DATA_HOME, XDG_CONFIG_HOME).
+set -eu
+
+# The binary is copied to /installed-agent/opencode by the adapter.
+chmod +x /installed-agent/opencode
+if cp /installed-agent/opencode /usr/local/bin/opencode 2>/dev/null; then
+  chmod +x /usr/local/bin/opencode
+else
+  mkdir -p "$HOME/bin"
+  cp /installed-agent/opencode "$HOME/bin/opencode"
+  chmod +x "$HOME/bin/opencode"
+  echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.bashrc"
+  export PATH="$HOME/bin:$PATH"
+fi
+
+# Keep all mutable OpenCode state on the mounted agent-logs path. This is the
+# same volume the harness exposes for yaah/hermes, so the session database
+# survives the task container and can be read by extract_metrics.py.
+mkdir -p "$XDG_DATA_HOME" "$XDG_CONFIG_HOME/opencode" /agent-logs
+cat > "$XDG_CONFIG_HOME/opencode/opencode.json" <<'EOF'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "deepseek/deepseek-flash",
+  "update": "disable"
+}
+EOF
+
+# --standalone creates a private server per invocation. The shared service is
+# intentionally not started in benchmark containers.
+opencode --version 2>/dev/null || opencode --help >/dev/null 2>&1 || true

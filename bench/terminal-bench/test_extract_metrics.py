@@ -91,6 +91,119 @@ class TokenNormalizationTest(unittest.TestCase):
         self.assertIsNone(cost)
         self.assertEqual(key, "deepseek-flash")
 
+    def test_opencode_usage_sums_step_finish_events(self):
+        with tempfile.TemporaryDirectory() as root:
+            task_dir = os.path.join(root, "run", "hello-world", "trial", "agent-logs")
+            os.makedirs(task_dir)
+            events = [
+                {"type": "step_finish", "sessionID": "ses_test", "part": {
+                    "tokens": {"input": 100, "output": 20, "reasoning": 5,
+                               "cache": {"read": 30, "write": 0}},
+                    "cost": 0.1,
+                }},
+                {"type": "step_finish", "sessionID": "ses_test", "part": {
+                    "tokens": {"input": 10, "output": 2, "reasoning": 0,
+                               "cache": {"read": 0, "write": 0}},
+                    "cost": 0.02,
+                }},
+            ]
+            with open(os.path.join(task_dir, "opencode-stdout.jsonl"), "w") as f:
+                for event in events:
+                    f.write(json.dumps(event) + "\n")
+            with open(os.path.join(task_dir, "opencode-session.txt"), "w") as f:
+                f.write("ses_test")
+            usage = em.opencode_usage(root, "run", "hello-world")
+        self.assertEqual(usage["steps"], 2)
+        self.assertEqual(usage["tokens"]["input"], 110)
+        self.assertEqual(usage["tokens"]["output"], 22)
+        self.assertEqual(usage["tokens"]["reasoning"], 5)
+        self.assertEqual(usage["tokens"]["cache_read"], 30)
+
+    def test_opencode_stream_fallback_keeps_child_events(self):
+        with tempfile.TemporaryDirectory() as root:
+            task_dir = os.path.join(root, "run", "hello-world", "trial", "agent-logs")
+            os.makedirs(task_dir)
+            events = [
+                {"type": "step_finish", "sessionID": "ses_root", "part": {
+                    "tokens": {"input": 10, "output": 1, "reasoning": 0,
+                               "cache": {"read": 2, "write": 0}}, "cost": 0.01}},
+                {"type": "step_finish", "sessionID": "ses_child", "part": {
+                    "tokens": {"input": 5, "output": 2, "reasoning": 1,
+                               "cache": {"read": 3, "write": 0}}, "cost": 0.02}},
+            ]
+            with open(os.path.join(task_dir, "opencode-stdout.jsonl"), "w") as f:
+                for event in events:
+                    f.write(json.dumps(event) + "\n")
+            with open(os.path.join(task_dir, "opencode-session.txt"), "w") as f:
+                f.write("ses_root")
+            usage = em.opencode_usage(root, "run", "hello-world")
+        self.assertEqual(usage["tokens"]["input"], 15)
+        self.assertEqual(usage["tokens"]["cache_read"], 5)
+        self.assertEqual(usage["sub_tokens_in"], 8)
+        self.assertEqual(usage["sub_tokens_out"], 2)
+        self.assertEqual(usage["steps"], 2)
+
+    def test_opencode_db_folds_child_sessions(self):
+        with tempfile.TemporaryDirectory() as root:
+            task_dir = os.path.join(root, "run", "hello-world", "trial", "agent-logs")
+            os.makedirs(os.path.join(task_dir, "opencode-data", "opencode"))
+            with open(os.path.join(task_dir, "opencode-session.txt"), "w") as f:
+                f.write("ses_root")
+            db = sqlite3.connect(
+                os.path.join(task_dir, "opencode-data", "opencode", "opencode.db")
+            )
+            db.execute(
+                "CREATE TABLE session_v2 (id TEXT, parent_id TEXT, "
+                "tokens_input INTEGER, tokens_output INTEGER, "
+                "tokens_reasoning INTEGER, tokens_cache_read INTEGER, "
+                "tokens_cache_write INTEGER, cost REAL)"
+            )
+            db.execute("CREATE TABLE session_message (session_id TEXT, type TEXT)")
+            db.executemany(
+                "INSERT INTO session_v2 VALUES (?, ?, ?, ?, 0, ?, 0, 0)",
+                [
+                    ("ses_root", None, 100, 10, 20),
+                    ("ses_child", "ses_root", 50, 5, 10),
+                ],
+            )
+            db.executemany(
+                "INSERT INTO session_message VALUES (?, 'assistant')",
+                [("ses_root",), ("ses_root",), ("ses_child",)],
+            )
+            db.commit()
+            db.close()
+            usage = em.opencode_usage(root, "run", "hello-world")
+        self.assertEqual(usage["steps"], 3)
+        self.assertEqual(usage["tokens"]["input"], 150)
+        self.assertEqual(usage["tokens"]["cache_read"], 30)
+        self.assertEqual(usage["sub_tokens_in"], 60)
+        self.assertEqual(usage["sub_tokens_out"], 5)
+        self.assertEqual(usage["orch_tokens_in"], 120)
+        self.assertEqual(usage["orch_tokens_out"], 10)
+
+    def test_opencode_db_fallback_tolerates_nulls(self):
+        with tempfile.TemporaryDirectory() as root:
+            task_dir = os.path.join(root, "run", "hello-world", "trial", "agent-logs")
+            os.makedirs(os.path.join(task_dir, "opencode-data", "opencode"))
+            with open(os.path.join(task_dir, "opencode-session.txt"), "w") as f:
+                f.write("ses_root")
+            db = sqlite3.connect(
+                os.path.join(task_dir, "opencode-data", "opencode", "opencode.db")
+            )
+            db.execute(
+                "CREATE TABLE session_v2 (id TEXT, parent_id TEXT, "
+                "tokens_input INTEGER, tokens_output INTEGER, "
+                "tokens_reasoning INTEGER, tokens_cache_read INTEGER, "
+                "tokens_cache_write INTEGER, cost REAL)"
+            )
+            db.execute("INSERT INTO session_v2 VALUES ('ses_root', NULL, NULL, NULL, NULL, NULL, NULL, NULL)")
+            db.commit()
+            db.close()
+            usage = em.opencode_usage(root, "run", "hello-world")
+        self.assertEqual(usage["tokens"]["input"], 0)
+        self.assertEqual(usage["tokens_in"], 0)
+        self.assertIsNone(usage["steps"])
+
     def test_usage_report_splits_cached_prompt(self):
         with tempfile.TemporaryDirectory() as root:
             task_dir = os.path.join(root, "run", "hello-world", "trial", "agent-logs")

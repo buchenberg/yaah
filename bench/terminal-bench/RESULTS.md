@@ -494,28 +494,33 @@ comparison: two tasks, one trial, off-peak pricing.
 - Harness pin: `d28711d`
 - yaah: `53407d7`, run `2026-10-29__11-39-32`
 - hermes-agent 0.19.0, run `2026-10-29__11-42-33`
+- opencode v2.1.3: hello-world `2026-10-29__12-11-43`,
+  broken-python `2026-10-29__12-12-27` (one OpenCode run per task)
 - Model: `deepseek-flash`; effort: default; price tier: off-peak
 
-| Task | yaah | hermes |
-|---|---|---|
-| hello-world | resolved | resolved |
-| broken-python | resolved | resolved |
-| **Resolved** | **2/2** | **2/2** |
+| Task | yaah | hermes | opencode |
+|---|---|---|---|
+| hello-world | resolved | resolved | resolved |
+| broken-python | resolved | resolved | resolved |
+| **Resolved** | **2/2** | **2/2** | **2/2** |
 
-| Metric | yaah | hermes |
-|---|---:|---:|
-| Input, uncached | 25,066 | 24,268 |
-| Output | 5,968 | 2,245 |
-| Cache read | 196,352 | 141,440 |
-| Steps | 13 | 13 |
-| Agent wall time | 52s | 50s |
-| Cost (off-peak) | $0.0079 | $0.0054 |
+| Metric | yaah | hermes | opencode |
+|---|---:|---:|---:|
+| Input, uncached | 25,066 | 24,268 | 7,704 |
+| Output | 5,968 | 2,245 | 2,031 |
+| Reasoning | n/a | 0 | 1,615 |
+| Cache read | 196,352 | 141,440 | 68,608 |
+| Steps | 13 | 13 | 10 |
+| Agent wall time | 52s | 50s | 34s |
+| Cost (off-peak) | $0.0079 | $0.0054 | $0.0035 |
 
-The normalized columns keep cache separate from input; `tokens_in` in the
-legacy totals still includes cache. Cost uses the shared price table, not an
-arm's self-reported price. Both runs came from old-style run metadata with no
-model field, so the extractor used its documented `TB_MODEL` fallback
-(`deepseek-flash`).
+The OpenCode totals sum the two per-task smoke runs; the adapter was exercised
+one task per invocation. OpenCode's durable `session_v2` row is authoritative
+(the CLI can exit before the final `step_finish` reaches stdout); the stream is
+the fallback. The normalized columns keep cache separate from input;
+`tokens_in` in the legacy totals still includes cache. Cost uses the shared price table, not an
+arm's self-reported price. All runs came from run metadata with no model field,
+so the extractor used its documented `TB_MODEL` fallback (`deepseek-flash`).
 
 Raw metrics are emitted by `extract_metrics.py --json` for the run IDs above;
 append future run IDs here rather than rewriting this section.
