@@ -359,6 +359,7 @@ yaah version
 | Doc | Contents |
 |---|---|
 | [architecture.md](./docs/architecture.md) | Agent loop, middleware pipeline, tool dispatch, context management, streaming, persistence, traces |
+| [storage.md](./docs/storage.md) | `state.db` / `trace.db` ownership, intentional overlap, fidelity limits, retention |
 | [sub-agents.md](./docs/sub-agents.md) | Roles, budgets, escalation, quality gates, retained proposals, custom roles |
 | [configuration.md](./docs/configuration.md) | Full `config.yaml` reference: providers, agents, sub-agents, workspace, supervision, hooks, observability |
 | [features.md](./docs/features.md) | TUI/REPL/web, memory, MCP, tools, approval, workspace containment, tracing |

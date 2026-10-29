@@ -108,6 +108,11 @@ persisted its debounced write still has a recoverable transcript. Sub-agent
 traces use their synthetic owner IDs; `rebuild sub-<role>-...` works the same
 way and the owner mapping stays in `trace_owners`.
 
+The two stores are not replicas: `state.db` is the active/resume/search model
+while `trace.db` is append-only evidence and recovery. Their intentional
+overlap, fidelity limits, and deletion semantics are documented in
+[storage.md](./storage.md).
+
 ## MCP client
 
 yaah consumes Model Context Protocol servers over stdio and HTTP:
