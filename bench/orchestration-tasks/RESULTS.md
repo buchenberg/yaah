@@ -452,3 +452,21 @@ The verifier checks the reported adopted path, the exact recovered payload,
 trace, and the sealed output. `suite.txt` now lists nine scenarios;
 `orch-settle-discard` remains runnable ad hoc because it overlaps
 `orch-settle-apply`.
+
+## 2026-10-29 — runtime schema namespace compatibility
+
+The orchestration verifier still queried only the pre-rename
+`shepherd.run_output.*` schemas. Runtime v0.21 emits
+`goatherd.run_output.*` (and the kernel's frozen `shepherd2` vocabulary is
+separate), so `orch-settle-discard`'s end state passed while its trace layer
+reported no settlement.
+
+The helper now unions both runtime namespaces for settlement actions, settled
+output IDs, and sealed-output counts. Recorded copies are re-vendored.
+
+- Live `orch-settle-discard` after the fix: run `2026-10-29__15-01-01`, **1/1**
+- Before the fix: run `2026-10-29__14-59-03`, end state passed but trace layer
+  failed with `settlement record is missing ['discarded']`
+
+This affects every orchestration task that asserts settlement/sealed evidence,
+not only the mock track.
