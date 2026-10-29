@@ -740,6 +740,8 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			dispatchWorlds.SessionSandbox = sessionSandbox
 		}
 	}
+	containerSession := dispatchWorlds != nil && dispatchWorlds.SessionSandbox != nil
+	retainLane := retainedLaneActive(cfg.Agent.SubAgent.Mode, retainCapable, containerSession)
 
 	taskTool := runner.NewDelegateTool(runner.DelegateToolOpts{
 		Provider:              provider,
@@ -777,7 +779,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		// routed shared below because there is no host worktree to settle into.
 		// agents.subagent.mode: shared remains the opt-out.
 		SubNetwork:           subNetwork,
-		Retain:               (sessionSandbox == nil || dispatchWorlds != nil) && retainedMode(cfg.Agent.SubAgent.Mode) && retainCapable,
+		Retain:               retainLane,
 		RetainedRepoPath:     cfg.Agent.Default.RetainedRepoPath,
 		RetainedWorktreeRoot: cfg.Agent.Default.RetainedWorktreeRoot,
 		RetainedBootstrap:    cfg.Agent.Default.RetainedWorktreeBootstrap,
@@ -800,7 +802,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		case subagent.LaneShared:
 			return tools.LaneShared
 		default:
-			if sessionSandbox != nil {
+			if containerSession {
 				// A container session has no host worktree and no retained
 				// settlement target; proposal work stays on the session
 				// container under the shared lane.
@@ -1231,6 +1233,17 @@ func normalizeBrokerHosts(hosts []string) []string {
 // retainedMode reports whether agents.subagent.mode selects the retained-run
 // lane for delegate (Plan 7 Phase 2). The default (empty) is retained —
 // the parity default; "shared" is the explicit opt-out.
+// retainedLaneActive decides whether NewDelegateTool should build the retained
+// runtime. A local session additionally needs a capturable root sandbox; a
+// container session's root is pure-causal, and its report-lane siblings come
+// from the session container, so retainCapable does not apply there.
+func retainedLaneActive(mode string, retainCapable, containerSession bool) bool {
+	if !retainedMode(mode) {
+		return false
+	}
+	return containerSession || retainCapable
+}
+
 func retainedMode(mode string) bool {
 	return !strings.EqualFold(strings.TrimSpace(mode), "shared")
 }

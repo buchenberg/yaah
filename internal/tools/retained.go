@@ -428,8 +428,23 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		if werr != nil {
 			return "", werr
 		}
-		if rt.DispatchWorlds != nil && rt.DispatchWorlds.SessionSandbox != nil && worldRes.Resolved == subagent.WorldWorktree {
-			return "", fmt.Errorf("delegate: sibling container unavailable in a container session: %w", perr)
+		if rt.DispatchWorlds != nil && rt.DispatchWorlds.SessionSandbox != nil {
+			if !report {
+				return "", fmt.Errorf("delegate: sibling container unavailable in a container session: %w", perr)
+			}
+			// Report lanes can still run in the session container: it is the
+			// predecessor world in the ladder, and a report seals nothing.
+			runCtx := ctx
+			if timeout > 0 {
+				var cancel context.CancelFunc
+				runCtx, cancel = context.WithTimeout(ctx, timeout)
+				defer cancel()
+			}
+			result, rerr := rt.Runner(runCtx, prompt, subParams)
+			if rerr != nil {
+				return "", rerr
+			}
+			return retainedNote(result, "dispatch world degraded: "+worldRes.Reason), nil
 		}
 	}
 

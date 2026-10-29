@@ -2,7 +2,9 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -66,6 +68,9 @@ func openDispatchWorld(ctx context.Context, rt RetainedRuntime) (*SessionSandbox
 	defer cancel()
 
 	if dw.SessionSandbox != nil {
+		if dw.SessionSandbox.sb == nil {
+			return nil, fmt.Errorf("the container session has no sandbox to seed from")
+		}
 		// A sibling is seeded from the session's snapshot, not the host tree:
 		// edits made in the session container are part of the dispatch's
 		// world, and the host copy may be stale.
@@ -73,16 +78,32 @@ func openDispatchWorld(ctx context.Context, rt RetainedRuntime) (*SessionSandbox
 		if err != nil {
 			return nil, fmt.Errorf("capture the session container state: %w", err)
 		}
+		release := func() {
+			// Capture pins a state. The sibling's active layer keeps its own
+			// lease; drop this transient pin once the state has been applied.
+			releaser, ok := dw.SessionSandbox.sb.(interface {
+				ReleaseState(context.Context, shepherdtrace.WorkspaceState) error
+			})
+			if !ok {
+				return
+			}
+			if rerr := releaser.ReleaseState(context.WithoutCancel(startCtx), state); rerr != nil {
+				slog.Warn("dispatch world: release session capture", "err", rerr)
+			}
+		}
 		ss, err := StartSessionSandbox(startCtx, dw.Config, dw.Opener, "", dw.Deny)
 		if err != nil {
+			release()
 			return nil, err
 		}
 		if err := ss.sb.Apply(startCtx, state); err != nil {
 			dctx, dcancel := context.WithTimeout(context.WithoutCancel(ctx), dispatchWorldDestroyTimeout)
 			defer dcancel()
-			_ = ss.Destroy(dctx)
-			return nil, fmt.Errorf("seed the sibling container from the session state: %w", err)
+			destroyErr := ss.Destroy(dctx)
+			release()
+			return nil, errors.Join(fmt.Errorf("seed the sibling container from the session state: %w", err), destroyErr)
 		}
+		release()
 		return ss, nil
 	}
 

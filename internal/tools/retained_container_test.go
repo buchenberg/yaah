@@ -231,3 +231,30 @@ func TestRetainedReport_ContainerSessionSibling(t *testing.T) {
 		}
 	}
 }
+
+// TestRetainedReport_ContainerSessionFallsBackToSession pins the availability
+// rule: if a container session's sibling cannot be provisioned, an auto report
+// still runs in the session container with a recorded degradation.
+func TestRetainedReport_ContainerSessionFallsBackToSession(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	var gotWS Workspace
+	run := func(ctx context.Context, _ string, _ SubAgentParams) (string, error) {
+		gotWS = DispatchWorkspace(ctx)
+		return "session fallback report", nil
+	}
+	rt := containerReportRuntime(t, fx, repo, rootID, t.TempDir(), run, "auto", nil)
+	rt.DispatchWorlds.SessionSandbox = &SessionSandbox{}
+
+	res, err := startRetainedRun(context.Background(), rt, "inspect", SubAgentParams{Role: "reviewer"}, 0, true)
+	if err != nil {
+		t.Fatalf("auto report must fall back to the session container: %v", err)
+	}
+	for _, want := range []string{"session fallback report", "dispatch world degraded"} {
+		if !strings.Contains(res, want) {
+			t.Errorf("result must contain %q, got:\n%s", want, res)
+		}
+	}
+	if gotWS != nil {
+		t.Error("the session-container fallback must not inject a dispatch workspace")
+	}
+}
