@@ -201,6 +201,9 @@ func (w *memWorkspace) Remove(_ context.Context, p string) error {
 	delete(w.files, p)
 	return nil
 }
+func (w *memWorkspace) Stat(context.Context, string) (fs.FileInfo, error) {
+	return nil, fs.ErrNotExist
+}
 
 func TestApplyGitDeltaWorkspace(t *testing.T) {
 	ws := &memWorkspace{files: map[string][]byte{"/workspace/gone.txt": []byte("old")}}
@@ -230,5 +233,23 @@ func TestLoadProposalRegistry_SessionTargetNotRehydrated(t *testing.T) {
 	}
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "session-lifetime") {
 		t.Fatalf("warnings = %v, want a session-lifetime warning", warnings)
+	}
+}
+
+func TestLoadProposalRegistry_SessionTargetSettledConsumed(t *testing.T) {
+	f := newDeltaFixture(t)
+	dir, _, err := persistGitDelta(context.Background(), f.repo, "proposal:session-settled", rehydrateDelta(), "", "", "", f.sessionID, f.rootID, "session", f.basisState, f.basisDigest)
+	if err != nil {
+		t.Fatalf("persist: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, proposalSettled), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reg, warnings := LoadProposalRegistry(f.repo, f.fx.mgr, f.rootID, f.sessionID)
+	if len(reg.all()) != 0 || len(warnings) != 0 {
+		t.Fatalf("got %d proposals, warnings %v; want consumed silently", len(reg.all()), warnings)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("settled session artifact should be removed, stat err = %v", err)
 	}
 }

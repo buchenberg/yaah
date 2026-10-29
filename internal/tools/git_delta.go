@@ -1065,8 +1065,17 @@ func applyGitDeltaWorkspace(ctx context.Context, ws Workspace, delta *GitDelta) 
 				return fmt.Errorf("delete %s: %w", change.Path, err)
 			}
 		case deltaKindAdd, deltaKindModify:
-			if err := ws.MkdirAll(ctx, path.Dir(abs), 0o755); err != nil {
-				return fmt.Errorf("create parent for %s: %w", change.Path, err)
+			parent := path.Dir(abs)
+			// Never chmod an existing parent: sandboxWorkspace.MkdirAll
+			// unconditionally applies its mode, while the host os.MkdirAll
+			// leaves existing directories alone. Only create when missing.
+			if _, statErr := ws.Stat(ctx, parent); statErr != nil {
+				if !errors.Is(statErr, fs.ErrNotExist) {
+					return fmt.Errorf("stat parent for %s: %w", change.Path, statErr)
+				}
+				if err := ws.MkdirAll(ctx, parent, 0o755); err != nil {
+					return fmt.Errorf("create parent for %s: %w", change.Path, err)
+				}
 			}
 			if err := ws.WriteFile(ctx, abs, change.Content, change.Mode.Perm()); err != nil {
 				return fmt.Errorf("write %s: %w", change.Path, err)
@@ -1089,9 +1098,13 @@ func (p *retainedProposal) requireSessionUnmoved(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("proposal %s: select cannot capture the session state: %w", p.id, err)
 	}
-	digest, err := state.Digest()
-	if err != nil {
-		return fmt.Errorf("proposal %s: select cannot digest the session state: %w", p.id, err)
+	digest, digErr := state.Digest()
+	releaseErr := p.session.ReleaseCapture(context.WithoutCancel(ctx), state)
+	if digErr != nil {
+		return fmt.Errorf("proposal %s: select cannot digest the session state: %w", p.id, digErr)
+	}
+	if releaseErr != nil {
+		return fmt.Errorf("proposal %s: select cannot release the session capture: %w", p.id, releaseErr)
 	}
 	if digest != p.basisDigest {
 		return fmt.Errorf("proposal %s: the session container moved since the dispatch; select applies only onto the dispatch basis — use apply, or discard", p.id)

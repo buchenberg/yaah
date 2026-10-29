@@ -60,8 +60,7 @@ type Status struct {
 	// WorldReq is the configured dispatch world: "auto", "worktree", or
 	// "container" (default applied).
 	WorldReq string
-	// ProposalWorld is the resolved world for the proposal lane. In a
-	// container session proposals are routed shared, so it reads "shared".
+	// ProposalWorld is the resolved world for the proposal lane.
 	ProposalWorld string
 	// ReportWorld is the resolved world for the report lane.
 	ReportWorld string
@@ -118,11 +117,10 @@ func Derive(cfg *config.Config, workspaceRoot string, isolated bool) Status {
 		s.NetworkHosts = len(cfg.Agent.SubAgent.NetworkHosts)
 	}
 
-	// The session-level degradation is the default lane's: the proposal
-	// lane when it carries a world, otherwise the report lane (a container
-	// session's proposals are routed shared and never degrade there). A
-	// report-lane error still replaces a shared proposal so the reason
-	// reaches the surfaces instead of leaving "unavailable" unexplained.
+	// The session-level degradation is the proposal lane's (the default
+	// lane). A report-lane error only replaces a legitimate shared proposal,
+	// so the reason reaches the surfaces instead of leaving "unavailable"
+	// unexplained.
 	primary, primaryErr := res.Proposal, res.ProposalErr
 	if primaryErr == nil && primary.Resolved == subagent.WorldShared {
 		primary, primaryErr = res.Report, res.ReportErr
@@ -140,8 +138,8 @@ func Derive(cfg *config.Config, workspaceRoot string, isolated bool) Status {
 
 // Resolve applies the runtime ladder to the configured default world for
 // both dispatch lanes. It resolves nothing that the runtime would not:
-// mode shared has no world at all, and a container session routes its
-// proposal lane shared (see cmd/yaah's LaneForRole).
+// mode shared has no world at all; a container session resolves both lanes
+// against the sibling-container availability.
 func Resolve(cfg *config.Config, isolated bool) Resolution {
 	if cfg == nil {
 		return Resolution{}
@@ -172,17 +170,6 @@ func Resolve(cfg *config.Config, isolated bool) Resolution {
 		return out
 	}
 
-	if ContainerSession(cfg, isolated) {
-		// Wiring routes every non-report role shared; only report roles
-		// reach the retained runtime and resolve a sibling container.
-		out.Proposal = subagent.WorldResolution{
-			Requested: subagent.WorldKind(requested),
-			Resolved:  subagent.WorldShared,
-		}
-		out.Report, out.ReportErr = resolve("report", false)
-		return out
-	}
-
 	out.Proposal, out.ProposalErr = resolve("proposal", true)
 	out.Report, out.ReportErr = resolve("report", false)
 	return out
@@ -191,22 +178,20 @@ func Resolve(cfg *config.Config, isolated bool) Resolution {
 // Availability reports what this host and session can provide, constructed
 // exactly as internal/tools' resolveDispatchWorld constructs it. A
 // per-dispatch container is offered on Linux with an image configured; a
-// container session (isolated + offered) has no host worktree and its
-// proposals stay unretained.
+// container session (isolated + offered) has no host worktree but can retain
+// into the session container.
 func Availability(cfg *config.Config, isolated bool) subagent.WorldAvailability {
 	offered := cfg != nil && runtime.GOOS == "linux" && strings.TrimSpace(cfg.Workspace.Containerd.Image) != ""
 	containerSession := offered && isolated
-	containerRetains := offered && !containerSession
+	containerRetains := offered
 	retainsReason := ""
-	if containerSession {
-		retainsReason = "container-session proposals remain unretained; report lanes use sibling containers"
-	} else if !containerRetains {
+	if !containerRetains {
 		retainsReason = "container settlement is unavailable in this session: no per-dispatch container setup is wired"
 	}
 	worktree := !containerSession
 	worktreeReason := ""
 	if containerSession {
-		worktreeReason = "a container session has no host worktree; report lanes use a sibling container"
+		worktreeReason = "a container session has no host worktree; dispatches use a sibling container"
 	}
 	return subagent.WorldAvailability{
 		Container:              offered,

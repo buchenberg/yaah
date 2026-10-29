@@ -445,11 +445,12 @@ tree; a container-session proposal settles into the **session container** and
 leaves the host untouched until `apply_out`. The manifest and basis live under
 `.yaah/proposals/<id>/`: host-target proposals rehydrate after a restart,
 session-target proposals are session-lifetime (the parent container is gone, so
-they are left for audit rather than rebound to a new world). A preflight failure (open, probe,
-create, bootstrap) degrades `world: auto` to the worktree with a recorded
-warning; `world: container` fails closed. A restrictive `network` posture (`deny_all`/`broker`) is refused for a
-container world because `http`/`webfetch` run in this process, outside the
-container. This path is Linux-only, like the `containerd` backend itself.
+they are left for audit rather than rebound to a new world). A preflight failure (open, probe, create, bootstrap) degrades
+`world: auto` to the worktree in a host session; in a container session a
+report falls back to the session container and a proposal fails closed.
+`world: container` fails closed. A restrictive `network` posture
+(`deny_all`/`broker`) is refused for a container world because
+`http`/`webfetch` run in this process, outside the container. This path is Linux-only, like the `containerd` backend itself.
 
 The `containerd` backend requires a Linux containerd daemon: config
 validation refuses it at load on any other platform. The daemon's socket is
@@ -465,10 +466,11 @@ this mode; the container is the containment boundary. See
 
 A retained dispatch runs the sub-agent in its **own world** and returns a
 sealed proposal; the orchestrator settles it with
-`proposal select|apply|release|discard`. In a local session the world is a git
-worktree and settlement writes the host tree; in a container session it is a
-sibling container and settlement writes the **session container**, leaving the
-host untouched until `apply_out`. Retained mode is available whenever the
+`proposal select|apply|release|discard`. A local session defaults to a git
+worktree and settlement writes the host tree; with `containerd.image` set,
+`auto` may use a container proposal that still settles onto the host. In a
+container session the world is a sibling container and settlement writes the
+**session container**, leaving the host untouched until `apply_out`. Retained mode is available whenever the
 shepherd root scope exists and the lane can provide a world; otherwise use
 `agents.subagent.mode: shared` or expect the direct lane.
 
