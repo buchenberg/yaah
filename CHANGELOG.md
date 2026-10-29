@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.110.1](https://github.com/buchenberg/yaah/compare/v0.110.0...v0.110.1) (2026-10-29)
+
+
+### Tests
+
+* **container:** assert dispatch teardown in the live lane ([e5e01a8](https://github.com/buchenberg/yaah/commit/e5e01a8eff740d24ef9bab2cf69aec24afbe8a6e))
+* **container:** drop the unreachable warning assertion ([f437e8f](https://github.com/buchenberg/yaah/commit/f437e8f46dbd9df1f5707d7011f6791b6595ce17))
+* **container:** live dispatch-container proposal lane ([f950681](https://github.com/buchenberg/yaah/commit/f950681089f71befec8914c8b4fc21a0101785ea))
+* **container:** live dispatch-container proposal lane ([ad1c2f7](https://github.com/buchenberg/yaah/commit/ad1c2f78a8034ddfc99c3f37ac7d6b83a9b7f378))
+
 ## [0.110.0](https://github.com/buchenberg/yaah/compare/v0.109.0...v0.110.0) (2026-10-29)
 
 
