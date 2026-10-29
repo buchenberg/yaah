@@ -740,20 +740,20 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 	}
 }
 
-// subAgentRetainedContext binds a sub-agent's transcript to the dispatch's
-// substrate, containment, and role tool belt. The kernel stamps it into every
-// fact envelope, so authority provenance is digest-bound rather than living
-// only in the mutable sessions.workspace_backend/session_prompt columns.
+// subAgentTraceCWD mirrors buildSubAgentSysPrompt: the sandbox workdir wins
+// when a workspace is installed, because the isolated lane ignores a
+// model-supplied workdir and file tools resolve against the sandbox.
 func subAgentTraceCWD(opts taskRunnerOpts, workdir string) string {
-	// Mirror buildSubAgentSysPrompt: the sandbox workdir wins when a
-	// workspace is installed, because the isolated lane ignores a
-	// model-supplied workdir and file tools resolve against the sandbox.
 	if opts.workspace != nil {
 		return opts.workspace.WorkDir()
 	}
 	return workdir
 }
 
+// subAgentRetainedContext binds a sub-agent's transcript to the dispatch's
+// substrate, containment, and role tool belt. The kernel stamps it into every
+// fact envelope, so authority provenance is digest-bound rather than living
+// only in the mutable sessions.workspace_backend/session_prompt columns.
 func subAgentRetainedContext(ctx context.Context, opts taskRunnerOpts, role subagent.SubAgentRole, workdir string, conf *subAgentConfinement, reg *tools.Registry) *shepherdtrace.RetainedContext {
 	substrate := "yaah.substrate.host.v1"
 	containment := shepherdtrace.ContainUncontained
