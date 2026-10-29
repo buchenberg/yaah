@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.111.0](https://github.com/buchenberg/yaah/compare/v0.110.1...v0.111.0) (2026-10-29)
+
+
+### Features
+
+* **container:** durable proposals, per-role doctor, container pruning ([af7bd47](https://github.com/buchenberg/yaah/commit/af7bd47fabb816a9463e6ea7c23be472ec28665a))
+* **container:** durable proposals, per-role doctor, container pruning ([2b36061](https://github.com/buchenberg/yaah/commit/2b36061fb48557dceba66d51011d2c6641db8055))
+
+
+### Bug Fixes
+
+* **container:** address review — pausing is live, role lanes, rehydrate warnings ([775fb31](https://github.com/buchenberg/yaah/commit/775fb3142b084b400b7f9cb2df374de461b34fd7))
+* **doctor:** load the role registry before per-role world checks ([f0538c6](https://github.com/buchenberg/yaah/commit/f0538c609cf6244989d07be1df3cfdbc9e396659))
+
 ## [0.110.1](https://github.com/buchenberg/yaah/compare/v0.110.0...v0.110.1) (2026-10-29)
 
 
