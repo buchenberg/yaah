@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.113.0](https://github.com/buchenberg/yaah/compare/v0.112.0...v0.113.0) (2026-10-29)
+
+
+### Features
+
+* **ui:** surface workspace and dispatch world in every UI ([5feda39](https://github.com/buchenberg/yaah/commit/5feda397f6e6c8072334f504c7528a28a692fe6f))
+* **ui:** surface workspace and dispatch world in every UI ([ca3b3f1](https://github.com/buchenberg/yaah/commit/ca3b3f1cf68a10e68fd204e824943c68595ae8b5))
+
+
+### Bug Fixes
+
+* **ui:** address PR review — background world seeding, report-lane fidelity ([82fea96](https://github.com/buchenberg/yaah/commit/82fea969ad1a942d5a2e0d0b314e061097f9f883))
+* **web:** keep the dispatch world on the start frame only ([42873d2](https://github.com/buchenberg/yaah/commit/42873d2b739bb03c0f1b6af25a6e9f7887eb145a))
+
 ## [0.112.0](https://github.com/buchenberg/yaah/compare/v0.111.0...v0.112.0) (2026-10-29)
 
 
