@@ -11,6 +11,7 @@ import (
 	"time"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	"github.com/buchenberg/goatherd-runtime/effect"
 )
 
 // state.go implements the snapshot half of the fake: Capture records the
@@ -135,24 +136,9 @@ func (s *Sandbox) Diff(_ context.Context, ws shepherdtrace.WorkspaceState, maxLi
 	if err := s.usable(); err != nil {
 		return "", nil, err
 	}
-	if ws.Backend != s.Backend() {
-		return "", nil, fmt.Errorf("sandboxfake: cannot diff state from backend %q", ws.Backend)
-	}
-	raw, ok := ws.Data["files"].(map[string]any)
-	if !ok {
-		return "", nil, fmt.Errorf("sandboxfake: malformed state data: no files map")
-	}
-	old := make(map[string]*entry, len(raw))
-	for p, v := range raw {
-		m, ok := v.(map[string]any)
-		if !ok {
-			return "", nil, fmt.Errorf("sandboxfake: malformed state entry for %s", p)
-		}
-		e, err := restoreEntry(m)
-		if err != nil {
-			return "", nil, fmt.Errorf("sandboxfake: state entry %s: %w", p, err)
-		}
-		old[p] = e
+	old, err := s.stateEntries(ws)
+	if err != nil {
+		return "", nil, err
 	}
 
 	var changed []string
@@ -183,6 +169,9 @@ func (s *Sandbox) Diff(_ context.Context, ws shepherdtrace.WorkspaceState, maxLi
 		switch {
 		case !hadPrev:
 			lines = append(lines, fmt.Sprintf("+++ added %s", p))
+			for _, line := range splitLines(string(cur.data)) {
+				lines = append(lines, "+"+line)
+			}
 		case !hasCur:
 			lines = append(lines, fmt.Sprintf("--- deleted %s", p))
 		default:
@@ -194,6 +183,108 @@ func (s *Sandbox) Diff(_ context.Context, ws shepherdtrace.WorkspaceState, maxLi
 		}
 	}
 	return strings.Join(lines, "\n"), changed, nil
+}
+
+// stateEntries restores a captured state's tree. Callers hold s.mu.
+func (s *Sandbox) stateEntries(ws shepherdtrace.WorkspaceState) (map[string]*entry, error) {
+	if ws.Backend != s.Backend() {
+		return nil, fmt.Errorf("sandboxfake: cannot use state from backend %q", ws.Backend)
+	}
+	raw, ok := ws.Data["files"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("sandboxfake: malformed state data: no files map")
+	}
+	files := make(map[string]*entry, len(raw))
+	for p, v := range raw {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("sandboxfake: malformed state entry for %s", p)
+		}
+		e, err := restoreEntry(m)
+		if err != nil {
+			return nil, fmt.Errorf("sandboxfake: state entry %s: %w", p, err)
+		}
+		files[p] = e
+	}
+	return files, nil
+}
+
+// EffectChanges reports what changed since a captured state in the runtime's
+// typed change vocabulary. Paths are workspace-root-relative, slash-separated,
+// matching what the containerd adapter reports (croft's Change.Path contract),
+// so a caller written against the real backend sees the same shape here.
+//
+// This makes the in-memory fake a faithful stand-in for the one capability the
+// container proposal seal depends on; a test that needs a backend *without* the
+// capability wraps the fake rather than relying on its absence.
+func (s *Sandbox) EffectChanges(_ context.Context, ws shepherdtrace.WorkspaceState) ([]effect.Change, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.usable(); err != nil {
+		return nil, err
+	}
+	old, err := s.stateEntries(ws)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]effect.Change, 0, len(s.files))
+	for p, cur := range s.files {
+		rel := s.relPath(p)
+		if rel == "" {
+			continue // the workspace root itself is never a change
+		}
+		prev, had := old[p]
+		switch {
+		case !had:
+			out = append(out, fakeEffectChange(rel, effect.KindCreated, cur))
+		case !sameEntry(prev, cur):
+			out = append(out, fakeEffectChange(rel, effect.KindPatched, cur))
+		}
+	}
+	for p, prev := range old {
+		if _, still := s.files[p]; still {
+			continue
+		}
+		if rel := s.relPath(p); rel != "" {
+			out = append(out, fakeEffectChange(rel, effect.KindDeleted, prev))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out, nil
+}
+
+// fakeEffectChange converts one tree entry into an effect change. A delete
+// carries no permission bits (croft's contract) but keeps the symlink type bit
+// so a consumer can tell a deleted link from a deleted file.
+func fakeEffectChange(p string, kind effect.Kind, e *entry) effect.Change {
+	c := effect.Change{Path: p, Kind: kind, IsDir: e.isDir}
+	if kind == effect.KindDeleted {
+		if e.isLink {
+			c.Mode = fs.ModeSymlink
+		}
+		return c
+	}
+	c.Mode = e.mode
+	if e.isLink {
+		c.Mode |= fs.ModeSymlink
+	}
+	if !e.isDir && !e.isLink {
+		c.Size = int64(len(e.data))
+	}
+	return c
+}
+
+// relPath reports a tree path relative to the sandbox workspace root. The tree
+// is rooted at "/" and the root directory is created at Create; a path outside
+// the root (possible only in tests that write absolute paths directly) passes
+// through with its leading slash trimmed, matching what a caller expects from a
+// workspace-relative path.
+func (s *Sandbox) relPath(p string) string {
+	if s.root != "" && s.root != "/" {
+		p = strings.TrimPrefix(p, s.root+"/")
+	}
+	return strings.TrimPrefix(p, "/")
 }
 
 // sameEntry compares two entries by everything the state carries. modTime is

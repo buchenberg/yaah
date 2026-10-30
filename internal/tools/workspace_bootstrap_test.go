@@ -128,6 +128,32 @@ func TestBootstrap_CopiesTreeAndCapturesBaseline(t *testing.T) {
 	}
 }
 
+// TestBootstrap_UnbornHeadAccepted pins the snapshot-native bootstrap's
+// ability to start from a freshly initialized repository: there is no HEAD to
+// resolve, but the snapshot baseline does not need one.
+func TestBootstrap_UnbornHeadAccepted(t *testing.T) {
+	src := t.TempDir()
+	if out, err := exec.Command("git", "-C", src, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(src, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	open, _ := cleanOpener()
+	ss, err := StartSessionSandbox(context.Background(), sessionTestConfig(), open, src, nil)
+	if err != nil {
+		t.Fatalf("StartSessionSandbox: %v", err)
+	}
+	defer ss.Destroy(context.Background())
+	if ss.Baseline() == nil {
+		t.Fatal("an unborn-HEAD repository must still capture a baseline")
+	}
+	got, err := ss.Workspace().ReadFile(context.Background(), "/workspace/README.md")
+	if err != nil || string(got) != "hello\n" {
+		t.Fatalf("copied README = %q, %v", got, err)
+	}
+}
+
 func TestBootstrap_RequiresGitWorkTree(t *testing.T) {
 	src := t.TempDir() // no .git: not a work tree
 	// t.TempDir() lives wherever TMPDIR points, and git rev-parse walks
@@ -449,10 +475,9 @@ func TestApplyOut_DoesNotLoosenAPrivateHostFile(t *testing.T) {
 	if err := os.Chmod(hostSecret, 0o600); err != nil {
 		t.Fatalf("chmod the fixture: %v", err)
 	}
-	// Commit it. Leaving it untracked makes the source dirty, which sends the
-	// bootstrap down its in-container baseline-commit path — and the fake has
-	// no git, so the session would fail to start for a reason unrelated to
-	// what this test is about.
+	// Commit it. The bootstrap copies the tree in file by file and the fake's
+	// shell is not involved; committing keeps the fixture representative of a
+	// normal repository source.
 	gitRun(t, src, "add", "secret.txt")
 	gitRun(t, src, "commit", "-q", "-m", "add a private file")
 
@@ -569,10 +594,9 @@ func TestApplyOut_RefusesWithoutBaseline(t *testing.T) {
 	}
 }
 
-// The bootstrap's source checks: each layout below copies in but leaves
-// the container without a usable in-container git, so each must fail the
-// session at startup instead of breaking capture, diff, or apply-out
-// mid-session.
+// The bootstrap's source checks: each layout below copies in without a
+// self-contained repository, so each must fail the session at startup instead
+// of handing the agent a tree whose repository data is missing.
 
 func TestBootstrap_RejectsSubdirectory(t *testing.T) {
 	src := filepath.Join(gitHostRepo(t), "pkg")
@@ -680,9 +704,8 @@ func TestBootstrap_RejectsTrackedDeniedFile(t *testing.T) {
 }
 
 // gitRecordingSandbox answers in-container git commands with success and
-// records them. The fake's shell has no git, and what is under test is
-// whether the bootstrap runs the synthetic baseline commit — not what a
-// real container's git would do with one.
+// records them. The fake's shell has no git; the recorder is how a test proves
+// the bootstrap runs no container-side git at all.
 type gitRecordingSandbox struct {
 	goatherdsandbox.Sandbox
 	mu       sync.Mutex
@@ -722,7 +745,11 @@ func recordingOpener(rec goatherdsandbox.Sandbox) SandboxOpener {
 	}
 }
 
-func TestBootstrap_DirtySourceCommitsBaselineInContainer(t *testing.T) {
+// TestBootstrap_RunsNoContainerGit pins the snapshot-native bootstrap: even a
+// dirty source is copied in and captured as-is. There is no synthetic commit,
+// because the session's diffs and apply-out are measured against the captured
+// snapshot, not against an in-container HEAD.
+func TestBootstrap_RunsNoContainerGit(t *testing.T) {
 	src := gitHostRepo(t)
 	if err := os.WriteFile(filepath.Join(src, "readme.txt"), []byte("dirty\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -735,23 +762,10 @@ func TestBootstrap_DirtySourceCommitsBaselineInContainer(t *testing.T) {
 	}
 	defer ss.Destroy(context.Background())
 
-	calls := rec.calls()
-	if len(calls) != 2 || calls[0] != "add -A" || !strings.Contains(calls[1], "commit") {
-		t.Errorf("container git calls = %q, want the synthetic baseline (add -A, then commit)", calls)
-	}
-}
-
-func TestBootstrap_CleanSourceRunsNoContainerGit(t *testing.T) {
-	src := gitHostRepo(t)
-	rec := &gitRecordingSandbox{Sandbox: sandboxfake.New()}
-
-	ss, err := StartSessionSandbox(context.Background(), sessionTestConfig(), recordingOpener(rec), src, nil)
-	if err != nil {
-		t.Fatalf("StartSessionSandbox: %v", err)
-	}
-	defer ss.Destroy(context.Background())
-
 	if calls := rec.calls(); len(calls) != 0 {
-		t.Errorf("container git calls = %q, want none — a clean tree already matches HEAD", calls)
+		t.Errorf("container git calls = %q, want none — the baseline is a snapshot state", calls)
+	}
+	if ss.Baseline() == nil {
+		t.Error("the bootstrap must capture a baseline")
 	}
 }

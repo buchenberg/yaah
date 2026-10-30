@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	"github.com/buchenberg/goatherd-runtime/effect"
 	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 )
 
@@ -466,5 +467,79 @@ func TestSymlinkChainResolvesFromEachLinkDirectory(t *testing.T) {
 	data, err := s.ReadFile(ctx, "/workspace/link2")
 	if err != nil || string(data) != "chain" {
 		t.Errorf("read through link chain = %q, %v; want chain", data, err)
+	}
+}
+
+// TestEffectChangesMatchesTheTypedContract pins the fake's change set to the
+// shape the container proposal seal consumes: workspace-relative paths, sorted,
+// with created/patched/deleted kinds, post-image size and mode, and no
+// permission bits on a delete.
+func TestEffectChangesMatchesTheTypedContract(t *testing.T) {
+	ctx := context.Background()
+	s := newCreated(t)
+	for p, body := range map[string]string{
+		"/workspace/keep.txt": "before\n",
+		"/workspace/gone.txt": "bye\n",
+	} {
+		if err := s.WriteFile(ctx, p, []byte(body), 0o644); err != nil {
+			t.Fatalf("seed %s: %v", p, err)
+		}
+	}
+	base, err := s.Capture(ctx)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+
+	if err := s.WriteFile(ctx, "/workspace/keep.txt", []byte("after!\n"), 0o600); err != nil {
+		t.Fatalf("modify: %v", err)
+	}
+	if err := s.WriteFile(ctx, "/workspace/new.txt", []byte("new\n"), 0o755); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if res := runScript(t, s, `rm -f -- "$1"`, nil, "/workspace/gone.txt"); res.ExitCode != 0 {
+		t.Fatalf("remove: exit %d: %s", res.ExitCode, res.Stderr)
+	}
+	if err := s.MkdirAll("/workspace/sub", 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	changes, err := s.EffectChanges(ctx, base)
+	if err != nil {
+		t.Fatalf("EffectChanges: %v", err)
+	}
+	got := make(map[string]effect.Change, len(changes))
+	for _, c := range changes {
+		got[c.Path] = c
+	}
+	if len(got) != 4 {
+		t.Fatalf("changes = %+v, want keep.txt, new.txt, gone.txt, sub", changes)
+	}
+	if c := got["keep.txt"]; c.Kind != effect.KindPatched || c.Size != int64(len("after!\n")) || c.Mode.Perm() != 0o600 {
+		t.Errorf("keep.txt = %+v", c)
+	}
+	if c := got["new.txt"]; c.Kind != effect.KindCreated || c.Size != int64(len("new\n")) || c.Mode.Perm() != 0o755 {
+		t.Errorf("new.txt = %+v", c)
+	}
+	if c := got["gone.txt"]; c.Kind != effect.KindDeleted || c.Size != 0 || c.Mode.Perm() != 0 {
+		t.Errorf("gone.txt = %+v, want a delete with no size or permission bits", c)
+	}
+	if c := got["sub"]; c.Kind != effect.KindCreated || !c.IsDir {
+		t.Errorf("sub = %+v, want a created directory", c)
+	}
+	for i := 1; i < len(changes); i++ {
+		if changes[i-1].Path > changes[i].Path {
+			t.Fatalf("changes are not sorted: %+v", changes)
+		}
+	}
+}
+
+func TestRelPathRequiresRootBoundary(t *testing.T) {
+	s := New()
+	s.root = "/workspace"
+	if got := s.relPath("/workspace/file.txt"); got != "file.txt" {
+		t.Errorf("root child = %q, want file.txt", got)
+	}
+	if got := s.relPath("/workspace-other/file.txt"); got != "workspace-other/file.txt" {
+		t.Errorf("root sibling = %q, want it not to be treated as workspace-relative", got)
 	}
 }

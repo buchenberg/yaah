@@ -52,6 +52,7 @@ type Sandbox struct {
 
 	mu        sync.Mutex
 	files     map[string]*entry
+	root      string // workspace root from SandboxSpec.Workdir; "/" when unset
 	created   bool
 	destroyed bool
 	rev       int // capture revision counter
@@ -119,6 +120,9 @@ func (s *Sandbox) Create(_ context.Context, spec goatherdsandbox.SandboxSpec) er
 		if err := s.mkdirParentsLocked(clean, 0o755); err != nil {
 			return err
 		}
+		s.root = clean
+	} else {
+		s.root = "/"
 	}
 	s.created = true
 	return nil

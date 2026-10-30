@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"io/fs"
 	"os"
@@ -13,87 +12,18 @@ import (
 	"testing"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	"github.com/buchenberg/goatherd-runtime/effect"
 	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/sandboxfake"
 )
 
 // git_delta_test.go covers the container settlement artifact without a
-// containerd daemon: the raw-diff parser, the host writer, the persistent
-// proposal lifecycle, and one end-to-end dispatch over a fake sandbox whose
-// Exec is a canned git responder. The fake still exercises the real proposal
-// plumbing — bootstrap copy-in, base capture, seal, persist, destroy, settle —
-// only git itself is canned.
-
-func TestParseGitRawDiff(t *testing.T) {
-	raw := ":000000 100644 0000000 1111111 A\x00dir/new file.txt\x00" +
-		":100644 100755 2222222 3333333 M\x00bin/run.sh\x00" +
-		":100644 000000 4444444 0000000 D\x00gone\nname.txt\x00"
-
-	entries, err := parseGitRawDiff(raw)
-	if err != nil {
-		t.Fatalf("parseGitRawDiff: %v", err)
-	}
-	if len(entries) != 3 {
-		t.Fatalf("got %d entries, want 3", len(entries))
-	}
-	if got, want := entries[0], (rawDiffEntry{OldMode: "000000", NewMode: "100644", OldSHA: "0000000", NewSHA: "1111111", Status: "A", Path: "dir/new file.txt"}); got != want {
-		t.Errorf("add entry = %+v, want %+v", got, want)
-	}
-	if entries[1].NewMode != "100755" || entries[1].Status != "M" {
-		t.Errorf("modify entry = %+v, want mode 100755 and status M", entries[1])
-	}
-	if entries[2].Status != "D" || entries[2].Path != "gone\nname.txt" {
-		t.Errorf("delete entry = %+v, want a NUL-safe path with an embedded newline", entries[2])
-	}
-
-	t.Run("rename records are refused", func(t *testing.T) {
-		_, err := parseGitRawDiff(":100644 100644 a b R100\x00new\x00old\x00")
-		if err == nil || !strings.Contains(err.Error(), "rename") {
-			t.Fatalf("error = %v, want a rename refusal", err)
-		}
-	})
-
-	t.Run("malformed records are refused", func(t *testing.T) {
-		for _, raw := range []string{
-			"not-a-header\x00",
-			":100644 100644 a b\x00path\x00",
-			":100644 100644 a b M\x00",
-		} {
-			if _, err := parseGitRawDiff(raw); err == nil {
-				t.Errorf("parseGitRawDiff(%q) must fail", raw)
-			}
-		}
-	})
-}
-
-func TestGitChangeKind(t *testing.T) {
-	for status, want := range map[string]string{"A": deltaKindAdd, "M": deltaKindModify, "D": deltaKindDelete} {
-		got, err := gitChangeKind(status)
-		if err != nil || got != want {
-			t.Errorf("gitChangeKind(%q) = %q, %v, want %q", status, got, err, want)
-		}
-	}
-	for _, status := range []string{"", "T", "U", "X"} {
-		if _, err := gitChangeKind(status); err == nil {
-			t.Errorf("gitChangeKind(%q) must be refused", status)
-		}
-	}
-}
-
-func TestParseGitMode(t *testing.T) {
-	for mode, want := range map[string]fs.FileMode{"100644": 0o644, "100755": 0o755} {
-		got, err := parseGitMode(mode)
-		if err != nil || got != want {
-			t.Errorf("parseGitMode(%q) = %v, %v, want %v", mode, got, err, want)
-		}
-	}
-	for _, mode := range []string{"120000", "160000", "100600", ""} {
-		if _, err := parseGitMode(mode); err == nil {
-			t.Errorf("parseGitMode(%q) must be refused", mode)
-		}
-	}
-}
+// containerd daemon: the path and manifest validation, the host writer, the
+// persistent proposal lifecycle, and one end-to-end dispatch over a fake
+// sandbox. The fake supplies the snapshot change set and post-images, so every
+// step — bootstrap copy-in, baseline capture, seal, persist, destroy, settle —
+// is exercised without git inside the container.
 
 func TestSafeDeltaPath(t *testing.T) {
 	valid := map[string]string{
@@ -131,6 +61,12 @@ func TestValidateDelta(t *testing.T) {
 	if err := validateDelta(base); err != nil {
 		t.Fatalf("valid delta refused: %v", err)
 	}
+	// A snapshot change set reports the file's real permission bits, not git's
+	// normalized 0644/0755, so a private file is a legal post-image.
+	private := &GitDelta{Changes: []DeltaChange{{Path: "private.txt", Kind: deltaKindAdd, Mode: 0o600, Content: []byte("s")}}}
+	if err := validateDelta(private); err != nil {
+		t.Fatalf("a 0600 post-image must be valid: %v", err)
+	}
 
 	cases := map[string]*GitDelta{
 		"duplicate paths": {Changes: []DeltaChange{
@@ -139,7 +75,8 @@ func TestValidateDelta(t *testing.T) {
 		}},
 		"unknown kind":        {Changes: []DeltaChange{{Path: "a.txt", Kind: "rename", Mode: 0o644}}},
 		"delete with content": {Changes: []DeltaChange{{Path: "a.txt", Kind: deltaKindDelete, Content: []byte("x")}}},
-		"non-regular mode":    {Changes: []DeltaChange{{Path: "a.txt", Kind: deltaKindAdd, Mode: 0o600}}},
+		"symlink mode":        {Changes: []DeltaChange{{Path: "a.txt", Kind: deltaKindAdd, Mode: fs.ModeSymlink | 0o777}}},
+		"directory mode":      {Changes: []DeltaChange{{Path: "a.txt", Kind: deltaKindAdd, Mode: fs.ModeDir | 0o755}}},
 		"unnormalized path":   {Changes: []DeltaChange{{Path: "a/./b", Kind: deltaKindAdd, Mode: 0o644}}},
 		"unsafe path":         {Changes: []DeltaChange{{Path: "../a", Kind: deltaKindAdd, Mode: 0o644}}},
 	}
@@ -171,24 +108,6 @@ func TestValidateDelta(t *testing.T) {
 		}
 	})
 }
-
-func TestDecodeBase64Blob(t *testing.T) {
-	want := []byte{0x00, 0x01, 0xff, 'h', 'i', '\n'}
-	encoded := base64.StdEncoding.EncodeToString(want)
-	// base64(1) wraps at 76 columns; simulate that and stray indentation.
-	withSpace := "  " + encoded[:4] + "\n" + encoded[4:] + "\t\n"
-	got, err := decodeBase64Blob(withSpace)
-	if err != nil {
-		t.Fatalf("decodeBase64Blob: %v", err)
-	}
-	if string(got) != string(want) {
-		t.Errorf("decoded = %v, want %v", got, want)
-	}
-	if _, err := decodeBase64Blob("not base64!"); err == nil {
-		t.Error("invalid base64 must fail")
-	}
-}
-
 func TestGitDeltaRenderDiff(t *testing.T) {
 	delta := &GitDelta{Changes: []DeltaChange{
 		{Path: "added.txt", Kind: deltaKindAdd, Mode: 0o644, Content: []byte("hello\n")},
@@ -554,94 +473,268 @@ func TestGitDeltaSettle_DiscardRemovesProposal(t *testing.T) {
 	}
 }
 
-// TestCaptureGitDelta_RefusesOversizedAndUnsafe covers the producer's fail
-// paths: a blob above the cap is refused before it is transferred, and an
-// unsafe path from git is refused rather than applied.
-func TestCaptureGitDelta_RefusesOversizedAndUnsafe(t *testing.T) {
-	t.Run("oversized blob", func(t *testing.T) {
-		sb := sandboxfake.New()
-		if err := sb.Create(context.Background(), goatherdsandbox.SandboxSpec{}); err != nil {
-			t.Fatalf("create fake: %v", err)
+// newDeltaSession builds a SessionSandbox around an already-created fake whose
+// workspace root is /workspace. Callers seed the tree and then call
+// captureDeltaBaseline, so the baseline includes the seed.
+func newDeltaSession(t *testing.T, sb *sandboxfake.Sandbox) *SessionSandbox {
+	t.Helper()
+	if err := sb.Create(context.Background(), goatherdsandbox.SandboxSpec{Workdir: "/workspace"}); err != nil {
+		t.Fatalf("create fake: %v", err)
+	}
+	return &SessionSandbox{sb: sb, ws: newSandboxWorkspace(sb, "/workspace")}
+}
+
+// captureDeltaBaseline records the current tree as the session baseline.
+func captureDeltaBaseline(t *testing.T, ss *SessionSandbox) {
+	t.Helper()
+	base, err := ss.sb.Capture(context.Background())
+	if err != nil {
+		t.Fatalf("capture baseline: %v", err)
+	}
+	ss.baseline = &base
+}
+
+func TestCaptureContainerDelta_ProducesManifest(t *testing.T) {
+	sb := sandboxfake.New()
+	ss := newDeltaSession(t, sb)
+	if err := sb.WriteFile(context.Background(), "/workspace/keep.txt", []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := sb.WriteFile(context.Background(), "/workspace/gone.txt", []byte("bye\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	captureDeltaBaseline(t, ss)
+
+	if err := ss.ws.WriteFile(context.Background(), "/workspace/keep.txt", []byte("after\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ss.ws.WriteFile(context.Background(), "/workspace/out.txt", []byte("from the container\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ss.ws.Remove(context.Background(), "/workspace/gone.txt"); err != nil {
+		t.Fatal(err)
+	}
+
+	delta, review, err := captureContainerDelta(context.Background(), ss)
+	if err != nil {
+		t.Fatalf("captureContainerDelta: %v", err)
+	}
+	if delta.BasisRevision == "" {
+		t.Error("the manifest must record the baseline revision")
+	}
+	got := make(map[string]DeltaChange, len(delta.Changes))
+	for _, c := range delta.Changes {
+		got[c.Path] = c
+	}
+	if len(got) != 3 {
+		t.Fatalf("changes = %+v, want keep.txt, out.txt, gone.txt", delta.Changes)
+	}
+	if c := got["out.txt"]; c.Kind != deltaKindAdd || string(c.Content) != "from the container\n" || c.Mode.Perm() != 0o644 {
+		t.Errorf("out.txt = %+v, want an add with its post-image", c)
+	}
+	if c := got["keep.txt"]; c.Kind != deltaKindModify || string(c.Content) != "after\n" || c.Mode.Perm() != 0o600 {
+		t.Errorf("keep.txt = %+v, want a modify carrying the real 0600 mode", c)
+	}
+	if c := got["gone.txt"]; c.Kind != deltaKindDelete || len(c.Content) != 0 {
+		t.Errorf("gone.txt = %+v, want a delete with no content", c)
+	}
+	if !strings.Contains(review, "+from the container") {
+		t.Errorf("review must render the added post-image:\n%s", review)
+	}
+	if !strings.Contains(review, "-before") || !strings.Contains(review, "+after") {
+		t.Errorf("review must show the real modify delta, not only the post-image:\n%s", review)
+	}
+}
+
+func TestCaptureContainerDelta_ReviewShowsDeltaAlongsideNewDirectory(t *testing.T) {
+	sb := sandboxfake.New()
+	ss := newDeltaSession(t, sb)
+	if err := sb.WriteFile(context.Background(), "/workspace/file.txt", []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	captureDeltaBaseline(t, ss)
+	if err := ss.ws.WriteFile(context.Background(), "/workspace/file.txt", []byte("after\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ss.ws.MkdirAll(context.Background(), "/workspace/newdir", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := ss.ws.WriteFile(context.Background(), "/workspace/newdir/new.txt", []byte("new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, review, err := captureContainerDelta(context.Background(), ss)
+	if err != nil {
+		t.Fatalf("captureContainerDelta: %v", err)
+	}
+	if !strings.Contains(review, "-before") || !strings.Contains(review, "+after") {
+		t.Fatalf("review must retain the real modify delta despite a directory entry:\n%s", review)
+	}
+}
+
+func TestCaptureContainerDelta_SkipsBookkeepingAndDirectories(t *testing.T) {
+	sb := sandboxfake.New()
+	ss := newDeltaSession(t, sb)
+	for p, body := range map[string]string{
+		"/workspace/.git/index":                    "old-index",
+		"/workspace/.yaah/proposals/p1/delta.json": "old-manifest",
+		"/workspace/.yaah/scratch/state":           "old-state",
+	} {
+		if err := sb.WriteFile(context.Background(), p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
 		}
-		sb.ExecHook = func(req goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
-			if req.Command != "git" {
-				return goatherdsandbox.ExecResult{ExitCode: 127}, nil
-			}
-			switch strings.Join(req.Args, " ") {
-			case "rev-parse HEAD":
-				return goatherdsandbox.ExecResult{Stdout: "base\n"}, nil
-			case "write-tree":
-				return goatherdsandbox.ExecResult{Stdout: "tree\n"}, nil
-			case "cat-file -s 333":
-				return goatherdsandbox.ExecResult{Stdout: strconv.Itoa(gitDeltaMaxContentBytes+1) + "\n"}, nil
-			}
-			if strings.HasPrefix(strings.Join(req.Args, " "), "diff-tree") {
-				return goatherdsandbox.ExecResult{Stdout: ":000000 100644 0 333 A\x00big.bin\x00"}, nil
-			}
-			return goatherdsandbox.ExecResult{ExitCode: 0}, nil
+	}
+	captureDeltaBaseline(t, ss)
+
+	// A git command in the container rewrites index/log files, and a proposal
+	// must not settle its own registry; both are bookkeeping, not content.
+	if err := sb.WriteFile(context.Background(), "/workspace/.git/index", []byte("new-index"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := sb.WriteFile(context.Background(), "/workspace/.yaah/proposals/p1/delta.json", []byte("new-manifest"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := sb.WriteFile(context.Background(), "/workspace/.yaah/scratch/state", []byte("new-state"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ss.ws.MkdirAll(context.Background(), "/workspace/newdir", 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	delta, _, err := captureContainerDelta(context.Background(), ss)
+	if err != nil {
+		t.Fatalf("captureContainerDelta: %v", err)
+	}
+	if len(delta.Changes) != 0 {
+		t.Fatalf("changes = %+v, want no bookkeeping or directory entries", delta.Changes)
+	}
+}
+
+func TestCaptureContainerDelta_SkipsDeniedPaths(t *testing.T) {
+	sb := sandboxfake.New()
+	ss := newDeltaSession(t, sb)
+	ss.deny = []string{".env"}
+	for p, body := range map[string]string{
+		"/workspace/.env":   "secret\n",
+		"/workspace/ok.txt": "ok\n",
+	} {
+		if err := sb.WriteFile(context.Background(), p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
 		}
-		_, _, err := captureGitDelta(context.Background(), sb, "/", "base")
+	}
+	captureDeltaBaseline(t, ss)
+	if err := sb.WriteFile(context.Background(), "/workspace/.env", []byte("new secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := sb.WriteFile(context.Background(), "/workspace/ok.txt", []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	delta, _, err := captureContainerDelta(context.Background(), ss)
+	if err != nil {
+		t.Fatalf("captureContainerDelta: %v", err)
+	}
+	if len(delta.Changes) != 1 || delta.Changes[0].Path != "ok.txt" {
+		t.Fatalf("changes = %+v, want only the non-denied file", delta.Changes)
+	}
+}
+
+func TestCopyOut_SkipsBookkeepingAndDeniedPaths(t *testing.T) {
+	sb := sandboxfake.New()
+	ss := newDeltaSession(t, sb)
+	ss.deny = []string{".env"}
+	if err := sb.WriteFile(context.Background(), "/workspace/keep.txt", []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	captureDeltaBaseline(t, ss)
+	for p, body := range map[string]string{
+		"/workspace/.git/index":    "index",
+		"/workspace/.yaah/scratch": "scratch",
+		"/workspace/.env":          "secret\n",
+		"/workspace/keep.txt":      "after\n",
+	} {
+		if err := sb.WriteFile(context.Background(), p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	host := t.TempDir()
+	if err := ss.copyOut(context.Background(), host); err != nil {
+		t.Fatalf("copyOut: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(host, "keep.txt"))
+	if err != nil || string(got) != "after\n" {
+		t.Fatalf("keep.txt = %q, %v; want the workspace change", got, err)
+	}
+	for _, rel := range []string{".git/index", ".yaah/scratch", ".env"} {
+		if _, err := os.Stat(filepath.Join(host, rel)); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%s must not reach the host (err=%v)", rel, err)
+		}
+	}
+}
+
+func TestCaptureContainerDelta_RequiresBaseline(t *testing.T) {
+	sb := sandboxfake.New()
+	if err := sb.Create(context.Background(), goatherdsandbox.SandboxSpec{Workdir: "/workspace"}); err != nil {
+		t.Fatal(err)
+	}
+	ss := &SessionSandbox{sb: sb, ws: newSandboxWorkspace(sb, "/workspace")}
+	if _, _, err := captureContainerDelta(context.Background(), ss); err == nil || !strings.Contains(err.Error(), "baseline") {
+		t.Fatalf("error = %v, want a missing-baseline refusal", err)
+	}
+}
+
+func TestManifestChange_RefusesOversizedSymlinkAndUnsafe(t *testing.T) {
+	sb := sandboxfake.New()
+	ss := newDeltaSession(t, sb)
+	captureDeltaBaseline(t, ss)
+
+	t.Run("oversized before transfer", func(t *testing.T) {
+		// The path does not exist: if the size check did not run first, the
+		// read would fail with a different error and the test would say so.
+		_, err := manifestChange(context.Background(), ss, effect.Change{
+			Path: "big.bin", Kind: effect.KindCreated, Size: gitDeltaMaxContentBytes + 1,
+		}, gitDeltaMaxContentBytes)
 		if err == nil || !strings.Contains(err.Error(), "cap") {
-			t.Fatalf("error = %v, want the content cap", err)
+			t.Fatalf("error = %v, want the content cap before any read", err)
+		}
+	})
+
+	t.Run("symlink post-image", func(t *testing.T) {
+		if err := sb.Symlink("/workspace/target", "/workspace/link"); err != nil {
+			t.Fatal(err)
+		}
+		_, err := manifestChange(context.Background(), ss, effect.Change{
+			Path: "link", Kind: effect.KindCreated, Mode: fs.ModeSymlink | 0o777,
+		}, gitDeltaMaxContentBytes)
+		if err == nil || !strings.Contains(err.Error(), "symlink") {
+			t.Fatalf("error = %v, want a symlink refusal", err)
+		}
+	})
+
+	t.Run("special file", func(t *testing.T) {
+		_, err := manifestChange(context.Background(), ss, effect.Change{
+			Path: "fifo", Kind: effect.KindCreated, Mode: fs.ModeNamedPipe | 0o600,
+		}, gitDeltaMaxContentBytes)
+		if err == nil || !strings.Contains(err.Error(), "regular-file") {
+			t.Fatalf("error = %v, want a special-file refusal before any read", err)
 		}
 	})
 
 	t.Run("unsafe path", func(t *testing.T) {
-		sb := sandboxfake.New()
-		if err := sb.Create(context.Background(), goatherdsandbox.SandboxSpec{}); err != nil {
-			t.Fatalf("create fake: %v", err)
-		}
-		sb.ExecHook = func(req goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
-			key := strings.Join(req.Args, " ")
-			switch {
-			case req.Command == "git" && key == "rev-parse HEAD":
-				return goatherdsandbox.ExecResult{Stdout: "base\n"}, nil
-			case req.Command == "git" && key == "write-tree":
-				return goatherdsandbox.ExecResult{Stdout: "tree\n"}, nil
-			case req.Command == "git" && strings.HasPrefix(key, "diff-tree"):
-				return goatherdsandbox.ExecResult{Stdout: ":000000 100644 0 333 A\x00../escape.txt\x00"}, nil
-			default:
-				return goatherdsandbox.ExecResult{ExitCode: 0}, nil
-			}
-		}
-		if _, _, err := captureGitDelta(context.Background(), sb, "/", "base"); err == nil {
-			t.Fatal("an unsafe path from git must be refused")
+		_, err := manifestChange(context.Background(), ss, effect.Change{
+			Path: "../escape.txt", Kind: effect.KindCreated, Size: 1,
+		}, gitDeltaMaxContentBytes)
+		if err == nil {
+			t.Fatal("an escaping change path must be refused")
 		}
 	})
-}
 
-// containerHookGit is a canned git responder for the fake dispatch sandbox. It
-// returns the base commit, tree, raw diff, blob, and review the producer asks
-// for; everything else is an unexpected-command failure.
-func containerHookGit(head, tree, raw, review string, blob []byte) func(goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
-	ok := func(out string) (goatherdsandbox.ExecResult, error) {
-		return goatherdsandbox.ExecResult{ExitCode: 0, Stdout: out}, nil
-	}
-	return func(req goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
-		switch req.Command {
-		case "git":
-			key := strings.Join(req.Args, " ")
-			switch {
-			case key == "rev-parse HEAD":
-				return ok(head + "\n")
-			case key == "add -A":
-				return ok("")
-			case key == "write-tree":
-				return ok(tree + "\n")
-			case strings.HasPrefix(key, "diff-tree "):
-				return ok(raw)
-			case strings.HasPrefix(key, "cat-file -s "):
-				return ok(strconv.Itoa(len(blob)) + "\n")
-			case strings.HasPrefix(key, "diff "):
-				return ok(review)
-			}
-		case "sh":
-			if len(req.Args) > 1 && strings.Contains(req.Args[1], "cat-file") {
-				return ok(base64.StdEncoding.EncodeToString(blob) + "\n")
-			}
+	t.Run("absolute path outside the root", func(t *testing.T) {
+		_, err := manifestChange(context.Background(), ss, effect.Change{
+			Path: "/etc/passwd", Kind: effect.KindCreated, Size: 1,
+		}, gitDeltaMaxContentBytes)
+		if err == nil || !strings.Contains(err.Error(), "outside the workspace root") {
+			t.Fatalf("error = %v, want an outside-the-root refusal", err)
 		}
-		return goatherdsandbox.ExecResult{ExitCode: 127, Stderr: "unexpected command: " + strings.Join(append([]string{req.Command}, req.Args...), " ")}, nil
-	}
+	})
 }
 
 // containerProposalRuntime builds a host-session runtime whose proposal
@@ -679,17 +772,14 @@ func containerProposalRuntime(t *testing.T, fx *sessionFixtures, repo, rootID st
 }
 
 // TestContainerProposal_EndToEnd covers the container proposal lifecycle over a
-// fake sandbox: bootstrap, base capture, body, seal, persist, destroy, then a
-// real host settlement. No containerd daemon is involved; git inside the
-// container is canned, but every yaah-side step is real.
+// fake sandbox: bootstrap, baseline capture, body, snapshot seal, persist,
+// destroy, then a real host settlement. No containerd daemon and no git inside
+// the container: the producer reads the fake's change set and post-images, so
+// every step is real.
 func TestContainerProposal_EndToEnd(t *testing.T) {
 	fx, repo, rootID := newSessionFixtures(t)
-	head, tree := "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222"
 	content := []byte("from the container\n")
-	raw := ":000000 100644 0000000 3333333 A\x00out.txt\x00"
-	review := "diff --git a/out.txt b/out.txt\nnew file mode 100644\n--- /dev/null\n+++ b/out.txt\n@@ -0,0 +1 @@\n+from the container\n"
 
-	var fakes func() []*sandboxfake.Sandbox
 	run := func(ctx context.Context, _ string, params SubAgentParams) (string, error) {
 		ws := DispatchWorkspace(ctx)
 		if ws == nil {
@@ -698,20 +788,12 @@ func TestContainerProposal_EndToEnd(t *testing.T) {
 		if params.Workdir != ws.WorkDir() {
 			t.Errorf("workdir = %q, want %q", params.Workdir, ws.WorkDir())
 		}
-		// Write straight through the dispatch sandbox: the fake's ExecHook is
-		// already answering git, so the workspace's shell write would need a
-		// second interpreter. The seal path under test is unaffected.
-		opened := fakes()
-		if len(opened) < 2 {
-			t.Fatalf("dispatch sandbox not opened (have %d)", len(opened))
-		}
-		if err := opened[1].WriteFile(ctx, ws.Join(ws.WorkDir(), "out.txt"), content, 0o644); err != nil {
+		if err := ws.WriteFile(ctx, ws.Join(ws.WorkDir(), "out.txt"), content, 0o644); err != nil {
 			return "", err
 		}
 		return "the body's report", nil
 	}
-	rt, fakeGetter := containerProposalRuntime(t, fx, repo, rootID, run, containerHookGit(head, tree, raw, review, content))
-	fakes = fakeGetter
+	rt, fakes := containerProposalRuntime(t, fx, repo, rootID, run, nil)
 
 	res, err := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "developer"}, 0, false)
 	if err != nil {
@@ -784,32 +866,29 @@ func TestContainerProposal_EndToEnd(t *testing.T) {
 }
 
 // TestContainerProposal_SealFailureDestroysContainer proves a failed seal leaves
-// no proposal and no live world.
+// no proposal and no live world. A symlink post-image is the one change a
+// whole-path file manifest cannot represent, so the seal fails after the body
+// has run, exercising the real cleanup path rather than a canned error.
 func TestContainerProposal_SealFailureDestroysContainer(t *testing.T) {
 	fx, repo, rootID := newSessionFixtures(t)
-	failing := func(req goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
-		switch {
-		case req.Command == "git" && strings.Join(req.Args, " ") == "rev-parse HEAD":
-			return goatherdsandbox.ExecResult{ExitCode: 0, Stdout: "abc\n"}, nil
-		case req.Command == "git" && strings.Join(req.Args, " ") == "add -A":
-			return goatherdsandbox.ExecResult{ExitCode: 0}, nil
-		default:
-			return goatherdsandbox.ExecResult{ExitCode: 1, Stderr: "write-tree exploded"}, nil
-		}
-	}
+	var fakes func() []*sandboxfake.Sandbox
 	run := func(ctx context.Context, _ string, _ SubAgentParams) (string, error) {
-		ws := DispatchWorkspace(ctx)
-		return "partial", ws.WriteFile(ctx, ws.Join(ws.WorkDir(), "out.txt"), []byte("x"), 0o644)
+		opened := fakes()
+		if len(opened) < 2 {
+			t.Fatalf("dispatch sandbox not opened (have %d)", len(opened))
+		}
+		return "partial", opened[1].Symlink("/workspace/target", "/workspace/link")
 	}
-	rt, fakes := containerProposalRuntime(t, fx, repo, rootID, run, failing)
+	rt, getter := containerProposalRuntime(t, fx, repo, rootID, run, nil)
+	fakes = getter
 
 	res, err := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "developer"}, 0, false)
 	if err != nil {
 		t.Fatalf("startRetainedRun: %v", err)
 	}
 	env := decodeProposalEnvelope(t, res)
-	if env.Status != "error" || !strings.Contains(env.Error, "write-tree exploded") {
-		t.Fatalf("envelope = %+v, want a seal error", env)
+	if env.Status != "error" || !strings.Contains(env.Error, "symlink") {
+		t.Fatalf("envelope = %+v, want a seal error naming the symlink", env)
 	}
 	if ps := rt.Proposals.all(); len(ps) != 0 {
 		t.Errorf("a failed seal must register no proposal, got %d", len(ps))
@@ -835,7 +914,7 @@ func TestGitDeltaSettle_ApplyIgnoresPreExistingDirty(t *testing.T) {
 		}
 	})
 	delta := &GitDelta{
-		BasisHead: "basis",
+		BasisRevision: "basis",
 		Changes: []DeltaChange{{
 			Path:    "shared.txt",
 			Kind:    "modify",
