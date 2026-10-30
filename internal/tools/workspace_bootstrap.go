@@ -25,34 +25,31 @@ import (
 // until they are deliberately let out, which is the property that makes an
 // isolated attempt safe to discard.
 
-// checkHostGitWorkTree refuses a bootstrap source the copy-in cannot
-// reproduce faithfully. The isolated story is git-anchored end to end:
-// the containerd backend's Diff runs against the in-container git HEAD,
-// and apply-out's delta is a git patch. A non-git source could copy in,
-// but its diffs, captures, and apply-out would all be undeliverable —
-// better to fail the session at startup than mid-review. Three subtler
-// layouts are refused for the same reason, each after the copy-in would
-// have already gone wrong:
+// checkHostGitWorkTree refuses a bootstrap source the copy-in cannot reproduce
+// faithfully. The copy is file by file, and the container backend cannot create
+// symlinks, so git's tracked-file list is what tells the copy-in whether a
+// skipped entry would silently change what the repository contains.
 //
-//   - a subdirectory of the work tree: it copies in without the
-//     repository, so the in-container HEAD the delta machinery needs
-//     would not exist;
+// The container lane currently bootstraps a repository source: the copy
+// includes `.git` so the agent can use git inside the sandbox, and the
+// tracked-file list drives the symlink and deny-policy decisions below.
+// Broadening it to an arbitrary directory is a separate change; until then,
+// two layouts are refused because the copy would be incomplete or the
+// copied git metadata would point outside the tree:
+//
+//   - a subdirectory of the work tree: it copies in without the repository;
 //   - a linked worktree or submodule (a .git file, not a directory): the
-//     file points at administrative data outside the copied tree, which
-//     would not arrive;
-//   - a repository with no commits: an unborn HEAD has nothing for
-//     Capture to record, so the delta base the closing Apply establishes
-//     would never exist.
+//     file points at administrative data outside the copied tree.
 //
 // Every git invocation is context-bound, like the rest of the startup
 // path: a wedged host git must fail the startup bound, not hang past it.
 func checkHostGitWorkTree(ctx context.Context, dir string) error {
 	out, err := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--is-inside-work-tree").Output()
 	if err != nil {
-		return fmt.Errorf("workspace bootstrap: %s is not a git work tree (git rev-parse: %w) — the isolated workspace's capture, diff, and apply-out are all git-anchored", dir, err)
+		return fmt.Errorf("workspace bootstrap: %s is not a git work tree (git rev-parse: %w) — the isolated workspace currently bootstraps a repository source", dir, err)
 	}
 	if strings.TrimSpace(string(out)) != "true" {
-		return fmt.Errorf("workspace bootstrap: %s is not a git work tree — the isolated workspace's capture, diff, and apply-out are all git-anchored", dir)
+		return fmt.Errorf("workspace bootstrap: %s is not a git work tree — the isolated workspace currently bootstraps a repository source", dir)
 	}
 	// --show-cdup is empty only at the top level of the work tree.
 	out, err = exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--show-cdup").Output()
@@ -65,16 +62,14 @@ func checkHostGitWorkTree(ctx context.Context, dir string) error {
 	if fi, serr := os.Lstat(filepath.Join(dir, ".git")); serr != nil || !fi.IsDir() {
 		return fmt.Errorf("workspace bootstrap: %s is not a self-contained repository (.git is not a directory — linked worktrees and submodules keep their git data outside the tree) — the isolated workspace cannot reproduce it", dir)
 	}
-	if herr := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--verify", "--quiet", "HEAD").Run(); herr != nil {
-		return fmt.Errorf("workspace bootstrap: %s has no commits — the isolated workspace's capture, diff, and apply-out are anchored to git HEAD, which does not exist yet", dir)
-	}
 	return nil
 }
 
 // gitTrackedFiles returns the repository's tracked paths, slash-separated
-// and work-tree-relative. This is the set the copy-in must reproduce
-// exactly: a tracked entry the container lacks becomes a deletion in the
-// git-anchored delta, which apply-out would then carry onto the host.
+// and work-tree-relative. The copy-in uses it to distinguish repository
+// content from incidental files: a tracked entry the container cannot represent
+// (a symlink) or must exclude (a deny pattern) fails the bootstrap instead of
+// silently changing what the agent sees.
 func gitTrackedFiles(ctx context.Context, dir string) (map[string]bool, error) {
 	out, err := exec.CommandContext(ctx, "git", "-C", dir, "ls-files", "-z").Output()
 	if err != nil {
@@ -87,31 +82,6 @@ func gitTrackedFiles(ctx context.Context, dir string) (map[string]bool, error) {
 		}
 	}
 	return tracked, nil
-}
-
-// hostTreeDirty reports whether the working tree differs from HEAD in a
-// way the copy-in reproduces: tracked files changed (staged or not), or
-// untracked files that will be copied in. Untracked files the deny policy
-// excludes do not count — they are absent on both sides, so the copied
-// tree still matches HEAD and no container-side git is needed.
-func hostTreeDirty(ctx context.Context, dir string, deny []string) (bool, error) {
-	if derr := exec.CommandContext(ctx, "git", "-C", dir, "diff", "--quiet", "HEAD").Run(); derr != nil {
-		var xerr *exec.ExitError
-		if errors.As(derr, &xerr) {
-			return true, nil
-		}
-		return false, fmt.Errorf("workspace bootstrap: git diff HEAD: %w", derr)
-	}
-	out, err := exec.CommandContext(ctx, "git", "-C", dir, "ls-files", "--others", "--exclude-standard", "-z").Output()
-	if err != nil {
-		return false, fmt.Errorf("workspace bootstrap: git ls-files --others: %w", err)
-	}
-	for _, p := range bytes.Split(out, []byte{0}) {
-		if len(p) > 0 && deniedBy(deny, string(p)) == "" {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 // deniedBy reports the first deny pattern matching the slash-separated,
@@ -142,26 +112,23 @@ func deniedBy(deny []string, p string) string {
 // Three kinds of entries are deliberately excluded, each loudly:
 //
 //   - Tracked symlinks fail the bootstrap. The Sandbox interface cannot
-//     create symlinks, so the container would hold the tree without them
-//     while its git HEAD still has them — the delta machinery would
-//     record every one as deleted, and an otherwise no-op apply-out would
-//     delete them from the host. Untracked symlinks are only skipped with
-//     a warning: git does not see them, so no delta ever will.
+//     create symlinks, so the container would silently hold a tree missing
+//     a file the repository tracks. Untracked symlinks are only skipped with
+//     a warning: git does not see them, so they are not repository content.
 //   - Files matching the deny policy are not copied in: the copy-in is
 //     the only way in, so it is where the policy is enforced — denied
 //     files must never become agent-readable inside the container. A
 //     tracked denied file fails the bootstrap instead (excluding it would
-//     turn it into a host-side deletion at apply-out, exactly like a
-//     tracked symlink); an untracked one — the usual case, a local
-//     secret — is simply absent on both sides.
+//     silently change what the repository contains); an untracked one — the
+//     usual case, a local secret — is simply absent on both sides.
 //   - Other special files (FIFOs, devices) are skipped with a warning;
-//     git cannot track them, so the delta stays faithful.
+//     git cannot track them, and the copy cannot represent them.
 //
 // Empty directories do not arrive either: nothing writes them, and git
 // itself does not track them.
 //
-// Known cost, deliberate for D1's correctness-first landing: one backend
-// exec per file. A bundle-based fast path is the anticipated follow-up.
+// Known cost, deliberate for D1's correctness-first landing: one WriteFile
+// round trip per file. A bundle-based fast path is the anticipated follow-up.
 func copyTreeIn(ctx context.Context, sb goatherdsandbox.Sandbox, src, root string, deny []string, tracked map[string]bool) error {
 	src = filepath.Clean(src)
 	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
@@ -181,7 +148,7 @@ func copyTreeIn(ctx context.Context, sb goatherdsandbox.Sandbox, src, root strin
 			return nil
 		case d.Type()&fs.ModeSymlink != 0:
 			if tracked[slashRel] {
-				return fmt.Errorf("%s: a tracked symlink — sandbox backends cannot create symlinks, so the container tree would differ from its git HEAD and apply-out would delete it from the host; remove the symlink (or materialize its target) before starting an isolated session", rel)
+				return fmt.Errorf("%s: a tracked symlink — sandbox backends cannot create symlinks, so the container tree would be missing a file the repository tracks; remove the symlink (or materialize its target) before starting an isolated session", rel)
 			}
 			fmt.Fprintf(os.Stderr, "warning: workspace bootstrap: skipping untracked symlink %s — sandbox backends cannot create symlinks\n", rel)
 			return nil
@@ -216,30 +183,16 @@ func copyTreeIn(ctx context.Context, sb goatherdsandbox.Sandbox, src, root strin
 }
 
 // bootstrapSession runs the D1 sequence on a freshly created session
-// sandbox: verify the source, copy the tree in, anchor the in-container
-// git HEAD to the copied tree when it differs from it, capture the
-// baseline, then Apply that baseline once.
+// sandbox: verify the source, copy the tree in, then capture the baseline the
+// session's diffs and apply-out are measured against.
 //
-// The HEAD anchor keeps apply-out honest on a dirty source. The
-// containerd backend records the applied state's git HEAD as its delta
-// base, and every later capture is a patch from that HEAD to the current
-// tree. Copying a dirty working tree in without touching HEAD would bake
-// every pre-existing staged, unstaged, or untracked change into that
-// patch — and applying it back onto the very host those changes came
-// from fails, because the hunks are already there. So a dirty source gets
-// one synthetic in-container commit of exactly the copied tree; a clean
-// one already matches HEAD and no container-side git runs at all (which
-// is also why the in-memory fake, whose shell has no git, bootstraps
-// clean test repositories fine). The commit lives only in the container:
-// the host's staged/unstaged split is untouched.
-//
-// The closing Apply looks redundant — the sandbox already holds this exact
-// tree — but it is what anchors the delta machinery: the containerd
-// backend records the applied state's git HEAD as its delta base, so every
-// later capture emits a binary patch from the session baseline to the
-// current tree. Without it, no state this sandbox captures ever carries an
-// outward delta, and apply-out has nothing to apply. For snapshot backends
-// without a delta base the Apply is an idempotent reset.
+// Nothing is applied at the end. A capture already commits the active layer and
+// continues on a fresh layer parented to it, so the workspace is exactly the
+// baseline and a diff against that state is the session's outward delta. The
+// old closing Apply existed to anchor a git-HEAD delta base for the backend's
+// delta machinery; croft states carry their own snapshot lineage now, and this
+// path never calls ApplyDelta, so the rebind only stopped and restarted the
+// task for a field nothing read.
 func bootstrapSession(ctx context.Context, ss *SessionSandbox, src string, deny []string) error {
 	if err := checkHostGitWorkTree(ctx, src); err != nil {
 		return err
@@ -251,50 +204,11 @@ func bootstrapSession(ctx context.Context, ss *SessionSandbox, src string, deny 
 	if err := copyTreeIn(ctx, ss.sb, src, ss.ws.root, deny, tracked); err != nil {
 		return fmt.Errorf("workspace: copy-in: %w", err)
 	}
-	dirty, err := hostTreeDirty(ctx, src, deny)
-	if err != nil {
-		return err
-	}
-	if dirty {
-		if cerr := commitContainerBaseline(ctx, ss); cerr != nil {
-			return cerr
-		}
-	}
 	base, err := ss.sb.Capture(ctx)
 	if err != nil {
 		return fmt.Errorf("workspace: capture baseline: %w", err)
 	}
-	if err := ss.sb.Apply(ctx, base); err != nil {
-		return fmt.Errorf("workspace: rebind to baseline: %w", err)
-	}
 	ss.baseline = &base
-	return nil
-}
-
-// commitContainerBaseline anchors the in-container git HEAD to the copied
-// tree: stage everything and commit it, as a synthetic baseline only the
-// container ever sees. Hooks and signing are disabled — this commit is
-// bookkeeping, not history, and a pre-commit hook or signing key from the
-// copied .git would fail inside the container for no reason the user can
-// act on. The identity is fixed for the same reason: no user config needs
-// to exist inside the container.
-func commitContainerBaseline(ctx context.Context, ss *SessionSandbox) error {
-	for _, req := range []goatherdsandbox.ExecRequest{
-		{Command: "git", Args: []string{"add", "-A"}, Cwd: ss.ws.root},
-		{Command: "git", Args: []string{
-			"-c", "user.name=yaah", "-c", "user.email=yaah@localhost",
-			"-c", "commit.gpgsign=false",
-			"commit", "-q", "--no-verify", "-m", "yaah: isolated-workspace baseline",
-		}, Cwd: ss.ws.root},
-	} {
-		res, err := ss.sb.Exec(ctx, req)
-		if err != nil {
-			return fmt.Errorf("workspace: baseline commit: git %s: %w", strings.Join(req.Args, " "), err)
-		}
-		if res.ExitCode != 0 {
-			return fmt.Errorf("workspace: baseline commit: git %s: exit %d: %s", strings.Join(req.Args, " "), res.ExitCode, strings.TrimSpace(res.Stderr))
-		}
-	}
 	return nil
 }
 

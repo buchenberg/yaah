@@ -130,26 +130,41 @@ func newEffectSession(t *testing.T, changes []effect.Change, changesErr error) (
 
 func TestSessionSandbox_SupportsEffects(t *testing.T) {
 	// The capability is discovered structurally, so a backend that offers it is
-	// used and one that does not is skipped — the git lane and the in-memory
-	// fake have no typed change set, and that must not be an error.
+	// used and one that does not is skipped — the git lane has no typed change
+	// set, and that must not be an error.
 	withCapability, _, _ := newEffectSession(t, sampleChanges(), nil)
 	if !withCapability.SupportsEffects() {
 		t.Error("a sandbox offering EffectChanges must be reported as supporting effects")
 	}
 
-	src := gitHostRepo(t)
-	open, _ := cleanOpener()
-	plain, err := StartSessionSandbox(context.Background(), sessionTestConfig(), open, src, nil)
-	if err != nil {
-		t.Fatalf("StartSessionSandbox: %v", err)
+	// The in-memory fake now offers the capability too (the container proposal
+	// seal depends on it), so the negative case uses a wrapper that hides it —
+	// the same shape as the git lane.
+	fake := sandboxfake.New()
+	if err := fake.Create(context.Background(), goatherdsandbox.SandboxSpec{}); err != nil {
+		t.Fatalf("create fake: %v", err)
 	}
-	t.Cleanup(func() { _ = plain.Destroy(context.Background()) })
+	base, err := fake.Capture(context.Background())
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	plain := &SessionSandbox{
+		sb:       &noEffectsSandbox{Sandbox: fake},
+		ws:       newSandboxWorkspace(fake, "/"),
+		baseline: &base,
+	}
 	if plain.SupportsEffects() {
-		t.Error("the in-memory fake has no EffectChanges and must not be reported as supporting effects")
+		t.Error("a backend without EffectChanges must not be reported as supporting effects")
 	}
 	if _, err := plain.EffectChanges(context.Background()); err == nil {
 		t.Error("EffectChanges on a backend without the capability must fail, so a caller cannot mistake it for an empty change set")
 	}
+}
+
+// noEffectsSandbox hides the fake's EffectChanges, standing in for a backend
+// that reports no typed change set.
+type noEffectsSandbox struct {
+	goatherdsandbox.Sandbox
 }
 
 func TestSessionSandbox_EffectChangesRequiresBaseline(t *testing.T) {
@@ -272,11 +287,12 @@ func TestApplyOutTool_EmitFailureDoesNotFailTheApply(t *testing.T) {
 }
 
 func TestApplyOutTool_BackendWithoutEffectsIsANoOp(t *testing.T) {
-	// The git lane and the in-memory fake have no typed change set. A sink being
-	// configured must not turn that into an error on every accept.
+	// The git lane has no typed change set. A sink being configured must not
+	// turn that into an error on every accept. The fake now implements the
+	// capability (the container seal needs it), so hide it to model the lane.
 	src := gitHostRepo(t)
-	open, _ := cleanOpener()
-	ss, err := StartSessionSandbox(context.Background(), sessionTestConfig(), open, src, nil)
+	ss, err := StartSessionSandbox(context.Background(), sessionTestConfig(),
+		recordingOpener(&noEffectsSandbox{Sandbox: sandboxfake.New()}), src, nil)
 	if err != nil {
 		t.Fatalf("StartSessionSandbox: %v", err)
 	}

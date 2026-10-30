@@ -110,6 +110,10 @@ func openDispatchWorld(ctx context.Context, rt RetainedRuntime) (*SessionSandbox
 			releaseErr := release()
 			return nil, noBasis, "", errors.Join(fmt.Errorf("seed the sibling container from the session state: %w", err), destroyErr, releaseErr)
 		}
+		// The applied state is the sibling's baseline: the proposal's manifest
+		// is the difference between it and the workspace at seal, so the seal
+		// needs no second capture and no in-container git.
+		ss.baseline = &state
 		if err := release(); err != nil {
 			dctx, dcancel := context.WithTimeout(context.WithoutCancel(ctx), dispatchWorldDestroyTimeout)
 			defer dcancel()
@@ -243,15 +247,6 @@ func runDispatchContainerProposal(
 	recordWorldFact(ctx, rt.ScopeManager, scope.ID(), res)
 
 	root := sandbox.Workspace().WorkDir()
-	// The basis is captured after the bootstrap and before the body: the
-	// bootstrap commits a synthetic baseline when the host tree was dirty, so
-	// HEAD is exactly the tree the body starts from.
-	base, herr := containerGitHead(ctx, sandbox.sb, root)
-	if herr != nil {
-		env.Status = "error"
-		env.Error = "container dispatch: capture baseline HEAD: " + herr.Error()
-		return "", nil
-	}
 
 	sp := subParams
 	sp.Workdir = root
@@ -283,7 +278,7 @@ func runDispatchContainerProposal(
 
 	// Seal on the dispatch context, not the (possibly expired) run context: a
 	// timed-out body's partial work is still worth sealing.
-	delta, review, sealErr := captureGitDelta(ctx, sandbox.sb, root, base)
+	delta, review, sealErr := captureContainerDelta(ctx, sandbox)
 	if sealErr != nil {
 		notes = append(notes, "seal: "+sealErr.Error())
 		env.Status = "error"

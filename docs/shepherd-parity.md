@@ -119,7 +119,7 @@ Rule of thumb: **step down only along axes that were not required.**
 | daemon unreachable / socket perms | preflight | one retry on transient; then step down or fail |
 | image missing / contract probe fails | preflight | step down; report as configuration error |
 | snapshotter / rootless / netns unsupported | preflight | step down if requirements allow, else fail |
-| copy-in/bootstrap refuses (not a repo, `.git` file, no commits) | preflight | fail — there is no faithful world to fall back to |
+| copy-in/bootstrap refuses (not a repo, `.git` file, tracked symlink, tracked denied file) | preflight | fail — there is no faithful world to fall back to |
 | create / exec fails | in-run | fail the dispatch; keep the world |
 | capture fails at seal | end | fail the seal; keep the world |
 | teardown fails | end | warn; record the world for `yaah shepherd`; never block settlement |
@@ -187,15 +187,19 @@ seals; a proposal seals a `GitDelta` manifest before teardown.
 ### Retained container worlds — shipped as a change manifest
 
 `croft-dlb` shipped (croft `v0.9.1`, adapter `v0.2.0`): unchanged captures
-return the previous state verbatim, and `ContentDigest` rides the kernel
-state's `Data`.
+return the previous state verbatim, so the kernel's digest-stability contract
+holds without a per-capture content diff. The adapter does not enable croft's
+`ContentDigest` option: the kernel digest includes `Revision`, so an extra
+content digest cannot make a moved-timeline state compare equal through a state
+digest, and no current host reads the field.
 
-yaah's settlement path does not use that digest across backends. In a host
+yaah's settlement path does not use a croft state across backends. In a host
 session the parent root is a **git** sandbox while the dispatch world is croft,
 so container proposals settle as a `GitDelta` change manifest (below) rather
-than as a kernel state. The container is destroyed at seal; the manifest is the
-proposal, so `select`, `apply`, `release`, and `discard` all work with no live
-world:
+than as a kernel state. The manifest is produced from the container world's own
+change set (`Changes`/`ReadFile`), not from git plumbing. The container is
+destroyed at seal; the manifest is the proposal, so `select`, `apply`,
+`release`, and `discard` all work with no live world:
 
 - `world: auto` uses a container for a proposal when `DispatchWorlds` is wired;
   a preflight failure degrades to the worktree (host session) or fails closed
@@ -235,17 +239,21 @@ artifact is a **change manifest**, not a text patch:
 GitDelta = []Change{ Path, Kind(add|modify|delete), Mode, Content }
 ```
 
-It is Shepherd's `Changeset`: whole-path post-images, produced with git
-plumbing inside the container against the baseline commit the bootstrap already
-creates (`commitContainerBaseline`). A text patch is deliberately rejected —
-its context/fuzz and binary handling are the fidelity traps; the manifest is
-exact, and applying it is a writer rather than a patch parser.
+It is Shepherd's `Changeset`: whole-path post-images, produced from the
+container's snapshot change set (`Changes`/`EffectChanges` plus `ReadFile`)
+against the baseline state the bootstrap captures. No git runs inside the
+container: the manifest is the same delta `apply_out` would consume, so a
+container proposal works in an image that is not a repository, and the
+`.git`/index churn a git command causes is never mistaken for workspace
+content. A text patch is deliberately rejected — its context/fuzz and binary
+handling are the fidelity traps; the manifest is exact, and applying it is a
+writer rather than a patch parser.
 
 ### Semantics (reference-faithful)
 
-- **Basis** — the in-container baseline commit (the synthetic commit for a
-  dirty host tree; HEAD for a clean one). The host's git state at dispatch is
-  captured for the `select` precondition.
+- **Basis** — the container baseline state's revision, captured after the
+  copy-in and before the body. The host's git state at dispatch is captured
+  separately for the `select` precondition.
 - **`select`** — capture the host state again; equal ⇒ apply the manifest
   (fast-forward). A moved host fails closed.
 - **`apply`** — only when the manifest's paths are disjoint from the host's
@@ -304,6 +312,12 @@ and child worlds do not share a state language; a manifest is exact where a
 patch is contextual; path-disjoint whole-path application is the reference's
 "no content synthesis" rule; and destroying the container at seal removes the
 pinning/recovery problem entirely.
+
+The manifest is the world's own change set (`Changes`/`ReadFile`), not a
+second opinion computed by git. That is the reference's division of labour: the
+world owns the diff; the machine consumes it. A container image does not have
+to be a repository, and repository bookkeeping (`.git`, yaah's proposal trees)
+is not proposable content.
 
 ### D12 — container-session proposals settle into the session (yaah-a7ks.1)
 

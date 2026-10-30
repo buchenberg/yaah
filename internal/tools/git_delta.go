@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,13 +13,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	goatherd "github.com/buchenberg/goatherd-runtime"
-	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+	"github.com/buchenberg/goatherd-runtime/effect"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 )
 
@@ -28,8 +26,10 @@ import (
 // container proposal (docs/shepherd-parity.md §Container settlement: GitDelta,
 // decision D11). The parent world is a git sandbox and the dispatch world is a
 // container, so there is no shared state language to compare or merge. The
-// artifact is instead a change manifest of whole-path post-images produced by
-// git plumbing inside the dispatch container.
+// artifact is a change manifest of whole-path post-images, produced from the
+// dispatch container's snapshot change set (Changes/ReadFile), never from git
+// plumbing: the container does not have to be a repository, and the manifest is
+// the same delta apply-out would consume.
 //
 // Nothing here parses or applies a text patch: a manifest is exact, and
 // applying it is a writer rather than a patch parser. Whole-path replacement
@@ -61,15 +61,20 @@ const (
 	deltaKindDelete = "delete"
 )
 
-// GitDelta is a container proposal's settlement artifact: the in-container
-// baseline commit it was computed against, and one whole-path post-image per
-// changed path.
+// GitDelta is a container proposal's settlement artifact: the baseline state's
+// revision it was measured against, and one whole-path post-image per changed
+// path.
+//
+// The name is historical: the artifact was once produced by git plumbing inside
+// the container. It is now the snapshot differ's change set, and the JSON field
+// is basis_revision; nothing about producing or settling it requires a
+// repository.
 type GitDelta struct {
-	// BasisHead is the in-container baseline commit. The bootstrap creates a
-	// synthetic commit for a dirty host tree, so this is the exact basis the
-	// body started from.
-	BasisHead string        `json:"basis_head"`
-	Changes   []DeltaChange `json:"changes"`
+	// BasisRevision is the container baseline's state revision (croft's snapshot
+	// key). The manifest's changes are the difference between that state and the
+	// workspace at seal time.
+	BasisRevision string        `json:"basis_revision"`
+	Changes       []DeltaChange `json:"changes"`
 }
 
 // DeltaChange is one changed path in a GitDelta. Content is the post-image and
@@ -79,8 +84,8 @@ type DeltaChange struct {
 	Path string `json:"path"`
 	// Kind is "add", "modify", or "delete".
 	Kind string `json:"kind"`
-	// Mode is the post-image mode (the pre-image mode for a delete; git only
-	// tracks regular-file modes 0644 and 0755).
+	// Mode is the post-image permission bits (the pre-image mode for a delete;
+	// it is ignored on apply). The manifest carries regular files only.
 	Mode fs.FileMode `json:"mode"`
 	// Content is the post-image bytes; empty for a delete.
 	Content []byte `json:"content,omitempty"`
@@ -176,101 +181,6 @@ func bytesIndexByte(b []byte, c byte) int {
 	return -1
 }
 
-// rawDiffEntry is one NUL-delimited record of
-// `git diff-tree -r --raw -z --no-commit-id --no-renames`.
-type rawDiffEntry struct {
-	OldMode string
-	NewMode string
-	OldSHA  string
-	NewSHA  string
-	Status  string
-	Path    string
-}
-
-// parseGitRawDiff parses git's raw diff output. The format is
-// ":<oldmode> <newmode> <oldsha> <newsha> <status>\0<path>\0"; with -z paths are
-// NUL-terminated and never quoted, so a path containing a newline round-trips.
-//
-// Rename and copy records are rejected rather than guessed at: the producer
-// passes --no-renames, and a surprising record means the assumption that makes
-// the manifest exact no longer holds.
-func parseGitRawDiff(raw string) ([]rawDiffEntry, error) {
-	fields := strings.Split(raw, "\x00")
-	var out []rawDiffEntry
-	for i := 0; i < len(fields); i++ {
-		f := fields[i]
-		if f == "" {
-			continue // the trailing terminator (or an empty record)
-		}
-		if !strings.HasPrefix(f, ":") {
-			return nil, fmt.Errorf("git delta: malformed raw diff record %q (want a ':' header)", f)
-		}
-		parts := strings.Fields(f[1:])
-		if len(parts) != 5 {
-			return nil, fmt.Errorf("git delta: malformed raw diff header %q (want 5 fields)", f)
-		}
-		e := rawDiffEntry{
-			OldMode: parts[0],
-			NewMode: parts[1],
-			OldSHA:  parts[2],
-			NewSHA:  parts[3],
-			Status:  parts[4],
-		}
-		if i+1 >= len(fields) {
-			return nil, fmt.Errorf("git delta: raw diff header %q has no path", f)
-		}
-		e.Path = fields[i+1]
-		i++
-		if e.Path == "" {
-			return nil, fmt.Errorf("git delta: raw diff header %q has an empty path", f)
-		}
-		if strings.HasPrefix(e.Status, "R") || strings.HasPrefix(e.Status, "C") {
-			return nil, fmt.Errorf("git delta: rename/copy record for %q is not supported (the producer must pass --no-renames)", e.Path)
-		}
-		out = append(out, e)
-	}
-	return out, nil
-}
-
-// gitChangeKind maps git's status letter to a manifest kind. Anything else — a
-// typechange, an unmerged entry, a malformed status — is refused rather than
-// mapped onto the wrong post-image.
-func gitChangeKind(status string) (string, error) {
-	if status == "" {
-		return "", errors.New("git delta: empty status in raw diff")
-	}
-	switch status[0] {
-	case 'A':
-		return deltaKindAdd, nil
-	case 'M':
-		return deltaKindModify, nil
-	case 'D':
-		return deltaKindDelete, nil
-	case 'T':
-		return "", fmt.Errorf("git delta: typechange record %q is not representable as a whole-path file post-image", status)
-	default:
-		return "", fmt.Errorf("git delta: unsupported diff status %q", status)
-	}
-}
-
-// parseGitMode converts git's octal mode to an fs.FileMode. Only regular files
-// are supported: a symlink (120000) or gitlink (160000) cannot be written by
-// the manifest without changing the host's meaning.
-func parseGitMode(mode string) (fs.FileMode, error) {
-	switch mode {
-	case "100644", "100755":
-		u, err := strconv.ParseUint(mode, 8, 32)
-		if err != nil {
-			return 0, fmt.Errorf("git delta: invalid mode %q: %w", mode, err)
-		}
-		return fs.FileMode(u & 0o777), nil
-	case "000000":
-		return 0, nil
-	default:
-		return 0, fmt.Errorf("git delta: unsupported mode %q (only regular files 100644/100755 are settled)", mode)
-	}
-}
-
 // safeDeltaPath validates and normalizes a manifest path. The result is the
 // cleaned slash-separated relative path. Absolute paths, traversal, NUL,
 // backslashes, Windows volume paths, and anything under `.git` are refused.
@@ -340,8 +250,11 @@ func validateDelta(d *GitDelta) error {
 		}
 		switch c.Kind {
 		case deltaKindAdd, deltaKindModify:
-			if _, err := parseGitMode(fmt.Sprintf("100%03o", c.Mode.Perm())); err != nil {
-				return fmt.Errorf("git delta: %s: mode %04o is not a regular-file mode", c.Path, c.Mode.Perm())
+			// The manifest writes regular files only: whole-path post-images
+			// cannot reproduce a symlink target or a device. Any type bit is
+			// refused, including the symlink bit a change set may carry.
+			if c.Mode&fs.ModeType != 0 {
+				return fmt.Errorf("git delta: %s: mode %04o is not a regular-file mode", c.Path, c.Mode)
 			}
 		case deltaKindDelete:
 			if len(c.Content) != 0 {
@@ -358,73 +271,56 @@ func validateDelta(d *GitDelta) error {
 	return nil
 }
 
-// containerGitHead reads the in-container HEAD. Captured before the body, it is
-// the basis the manifest is computed against: the bootstrap commits a synthetic
-// baseline for a dirty host tree, so HEAD is exact either way.
-func containerGitHead(ctx context.Context, sb goatherdsandbox.Sandbox, root string) (string, error) {
-	out, err := runSandboxGit(ctx, sb, root, "rev-parse", "HEAD")
-	if err != nil {
-		return "", err
-	}
-	head := strings.TrimSpace(out)
-	if head == "" {
-		return "", errors.New("git delta: git rev-parse HEAD returned nothing")
-	}
-	return head, nil
-}
-
-// runSandboxGit runs one git command in the sandbox and maps a non-zero exit to
-// an error that names the command and its stderr.
-func runSandboxGit(ctx context.Context, sb goatherdsandbox.Sandbox, root string, args ...string) (string, error) {
-	res, err := sb.Exec(ctx, goatherdsandbox.ExecRequest{Command: "git", Args: args, Cwd: root})
-	if err != nil {
-		return "", fmt.Errorf("git delta: git %s: %w", strings.Join(args, " "), err)
-	}
-	if res.ExitCode != 0 {
-		return "", fmt.Errorf("git delta: git %s: exit %d: %s", strings.Join(args, " "), res.ExitCode, strings.TrimSpace(res.Stderr))
-	}
-	return res.Stdout, nil
-}
-
-// captureGitDelta produces the manifest for a finished body. It stages the whole
-// tree, writes the tree object, and diffs raw against the basis. Post-image
-// blobs are read through base64 so binary content survives the exec transport.
+// captureContainerDelta produces the settlement manifest for a finished body.
 //
-// The returned review is git's own unified diff (capped, display-only). It is
-// not the settlement artifact; it exists so `show` stays useful after the
-// container is gone.
-func captureGitDelta(ctx context.Context, sb goatherdsandbox.Sandbox, root, base string) (*GitDelta, string, error) {
-	if strings.TrimSpace(base) == "" {
-		return nil, "", errors.New("git delta: no in-container baseline HEAD to diff against")
+// It asks the backend for the typed change set between the container's baseline
+// state and its current workspace — the same change set apply-out consumes —
+// then reads each added or modified file's post-image through ReadFile. No git
+// is involved: the container does not have to be a repository, and the manifest
+// is the snapshot differ's answer rather than a second opinion computed by
+// staging the tree.
+//
+// Two kinds of path are left out of the manifest:
+//
+//   - directories, which carry no post-image (git never tracked them either);
+//   - repository/proposal bookkeeping: anything under a `.git` directory, and
+//     yaah's own `.yaah/proposals` and `.yaah/proposal-releases` trees. The
+//     bootstrap copies the repository's git metadata into the container so the
+//     agent can use git, and any git command then changes index/log/object
+//     files. Those are bookkeeping, not workspace content, and settling them
+//     would either fail the path guard or carry megabytes of objects to the
+//     host. The proposal trees are excluded for the same reason the host
+//     excludes them from git: a proposal must not settle its own registry.
+//
+// Everything else the change set reports is included, including files a
+// `.gitignore` would hide. That matches the session lane: apply-out diffs the
+// snapshot and writes every changed path, so proposals and accepts now agree on
+// what "the workspace changed" means. The content cap still bounds the manifest.
+//
+// The review is the manifest rendered as a post-image view, not a second diff
+// call: it names exactly what will land, with no `.git` noise and no window in
+// which the text and the manifest describe different moments.
+func captureContainerDelta(ctx context.Context, ss *SessionSandbox) (*GitDelta, string, error) {
+	baseline := ss.Baseline()
+	if baseline == nil {
+		return nil, "", errors.New("git delta: the container has no baseline state to measure against")
 	}
-	if _, err := runSandboxGit(ctx, sb, root, "add", "-A"); err != nil {
-		return nil, "", fmt.Errorf("git delta: stage working tree: %w", err)
-	}
-	treeOut, err := runSandboxGit(ctx, sb, root, "write-tree")
+	changes, err := ss.EffectChanges(ctx)
 	if err != nil {
-		return nil, "", fmt.Errorf("git delta: write tree: %w", err)
+		return nil, "", fmt.Errorf("git delta: read the container change set: %w", err)
 	}
-	tree := strings.TrimSpace(treeOut)
-	if tree == "" {
-		return nil, "", errors.New("git delta: git write-tree returned nothing")
-	}
-	raw, err := runSandboxGit(ctx, sb, root,
-		"diff-tree", "-r", "--raw", "-z", "--no-commit-id", "--no-renames", base, tree)
-	if err != nil {
-		return nil, "", fmt.Errorf("git delta: diff tree: %w", err)
-	}
-	entries, err := parseGitRawDiff(raw)
-	if err != nil {
-		return nil, "", err
-	}
-	if len(entries) > gitDeltaMaxFiles {
-		return nil, "", fmt.Errorf("git delta: %d changed files exceeds the %d-file cap", len(entries), gitDeltaMaxFiles)
+	if len(changes) > gitDeltaMaxFiles {
+		return nil, "", fmt.Errorf("git delta: %d changed files exceeds the %d-file cap", len(changes), gitDeltaMaxFiles)
 	}
 
-	delta := &GitDelta{BasisHead: base, Changes: make([]DeltaChange, 0, len(entries))}
+	delta := &GitDelta{BasisRevision: baseline.Revision, Changes: make([]DeltaChange, 0, len(changes))}
 	total := 0
-	for _, e := range entries {
-		change, err := deltaChangeFromRaw(ctx, sb, root, e, gitDeltaMaxContentBytes-total)
+	for _, c := range changes {
+		rel := ss.rootRel(c.Path)
+		if c.IsDir || excludedFromManifest(rel) {
+			continue
+		}
+		change, err := manifestChange(ctx, ss, c, gitDeltaMaxContentBytes-total)
 		if err != nil {
 			return nil, "", err
 		}
@@ -438,116 +334,86 @@ func captureGitDelta(ctx context.Context, sb goatherdsandbox.Sandbox, root, base
 	if err := validateDelta(delta); err != nil {
 		return nil, "", err
 	}
-
-	// Display-only review. A failure here must not fail the seal: the manifest
-	// is complete and exact, and the fallback renderer can still show it.
-	review := ""
-	if len(delta.Changes) > 0 {
-		if out, rerr := runSandboxGit(ctx, sb, root,
-			"diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", base); rerr == nil {
-			review = clipDeltaReview(out)
-		}
-	}
-	return delta, review, nil
+	return delta, clipDeltaReview(delta.RenderDiff()), nil
 }
 
-// deltaChangeFromRaw turns one raw record into a manifest change. Deletes carry
-// the pre-image mode and no content; adds and modifies read the post-image blob
-// after checking its size against the remaining manifest budget, so a huge blob
-// is refused before it is transferred.
-func deltaChangeFromRaw(ctx context.Context, sb goatherdsandbox.Sandbox, root string, e rawDiffEntry, remaining int) (DeltaChange, error) {
-	kind, err := gitChangeKind(e.Status)
-	if err != nil {
-		return DeltaChange{}, err
-	}
-	p, err := safeDeltaPath(e.Path)
-	if err != nil {
-		return DeltaChange{}, err
-	}
-	switch kind {
-	case deltaKindDelete:
-		mode, merr := parseGitMode(e.OldMode)
-		if merr != nil {
-			return DeltaChange{}, fmt.Errorf("git delta: %s: %w", p, merr)
-		}
-		return DeltaChange{Path: p, Kind: kind, Mode: mode}, nil
-	default:
-		mode, merr := parseGitMode(e.NewMode)
-		if merr != nil {
-			return DeltaChange{}, fmt.Errorf("git delta: %s: %w", p, merr)
-		}
-		size, serr := sandboxBlobSize(ctx, sb, root, e.NewSHA)
-		if serr != nil {
-			return DeltaChange{}, fmt.Errorf("git delta: %s: %w", p, serr)
-		}
-		if size > int64(remaining) {
-			return DeltaChange{}, fmt.Errorf("git delta: post-image content exceeds the %d-byte cap; refusing to truncate", gitDeltaMaxContentBytes)
-		}
-		data, berr := readSandboxBlob(ctx, sb, root, e.NewSHA)
-		if berr != nil {
-			return DeltaChange{}, fmt.Errorf("git delta: %s: %w", p, berr)
-		}
-		if int64(len(data)) != size {
-			return DeltaChange{}, fmt.Errorf("git delta: %s: blob read %d bytes, expected %d", p, len(data), size)
-		}
-		return DeltaChange{Path: p, Kind: kind, Mode: mode, Content: data}, nil
-	}
-}
-
-// sandboxBlobSize reports a blob's size without transferring it.
-func sandboxBlobSize(ctx context.Context, sb goatherdsandbox.Sandbox, root, sha string) (int64, error) {
-	out, err := runSandboxGit(ctx, sb, root, "cat-file", "-s", sha)
-	if err != nil {
-		return 0, err
-	}
-	size, err := strconv.ParseInt(strings.TrimSpace(out), 10, 64)
-	if err != nil || size < 0 {
-		return 0, fmt.Errorf("git cat-file -s %s: unexpected size %q", sha, strings.TrimSpace(out))
-	}
-	return size, nil
-}
-
-// readSandboxBlob reads one blob as base64 over the sandbox transport and
-// decodes it in Go. Raw binary on stdout can be mangled by an exec transport;
-// base64 makes the bytes explicit.
+// manifestChange turns one typed change into a whole-path manifest change.
 //
-// The producer currently costs two execs per changed file (a size probe, then
-// this read). A `git cat-file --batch` stream would return size and content in
-// one round trip; it is a worthwhile optimisation if proposals routinely carry
-// many small files, but not a correctness issue (the caps bound the cost).
-func readSandboxBlob(ctx context.Context, sb goatherdsandbox.Sandbox, root, sha string) ([]byte, error) {
-	if strings.TrimSpace(sha) == "" {
-		return nil, errors.New("empty blob sha")
-	}
-	res, err := sb.Exec(ctx, goatherdsandbox.ExecRequest{
-		Command: "sh",
-		Args:    []string{"-c", `git cat-file blob "$1" | base64`, "yaah", sha},
-		Cwd:     root,
-	})
+// A symlink add or modify is refused: the manifest writes regular files only,
+// so recording one would silently replace a link with its target text. A
+// deleted symlink is representable as a plain delete and stays allowed.
+func manifestChange(ctx context.Context, ss *SessionSandbox, c effect.Change, remaining int) (DeltaChange, error) {
+	rel, err := manifestPath(ss, c.Path)
 	if err != nil {
-		return nil, fmt.Errorf("git cat-file blob %s: %w", sha, err)
+		return DeltaChange{}, err
 	}
-	if res.ExitCode != 0 {
-		return nil, fmt.Errorf("git cat-file blob %s: exit %d: %s", sha, res.ExitCode, strings.TrimSpace(res.Stderr))
+	p, err := safeDeltaPath(rel)
+	if err != nil {
+		return DeltaChange{}, err
 	}
-	return decodeBase64Blob(res.Stdout)
+	switch c.Kind {
+	case effect.KindDeleted:
+		return DeltaChange{Path: p, Kind: deltaKindDelete}, nil
+	case effect.KindCreated, effect.KindPatched:
+	default:
+		return DeltaChange{}, fmt.Errorf("git delta: %s: unknown change kind %q", c.Path, c.Kind)
+	}
+	if c.Mode&fs.ModeSymlink != 0 {
+		return DeltaChange{}, fmt.Errorf("git delta: %s: a symlink cannot be represented as a whole-path file post-image", c.Path)
+	}
+	if c.Size > int64(remaining) {
+		return DeltaChange{}, fmt.Errorf("git delta: post-image content exceeds the %d-byte cap; refusing to truncate", gitDeltaMaxContentBytes)
+	}
+	// Read by absolute path: the change set may report a workspace-relative
+	// path (croft) or an absolute one (the in-memory fake), and both backends
+	// resolve an absolute in-workspace path.
+	readPath := c.Path
+	if !strings.HasPrefix(readPath, "/") {
+		readPath = path.Join(ss.Workspace().WorkDir(), readPath)
+	}
+	data, err := ss.sb.ReadFile(ctx, readPath)
+	if err != nil {
+		return DeltaChange{}, fmt.Errorf("git delta: %s: read post-image: %w", c.Path, err)
+	}
+	if int64(len(data)) != c.Size {
+		return DeltaChange{}, fmt.Errorf("git delta: %s: read %d bytes, change set reported %d", c.Path, len(data), c.Size)
+	}
+	kind := deltaKindModify
+	if c.Kind == effect.KindCreated {
+		kind = deltaKindAdd
+	}
+	return DeltaChange{Path: p, Kind: kind, Mode: c.Mode.Perm(), Content: data}, nil
 }
 
-// decodeBase64Blob removes the whitespace base64 tools insert and decodes the
-// remainder.
-func decodeBase64Blob(s string) ([]byte, error) {
-	compact := strings.Map(func(r rune) rune {
-		switch r {
-		case ' ', '\t', '\r', '\n':
-			return -1
+// manifestPath normalizes a change-set path to a workspace-relative one and
+// refuses an absolute path outside the workspace root. A backend reporting such
+// a path is misbehaving; trimming it to a relative path would silently settle a
+// file from elsewhere in the container.
+func manifestPath(ss *SessionSandbox, p string) (string, error) {
+	if strings.HasPrefix(p, "/") && ss.ws.root != "/" {
+		prefix := strings.TrimSuffix(ss.ws.root, "/") + "/"
+		if !strings.HasPrefix(p, prefix) {
+			return "", fmt.Errorf("git delta: change path %q is outside the workspace root %q", p, ss.ws.root)
 		}
-		return r
-	}, s)
-	data, err := base64.StdEncoding.DecodeString(compact)
-	if err != nil {
-		return nil, fmt.Errorf("decode base64 blob: %w", err)
 	}
-	return data, nil
+	return ss.rootRel(p), nil
+}
+
+// excludedFromManifest reports whether a workspace-relative path is// bookkeeping rather than proposable content: git metadata (copied in for the
+// agent's use) or yaah's own proposal trees (excluded from host git for the same
+// reason).
+func excludedFromManifest(p string) bool {
+	for _, comp := range strings.Split(p, "/") {
+		if strings.EqualFold(comp, ".git") {
+			return true
+		}
+	}
+	for _, prefix := range []string{".yaah/proposals", ".yaah/proposal-releases"} {
+		if p == prefix || strings.HasPrefix(p, prefix+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // clipDeltaReview bounds the display-only diff. The manifest is never clipped.
