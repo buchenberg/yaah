@@ -534,12 +534,43 @@ func TestEffectChangesMatchesTheTypedContract(t *testing.T) {
 }
 
 func TestRelPathRequiresRootBoundary(t *testing.T) {
-	s := New()
-	s.root = "/workspace"
-	if got := s.relPath("/workspace/file.txt"); got != "file.txt" {
-		t.Errorf("root child = %q, want file.txt", got)
+	s := newCreated(t) // root /workspace
+	for in, want := range map[string]string{
+		"/workspace":                "",
+		"/workspace/file.txt":       "file.txt",
+		"/workspace-other/file.txt": "",
+		"/workspacex":               "",
+		"/etc/passwd":               "",
+	} {
+		if got := s.relPath(in); got != want {
+			t.Errorf("relPath(%q) = %q, want %q", in, got, want)
+		}
 	}
-	if got := s.relPath("/workspace-other/file.txt"); got != "workspace-other/file.txt" {
-		t.Errorf("root sibling = %q, want it not to be treated as workspace-relative", got)
+
+	// A file outside the root is part of the fake tree but not a workspace
+	// change, so the typed change set must not report it.
+	ctx := context.Background()
+	if err := s.WriteFile(ctx, "/workspace/inside.txt", []byte("in\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteFile(ctx, "/workspace-other/outside.txt", []byte("out\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	base, err := s.Capture(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteFile(ctx, "/workspace-other/outside.txt", []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteFile(ctx, "/workspace/inside.txt", []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changes, err := s.EffectChanges(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].Path != "inside.txt" {
+		t.Fatalf("changes = %+v, want only inside.txt", changes)
 	}
 }
