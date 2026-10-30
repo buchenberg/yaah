@@ -35,8 +35,8 @@ five tasks, so every row is directly comparable.
 | 2026-10-29 | hermes-agent 0.19.0 | hermes | 5/5 | 423,427 | 6,977 | 384,000 (91%) | 176s |
 | 2026-10-29 | opencode 2.1.3 | opencode | 5/5 | 300,316 | 6,823 | 283,648 (94%) | 134s |
 
-OpenCode's 2026-10-29 `Out` is 6,823 output tokens plus a separate 4,213
-reasoning tokens; the cost includes reasoning. The other arms do not report a
+OpenCode's 2026-10-29 `Out` is 6,823 output tokens; its separate reasoning
+bucket is 4,213, and cost includes reasoning. The other arms do not report a
 separate reasoning bucket.
 
 Run ids: 2026-10-17__04-47-51 (yaah), hermes-coding 2026-10-17__18-34-17
