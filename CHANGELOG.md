@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.118.1](https://github.com/buchenberg/yaah/compare/v0.118.0...v0.118.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* **bench:** harden the deterministic mock provider ([36d51ef](https://github.com/buchenberg/yaah/commit/36d51ef462f9ecd78f221f1031e78e16e186c203))
+* **bench:** separate mock validation from response building ([fe0a658](https://github.com/buchenberg/yaah/commit/fe0a65890124d1caad6ef3a7b45e1c4da9a9f6c9))
+
 ## [0.118.0](https://github.com/buchenberg/yaah/compare/v0.117.1...v0.118.0) (2026-10-29)
 
 
