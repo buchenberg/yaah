@@ -414,6 +414,61 @@ func TestBuildSubAgentRegistry_RestrictiveEgressOmitsHostNetworkTools(t *testing
 	}
 }
 
+// A container netns covers the dispatch's shell children, not the HTTP clients
+// that run in yaah's own process. A restrictive posture must omit those tools
+// in the container lane too, rather than leaving them silently host-networked.
+func TestBuildSubAgentRegistry_ContainerRestrictiveEgressOmitsHostNetworkTools(t *testing.T) {
+	profile := subagent.RoleProfile{Tools: []string{"read", "webfetch", "http"}}
+	for _, mode := range []confinement.NetMode{confinement.NetDenyAll, confinement.NetBroker} {
+		opts := taskRunnerOpts{
+			workspace:  fakeSandboxWorkspace{},
+			subNetwork: confinement.NetworkPolicy{Mode: mode, BrokerPort: 41234},
+			subCfg:     config.SubAgentConfig{},
+		}
+		reg, _, err := buildSubAgentRegistry(opts, profile, "", 0, "/workspace")
+		if err != nil {
+			t.Fatalf("%s: buildSubAgentRegistry: %v", mode, err)
+		}
+		for _, name := range []string{"webfetch", "http"} {
+			if reg.Get(name) != nil {
+				t.Errorf("%s: container dispatch must omit %s; it would reach the host network", mode, name)
+			}
+		}
+		if reg.Get("read") == nil {
+			t.Errorf("%s: only the host-network tools should be omitted", mode)
+		}
+	}
+
+	// The open posture keeps them: the rule follows the declared network.
+	open, _, err := buildSubAgentRegistry(taskRunnerOpts{
+		workspace:  fakeSandboxWorkspace{},
+		subNetwork: allowAllNetwork(),
+	}, profile, "", 0, "/workspace")
+	if err != nil {
+		t.Fatalf("allow_all: %v", err)
+	}
+	for _, name := range []string{"webfetch", "http"} {
+		if open.Get(name) == nil {
+			t.Errorf("allow_all must keep %s", name)
+		}
+	}
+}
+
+// The container prompt must name the omitted host-network tools rather than
+// leaving the sub-agent to discover a missing tool as a failed fetch.
+func TestBuildSubAgentSysPrompt_ContainerRestrictiveEgressNamesOmittedTools(t *testing.T) {
+	profile := subagent.RoleProfile{Tools: []string{"read", "webfetch", "http"}}
+	got := buildSubAgentSysPrompt(taskRunnerOpts{
+		workspace:  fakeSandboxWorkspace{},
+		subNetwork: confinement.NetworkPolicy{Mode: confinement.NetDenyAll},
+	}, "developer", profile, false, "/workspace", nil)
+	for _, want := range []string{"webfetch", "http", "outside the container network namespace"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("container prompt does not mention %q:\n%s", want, got)
+		}
+	}
+}
+
 // The prompt must name the omission, so a missing tool does not read as a broken
 // profile.
 func TestBuildSubAgentSysPrompt_NamesOmittedHostNetworkTools(t *testing.T) {

@@ -176,9 +176,12 @@ seals; a proposal seals a `GitDelta` manifest before teardown.
   after a restart; in a container session it settles into the **session
   container** and is session-lifetime (see below).
 - A restrictive `network` posture (`deny_all`/`broker`) is refused for a
-  container world: the shell children are netns-bound, but `http`/`webfetch`
-  execute in the yaah process on the host, which a container netns cannot
-  cover. `allow_all` is the only posture a container world accepts.
+  per-dispatch container world: the shell children are netns-bound, but
+  `http`/`webfetch` execute in the yaah process on the host, which a container
+  netns cannot cover. `allow_all` is the only posture that container world
+  accepts. An isolated session differs: its container supplies the shell's
+  egress, and a restrictive posture now omits those two host-process tools from
+  its dispatches rather than leaving them silently host-networked.
 - **Container-session proposals settle into the session container.** The host
   tree is untouched; `apply_out` remains the explicit host bridge. The
   manifest and basis are persisted for audit, but a session-target proposal is

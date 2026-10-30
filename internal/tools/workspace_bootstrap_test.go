@@ -281,9 +281,10 @@ func TestApplyOut_CopyOutFallback(t *testing.T) {
 //   - A new executable. The doc has always claimed "a new executable arrives
 //     executable"; this is where that claim is actually checked.
 //
-// setuid/setgid/sticky are not asserted: perm is masked with .Perm(), so they
-// do not cross back to the host. That is a deliberate open question tracked as
-// yaah-vlwm, not coverage missing by accident.
+// setuid/setgid/sticky are deliberately not carried: perm is masked with
+// .Perm(), so a container-authored privilege bit never reaches the host. The
+// asymmetry is intentional (yaah-vlwm); TestApplyOut_DoesNotPropagateSetuid
+// pins it explicitly.
 func TestApplyOut_CarriesModeChanges(t *testing.T) {
 	// Windows cannot represent permission bits — every regular file the host
 	// reports is 0666 there, and a chmod cannot make it 0755 — so there is no
@@ -347,6 +348,54 @@ func TestApplyOut_CarriesModeChanges(t *testing.T) {
 	}
 	if gotScript.Mode().Perm() != 0o755 {
 		t.Errorf("new file mode = %v, want 0755 — a new executable must arrive executable", gotScript.Mode().Perm())
+	}
+}
+
+// TestApplyOut_DoesNotPropagateSetuid pins the deliberate asymmetry: copy-in
+// carries the full mode, but copy-out masks it with .Perm(). A container is a
+// weaker boundary, and a setuid/setgid/sticky bit authored there must not land
+// on the host with host privilege semantics.
+func TestApplyOut_DoesNotPropagateSetuid(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows cannot represent permission or privilege bits")
+	}
+
+	src := gitHostRepo(t)
+	open, _ := cleanOpener()
+	ss, err := StartSessionSandbox(context.Background(), sessionTestConfig(), open, src, nil)
+	if err != nil {
+		t.Fatalf("StartSessionSandbox: %v", err)
+	}
+	defer ss.Destroy(context.Background())
+
+	ws := ss.Workspace()
+	readme, _ := ws.ResolvePath("readme.txt")
+	// Write through the backend, not sandboxWorkspace.WriteFile: the workspace
+	// API deliberately masks permission bits, while copy-in uses the backend
+	// directly and preserves the full mode.
+	if err := ss.sb.WriteFile(context.Background(), readme, []byte("hello\n"), 0o7755); err != nil {
+		t.Fatalf("write privileged mode in the sandbox: %v", err)
+	}
+	sandboxInfo, err := ws.Stat(context.Background(), readme)
+	if err != nil {
+		t.Fatalf("stat privileged file in the sandbox: %v", err)
+	}
+	if sandboxInfo.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) == 0 {
+		t.Fatalf("sandbox stored mode %v without the privilege bits; the copy-out assertion would be vacuous", sandboxInfo.Mode())
+	}
+	if err := ss.ApplyOut(context.Background(), src); err != nil {
+		t.Fatalf("ApplyOut: %v", err)
+	}
+
+	got, err := os.Stat(filepath.Join(src, "readme.txt"))
+	if err != nil {
+		t.Fatalf("stat host readme.txt after apply-out: %v", err)
+	}
+	if got.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 {
+		t.Errorf("host readme.txt mode = %v: a container-authored privilege bit crossed to the host", got.Mode())
+	}
+	if got.Mode().Perm() != 0o755 {
+		t.Errorf("host readme.txt mode = %v, want 0755 after masking privilege bits", got.Mode().Perm())
 	}
 }
 
