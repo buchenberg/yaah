@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.118.2](https://github.com/buchenberg/yaah/compare/v0.118.1...v0.118.2) (2026-10-30)
+
+
+### Documentation
+
+* record evidence-guard live recapture and threshold evidence ([8eb063f](https://github.com/buchenberg/yaah/commit/8eb063ff5d805dd18a5fdea3836becceb6569941))
+* record evidence-guard live recapture and threshold evidence ([0fca251](https://github.com/buchenberg/yaah/commit/0fca2517e3b66e1af30e25b186e4b31810af2e4a))
+
 ## [0.118.1](https://github.com/buchenberg/yaah/compare/v0.118.0...v0.118.1) (2026-10-29)
 
 
