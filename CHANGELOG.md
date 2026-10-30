@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.119.3](https://github.com/buchenberg/yaah/compare/v0.119.2...v0.119.3) (2026-10-30)
+
+
+### Bug Fixes
+
+* **update:** age-gate swap-script cleanup and report pending state only when acting ([ad95d12](https://github.com/buchenberg/yaah/commit/ad95d12bc4950792c3db08a5619ad36cecd55bba))
+* **update:** derive the script lifetime constants and keep the offline pending signal ([c673621](https://github.com/buchenberg/yaah/commit/c67362184c5e455af1f84be0b48fd4b8d36dc5da))
+* **update:** retry the Windows swap and report the real outcome ([1c84fd3](https://github.com/buchenberg/yaah/commit/1c84fd3a39fb12bc09c4e20cdc4ae2af64e95878))
+* **update:** retry the Windows swap and report the real outcome ([3120aa7](https://github.com/buchenberg/yaah/commit/3120aa7ad7a87aa8ccee8c931661795c2707f653))
+* **update:** share install-dir resolution, serialize swap scripts, cover the script in CI ([34a97e3](https://github.com/buchenberg/yaah/commit/34a97e359c2fb5dd7f6650a5b689521a602ea2bc))
+
 ## [0.119.2](https://github.com/buchenberg/yaah/compare/v0.119.1...v0.119.2) (2026-10-30)
 
 
