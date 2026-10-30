@@ -28,15 +28,18 @@ var falsifiableReference = regexp.MustCompile(`\b(?:yaah|croft|shepherd-runtime-
 func TestDeferralCommentsNameFalsifiableReference(t *testing.T) {
 	root := filepath.Clean("../..")
 	fset := token.NewFileSet()
+	scanned := 0
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if entry.IsDir() {
-			// Local-only tool directories and dependency/build trees are not
-			// part of this repository's source contract. Skip every hidden
-			// directory so .scratch, .sandbox, and future tool metadata cannot
-			// make a developer-machine run parse third-party Go.
+			// The walk root is "..", which looks hidden but must be traversed.
+			// Below it, skip local-only tool directories and dependency/build
+			// trees so a developer machine cannot parse third-party Go.
+			if path == root {
+				return nil
+			}
 			if strings.HasPrefix(entry.Name(), ".") {
 				return filepath.SkipDir
 			}
@@ -49,6 +52,7 @@ func TestDeferralCommentsNameFalsifiableReference(t *testing.T) {
 		if !strings.HasSuffix(entry.Name(), ".go") {
 			return nil
 		}
+		scanned++
 		file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
 		if err != nil {
 			return err
@@ -69,6 +73,9 @@ func TestDeferralCommentsNameFalsifiableReference(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("scan comments: %v", err)
+	}
+	if scanned == 0 {
+		t.Fatal("deferral scan visited no Go files; the walk root was skipped")
 	}
 }
 
