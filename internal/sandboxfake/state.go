@@ -275,16 +275,22 @@ func fakeEffectChange(p string, kind effect.Kind, e *entry) effect.Change {
 	return c
 }
 
-// relPath reports a tree path relative to the sandbox workspace root. The tree
-// is rooted at "/" and the root directory is created at Create; a path outside
-// the root (possible only in tests that write absolute paths directly) passes
-// through with its leading slash trimmed, matching what a caller expects from a
-// workspace-relative path.
+// relPath reports a tree path relative to the sandbox workspace root. A path
+// outside the root — or the root itself — is not a workspace change and reports
+// the empty string, so a caller never mistakes `/workspace-other/x` for a path
+// under `/workspace`.
 func (s *Sandbox) relPath(p string) string {
-	if s.root != "" && s.root != "/" {
-		p = strings.TrimPrefix(p, s.root+"/")
+	if s.root == "" || s.root == "/" {
+		return strings.TrimPrefix(p, "/")
 	}
-	return strings.TrimPrefix(p, "/")
+	if p == s.root {
+		return ""
+	}
+	prefix := s.root + "/"
+	if !strings.HasPrefix(p, prefix) {
+		return ""
+	}
+	return p[len(prefix):]
 }
 
 // sameEntry compares two entries by everything the state carries. modTime is
