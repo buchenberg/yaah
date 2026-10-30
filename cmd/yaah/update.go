@@ -50,6 +50,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	latest, err := update.FetchLatestRelease(gitHubRepo)
 	if err != nil {
+		if hasPending {
+			reportPending(cmd, pending)
+		}
 		cmd.Printf("  %s  Could not check for updates: %v\n", doctor.StatusLabel("WARN"), err)
 		cmd.Printf("         You can check manually at https://github.com/%s/releases\n", gitHubRepo)
 		return nil
@@ -75,9 +78,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Report a blocked earlier attempt only once this run is going to
-	// act on it; otherwise the advice to retry contradicts the discard
-	// above.
+	// Report a blocked earlier attempt after the version decision: when
+	// the running binary is already newer the staged file is discarded
+	// instead, and advising a retry would contradict that. The
+	// fetch-failure path above reports it too, since no decision can be
+	// made there.
 	if hasPending {
 		reportPending(cmd, pending)
 	}

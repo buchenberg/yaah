@@ -268,6 +268,20 @@ func applyUnix(newPath, targetPath, binDir string) error {
 	return nil
 }
 
+const (
+	// windowsSwapWait bounds how long the detached swap waits for the
+	// updating process to exit before trying anyway.
+	windowsSwapWait = 2 * time.Minute
+	// windowsSwapRetry bounds the move retries after that wait.
+	windowsSwapRetry = 2 * time.Minute
+	// windowsSwapInterval is the pause between retry attempts.
+	windowsSwapInterval = 500 * time.Millisecond
+	// windowsScriptTTL is how old a leftover per-process swap script
+	// must be before cleanup removes it. It is derived from the script's
+	// real maximum lifetime so a live script is never deleted.
+	windowsScriptTTL = windowsSwapWait + windowsSwapRetry + 10*time.Minute
+)
+
 func applyWindows(newPath, targetPath string) (bool, error) {
 	nextPath := targetPath + ".next"
 	oldPath := filepath.Join(filepath.Dir(targetPath), OldName(runtime.GOOS))
@@ -311,24 +325,28 @@ func applyWindows(newPath, targetPath string) (bool, error) {
 // the error and the processes still holding the binary, so the next
 // `yaah update` can report it and retry without re-downloading.
 func windowsSwapScript(targetPath, oldPath, nextPath, scriptPath, logPath string, pid int) string {
+	waitSeconds := int(windowsSwapWait / time.Second)
+	attempts := int(windowsSwapRetry / windowsSwapInterval)
+	intervalMilliseconds := int(windowsSwapInterval / time.Millisecond)
+
 	return fmt.Sprintf(`$target = "%[1]s"
 $old    = "%[2]s"
 $next   = "%[3]s"
 $log    = "%[5]s"
 
 # Wait for the updater to exit, then let Windows release the image mapping.
-$deadline = (Get-Date).AddSeconds(120)
+$deadline = (Get-Date).AddSeconds(%[7]d)
 while ((Get-Process -Id %[6]d -ErrorAction SilentlyContinue) -and ((Get-Date) -lt $deadline)) {
-	Start-Sleep -Milliseconds 250
+	Start-Sleep -Milliseconds %[9]d
 }
-Start-Sleep -Milliseconds 500
+Start-Sleep -Milliseconds %[9]d
 
 # One backup copy of the binary being replaced; the move below either
 # succeeds or leaves the target untouched. A locked target is expected
 # and must not abort the script.
 $applied = $false
 $lastError = ''
-for ($i = 0; $i -lt 240 -and -not $applied; $i++) {
+for ($i = 0; $i -lt %[8]d -and -not $applied; $i++) {
 	try {
 		if (-not (Test-Path -LiteralPath $next)) {
 			# A concurrent invocation may have completed the swap (or a
@@ -350,7 +368,7 @@ for ($i = 0; $i -lt 240 -and -not $applied; $i++) {
 		if ((-not (Test-Path -LiteralPath $target)) -and (Test-Path -LiteralPath $old)) {
 			try { Move-Item -Force -LiteralPath $old -Destination $target -ErrorAction Stop } catch { }
 		}
-		Start-Sleep -Milliseconds 500
+		Start-Sleep -Milliseconds %[9]d
 	}
 }
 
@@ -381,6 +399,9 @@ try { Remove-Item -LiteralPath "%[4]s" -Force -ErrorAction Stop } catch { }
 		escapePSPath(scriptPath),
 		escapePSPath(logPath),
 		pid,
+		waitSeconds,
+		attempts,
+		intervalMilliseconds,
 	)
 }
 
@@ -476,10 +497,10 @@ func cleanOldBinariesIn(dir string) {
 	os.Remove(filepath.Join(dir, OldName(runtime.GOOS)))
 	os.Remove(filepath.Join(dir, OldName(runtime.GOOS)+".tmp"))
 	os.Remove(filepath.Join(dir, BinaryName(runtime.GOOS)+".update.ps1"))
-	// Per-process swap scripts belong to a run that is still retrying;
-	// a swap script never outlives its two-minute retry budget, so only
-	// scripts older than that are leftovers from a crashed run.
-	removeStaleScripts(dir, 30*time.Minute)
+	// Per-process swap scripts belong to a run that may still be
+	// retrying; only scripts past their maximum lifetime are leftovers
+	// from a crashed run.
+	removeStaleScripts(dir, windowsScriptTTL)
 }
 
 // removeStaleScripts deletes per-process swap scripts older than
