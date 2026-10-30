@@ -8,6 +8,9 @@ package tools
 // the model actually receives.
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"reflect"
 	"regexp"
 	"slices"
@@ -39,12 +42,53 @@ func TestResultEnvelopeDocs_NameEveryJSONField(t *testing.T) {
 	for _, entry := range resultEnvelopeDocs {
 		text := prompts.ToolDescription(entry.doc)
 		for _, field := range jsonEnvelopeFields(entry.typ) {
-			re, err := regexp.Compile(`\b` + regexp.QuoteMeta(field) + `\b`)
+			// Require the field in code formatting. A bare word in prose is
+			// too weak: "an error" would satisfy an `error` field without
+			// documenting it as a field.
+			re, err := regexp.Compile("`" + regexp.QuoteMeta(field) + "`")
 			if err != nil {
 				t.Fatalf("compile pattern for %s.%s: %v", entry.typ, field, err)
 			}
 			if !re.MatchString(text) {
-				t.Errorf("%s: %s.md never names result field %q; document it or stop emitting it", entry.typ, entry.doc, field)
+				t.Errorf("%s: %s.md never names result field `%s`; document it or stop emitting it", entry.typ, entry.doc, field)
+			}
+		}
+	}
+}
+
+// TestResultEnvelopeRegistryCoversNamedEnvelopes catches the obvious new
+// envelope a manual registry would otherwise miss. Result types that do not
+// end in "Envelope" (the delegate payloads) still need an explicit registry
+// entry; their JSON field names are covered once registered.
+func TestResultEnvelopeRegistryCoversNamedEnvelopes(t *testing.T) {
+	registered := make(map[string]bool, len(resultEnvelopeDocs))
+	for _, entry := range resultEnvelopeDocs {
+		registered[entry.typ.Name()] = true
+	}
+
+	pkgs, err := parser.ParseDir(token.NewFileSet(), ".", nil, 0)
+	if err != nil {
+		t.Fatalf("parse package for envelope types: %v", err)
+	}
+	for _, pkg := range pkgs {
+		for _, file := range pkg.Files {
+			for _, decl := range file.Decls {
+				gen, ok := decl.(*ast.GenDecl)
+				if !ok || gen.Tok != token.TYPE {
+					continue
+				}
+				for _, spec := range gen.Specs {
+					ts, ok := spec.(*ast.TypeSpec)
+					if !ok || !strings.HasSuffix(ts.Name.Name, "Envelope") {
+						continue
+					}
+					if _, ok := ts.Type.(*ast.StructType); !ok {
+						continue
+					}
+					if !registered[ts.Name.Name] {
+						t.Errorf("type %s is a JSON envelope but is not in resultEnvelopeDocs; add it and its model-facing doc", ts.Name.Name)
+					}
+				}
 			}
 		}
 	}
@@ -64,11 +108,25 @@ func jsonEnvelopeFields(typ reflect.Type) []string {
 	var fields []string
 	for i := 0; i < typ.NumField(); i++ {
 		field := typ.Field(i)
+		name := strings.Split(field.Tag.Get("json"), ",")[0]
 		if field.Anonymous {
-			fields = append(fields, jsonEnvelopeFields(field.Type)...)
+			if name == "-" {
+				continue
+			}
+			if name != "" {
+				// An explicit tag on an embedded field makes it a named
+				// field; encoding/json does not flatten it.
+				fields = append(fields, name)
+				continue
+			}
+			if embedded := indirectStruct(field.Type); embedded != nil {
+				fields = append(fields, jsonEnvelopeFields(embedded)...)
+			} else {
+				// An embedded non-struct is emitted under its type name.
+				fields = append(fields, field.Name)
+			}
 			continue
 		}
-		name := strings.Split(field.Tag.Get("json"), ",")[0]
 		if name == "" || name == "-" {
 			continue
 		}
@@ -76,4 +134,16 @@ func jsonEnvelopeFields(typ reflect.Type) []string {
 	}
 	slices.Sort(fields)
 	return slices.Compact(fields)
+}
+
+// indirectStruct follows pointers to an embedded struct type, returning nil
+// for embedded non-structs and for named non-struct types.
+func indirectStruct(typ reflect.Type) reflect.Type {
+	for typ.Kind() == reflect.Ptr {
+		typ = typ.Elem()
+	}
+	if typ.Kind() == reflect.Struct {
+		return typ
+	}
+	return nil
 }

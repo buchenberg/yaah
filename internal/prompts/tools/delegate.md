@@ -5,7 +5,7 @@ What comes back depends on the role's output contract and the dispatch lane it s
 - **Proposal roles** (default; e.g. developer): the work runs in an isolated dispatch world — a git worktree, or a per-dispatch container when configured — and returns `status: "proposal"` with a `proposal_id`, the changed `files`, and a `diff`. Nothing has changed on your tree — settle it with the `proposal` tool (`select`, `apply`, `release`, `discard`).
 - **Report roles** (`output: report` in the role file; e.g. reviewer): when the role can change the workspace, its work runs in an isolated report world (worktree or container) and the result is the report itself — there is no proposal and nothing to settle. A report role with no tool that can change the workspace runs directly on the shared workspace for fresher data.
 - **Shared mode** (`agents.subagent.mode: shared`): every dispatch runs directly on the workspace, and the result is its report; whatever it wrote is already applied.
-- **Background** (`background: true`): returns `status: "running"`, a `job_id`, and a `label` immediately; the result arrives later as a follow-up message and can be managed with `subagent_jobs`. A plain call blocks until the dispatch returns.
+- **Background** (`background: true`): returns `status` = `running`, a `job_id`, and a `label` immediately; the result arrives later as a follow-up message and can be managed with `subagent_jobs`. A plain call blocks until the dispatch returns.
 
 A dispatch that cannot complete returns `error` plus optional `role`, `timeout`, and `partial` fields.
 
