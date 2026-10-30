@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.119.1](https://github.com/buchenberg/yaah/compare/v0.119.0...v0.119.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* **sandboxfake:** enforce the workspace root boundary in relPath ([b57508b](https://github.com/buchenberg/yaah/commit/b57508b8dcb05f08a1a30c35fc4ba416185bd770))
+
+
+### Tests
+
+* **docs:** avoid deprecated parser.ParseDir ([d4ae67c](https://github.com/buchenberg/yaah/commit/d4ae67c10f2396a4b4e5bebfdd237502aa81eccc))
+* **docs:** gate result-envelope field disclosure ([9d2df35](https://github.com/buchenberg/yaah/commit/9d2df35bb76cb7fcc8ee08095002372d6e0ec4fd))
+* **docs:** gate result-envelope field disclosure ([8c78cb2](https://github.com/buchenberg/yaah/commit/8c78cb22d40cc30d4b5ba08f3faa5a0c1b95a22d))
+* **docs:** honor build constraints in envelope discovery ([5296cc8](https://github.com/buchenberg/yaah/commit/5296cc8d490aa681f07a0410935bb6fbdfd93208))
+* **docs:** keep result-envelope registry explicit ([a089c07](https://github.com/buchenberg/yaah/commit/a089c07f1d418511539c2bee99fde78b3770bd34))
+* **docs:** name result envelopes by convention ([ee92a19](https://github.com/buchenberg/yaah/commit/ee92a19466078e7b7b66c4026b01559bc794f777))
+* **docs:** require code-formatted fields and cover new envelope types ([2c24af4](https://github.com/buchenberg/yaah/commit/2c24af4858778ece07cea425e5e46de7de4ed9f9))
+* **docs:** restore envelope registry completeness guard ([e8ed56c](https://github.com/buchenberg/yaah/commit/e8ed56cca57754e3af94ba8144804b2695b5cb33))
+* **docs:** scan every production envelope regardless of build tags ([f6a9a55](https://github.com/buchenberg/yaah/commit/f6a9a559e1886deb10e0a7c82d3f9b80f2d4c0f9))
+* **docs:** scope envelope discovery to tagged production types ([3772a91](https://github.com/buchenberg/yaah/commit/3772a9146296007ab68c849198ca603a22373271))
+
 ## [0.119.0](https://github.com/buchenberg/yaah/compare/v0.118.3...v0.119.0) (2026-10-30)
 
 
