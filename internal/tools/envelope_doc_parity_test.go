@@ -9,6 +9,7 @@ package tools
 
 import (
 	"go/ast"
+	"go/build"
 	"go/parser"
 	"go/token"
 	"os"
@@ -39,6 +40,11 @@ var resultEnvelopeDocs = []struct {
 	{reflect.TypeOf(dispatchFailureResult{}), "delegate"},
 }
 
+// envelopeExemptions lists production *Envelope types that are not
+// model-facing result envelopes. Keep this empty unless a real
+// non-result envelope needs one; the value is the bead that removes it.
+var envelopeExemptions = map[string]string{}
+
 func TestResultEnvelopeDocs_NameEveryJSONField(t *testing.T) {
 	for _, entry := range resultEnvelopeDocs {
 		text := prompts.ToolDescription(entry.doc)
@@ -58,9 +64,10 @@ func TestResultEnvelopeDocs_NameEveryJSONField(t *testing.T) {
 }
 
 // TestResultEnvelopeRegistryCoversNamedEnvelopes catches the obvious new
-// envelope a manual registry would otherwise miss. Result types that do not
-// end in "Envelope" (the delegate payloads) still need an explicit registry
-// entry; their JSON field names are covered once registered.
+// envelope a manual registry would otherwise miss. Tool result envelopes are
+// declared in this package, so the scan is package-local; result types that
+// do not end in "Envelope" (the delegate payloads) still need an explicit
+// registry entry, and their JSON field names are covered once registered.
 func TestResultEnvelopeRegistryCoversNamedEnvelopes(t *testing.T) {
 	registered := make(map[string]bool, len(resultEnvelopeDocs))
 	for _, entry := range resultEnvelopeDocs {
@@ -74,6 +81,15 @@ func TestResultEnvelopeRegistryCoversNamedEnvelopes(t *testing.T) {
 	fset := token.NewFileSet()
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		// MatchFile keeps platform- and tag-gated files out of the scan;
+		// a result envelope should not depend on the runner's GOOS.
+		match, err := build.Default.MatchFile(".", entry.Name())
+		if err != nil {
+			t.Fatalf("match build constraints for %s: %v", entry.Name(), err)
+		}
+		if !match {
 			continue
 		}
 		file, err := parser.ParseFile(fset, entry.Name(), nil, 0)
@@ -90,12 +106,14 @@ func TestResultEnvelopeRegistryCoversNamedEnvelopes(t *testing.T) {
 				if !ok || !strings.HasSuffix(ts.Name.Name, "Envelope") {
 					continue
 				}
-				st, ok := ts.Type.(*ast.StructType)
-				if !ok || !structHasJSONTag(st) {
+				if _, ok := ts.Type.(*ast.StructType); !ok {
+					continue
+				}
+				if _, ok := envelopeExemptions[ts.Name.Name]; ok {
 					continue
 				}
 				if !registered[ts.Name.Name] {
-					t.Errorf("type %s is a JSON envelope but is not in resultEnvelopeDocs; add it and its model-facing doc", ts.Name.Name)
+					t.Errorf("type %s is a production envelope but is not in resultEnvelopeDocs; add it and its model-facing doc, or record an envelopeExemptions entry citing a bead", ts.Name.Name)
 				}
 			}
 		}
@@ -142,21 +160,6 @@ func jsonEnvelopeFields(typ reflect.Type) []string {
 	}
 	slices.Sort(fields)
 	return slices.Compact(fields)
-}
-
-// structHasJSONTag reports whether the struct itself carries a JSON tag. The
-// name-suffix scan is deliberately limited to tagged production structs so an
-// unrelated *Envelope helper is not forced into the registry.
-func structHasJSONTag(st *ast.StructType) bool {
-	if st == nil {
-		return false
-	}
-	for _, field := range st.Fields.List {
-		if field.Tag != nil && strings.Contains(field.Tag.Value, `json:"`) {
-			return true
-		}
-	}
-	return false
 }
 
 // indirectStruct follows pointers to an embedded struct type, returning nil
