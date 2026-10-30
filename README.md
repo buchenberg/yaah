@@ -83,7 +83,8 @@ go install github.com/buchenberg/yaah@latest
 the updating process exits and needs exclusive access to `yaah.exe`, so close
 any other running yaah process (TUI, `acp serve`, `mcp serve`) first. A swap
 that could not be applied is reported by the next `yaah update` and by
-`yaah doctor`; the staged download is reused, so the retry needs no download.
+`yaah doctor`; when the release publishes `checksums.txt` the staged download
+is reused, so the retry needs no download.
 
 Docker with OTLP tracing:
 

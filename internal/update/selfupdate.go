@@ -176,6 +176,28 @@ func isHexDigest(s string) bool {
 	return true
 }
 
+// installDir returns the directory holding the installed binary and the
+// path this package manages for it. Apply, Pending, and the cleanup
+// helpers all derive the artifact location from here so they cannot
+// disagree about where yaah.exe.next lives.
+func installDir() (dir, target string, err error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", "", fmt.Errorf("cannot locate current binary: %w", err)
+	}
+	dir = filepath.Dir(exe)
+	target = filepath.Join(dir, BinaryName(runtime.GOOS))
+	// A binary installed under another name or reached through a link
+	// keeps its artifacts next to the real install.
+	if target != exe {
+		if resolved, err := filepath.EvalSymlinks(exe); err == nil && resolved != exe {
+			dir = filepath.Dir(resolved)
+			target = filepath.Join(dir, BinaryName(runtime.GOOS))
+		}
+	}
+	return dir, target, nil
+}
+
 // Apply replaces the current running binary with the downloaded one at
 // newPath.
 //
@@ -191,21 +213,9 @@ func isHexDigest(s string) bool {
 // is skipped and only the swap is (re)launched — that is the retry path
 // after a swap blocked by another running yaah process.
 func Apply(newPath string) (deferred bool, err error) {
-	currentPath, err := os.Executable()
+	binDir, targetPath, err := installDir()
 	if err != nil {
-		return false, fmt.Errorf("cannot locate current binary: %w", err)
-	}
-
-	binDir := filepath.Dir(currentPath)
-	binName := BinaryName(runtime.GOOS)
-	targetPath := filepath.Join(binDir, binName)
-
-	if targetPath != currentPath {
-		resolved, err := filepath.EvalSymlinks(currentPath)
-		if err == nil && resolved != currentPath {
-			binDir = filepath.Dir(resolved)
-			targetPath = filepath.Join(binDir, binName)
-		}
+		return false, err
 	}
 
 	if err := checkWriteAccess(binDir); err != nil {
@@ -271,7 +281,7 @@ func applyWindows(newPath, targetPath string) (bool, error) {
 		}
 	}
 
-	scriptPath := targetPath + ".update.ps1"
+	scriptPath := fmt.Sprintf("%s.update-%d.ps1", targetPath, os.Getpid())
 	script := windowsSwapScript(targetPath, oldPath, nextPath, scriptPath, logPath, os.Getpid())
 	if err := os.WriteFile(scriptPath, []byte(script), 0o644); err != nil {
 		return false, fmt.Errorf("write update script: %w", err)
@@ -320,7 +330,13 @@ $applied = $false
 $lastError = ''
 for ($i = 0; $i -lt 240 -and -not $applied; $i++) {
 	try {
-		if (-not (Test-Path -LiteralPath $next)) { throw 'staged binary is missing' }
+		if (-not (Test-Path -LiteralPath $next)) {
+			# A concurrent invocation may have completed the swap (or a
+			# newer run discarded the staged file). With a working target
+			# there is nothing left to do and nothing to report.
+			if (Test-Path -LiteralPath $target) { $applied = $true; break }
+			throw 'staged binary is missing'
+		}
 		if (-not (Test-Path -LiteralPath $old)) {
 			Copy-Item -Force -LiteralPath $target -Destination ($old + '.tmp') -ErrorAction Stop
 			Move-Item -Force -LiteralPath ($old + '.tmp') -Destination $old -ErrorAction Stop
@@ -418,16 +434,11 @@ type PendingState struct {
 // the swap was blocked (another yaah process held the binary) or the
 // machine shut down first.
 func Pending() (PendingState, bool) {
-	exe, err := os.Executable()
+	dir, _, err := installDir()
 	if err != nil {
 		return PendingState{}, false
 	}
-	// Mirror Apply: artifacts live next to the real binary, not next to
-	// a symlink pointing at it.
-	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = resolved
-	}
-	return pendingIn(filepath.Dir(exe))
+	return pendingIn(dir)
 }
 
 func pendingIn(dir string) (PendingState, bool) {
@@ -454,15 +465,43 @@ func pendingIn(dir string) (PendingState, bool) {
 // reuses a checksum-verified staged binary instead of downloading it
 // again.
 func CleanOldBinaries() {
-	exe, err := os.Executable()
+	dir, _, err := installDir()
 	if err != nil {
 		return
 	}
-	cleanOldBinariesIn(filepath.Dir(exe))
+	cleanOldBinariesIn(dir)
 }
 
 func cleanOldBinariesIn(dir string) {
 	os.Remove(filepath.Join(dir, OldName(runtime.GOOS)))
 	os.Remove(filepath.Join(dir, OldName(runtime.GOOS)+".tmp"))
-	os.Remove(filepath.Join(dir, BinaryName(runtime.GOOS)+".update.ps1"))
+	// Swap scripts are named per process so a re-run cannot truncate the
+	// script a still-retrying invocation is executing.
+	for _, pattern := range []string{
+		BinaryName(runtime.GOOS) + ".update.ps1",
+		BinaryName(runtime.GOOS) + ".update-*.ps1",
+	} {
+		matches, _ := filepath.Glob(filepath.Join(dir, pattern))
+		for _, match := range matches {
+			os.Remove(match)
+		}
+	}
+}
+
+// DiscardStaged removes a staged update and every artifact around it.
+// Used when the running binary is already at least as new as the staged
+// release, so the staged file can never be applied.
+func DiscardStaged() {
+	dir, _, err := installDir()
+	if err != nil {
+		return
+	}
+	discardStagedIn(dir)
+}
+
+func discardStagedIn(dir string) {
+	os.Remove(filepath.Join(dir, BinaryName(runtime.GOOS)+".next"))
+	os.Remove(filepath.Join(dir, BinaryName(runtime.GOOS)+".update.log"))
+	os.Remove(filepath.Join(dir, OldName(runtime.GOOS)))
+	os.Remove(filepath.Join(dir, OldName(runtime.GOOS)+".tmp"))
 }

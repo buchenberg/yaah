@@ -3,11 +3,14 @@ package update
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestVerifyChecksum(t *testing.T) {
@@ -205,6 +208,7 @@ func TestCleanOldBinariesIn(t *testing.T) {
 		filepath.Join(dir, OldName(runtime.GOOS)),
 		filepath.Join(dir, OldName(runtime.GOOS)+".tmp"),
 		filepath.Join(dir, BinaryName(runtime.GOOS)+".update.ps1"),
+		filepath.Join(dir, BinaryName(runtime.GOOS)+".update-1234.ps1"),
 	}
 	for _, p := range append(append([]string{}, keep...), drop...) {
 		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
@@ -224,4 +228,142 @@ func TestCleanOldBinariesIn(t *testing.T) {
 			t.Errorf("cleanup kept %s", filepath.Base(p))
 		}
 	}
+}
+
+// Discarding is for a staged update the running binary has already
+// overtaken: every artifact goes.
+func TestDiscardStagedIn(t *testing.T) {
+	dir := t.TempDir()
+	artifacts := []string{
+		filepath.Join(dir, BinaryName(runtime.GOOS)+".next"),
+		filepath.Join(dir, BinaryName(runtime.GOOS)+".update.log"),
+		filepath.Join(dir, OldName(runtime.GOOS)),
+		filepath.Join(dir, OldName(runtime.GOOS)+".tmp"),
+	}
+	for _, p := range artifacts {
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	discardStagedIn(dir)
+
+	if _, ok := pendingIn(dir); ok {
+		t.Fatal("staged binary survived the discard")
+	}
+	for _, p := range artifacts {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("discard kept %s", filepath.Base(p))
+		}
+	}
+}
+
+// The swap script's branches are exercised for real on Windows: a happy
+// path and the retry path where another process holds the target. The
+// permanent-lock path takes the full two-minute retry budget and is not
+// run here.
+func TestWindowsSwapScriptExecution(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows-only swap script")
+	}
+	if testing.Short() {
+		t.Skip("runs powershell.exe")
+	}
+	powershell, err := exec.LookPath("powershell.exe")
+	if err != nil {
+		t.Skip("powershell.exe not available")
+	}
+
+	target := func(dir string) string { return filepath.Join(dir, "yaah.exe") }
+	staged := func(dir string) string { return filepath.Join(dir, "yaah.exe.next") }
+
+	// run executes the generated script and waits for it to finish.
+	run := func(t *testing.T, dir string) {
+		t.Helper()
+		scriptPath := filepath.Join(dir, "swap.ps1")
+		script := windowsSwapScript(
+			target(dir),
+			filepath.Join(dir, OldName(runtime.GOOS)),
+			staged(dir),
+			scriptPath,
+			filepath.Join(dir, "yaah.exe.update.log"),
+			999999, // no such process: the wait loop exits at once
+		)
+		if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("swap script failed: %v\n%s", err, out)
+		}
+	}
+
+	assertSwapped := func(t *testing.T, dir string) {
+		t.Helper()
+		got, err := os.ReadFile(target(dir))
+		if err != nil {
+			t.Fatalf("read target: %v", err)
+		}
+		if string(got) != "new binary" {
+			t.Errorf("target = %q; want the staged binary", got)
+		}
+		for _, residual := range []string{
+			staged(dir),
+			filepath.Join(dir, OldName(runtime.GOOS)),
+			filepath.Join(dir, OldName(runtime.GOOS)+".tmp"),
+			filepath.Join(dir, "yaah.exe.update.log"),
+		} {
+			if _, err := os.Stat(residual); !os.IsNotExist(err) {
+				t.Errorf("swap left %s behind", filepath.Base(residual))
+			}
+		}
+	}
+
+	seed := func(t *testing.T, dir string) {
+		t.Helper()
+		if err := os.WriteFile(target(dir), []byte("old binary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(staged(dir), []byte("new binary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("applies", func(t *testing.T) {
+		dir := t.TempDir()
+		seed(t, dir)
+		run(t, dir)
+		assertSwapped(t, dir)
+	})
+
+	t.Run("retries until the target is released", func(t *testing.T) {
+		dir := t.TempDir()
+		seed(t, dir)
+
+		// Hold the target with no sharing for three seconds. The marker
+		// file proves the handle was acquired before the swap starts.
+		marker := filepath.Join(dir, "locked")
+		hold := strings.ReplaceAll(target(dir), "'", "''")
+		locker := exec.Command(powershell, "-NoProfile", "-NonInteractive", "-Command",
+			fmt.Sprintf("$fs=[IO.File]::Open('%s','Open','ReadWrite','None'); Set-Content -Path '%s' -Value locked; Start-Sleep -Seconds 3; $fs.Close()",
+				hold, strings.ReplaceAll(marker, "'", "''")))
+		if err := locker.Start(); err != nil {
+			t.Fatalf("start locker: %v", err)
+		}
+		defer func() { _ = locker.Process.Kill() }()
+
+		deadline := time.Now().Add(15 * time.Second)
+		for {
+			if _, err := os.Stat(marker); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("locker never acquired the target")
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+
+		run(t, dir) // blocks until the lock is released and the retry lands
+		assertSwapped(t, dir)
+	})
 }

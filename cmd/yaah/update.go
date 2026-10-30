@@ -68,8 +68,12 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		cmd.Println()
 		cmd.Printf("  %s  You're on the latest version.\n", doctor.StatusLabel("OK"))
 		if hasPending {
+			// The running binary is at least as new as the staged
+			// release, so the staged file can never be applied — clear
+			// it instead of warning forever.
+			update.DiscardStaged()
 			cmd.Println()
-			cmd.Printf("  %s  A staged update is still waiting — see the note above.\n", doctor.StatusLabel("WARN"))
+			cmd.Printf("  %s  Cleared a stale staged update — this binary is already newer.\n", doctor.StatusLabel("OK"))
 		}
 		return nil
 	}
@@ -146,8 +150,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		// instead of claiming the update already landed.
 		cmd.Printf("  %s  Staged %s; it will be swapped in when this process exits.\n", doctor.StatusLabel("OK"), latestVersion)
 		cmd.Printf("         If 'yaah --version' still reports %s, another yaah process is\n", currentVersion)
-		cmd.Printf("         holding the binary: close them all and run 'yaah update' again\n")
-		cmd.Printf("         (the staged download is reused, so that retry is instant).\n")
+		cmd.Printf("         holding the binary: close them all and run 'yaah update' again.\n")
+		cmd.Printf("         The staged download is reused when the release publishes\n")
+		cmd.Printf("         checksums, so that retry needs no download.\n")
 		return nil
 	}
 
