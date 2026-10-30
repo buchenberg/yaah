@@ -29,7 +29,7 @@ import (
 // artifact is a change manifest of whole-path post-images, produced from the
 // dispatch container's snapshot change set (Changes/ReadFile), never from git
 // plumbing: the container does not have to be a repository, and the manifest is
-// the same delta apply-out would consume.
+// the same snapshot change set apply-out consumes.
 //
 // Nothing here parses or applies a text patch: a manifest is exact, and
 // applying it is a writer rather than a patch parser. Whole-path replacement
@@ -293,13 +293,12 @@ func validateDelta(d *GitDelta) error {
 //     excludes them from git: a proposal must not settle its own registry.
 //
 // Everything else the change set reports is included, including files a
-// `.gitignore` would hide. That matches the session lane: apply-out diffs the
-// snapshot and writes every changed path, so proposals and accepts now agree on
-// what "the workspace changed" means. The content cap still bounds the manifest.
+// `.gitignore` would hide. The seal and apply-out both drop the same
+// bookkeeping and deny-policy paths, so proposals and accepts agree on what
+// "the workspace changed" means. The content cap still bounds the manifest.
 //
-// The review is the manifest rendered as a post-image view, not a second diff
-// call: it names exactly what will land, with no `.git` noise and no window in
-// which the text and the manifest describe different moments.
+// The review is the snapshot diff against the same baseline, capped for
+// display. It is not the settlement artifact: the manifest is.
 func captureContainerDelta(ctx context.Context, ss *SessionSandbox) (*GitDelta, string, error) {
 	baseline := ss.Baseline()
 	if baseline == nil {
@@ -309,16 +308,25 @@ func captureContainerDelta(ctx context.Context, ss *SessionSandbox) (*GitDelta, 
 	if err != nil {
 		return nil, "", fmt.Errorf("git delta: read the container change set: %w", err)
 	}
-	if len(changes) > gitDeltaMaxFiles {
-		return nil, "", fmt.Errorf("git delta: %d changed files exceeds the %d-file cap", len(changes), gitDeltaMaxFiles)
-	}
-
 	delta := &GitDelta{BasisRevision: baseline.Revision, Changes: make([]DeltaChange, 0, len(changes))}
 	total := 0
+	filtered := false
 	for _, c := range changes {
-		rel := ss.rootRel(c.Path)
-		if c.IsDir || excludedFromManifest(rel) {
+		// Validate before filtering: a malformed backend path must fail the
+		// seal even when it happens to look like bookkeeping or a denied path.
+		rel, err := manifestPath(ss, c.Path)
+		if err != nil {
+			return nil, "", err
+		}
+		if !filepath.IsLocal(filepath.FromSlash(rel)) {
+			return nil, "", fmt.Errorf("git delta: change path %q escapes the workspace root", c.Path)
+		}
+		if c.IsDir || excludedFromManifest(rel) || deniedBy(ss.deny, rel) != "" {
+			filtered = true
 			continue
+		}
+		if len(delta.Changes) >= gitDeltaMaxFiles {
+			return nil, "", fmt.Errorf("git delta: changed files exceed the %d-file cap", gitDeltaMaxFiles)
 		}
 		change, err := manifestChange(ctx, ss, c, gitDeltaMaxContentBytes-total)
 		if err != nil {
@@ -334,14 +342,25 @@ func captureContainerDelta(ctx context.Context, ss *SessionSandbox) (*GitDelta, 
 	if err := validateDelta(delta); err != nil {
 		return nil, "", err
 	}
-	return delta, clipDeltaReview(delta.RenderDiff()), nil
+	review := delta.RenderDiff()
+	if !filtered {
+		// The snapshot diff is the useful review: it shows what changed, not
+		// just the post-image. It is display-only and can mention bookkeeping
+		// or denied paths, so fall back to the filtered manifest view when any
+		// such path was present (the manifest remains the settlement artifact).
+		if diff, _, diffErr := ss.DiffSinceBaseline(ctx, 0); diffErr == nil {
+			review = diff
+		}
+	}
+	return delta, clipDeltaReview(review), nil
 }
 
 // manifestChange turns one typed change into a whole-path manifest change.
 //
-// A symlink add or modify is refused: the manifest writes regular files only,
-// so recording one would silently replace a link with its target text. A
-// deleted symlink is representable as a plain delete and stays allowed.
+// Every non-regular add or modify is refused before the post-image read: the
+// manifest writes regular files only, so recording a symlink or a special file
+// would either silently replace a link with its target text or block on a FIFO.
+// A deleted symlink is representable as a plain delete and stays allowed.
 func manifestChange(ctx context.Context, ss *SessionSandbox, c effect.Change, remaining int) (DeltaChange, error) {
 	rel, err := manifestPath(ss, c.Path)
 	if err != nil {
@@ -361,17 +380,16 @@ func manifestChange(ctx context.Context, ss *SessionSandbox, c effect.Change, re
 	if c.Mode&fs.ModeSymlink != 0 {
 		return DeltaChange{}, fmt.Errorf("git delta: %s: a symlink cannot be represented as a whole-path file post-image", c.Path)
 	}
+	if c.Mode&fs.ModeType != 0 {
+		return DeltaChange{}, fmt.Errorf("git delta: %s: mode %04o is not a regular-file post-image", c.Path, c.Mode)
+	}
 	if c.Size > int64(remaining) {
 		return DeltaChange{}, fmt.Errorf("git delta: post-image content exceeds the %d-byte cap; refusing to truncate", gitDeltaMaxContentBytes)
 	}
-	// Read by absolute path: the change set may report a workspace-relative
-	// path (croft) or an absolute one (the in-memory fake), and both backends
-	// resolve an absolute in-workspace path.
-	readPath := c.Path
-	if !strings.HasPrefix(readPath, "/") {
-		readPath = path.Join(ss.Workspace().WorkDir(), readPath)
-	}
-	data, err := ss.sb.ReadFile(ctx, readPath)
+	// Read the path that was validated, not the backend's raw spelling: a
+	// backend may report an absolute path or a relative one, but both resolve
+	// to the same workspace-relative p after the guard above.
+	data, err := ss.sb.ReadFile(ctx, path.Join(ss.ws.root, p))
 	if err != nil {
 		return DeltaChange{}, fmt.Errorf("git delta: %s: read post-image: %w", c.Path, err)
 	}
@@ -399,21 +417,19 @@ func manifestPath(ss *SessionSandbox, p string) (string, error) {
 	return ss.rootRel(p), nil
 }
 
-// excludedFromManifest reports whether a workspace-relative path is// bookkeeping rather than proposable content: git metadata (copied in for the
-// agent's use) or yaah's own proposal trees (excluded from host git for the same
-// reason).
+// excludedFromManifest reports whether a workspace-relative path is
+// bookkeeping rather than proposable content: git metadata (copied in for the
+// agent's use) or yaah's own state tree (excluded from host git for the same
+// reason). The whole .yaah tree is excluded, not only the proposal registry:
+// worktrees, scratch files, and future state are bookkeeping, not proposal
+// content.
 func excludedFromManifest(p string) bool {
 	for _, comp := range strings.Split(p, "/") {
 		if strings.EqualFold(comp, ".git") {
 			return true
 		}
 	}
-	for _, prefix := range []string{".yaah/proposals", ".yaah/proposal-releases"} {
-		if p == prefix || strings.HasPrefix(p, prefix+"/") {
-			return true
-		}
-	}
-	return false
+	return p == ".yaah" || strings.HasPrefix(p, ".yaah/")
 }
 
 // clipDeltaReview bounds the display-only diff. The manifest is never clipped.

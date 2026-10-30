@@ -191,8 +191,8 @@ func copyTreeIn(ctx context.Context, sb goatherdsandbox.Sandbox, src, root strin
 // baseline and a diff against that state is the session's outward delta. The
 // old closing Apply existed to anchor a git-HEAD delta base for the backend's
 // delta machinery; croft states carry their own snapshot lineage now, and this
-// path never calls ApplyDelta, so the rebind only stopped and restarted the
-// task for a field nothing read.
+// path never calls ApplyDelta, so the closing rebind only stopped and restarted
+// the task for a field nothing read. It is removed.
 func bootstrapSession(ctx context.Context, ss *SessionSandbox, src string, deny []string) error {
 	if err := checkHostGitWorkTree(ctx, src); err != nil {
 		return err
@@ -227,8 +227,8 @@ func (s *SessionSandbox) DiffSinceBaseline(ctx context.Context, maxLines int) (s
 func (s *SessionSandbox) Baseline() *shepherdtrace.WorkspaceState { return s.baseline }
 
 // effectChanger is the optional backend capability that yields typed workspace
-// changes in the runtime's neutral vocabulary. The containerd adapter provides
-// it; the git backend and the in-memory fake do not, so callers must tolerate
+// changes in the runtime's neutral vocabulary. The containerd adapter and the
+// in-memory fake provide it; the git backend does not, so callers must tolerate
 // its absence rather than treat it as an error.
 //
 // Declared locally and structurally rather than imported from the adapter, so
@@ -241,7 +241,7 @@ type effectChanger interface {
 // SupportsEffects reports whether the session's backend can supply typed
 // workspace effects at all. Callers check this before EffectChanges so that a
 // backend without the capability is a silent no-op rather than an error — the
-// git lane and the tests' in-memory fake have no typed change set to give.
+// git lane has no typed change set to give.
 func (s *SessionSandbox) SupportsEffects() bool {
 	_, ok := s.sb.(effectChanger)
 	return ok
@@ -278,6 +278,22 @@ func (s *SessionSandbox) EffectChanges(ctx context.Context) ([]effect.Change, er
 		return nil, fmt.Errorf("workspace: effects: %w", err)
 	}
 	return changes, nil
+}
+
+// filterEffectChanges removes the paths that the accept seam and proposal
+// seal never copy: bookkeeping trees and workspace deny matches. Effect
+// recording must use the same filter, or a denied path would be reported as
+// landed even though copyOut skipped it.
+func (s *SessionSandbox) filterEffectChanges(changes []effect.Change) []effect.Change {
+	out := make([]effect.Change, 0, len(changes))
+	for _, c := range changes {
+		rel := s.rootRel(c.Path)
+		if rel == "" || c.IsDir || excludedFromManifest(rel) || deniedBy(s.deny, rel) != "" {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // ApplyOut applies the session's outward delta onto the host working tree —
@@ -365,6 +381,12 @@ func (s *SessionSandbox) copyOut(ctx context.Context, hostDir string) error {
 		// not trimmed and trusted to be contained.
 		if !filepath.IsLocal(rel) {
 			return fmt.Errorf("workspace: apply-out: changed path %q escapes the workspace root — refusing to touch the host", p)
+		}
+		if excludedFromManifest(rel) || deniedBy(s.deny, rel) != "" {
+			// The accept seam applies the same bookkeeping and deny filters as
+			// a proposal seal; neither may copy .git, .yaah, or a denied path
+			// onto the host.
+			continue
 		}
 		host := filepath.Join(hostDir, filepath.FromSlash(rel))
 		sbPath := path.Join(s.ws.root, rel)

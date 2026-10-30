@@ -117,7 +117,7 @@ The knobs below apply to both live tests.
 ## What it proves
 
 1. `StartSessionSandbox` through the real registry seam: image probe,
-   `Create`, and the copy-in/bootstrap/rebind path.
+   `Create`, and the copy-in/bootstrap path.
 2. The isolated registry accepts the real sandbox workspace.
 3. Tool-shaped work runs inside the container (GNU `stat`, `rg`, writes).
 4. A three-file modify/add/delete delta is captured.

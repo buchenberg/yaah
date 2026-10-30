@@ -549,6 +549,7 @@ func TestCaptureContainerDelta_SkipsBookkeepingAndDirectories(t *testing.T) {
 	for p, body := range map[string]string{
 		"/workspace/.git/index":                    "old-index",
 		"/workspace/.yaah/proposals/p1/delta.json": "old-manifest",
+		"/workspace/.yaah/scratch/state":           "old-state",
 	} {
 		if err := sb.WriteFile(context.Background(), p, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
@@ -564,6 +565,9 @@ func TestCaptureContainerDelta_SkipsBookkeepingAndDirectories(t *testing.T) {
 	if err := sb.WriteFile(context.Background(), "/workspace/.yaah/proposals/p1/delta.json", []byte("new-manifest"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := sb.WriteFile(context.Background(), "/workspace/.yaah/scratch/state", []byte("new-state"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := ss.ws.MkdirAll(context.Background(), "/workspace/newdir", 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -574,6 +578,67 @@ func TestCaptureContainerDelta_SkipsBookkeepingAndDirectories(t *testing.T) {
 	}
 	if len(delta.Changes) != 0 {
 		t.Fatalf("changes = %+v, want no bookkeeping or directory entries", delta.Changes)
+	}
+}
+
+func TestCaptureContainerDelta_SkipsDeniedPaths(t *testing.T) {
+	sb := sandboxfake.New()
+	ss := newDeltaSession(t, sb)
+	ss.deny = []string{".env"}
+	for p, body := range map[string]string{
+		"/workspace/.env":   "secret\n",
+		"/workspace/ok.txt": "ok\n",
+	} {
+		if err := sb.WriteFile(context.Background(), p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	captureDeltaBaseline(t, ss)
+	if err := sb.WriteFile(context.Background(), "/workspace/.env", []byte("new secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := sb.WriteFile(context.Background(), "/workspace/ok.txt", []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	delta, _, err := captureContainerDelta(context.Background(), ss)
+	if err != nil {
+		t.Fatalf("captureContainerDelta: %v", err)
+	}
+	if len(delta.Changes) != 1 || delta.Changes[0].Path != "ok.txt" {
+		t.Fatalf("changes = %+v, want only the non-denied file", delta.Changes)
+	}
+}
+
+func TestCopyOut_SkipsBookkeepingAndDeniedPaths(t *testing.T) {
+	sb := sandboxfake.New()
+	ss := newDeltaSession(t, sb)
+	ss.deny = []string{".env"}
+	if err := sb.WriteFile(context.Background(), "/workspace/keep.txt", []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	captureDeltaBaseline(t, ss)
+	for p, body := range map[string]string{
+		"/workspace/.git/index":    "index",
+		"/workspace/.yaah/scratch": "scratch",
+		"/workspace/.env":          "secret\n",
+		"/workspace/keep.txt":      "after\n",
+	} {
+		if err := sb.WriteFile(context.Background(), p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	host := t.TempDir()
+	if err := ss.copyOut(context.Background(), host); err != nil {
+		t.Fatalf("copyOut: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(host, "keep.txt"))
+	if err != nil || string(got) != "after\n" {
+		t.Fatalf("keep.txt = %q, %v; want the workspace change", got, err)
+	}
+	for _, rel := range []string{".git/index", ".yaah/scratch", ".env"} {
+		if _, err := os.Stat(filepath.Join(host, rel)); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%s must not reach the host (err=%v)", rel, err)
+		}
 	}
 }
 
@@ -613,6 +678,15 @@ func TestManifestChange_RefusesOversizedSymlinkAndUnsafe(t *testing.T) {
 		}, gitDeltaMaxContentBytes)
 		if err == nil || !strings.Contains(err.Error(), "symlink") {
 			t.Fatalf("error = %v, want a symlink refusal", err)
+		}
+	})
+
+	t.Run("special file", func(t *testing.T) {
+		_, err := manifestChange(context.Background(), ss, effect.Change{
+			Path: "fifo", Kind: effect.KindCreated, Mode: fs.ModeNamedPipe | 0o600,
+		}, gitDeltaMaxContentBytes)
+		if err == nil || !strings.Contains(err.Error(), "regular-file") {
+			t.Fatalf("error = %v, want a special-file refusal before any read", err)
 		}
 	})
 

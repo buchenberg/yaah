@@ -532,3 +532,14 @@ func TestEffectChangesMatchesTheTypedContract(t *testing.T) {
 		}
 	}
 }
+
+func TestRelPathRequiresRootBoundary(t *testing.T) {
+	s := New()
+	s.root = "/workspace"
+	if got := s.relPath("/workspace/file.txt"); got != "file.txt" {
+		t.Errorf("root child = %q, want file.txt", got)
+	}
+	if got := s.relPath("/workspace-other/file.txt"); got != "workspace-other/file.txt" {
+		t.Errorf("root sibling = %q, want it not to be treated as workspace-relative", got)
+	}
+}

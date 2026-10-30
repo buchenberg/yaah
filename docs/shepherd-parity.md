@@ -119,7 +119,7 @@ Rule of thumb: **step down only along axes that were not required.**
 | daemon unreachable / socket perms | preflight | one retry on transient; then step down or fail |
 | image missing / contract probe fails | preflight | step down; report as configuration error |
 | snapshotter / rootless / netns unsupported | preflight | step down if requirements allow, else fail |
-| copy-in/bootstrap refuses (not a repo, `.git` file, tracked symlink, tracked denied file) | preflight | fail — there is no faithful world to fall back to |
+| copy-in/bootstrap refuses (not a repo, subdirectory, `.git` file, tracked symlink, tracked denied file) | preflight | fail — there is no faithful world to fall back to |
 | create / exec fails | in-run | fail the dispatch; keep the world |
 | capture fails at seal | end | fail the seal; keep the world |
 | teardown fails | end | warn; record the world for `yaah shepherd`; never block settlement |
@@ -188,10 +188,10 @@ seals; a proposal seals a `GitDelta` manifest before teardown.
 
 `croft-dlb` shipped (croft `v0.9.1`, adapter `v0.2.0`): unchanged captures
 return the previous state verbatim, so the kernel's digest-stability contract
-holds without a per-capture content diff. The adapter does not enable croft's
-`ContentDigest` option: the kernel digest includes `Revision`, so an extra
-content digest cannot make a moved-timeline state compare equal through a state
-digest, and no current host reads the field.
+holds without a per-capture content diff. The adapter enables croft's
+`ContentDigest` option, so `WorkspaceState.ContentDigest` rides the state's
+`Data`; yaah does not currently read it, because the kernel digest includes
+`Revision` and settlement compares the host basis separately.
 
 yaah's settlement path does not use a croft state across backends. In a host
 session the parent root is a **git** sandbox while the dispatch world is croft,
@@ -242,18 +242,21 @@ GitDelta = []Change{ Path, Kind(add|modify|delete), Mode, Content }
 It is Shepherd's `Changeset`: whole-path post-images, produced from the
 container's snapshot change set (`Changes`/`EffectChanges` plus `ReadFile`)
 against the baseline state the bootstrap captures. No git runs inside the
-container: the manifest is the same delta `apply_out` would consume, so a
-container proposal works in an image that is not a repository, and the
-`.git`/index churn a git command causes is never mistaken for workspace
-content. A text patch is deliberately rejected — its context/fuzz and binary
-handling are the fidelity traps; the manifest is exact, and applying it is a
-writer rather than a patch parser.
+container: the manifest is the same snapshot change set `apply_out` consumes,
+with repository/proposal bookkeeping and the copy-in deny policy excluded, so a
+container proposal works in an image that is not a repository. The `.git`/index
+churn a git command causes is never mistaken for workspace content, and a denied
+path created inside the container cannot overwrite its host counterpart. A text
+patch is deliberately rejected — its context/fuzz and binary handling are the
+fidelity traps; the manifest is exact, and applying it is a writer rather than a
+patch parser.
 
 ### Semantics (reference-faithful)
 
-- **Basis** — the container baseline state's revision, captured after the
-  copy-in and before the body. The host's git state at dispatch is captured
-  separately for the `select` precondition.
+- **Basis** — the container baseline state's revision: the captured baseline
+  after a host copy-in, or the applied session state for a sibling container,
+  before the body. The host's git state at dispatch is captured separately for
+  the `select` precondition.
 - **`select`** — capture the host state again; equal ⇒ apply the manifest
   (fast-forward). A moved host fails closed.
 - **`apply`** — only when the manifest's paths are disjoint from the host's

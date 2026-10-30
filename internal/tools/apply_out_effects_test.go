@@ -21,11 +21,11 @@ import (
 // accept records what it landed as typed workspace effects, and that failing to
 // record never fails the accept.
 //
-// The in-memory fake has no typed change set — only the containerd adapter
-// offers EffectChanges — so these tests wrap it in a double that does. That
-// keeps the emission path exercisable without a daemon, and exercises the same
-// structural type assertion production uses rather than a containerd-specific
-// one.
+// The in-memory fake now has a typed change set, and the containerd adapter
+// offers one too; these tests use a double with a canned change list so the
+// emission path stays exercisable without a daemon. That also exercises the
+// same structural type assertion production uses rather than a
+// containerd-specific one.
 
 // effectSandbox adds the optional typed-change capability to the in-memory fake.
 type effectSandbox struct {

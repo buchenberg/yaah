@@ -128,6 +128,32 @@ func TestBootstrap_CopiesTreeAndCapturesBaseline(t *testing.T) {
 	}
 }
 
+// TestBootstrap_UnbornHeadAccepted pins the snapshot-native bootstrap's
+// ability to start from a freshly initialized repository: there is no HEAD to
+// resolve, but the snapshot baseline does not need one.
+func TestBootstrap_UnbornHeadAccepted(t *testing.T) {
+	src := t.TempDir()
+	if out, err := exec.Command("git", "-C", src, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(src, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	open, _ := cleanOpener()
+	ss, err := StartSessionSandbox(context.Background(), sessionTestConfig(), open, src, nil)
+	if err != nil {
+		t.Fatalf("StartSessionSandbox: %v", err)
+	}
+	defer ss.Destroy(context.Background())
+	if ss.Baseline() == nil {
+		t.Fatal("an unborn-HEAD repository must still capture a baseline")
+	}
+	got, err := ss.Workspace().ReadFile(context.Background(), "/workspace/README.md")
+	if err != nil || string(got) != "hello\n" {
+		t.Fatalf("copied README = %q, %v", got, err)
+	}
+}
+
 func TestBootstrap_RequiresGitWorkTree(t *testing.T) {
 	src := t.TempDir() // no .git: not a work tree
 	// t.TempDir() lives wherever TMPDIR points, and git rev-parse walks

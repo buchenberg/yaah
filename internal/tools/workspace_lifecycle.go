@@ -31,9 +31,14 @@ type SessionSandbox struct {
 	sb goatherdsandbox.Sandbox
 	ws *sandboxWorkspace
 	// baseline is the state captured right after the D1 bootstrap (copy-in
-	// plus a rebind Apply), the anchor for the session's diffs and
-	// apply-out. Nil when the session started without a bootstrap.
+	// and, where a bootstrap ran, the captured snapshot), the anchor for the
+	// session's diffs and apply-out. Nil when the session started without a
+	// bootstrap.
 	baseline *shepherdtrace.WorkspaceState
+	// deny is the copy-in policy, retained so apply-out and proposal seals
+	// cannot copy a denied path back to the host after the agent creates it
+	// inside the container.
+	deny []string
 
 	destroyOnce sync.Once
 	destroyErr  error
@@ -93,10 +98,11 @@ func StartSessionSandbox(ctx context.Context, w config.WorkspaceConfig, open San
 		sb: sb,
 		// The config layer already validated and defaulted Root; the
 		// workspace constructor still guards the empty/"/" cases itself.
-		ws: newSandboxWorkspace(sb, w.Root),
+		ws:   newSandboxWorkspace(sb, w.Root),
+		deny: append([]string(nil), deny...),
 	}
-	// The D1 bootstrap (plan §2.3): copy the host working tree in, capture
-	// the baseline, rebind to it. A failed bootstrap destroys — a
+	// The D1 bootstrap (plan §2.3): copy the host working tree in, then
+	// capture the baseline. A failed bootstrap destroys — a
 	// half-bootstrapped container is still a container.
 	if src != "" {
 		if berr := bootstrapSession(ctx, ss, src, deny); berr != nil {

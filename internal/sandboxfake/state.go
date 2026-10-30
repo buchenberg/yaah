@@ -169,6 +169,9 @@ func (s *Sandbox) Diff(_ context.Context, ws shepherdtrace.WorkspaceState, maxLi
 		switch {
 		case !hadPrev:
 			lines = append(lines, fmt.Sprintf("+++ added %s", p))
+			for _, line := range splitLines(string(cur.data)) {
+				lines = append(lines, "+"+line)
+			}
 		case !hasCur:
 			lines = append(lines, fmt.Sprintf("--- deleted %s", p))
 		default:
@@ -279,7 +282,7 @@ func fakeEffectChange(p string, kind effect.Kind, e *entry) effect.Change {
 // workspace-relative path.
 func (s *Sandbox) relPath(p string) string {
 	if s.root != "" && s.root != "/" {
-		p = strings.TrimPrefix(p, s.root)
+		p = strings.TrimPrefix(p, s.root+"/")
 	}
 	return strings.TrimPrefix(p, "/")
 }

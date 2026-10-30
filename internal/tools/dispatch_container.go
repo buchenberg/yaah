@@ -112,7 +112,11 @@ func openDispatchWorld(ctx context.Context, rt RetainedRuntime) (*SessionSandbox
 		}
 		// The applied state is the sibling's baseline: the proposal's manifest
 		// is the difference between it and the workspace at seal, so the seal
-		// needs no second capture and no in-container git.
+		// needs no second capture and no in-container git. The sibling's active
+		// snapshot is prepared from this committed state, so dropping the
+		// session capture's transient lease below does not remove the state
+		// while the sibling exists; the live container-session proposal test
+		// covers this path.
 		ss.baseline = &state
 		if err := release(); err != nil {
 			dctx, dcancel := context.WithTimeout(context.WithoutCancel(ctx), dispatchWorldDestroyTimeout)

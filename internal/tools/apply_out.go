@@ -273,6 +273,7 @@ func (t *ApplyOutTool) recordEffects(ctx context.Context) (int, error) {
 	if err != nil {
 		return effectsUnknown, err
 	}
+	changes = t.Sandbox.filterEffectChanges(changes)
 	effects, err := effect.FromChanges(changes)
 	if err != nil {
 		return len(changes), err
