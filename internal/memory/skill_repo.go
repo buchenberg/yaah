@@ -16,9 +16,9 @@ import (
 
 // SkillUsage is the usage record for one skill: use_count counts loads
 // that were applied to the task, view_count counts inspections that did
-// not become uses. ReuseAfterPatch is reserved for the P3 idempotency
-// work (a patched skill must be re-used before it is patched again) and
-// stays zero until then.
+// not become uses. ReuseAfterPatch is reserved for a future idempotency
+// check (a patched skill must be re-used before it is patched again); it
+// is currently always zero because nothing writes it.
 type SkillUsage struct {
 	Name            string
 	UseCount        int
@@ -39,7 +39,7 @@ type SkillProvenance struct {
 // SkillLedgerEntry is one append-only record of a skill mutation.
 // BeforeHash/AfterHash are content digests, so a ledger row shows what
 // changed without storing the bodies; Delta carries a serialized patch
-// once the sealed-proposal path (P2) supplies one.
+// when a caller supplies one, and is empty otherwise.
 type SkillLedgerEntry struct {
 	ID         int64
 	Name       string

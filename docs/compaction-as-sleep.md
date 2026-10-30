@@ -1,9 +1,11 @@
-# Compaction-as-Sleep — Expanded Design Note
+# Compaction and Consolidation — Expanded Design Note
 
 > **Bead:** `yaah-u4r` · **Type:** spike · **Priority:** P3 · **Label:** agent
-> **Title:** *spike: compaction-as-sleep — policy-driven, boundary-aware, memory-consolidating compaction middleware*
+> **Title:** *spike: policy-driven, boundary-aware, memory-consolidating compaction middleware*
 > **Status:** shipped in phases (see §8 — each phase lists exactly what landed vs. what remains).
 > **Last expanded:** 2026-10-22 (hermes learning-loop analysis folded in — see §3–§6)
+>
+> **Filename note:** this file was originally named `compaction-as-sleep.md`. The sleep analogy was retired; this is the design note for compaction and consolidation mechanics.
 
 ---
 
@@ -11,9 +13,9 @@
 
 yaah already compacts context on overflow (`internal/agent/loop.go` `Loop.Compact`, `internal/agent/context_manager.go` `compactContext`/`applyCompactedSummary`/`PreviousSummary`). But compaction is **reactive** — it fires only when the context window overflows, and its only product is a *summary string* that replaces history. Nothing is *consolidated*; nothing is *learned*.
 
-This spike asks: what if compaction were reimagined as **sleep** — a policy-driven, boundary-aware stage that not only compresses context but **consolidates durable value** (memory, skills, plans) out of the session, on a schedule, at safe boundaries, rather than waiting for overflow?
+This spike asks: what if compaction were paired with a policy-driven, boundary-aware **consolidation** stage — one that not only compresses context but captures durable value (memory, skills, plans) out of the session, on a schedule, at safe boundaries, rather than waiting for overflow?
 
-The framing unifies five original directions. A deep read of **NousResearch/hermes-agent** (folded in below) adds a sixth — the **proactive consolidation trigger** — plus a concrete reference implementation and a guardrail catalog to crib.
+The design unifies five original directions. A deep read of **NousResearch/hermes-agent** (folded in below) adds a sixth — the **proactive consolidation trigger** — plus a concrete reference implementation and a guardrail catalog to crib.
 
 ---
 
@@ -23,7 +25,7 @@ The framing unifies five original directions. A deep read of **NousResearch/herm
 2. **Natural-boundary scheduling.** Compact at semantic boundaries (tool-call completion, sub-agent settle, turn end) instead of mid-stream — including a currently **missing sub-agent `onDrain` compaction hook**.
 3. **Compaction-as-consolidation into long-term memory.** Make the compaction pass *also* extract durable facts/skills into yaah's memory store, instead of discarding them into a summary.
 4. **Multi-level memory.** Short/medium/long tiers so a session's working context, recent summary, and durable memory don't share one structure.
-5. **Staged light-vs-deep sleep.** A cheap "light sleep" (compress recent turns) vs. an expensive "deep sleep" (full consolidation), chosen by policy.
+5. **Staged light-vs-full consolidation.** A cheap "light consolidation" (compress recent turns) vs. an expensive "full consolidation", chosen by policy.
 
 **Code anchors:** `internal/agent/pipeline/compaction.go` (`CompactionMiddleware` `PrepareStep`/`PostTool`), `internal/agent/pipeline/config.go` (middleware composition; sub-agents currently use `CtxMgr` pruning, *not* pipeline compaction), `internal/agent/context_manager.go`, `internal/agent/loop.go` (`Loop.Compact` + overflow recovery via `result.CompactedMessages`).
 
@@ -127,10 +129,11 @@ Two orthogonal triggers, one action. The middleware contract (`PrepareStep` /
 
 ```
 pipeline: steer → followup → compaction → soft_prune → approval → inline_limit
-          → tool_concurrency → loop_detection → intent_loop → evidence_guard → conflict_detect
+          → tool_concurrency → shepherd_trace → loop_detection → intent_loop
+          → evidence_guard → conflict_detect
           (consolidate is opt-in via agents.middleware.enabled)
 
-compaction  (enriched — "sleep check", PRESSURE-driven)
+compaction (enriched — pressure check, pressure-driven)
   PrepareStep / PostTool:
     if adaptive_threshold(ineffective_compactions) and at_safe_boundary:
         step.Messages = compactor.Compact(...)      # pure predicate + Compactor
@@ -148,7 +151,7 @@ consolidate (NEW — "nudge", CADENCE-driven)
 
 | Concern | Lives | Shape |
 |---|---|---|
-| **Sleep check** (pressure → compact now) | enriched `CompactionMiddleware` | pure predicate + `Compactor` (`Compact(ctx, msgs, thresh) []Message`) |
+| **Pressure check** (pressure → compact now) | enriched `CompactionMiddleware` | pure predicate + `Compactor` (`Compact(ctx, msgs, thresh) []Message`) |
 | **Nudge trigger** (cadence → consolidate every N) | new `ConsolidateMiddleware` | struct counters + hook check + injected `ConsolidateDispatch` callback |
 | **Consolidation action** (write memory/skills) | `consolidator` sub-agent, sealed proposal → `apply_out` | *not* middleware — scheduled by the pipeline, run out-of-band |
 
@@ -185,7 +188,7 @@ consolidator sub-agent (role: "consolidator", restricted tools, recursion guard)
 1. **P0 — Trigger.** ✅ Counter-gated `consolidate` middleware that fires a bounded pass and *writes memory entries* (no skills yet). Proves the "nudge" in yaah's pipeline.
 2. **P1 — Lifecycle.** ✅ Provenance + usage + archive-not-delete + ledger on `skill`. ⏳ The consolidator proposing skill create/patch through the sealed-proposal path is *not* wired yet — the lifecycle tables and tools are the foundation it will land on.
 3. **P2 — Guardrails.** ✅ Schema validation, description limits, security scan, recursion guard. (The security scan ships ready but is opt-in: no caller enables `SkillTool.Strict` yet, pending the unattended write path.)
-4. **P3 — Multi-level memory + light/deep sleep.** ✅ `session`/`global` scope tiers and the deep-sleep consolidator dispatch, plus a light/deep **policy** (`consolidate_deep_every`): the expensive fork runs only on every Nth nudge, and the nudges in between take the cheap light-sleep path (skip the fork — pruning/compaction already reclaim cheaply). The short/medium/long tiers are structurally satisfied (conversation / `PreviousSummary` / durable memory); what P3 added is the session-vs-global distinction *within* durable memory.
+4. **P3 — Multi-level memory + light/full consolidation.** ✅ `session`/`global` scope tiers and the full-consolidation dispatch, plus a light/full **policy** (`consolidate_deep_every`): the expensive fork runs only on every Nth nudge, and the nudges in between take the cheap light-consolidation path (skip the fork — pruning/compaction already reclaim cheaply). The short/medium/long tiers are structurally satisfied (conversation / `PreviousSummary` / durable memory); what P3 added is the session-vs-global distinction *within* durable memory.
 5. **P4 — Introspection.** ✅ `yaah memory stats` renders aggregate stats and a merged learning journey (the "learning graph" as a render, not a store).
 6. **Hygiene.** ✅ A conservative staleness sweep reclaims compaction atoms that were never recalled; accessed atoms are never pruned.
 
@@ -196,7 +199,7 @@ consolidator sub-agent (role: "consolidator", restricted tools, recursion guard)
 - **Autonomous self-modification is the risk hermes is engineered around.** yaah must adopt the guardrails *before* enabling unattended writes — not after.
 - **ReadOnly-skills friction in isolated mode** needs a clear answer: consolidation output must be a *proposal* crossing the `apply_out` boundary, never a direct in-container write.
 - **Cadence default.** 10 turns / 10 iterations is hermes's heuristic; yaah should surface it as policy (`agents.middleware.consolidate`) and let the `IneffectiveCompactions` signal tune it (ties to direction 1).
-- **Consolidator cost.** A full background fork per N turns is non-trivial token spend; the light-vs-deep staging (direction 5) is the mitigation.
+- **Consolidator cost.** A full background fork per N turns is non-trivial token spend; the light-vs-full staging (direction 5) is the mitigation.
 - **Idempotency.** Duplicate memory/skill writes across overlapping consolidations must be deduped (hermes's ledger + `reuse_after_patch` are the pattern to follow).
 
 ---

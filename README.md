@@ -20,22 +20,22 @@ running tests, and retrying. yaah splits that work:
 - **The orchestrator plans, judges, and lands.** It keeps the main conversation focused on the task and the review.
 - **Sub-agents do the long-running work.** Each role gets a focused tool set, its own iteration/turn budget, and a structured evidence contract.
 - **Parallel by default.** Independent research, implementation, and validation can run at the same time.
-- **Isolated by construction.** A dispatch runs in its own git worktree and returns a sealed proposal (`select`, `apply`, `release`, or `discard`). A rejected attempt costs one dispatch and leaves the tree untouched.
+- **Isolated by construction.** A dispatch runs in its own isolated world — a git worktree, or a per-dispatch container when configured — and returns a sealed proposal (`select`, `apply`, `release`, or `discard`). A rejected attempt costs one dispatch and leaves the tree untouched.
 - **Confined when the host can.** Retention isolates files; confinement governs processes and the network. Where the host can jail (Landlock on Linux, winacl on Windows, Seatbelt on macOS), a dispatch shells inside a kernel-enforced confinement jail — Landlock's syscall filtering, winacl's write-restricted access checks, Seatbelt's per-process profiles — whose sole writable root is its worktree, and on Linux egress can also be fully denied or pinned to a session broker's allowlist. Hosts without a usable jail degrade visibly; `paddock` fails closed instead. See [Confinement and egress](#confinement-and-egress).
 - **Supervised while running.** A supervision kernel reads every session's trace and steers or halts a running sub-agent loop on advisory rules — destructive-command patterns, error-rate spikes — rather than waiting for the run to finish.
 - **Speculative by design.** The orchestrator can compare several proposals and land the best one; nothing is committed by a sub-agent.
 
 Four roles are built in: `analyst`, `developer`, `tester`, and `reviewer`. Add your own in `.agents/roles/*.md` or `~/.agents/roles/*.md`.
 
-## Memory that optimizes
+## Memory and context
 
-yaah doesn't just summarize your context away when the window fills. It runs two complementary memory-optimization mechanisms:
+yaah uses two complementary mechanisms with different triggers: **compaction** keeps the live context within the model window, and **consolidation** captures durable facts and decisions while the agent works.
 
-### Context compaction (threshold-driven)
-When the conversation grows past `compaction_threshold` (~50% of the model window by default), or you run `:compact`, a **CompactionMiddleware** summarizes history into a single `system` message. The threshold is proactive — it triggers before the window fills. The summary preserves decisions, facts, and constraints so the agent keeps continuity without re-reading the full transcript.
+### Context compaction (pressure-driven)
+When the conversation grows past `compaction_threshold` (~50% of the model window by default), or you run `:compact`, **CompactionMiddleware** summarizes history into a single `system` message. The summary preserves decisions, facts, and constraints so the agent keeps continuity without re-reading the full transcript. This is capacity management, not learning.
 
-### Scheduled consolidation (proactive, cadence-driven)
-Separately, a **ConsolidateMiddleware** fires on configurable turn/iteration intervals (`consolidate_turns_interval`, `consolidate_iters_interval`). It dispatches a **consolidator sub-agent** — a restricted role with only `memory_search`, `memory_add`, and `memory_update` — that scans recent turns, deduplicates against existing memory, and writes durable session-scoped atoms (decisions, facts, constraints) to local SQLite. This is proactive: it runs while the agent works, not just at overflow.
+### Scheduled consolidation (cadence-driven)
+Separately, **ConsolidateMiddleware** fires on configurable turn/iteration intervals (`consolidate_turns_interval`, `consolidate_iters_interval`). It dispatches a restricted **consolidator sub-agent** that scans recent turns, deduplicates against existing memory, and writes durable session-scoped atoms (decisions, facts, constraints) to local SQLite. This is proactive: it runs while the agent works, not just at overflow.
 
 ### Tiers and isolation
 - **`global`** — durable, cross-session atoms you explicitly promoted
@@ -57,7 +57,7 @@ A staleness sweep reclaims only compaction atoms that were never recalled — ac
 ### Observability
 `yaah memory stats` renders the aggregate store and a merged learning journey — the learning graph is a render, not a store.
 
-Design reference: [docs/compaction-as-sleep.md](docs/compaction-as-sleep.md) (analogy under review — see bead `yaah-brd`).
+Design note: [compaction and consolidation mechanics](docs/compaction-as-sleep.md) (the filename is historical).
 
 ## Install
 
@@ -73,7 +73,7 @@ Windows:
 iwr -useb https://raw.githubusercontent.com/buchenberg/yaah/main/install.ps1 | iex
 ```
 
-From source (Go 1.26+):
+From source (Go 1.26.3+):
 
 ```bash
 go install github.com/buchenberg/yaah@latest
@@ -136,7 +136,7 @@ agents:
 yaah "We need faster session search. Dispatch two developers with different designs in parallel, compare their proposals, and apply the one with the smaller diff."
 ```
 
-With retained mode active, each dispatch is a separate worktree. The orchestrator reads both proposals (diff, changed files, status) and calls `proposal select` or `proposal apply` on the winner; the other is discarded. Neither attempt touched your working tree until settlement.
+With retained mode active, each dispatch is a separate isolated world. The orchestrator reads both proposals (diff, changed files, status) and calls `proposal select` or `proposal apply` on the winner; the other is discarded. Neither attempt touched your working tree until settlement.
 
 ### Add a specialist role
 
@@ -177,20 +177,20 @@ yaah mcp serve --listen 127.0.0.1:7333
 ```
 orchestrator
   └─ delegate(role, task)
-       ├─ fork isolated git worktree
+       ├─ fork isolated dispatch world
        ├─ run the sub-agent with a role-scoped tool set
        └─ seal the result as a proposal
             ├─ select   fast-forward onto the current tree
             ├─ apply    three-way merge (path-disjoint)
-            ├─ release  keep what landed, drop the record
+            ├─ release  export the delta to a patch, then drop the worktree
             └─ discard  throw the attempt away
 ```
 
 Retained mode is the default in local sessions: tracing is integral, so the shepherd root scope always exists. With `agents.subagent.mode: shared`, or if the trace store cannot be opened, dispatches run directly on the host. See [configuration.md](./docs/configuration.md#retained-worktrees-and-turn-checkpoints)
 for the prerequisites and knobs.
 
-Report roles — `analyst`, `reviewer` — seal no changeset at all: a `report`
-dispatch returns the report text directly, in an isolated worktree when the
+Report roles — `analyst`, `tester`, `reviewer` — seal no changeset at all: a `report`
+dispatch returns the report text directly, in an isolated report world when the
 role could mutate and straight on the shared host when it carries read-only
 tools only, so "did anything change?" is never the question.
 
@@ -359,6 +359,8 @@ yaah version
 | Doc | Contents |
 |---|---|
 | [architecture.md](./docs/architecture.md) | Agent loop, middleware pipeline, tool dispatch, context management, streaming, persistence, traces |
+| [shepherd-parity.md](./docs/shepherd-parity.md) | Shepherd parity ledger: dispatch worlds, settlement, intentional divergences |
+| [acp.md](./docs/acp.md) | Agent Client Protocol server, methods, and editor integration |
 | [storage.md](./docs/storage.md) | `state.db` / `trace.db` ownership, intentional overlap, fidelity limits, retention |
 | [sub-agents.md](./docs/sub-agents.md) | Roles, budgets, escalation, quality gates, retained proposals, custom roles |
 | [configuration.md](./docs/configuration.md) | Full `config.yaml` reference: providers, agents, sub-agents, workspace, supervision, hooks, observability |
@@ -376,6 +378,8 @@ yaah version
 go build .
 go test ./...
 go vet ./...
+gofmt -l .          # must be empty
+go run honnef.co/go/tools/cmd/staticcheck@latest ./...
 ```
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for the PR process and

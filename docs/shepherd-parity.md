@@ -186,9 +186,9 @@ seals; a proposal seals a `GitDelta` manifest before teardown.
 
 ### Retained container worlds — shipped as a change manifest
 
-`croft-dlb` shipped (croft `v0.9.1`, adapter `v0.2.0`): unchanged captures
-return the previous state verbatim, so the kernel's digest-stability contract
-holds without a per-capture content diff. The adapter enables croft's
+`croft-dlb` shipped (the pinned versions are in the ledger table below):
+unchanged captures return the previous state verbatim, so the kernel's
+digest-stability contract holds without a per-capture content diff. The adapter enables croft's
 `ContentDigest` option, so `WorkspaceState.ContentDigest` rides the state's
 `Data`; yaah does not currently read it, because the kernel digest includes
 `Revision` and settlement compares the host basis separately.

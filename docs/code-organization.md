@@ -20,28 +20,49 @@ yaah/
 │   └── ...                     # config, doctor, skill, mcp, memory, trace
 │
 ├── internal/
-│   ├── agent/                  # agent loop
-│   │   ├── loop.go turn.go     # run loop and turn processing
-│   │   ├── types.go options.go # Loop config/state and functional options
-│   │   ├── lifecycle_*.go      # setup and teardown
-│   │   ├── agent_*.go          # dispatch, tools, safety, context
-│   │   ├── events/             # typed events + hooks
+│   ├── acp/                    # ACP JSON-RPC server
+│   ├── agent/                  # agent loop and its subpackages
+│   │   ├── budget/             # iteration/turn budget resolution
 │   │   ├── context/            # pure context helpers (tokens, prune, truncation)
+│   │   ├── errorclassify/      # provider error classification
+│   │   ├── events/             # typed events + hooks
 │   │   ├── llm/                # provider client: streaming, retry, fallback
 │   │   ├── pipeline/           # middleware pipeline
+│   │   ├── recovery/           # crash recovery for orphaned scopes
 │   │   ├── runner/             # sub-agent dispatch wiring
 │   │   ├── subagent/           # role definitions and registry
-│   │   ├── budget/             # iteration/turn budget resolution
 │   │   └── supervision/        # advisory rules and destructive guard
-│   ├── acp/                    # ACP JSON-RPC server
+│   ├── banner/                 # startup/status banner rendering
 │   ├── config/                 # config load/validate
+│   ├── control/                # control-plane message types
+│   ├── cwdpath/                # cwd canonicalization
+│   ├── doctor/                 # diagnostics
+│   ├── gitsandbox/             # untracked-file-preserving git sandbox wrapper
+│   ├── instructions/           # AGENTS.md/CLAUDE.md discovery
+│   ├── jail/                   # per-platform containment selection
 │   ├── jobs/                   # background sub-agent jobs + I/O contract
-│   ├── memory/                 # SQLite sessions, memory, FTS5, embeddings
 │   ├── mcp/                    # MCP client + server (stdio + HTTP)
+│   ├── memory/                 # SQLite sessions, memory, FTS5, embeddings
+│   ├── observability/          # OpenTelemetry tracing + span buffer
+│   ├── parity/                 # Shepherd parity ledger drift guard
+│   ├── plans/                  # PLAN.md discovery/parsing
+│   ├── process/                # background process manager
 │   ├── prompts/                # embedded identity, roles, tool docs
 │   ├── providers/              # OpenAI-compatible + Anthropic clients
+│   ├── pubsub/                 # typed event broker
+│   ├── repl/                   # REPL history and slash commands
+│   ├── rolefile/               # role frontmatter parsing/validation
+│   ├── sandboxfake/            # in-memory sandbox test double
+│   ├── sessions/               # engine-level session registry
+│   ├── skills/                 # SKILL.md discovery/parsing
+│   ├── spinner/                # terminal spinner primitives
+│   ├── todo/                   # todo-list model shared by views
+│   ├── toolfmt/                # shared tool result formatting
+│   ├── tools/                  # built-in tools
 │   ├── tui/                    # tview components
-│   └── tools/                  # built-in tools
+│   ├── types/                  # message and chat request types
+│   ├── update/                 # release checking and self-update
+│   └── worldinfo/              # resolved dispatch-world reporting
 │
 ├── docs/                       # user and developer documentation
 ├── bench/                      # benchmark harnesses
@@ -120,10 +141,10 @@ error conversion stay in the provider package.
 
 ```bash
 go build ./...
-go test ./...
+go test -shuffle=on ./...
 go vet ./...
 gofmt -l .          # must be empty
-staticcheck ./...
+go run honnef.co/go/tools/cmd/staticcheck@latest ./...
 ```
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the review checklist and

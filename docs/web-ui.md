@@ -72,8 +72,9 @@ All web UI assets are embedded in the yaah binary via `//go:embed web`.
   - `login` / `logout` — start or clear an OAuth login
   - `steer` — inject guidance while the agent is running
 
-- **`handleCommands`**: Returns the slash-command list for the browser's
-  command palette.
+There is deliberately no `/api/commands` endpoint: the browser's slash-command
+list lives in `web/index.html` and every command is either executed client-side
+or posted to `/api/action`.
 
 - **`runPrompt`**: Runs the agent in a background goroutine. Sets up
   a cancellable context and calls `Session.RunPrompt`.
@@ -248,13 +249,13 @@ Stop button appears instead.
 Left side: connection dot (green = connected, gray = disconnected, yellow/pulsing = running) + status text.
 Right side: context window fill percentage.
 
+Chat search, copying the last response, and `:steer` while a turn is running
+are supported.
+
 ## Limitations
 
 - **Single SSE client**: Only one browser tab can connect at a time. The
   `sseView` is a singleton on the `webServer`.
-
-Chat search, copying the last response, and `:steer` while a turn is running
-are supported.
 
 ## Compared to the TUI
 

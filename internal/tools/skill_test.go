@@ -43,7 +43,7 @@ func TestSkillLifecycle_RecordsTracking(t *testing.T) {
 		t.Errorf("provenance = %+v, want agent/skill:create", prov)
 	}
 
-	// load is a view, not a use (P3 decides the use).
+	// load is a view, not a use; only an applied use bumps UseCount.
 	runSkill(t, tool, `{"action":"load","name":"tdd"}`)
 	usage, err := db.GetSkillUsage("tdd")
 	if err != nil {
