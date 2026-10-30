@@ -197,33 +197,38 @@ func TestPendingIn(t *testing.T) {
 }
 
 // Cleanup must keep the staged binary and its log: they are the retry
-// path after a blocked swap.
+// path after a blocked swap. A live per-process swap script stays too.
 func TestCleanOldBinariesIn(t *testing.T) {
 	dir := t.TempDir()
 	keep := []string{
 		filepath.Join(dir, BinaryName(runtime.GOOS)+".next"),
 		filepath.Join(dir, BinaryName(runtime.GOOS)+".update.log"),
 	}
+	live := filepath.Join(dir, BinaryName(runtime.GOOS)+".update-4242.ps1")
 	drop := []string{
 		filepath.Join(dir, OldName(runtime.GOOS)),
 		filepath.Join(dir, OldName(runtime.GOOS)+".tmp"),
 		filepath.Join(dir, BinaryName(runtime.GOOS)+".update.ps1"),
-		filepath.Join(dir, BinaryName(runtime.GOOS)+".update-1234.ps1"),
 	}
-	for _, p := range append(append([]string{}, keep...), drop...) {
+	stale := filepath.Join(dir, BinaryName(runtime.GOOS)+".update-1234.ps1")
+	for _, p := range append(append(append([]string{}, keep...), drop...), live, stale) {
 		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
 
 	cleanOldBinariesIn(dir)
 
-	for _, p := range keep {
+	for _, p := range append(append([]string{}, keep...), live) {
 		if _, err := os.Stat(p); err != nil {
-			t.Errorf("cleanup removed %s; it is the retry path", filepath.Base(p))
+			t.Errorf("cleanup removed %s; it is either the retry path or live", filepath.Base(p))
 		}
 	}
-	for _, p := range drop {
+	for _, p := range append(append([]string{}, drop...), stale) {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
 			t.Errorf("cleanup kept %s", filepath.Base(p))
 		}

@@ -475,16 +475,24 @@ func CleanOldBinaries() {
 func cleanOldBinariesIn(dir string) {
 	os.Remove(filepath.Join(dir, OldName(runtime.GOOS)))
 	os.Remove(filepath.Join(dir, OldName(runtime.GOOS)+".tmp"))
-	// Swap scripts are named per process so a re-run cannot truncate the
-	// script a still-retrying invocation is executing.
-	for _, pattern := range []string{
-		BinaryName(runtime.GOOS) + ".update.ps1",
-		BinaryName(runtime.GOOS) + ".update-*.ps1",
-	} {
-		matches, _ := filepath.Glob(filepath.Join(dir, pattern))
-		for _, match := range matches {
-			os.Remove(match)
+	os.Remove(filepath.Join(dir, BinaryName(runtime.GOOS)+".update.ps1"))
+	// Per-process swap scripts belong to a run that is still retrying;
+	// a swap script never outlives its two-minute retry budget, so only
+	// scripts older than that are leftovers from a crashed run.
+	removeStaleScripts(dir, 30*time.Minute)
+}
+
+// removeStaleScripts deletes per-process swap scripts older than
+// olderThan. A pid is not a reliable liveness signal across reboots, so
+// age is the guard.
+func removeStaleScripts(dir string, olderThan time.Duration) {
+	matches, _ := filepath.Glob(filepath.Join(dir, BinaryName(runtime.GOOS)+".update-*.ps1"))
+	for _, match := range matches {
+		info, err := os.Stat(match)
+		if err != nil || time.Since(info.ModTime()) < olderThan {
+			continue
 		}
+		os.Remove(match)
 	}
 }
 

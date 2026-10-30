@@ -45,9 +45,6 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	// A previous attempt may have staged a binary that never landed —
 	// typically a Windows swap blocked by another running yaah process.
 	pending, hasPending := update.Pending()
-	if hasPending {
-		reportPending(cmd, pending)
-	}
 
 	cmd.Println("Checking for updates...")
 
@@ -76,6 +73,13 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			cmd.Printf("  %s  Cleared a stale staged update — this binary is already newer.\n", doctor.StatusLabel("OK"))
 		}
 		return nil
+	}
+
+	// Report a blocked earlier attempt only once this run is going to
+	// act on it; otherwise the advice to retry contradicts the discard
+	// above.
+	if hasPending {
+		reportPending(cmd, pending)
 	}
 
 	assetName := update.AssetName(runtime.GOOS, runtime.GOARCH)
