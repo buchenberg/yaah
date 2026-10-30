@@ -17,7 +17,7 @@ covered separately in [prompts.md](prompts.md).
 | --- | --- | --- |
 | Orchestrator guidance: delegating to a sub-agent | `internal/prompts/subagent_tools.md` (`prompts.SubAgentToolsGuidance`) | Local sessions (`cmd/yaah/wiring.go`) — an isolated session takes the workspace delta below instead |
 | Retained-lane guidance: proposals and settlement | `internal/prompts/retained.md` (`prompts.RetainedModeGuidance`) | Local sessions with the retained lane live (`agents.subagent.mode: retained` and a root scope) |
-| `supervisor` tool description + schema | In code: `internal/tools/supervisor.go` (`Description()`, `Schema()`) | Always with the tool, when registered |
+| `supervisor` tool description + schema | `internal/prompts/tools/supervisor.md` (`prompts.ToolDescription`) plus the schema in `internal/tools/supervisor.go` | Always with the tool, when registered |
 | `delegate` tool description | `internal/prompts/tools/delegate.md` | Always |
 | Sub-agent identity (batching, codebase respect, reporting) | `internal/prompts/subagent_identity.md` | Every sub-agent dispatch; orchestration guidance is deliberately omitted |
 | Loop-detection steering message (convergence rule) | `internal/prompts/steering_message.md`, emitted by `LoopDetectionMiddleware` (`internal/agent/pipeline/loopdetect.go`) | When one tool dominates consecutive turns |
@@ -33,10 +33,13 @@ result.**
 
 From `subagent_tools.md`:
 
-- **`delegate`** is non-blocking. Parallel and background dispatches
-  are supported, each in its own world. Use it for independent work that can
-  run concurrently, and for exploration whose raw tool calls would otherwise
-  fill the orchestrator's context.
+- **`delegate`** blocks until the dispatch returns unless `background: true`
+  is set, in which case it returns a `job_id` immediately. Multiple calls in
+  one turn run concurrently, each in the lane its role selects — a retained
+  dispatch gets a worktree or container world; a shared-mode dispatch runs on
+  the shared workspace. Use it for independent work that can run concurrently,
+  and for exploration whose raw tool calls would otherwise fill the
+  orchestrator's context.
 - The sub-agent never lands work: in the retained lane it returns a sealed
   proposal and the orchestrator settles it. That is the only gate; there is no
   mandatory review round. A reviewer role can still be dispatched explicitly or
@@ -49,27 +52,38 @@ From `retained.md` (injected when the retained lane is live):
 - A dispatch returns `status: "proposal"` with a `proposal_id`, the changed
   `files`, and a `diff`. **Nothing has changed on the working tree yet.**
 - Settlement is `proposal` with an action: `select` (fast-forward; fails
-  closed if the tree moved), `apply` (three-way, path-disjoint), `release`
-  (keep what landed, drop the record), `discard` (throw it away and free the
-  worktree). A proposal settles exactly once.
-- **The orchestrator commits, not the sub-agent.** A worktree's index and
-  object store live in the original repository, outside the sub-agent's jail,
-  so git write commands are refused there. Changes arrive as file edits at
-  settlement.
+  closed if the basis moved), `apply` (path-disjoint — three-way on the
+  worktree lane, whole-path post-images on the container lane), `release`
+  (export the sealed delta to a retention path; tear down a worktree, or
+  consume the already-ended container manifest), `discard` (throw it away and
+  free the worktree or manifest directory). A proposal settles exactly once.
+- The dispatch envelope names `world` (`worktree` or `container`); a
+  container proposal also names `target` (`host` or `session`). It can include
+  `warning` for a degraded dispatch or `notes` for settlement caveats.
+- Report roles return the report itself. A report that can mutate runs in an
+  isolated report world; a read-only report role runs directly on the shared
+  workspace. Neither seals a proposal.
+- **The orchestrator commits, not the sub-agent.** In the worktree lane the
+  child's index and object store live outside its jail, so git write commands
+  are refused. In the container lane a commit stays in the disposable world.
+  Changes arrive as file edits at settlement.
 - Retrying means `discard` + dispatch again with what was learned — a
   discarded attempt costs one dispatch and leaves the tree untouched.
 
 ## The supervisor tool's verbs
 
-From the description in `internal/tools/supervisor.go`:
+From `internal/prompts/tools/supervisor.md` and the tool schema:
 
 - **Scope inspection**: `list_scopes` (all scopes and their state),
   `status` (supervision system status: advisory-rule firings, bridged
   runs).
-- **Intervention**: `inject` (push guidance into a running sub-agent's
-  loop — delivered between turns as a high-priority user message),
-  `halt` (force-stop a scope; the run reports a deliberate
-  "halted by supervisor" stop, not raw cancellation noise).
+- **Intervention**: `inject` records guidance in the trace and delivers it to
+  an active run's loop when possible; with no active run it is trace-only, and
+  a full steering buffer means it is recorded but not consumed. Injecting into
+  the session root steers the session itself. `halt` cancels a running loop,
+  waits up to 10 seconds for quiescence, then records the kernel halt; it
+  reports stopped, cancelled-but-not-stopped, or trace-only when there was no
+  active run. Root halt requires `supervisor_halt_root`.
 
 Two behaviors the model will meet and should not fight:
 

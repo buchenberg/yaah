@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // ProposalTool settles retained sub-agent proposals (Plan 7 Phase 2). A retained
@@ -30,7 +31,7 @@ type ProposalTool struct {
 func (*ProposalTool) Name() string { return "proposal" }
 
 func (*ProposalTool) Description() string {
-	return "Settle retained sub-agent proposals: select (fast-forward onto the dispatch basis), apply (path-disjoint), release, discard — plus list and show. A proposal is produced by delegate; the worktree lane merges three-way, the container lane settles a whole-path delta manifest (host-target writes the host tree; session-target writes the session container — use apply_out for the host)."
+	return prompts.ToolDescription("proposal")
 }
 
 func (*ProposalTool) Schema() json.RawMessage {
@@ -40,7 +41,7 @@ func (*ProposalTool) Schema() json.RawMessage {
 			"action": {
 				"type": "string",
 				"enum": ["list", "show", "select", "apply", "release", "discard"],
-				"description": "list: show open proposals; show: one proposal's diff and files; select: fast-forward onto the dispatch basis — fails closed if the host moved since the dispatch; apply: apply path-disjoint onto a moved host (a worktree proposal merges three-way, a container proposal writes whole-path post-images), refused on overlap; release: export the delta to a retention path (and tear a worktree down); discard: throw the proposal away"
+				"description": "list: show open proposals; show: one proposal's diff and files; select: fast-forward onto the dispatch basis — fails closed if the basis moved since the dispatch; apply: apply path-disjoint onto a moved tree (a worktree proposal merges three-way, a container proposal writes whole-path post-images), refused on overlap; release: export the delta to a retention path (and tear a worktree down; a container world already ended at seal); discard: throw the proposal away"
 			},
 			"proposal_id": {
 				"type": "string",

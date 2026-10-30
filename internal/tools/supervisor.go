@@ -10,6 +10,7 @@ import (
 	goatherd "github.com/buchenberg/goatherd-runtime"
 
 	"github.com/buchenberg/yaah/internal/agent/supervision"
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // haltQuiesceTimeout bounds the wait for a halted run to stop before
@@ -63,7 +64,7 @@ type SupervisorTool struct {
 
 func (*SupervisorTool) Name() string { return "supervisor" }
 func (*SupervisorTool) Description() string {
-	return "Supervise running sub-agents: list scopes, inject guidance, halt an agent, and report supervision status"
+	return prompts.ToolDescription("supervisor")
 }
 
 func (*SupervisorTool) Schema() json.RawMessage {
@@ -73,7 +74,7 @@ func (*SupervisorTool) Schema() json.RawMessage {
 			"action": {
 				"type": "string",
 				"enum": ["list_scopes", "inject", "halt", "status"],
-				"description": "list_scopes: show all scopes and their state; inject: push guidance into a scope; halt: force-stop a scope; status: show supervision system status"
+				"description": "list_scopes: show all scopes and their state; inject: push guidance into a scope (trace-only if no active run); halt: cancel a scope and bounded-quiesce it (root halt needs supervisor_halt_root); status: show supervision system status"
 			},
 			"scope_id": {
 				"type": "string",
