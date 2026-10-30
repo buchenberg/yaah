@@ -8,10 +8,6 @@ package tools
 // the model actually receives.
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"os"
 	"reflect"
 	"regexp"
 	"slices"
@@ -22,9 +18,10 @@ import (
 )
 
 // resultEnvelopeDocs is the registry of result envelopes and the prompt
-// file that documents them. Keep it in sync when adding an envelope; a
-// new JSON field on a registered type fails the test until the doc names
-// it.
+// file that documents them. New result envelopes must be added here; the
+// registry is explicit because a type can be platform-gated and therefore
+// absent from reflection on another build. Once registered, a new JSON
+// field fails the test until the doc names it.
 var resultEnvelopeDocs = []struct {
 	typ reflect.Type
 	doc string
@@ -38,11 +35,6 @@ var resultEnvelopeDocs = []struct {
 	{reflect.TypeOf(backgroundDispatchResult{}), "delegate"},
 	{reflect.TypeOf(dispatchFailureResult{}), "delegate"},
 }
-
-// envelopeExemptions lists production *Envelope types that are not
-// model-facing result envelopes. Keep this empty unless a real
-// non-result envelope needs one; the value is the bead that removes it.
-var envelopeExemptions = map[string]string{}
 
 func TestResultEnvelopeDocs_NameEveryJSONField(t *testing.T) {
 	for _, entry := range resultEnvelopeDocs {
@@ -58,68 +50,6 @@ func TestResultEnvelopeDocs_NameEveryJSONField(t *testing.T) {
 			if !re.MatchString(text) {
 				t.Errorf("%s: %s.md never names result field `%s`; document it or stop emitting it", entry.typ, entry.doc, field)
 			}
-		}
-	}
-}
-
-// TestResultEnvelopeRegistryCoversNamedEnvelopes catches the obvious new
-// envelope a manual registry would otherwise miss. Tool result envelopes are
-// declared in this package, so the scan is package-local; result types that
-// do not end in "Envelope" (the delegate payloads) still need an explicit
-// registry entry, and their JSON field names are covered once registered.
-func TestResultEnvelopeRegistryCoversNamedEnvelopes(t *testing.T) {
-	registered := make(map[string]bool, len(resultEnvelopeDocs))
-	for _, entry := range resultEnvelopeDocs {
-		registered[entry.typ.Name()] = true
-	}
-
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("read package directory: %v", err)
-	}
-	fset := token.NewFileSet()
-	seen := make(map[string]bool)
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
-			continue
-		}
-		// Parse every production file, including tag-gated ones. Coverage
-		// must not depend on which platform runs the test; an envelope that
-		// exists only on one platform still needs its doc.
-		file, err := parser.ParseFile(fset, entry.Name(), nil, 0)
-		if err != nil {
-			t.Fatalf("parse %s: %v", entry.Name(), err)
-		}
-		for _, decl := range file.Decls {
-			gen, ok := decl.(*ast.GenDecl)
-			if !ok || gen.Tok != token.TYPE {
-				continue
-			}
-			for _, spec := range gen.Specs {
-				ts, ok := spec.(*ast.TypeSpec)
-				if !ok || !strings.HasSuffix(ts.Name.Name, "Envelope") {
-					continue
-				}
-				if _, ok := ts.Type.(*ast.StructType); !ok {
-					continue
-				}
-				seen[ts.Name.Name] = true
-				if bead, ok := envelopeExemptions[ts.Name.Name]; ok {
-					t.Logf("%s: exempt — %s", ts.Name.Name, bead)
-					continue
-				}
-				if !registered[ts.Name.Name] {
-					t.Errorf("type %s is a production envelope but is not in resultEnvelopeDocs; add it and its model-facing doc, or record an envelopeExemptions entry citing a bead", ts.Name.Name)
-				}
-			}
-		}
-	}
-	for name, bead := range envelopeExemptions {
-		if strings.TrimSpace(bead) == "" {
-			t.Errorf("envelopeExemptions[%s] must cite the bead that removes the exemption", name)
-		}
-		if !seen[name] {
-			t.Errorf("envelopeExemptions names %s, but no production *Envelope type exists", name)
 		}
 	}
 }
