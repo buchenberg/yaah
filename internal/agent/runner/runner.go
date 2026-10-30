@@ -428,6 +428,32 @@ type taskRunnerOpts struct {
 	// a nil resolver means per-role provider overrides fall through to
 	// the planner's provider.
 	resolveProviderByName func(pmap map[string]config.Provider, name string) agent.Provider
+
+	// now mints dispatch timestamps for the sub-agent trace ID. Nil means
+	// time.Now; tests pin it to force two dispatches into the same clock
+	// tick and prove the per-dispatch sequence keeps their scope keys
+	// apart.
+	now func() time.Time
+}
+
+// dispatchClock returns the clock that stamps dispatch IDs: the test
+// override when set, time.Now otherwise.
+func dispatchClock(opts taskRunnerOpts) time.Time {
+	if opts.now != nil {
+		return opts.now()
+	}
+	return time.Now()
+}
+
+// subAgentTraceID mints the trace/scope owner ID for one dispatch. The
+// kernel registers the sub-agent scope under this exact string
+// ("scope:" + owner), so it must be unique per dispatch: the timestamp
+// separates processes and restarts, the sequence separates dispatches
+// that start within the same clock tick — which is what parallel
+// delegate calls in one turn do. Ordering the timestamp first keeps the
+// existing ID shape (and any trace-side expectations) recognisable.
+func subAgentTraceID(role subagent.SubAgentRole, parent string, at time.Time, seq uint64) string {
+	return fmt.Sprintf("sub-%s-%s-%d-%d", role, parent, at.UnixNano(), seq)
 }
 
 // makeTaskRunner creates a sub-agent runner that honours roles, timeouts,
@@ -438,6 +464,14 @@ type taskRunnerOpts struct {
 // is omitted from the sub-loop's registry, so nesting is bounded
 // structurally without relying on middleware alone. Depth is hardcoded to 1.
 func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
+	// Per-runner dispatch sequence. Two delegate calls in one turn start
+	// together; a timestamp alone can hand them the same key, and the
+	// kernel registers a sub-agent scope under exactly this string
+	// (goatherd ScopeManager.Create), so the loser of the race failed
+	// with "scope ... already exists" and its work was lost (95ri.1).
+	// The counter makes the key unique by construction.
+	var dispatchSeq atomic.Uint64
+
 	return func(ctx context.Context, prompt string, params tools.SubAgentParams) (string, error) {
 		// A per-dispatch world overrides the session's substrate for this
 		// dispatch only (yaah-ihfh.3). The shadow copy keeps the captured
@@ -542,7 +576,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		tools.WriteSubAgentModel(ctx, subModel)
 		tools.NotifySubAgentStart(ctx, subModel)
 
-		subTraceID := fmt.Sprintf("sub-%s-%s-%d", role, opts.parentSession, time.Now().UnixNano())
+		subTraceID := subAgentTraceID(role, opts.parentSession, dispatchClock(opts), dispatchSeq.Add(1))
 		traceContext := subAgentRetainedContext(ctx, opts, role, params.Workdir, subConf, subReg)
 		traceCWD := subAgentTraceCWD(opts, params.Workdir)
 
