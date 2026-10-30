@@ -329,11 +329,13 @@ func (s *SessionSandbox) filterEffectChanges(changes []effect.Change) []effect.C
 // later, in atomicWriteFile, which preserves an existing file's mode by design.
 // So the fix belongs at the write, not in how the work list is built.
 //
-// Still narrowed, and tracked as yaah-vlwm: perm is taken with .Perm(), so
+// Privilege bits are deliberately not carried: perm is taken with .Perm(), so
 // setuid/setgid/sticky bits do not cross back to the host even though the
-// sandbox's Stat reconstructs them and copy-in carries them in. Whether they
-// should is a policy question about propagating privilege bits from a weaker
-// boundary to a stronger one, not a bug to fix silently.
+// sandbox's Stat reconstructs them and copy-in carries them in. The container
+// is a weaker boundary; propagating a privilege bit from it onto the host
+// would let container-authored files acquire host privilege semantics. Copy-in
+// preserves the bits because the host is the authority there. The asymmetry is
+// intentional (yaah-vlwm).
 //
 // The host tree is trusted not to have moved since copy-in. Applying onto a
 // moved parent is settlement's problem (kernel Seal/Settle with
@@ -350,9 +352,9 @@ func (s *SessionSandbox) ApplyOut(ctx context.Context, hostDir string) error {
 // come from the Sandbox Diff against the baseline, and each is written out with
 // the same crash safety the host-side tools use. A changed path is classified
 // by reading and statting it in the sandbox: readable content is written out
-// (its mode taken from the sandbox entry when one is reachable, so a new
-// executable arrives executable), a missing path is deleted on the host, a
-// directory is ensured to exist — and every other read failure propagates:
+// (its permission bits taken from the sandbox entry when one is reachable, so
+// a new executable arrives executable), a missing path is deleted on the host,
+// a directory is ensured to exist — and every other read failure propagates:
 // a transport error must fail apply-out, not pass as a directory.
 //
 // This is backend-agnostic, which is why it is now the only apply-out path
@@ -365,7 +367,7 @@ func (s *SessionSandbox) ApplyOut(ctx context.Context, hostDir string) error {
 // croft's Changes reports it as a modify carrying the new mode, verified
 // against a real daemon — and the explicit chmod below makes it land. What
 // still does not cross is setuid/setgid/sticky, because perm is masked with
-// .Perm(); that is a deliberate open question, not an oversight (yaah-vlwm).
+// .Perm(); that is the deliberate policy recorded above (yaah-vlwm).
 func (s *SessionSandbox) copyOut(ctx context.Context, hostDir string) error {
 	_, changed, err := s.sb.Diff(ctx, *s.baseline, 0)
 	if err != nil {
