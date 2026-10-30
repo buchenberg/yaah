@@ -22,17 +22,20 @@ func TestArchitectureNamesDefaultPipelineInOrder(t *testing.T) {
 	const startMarker = "The pipeline is built in `buildPipeline()` with a config-driven order:"
 	start := strings.Index(doc, startMarker)
 	if start < 0 {
-		t.Fatalf("architecture.md no longer has the pipeline inventory marker")
+		t.Fatalf("architecture.md no longer has the pipeline inventory marker %q", startMarker)
 	}
 	rest := doc[start+len(startMarker):]
-	end := strings.Index(rest, "The default set is defined")
+	end := strings.Index(rest, "\n\n")
 	if end < 0 {
-		t.Fatalf("architecture.md no longer has the pipeline inventory terminator")
+		t.Fatalf("architecture.md pipeline list has no terminating blank line")
 	}
-	lines := regexp.MustCompile(`(?m)^\d+\. `+"`([a-z_]+)`").FindAllStringSubmatch(rest[:end], -1)
+	lines := regexp.MustCompile(`(?m)^\d+\.\s+`+"`([a-z_]+)`").FindAllStringSubmatch(rest[:end], -1)
 	got := make([]string, 0, len(lines))
 	for _, line := range lines {
 		got = append(got, line[1])
+	}
+	if len(got) == 0 {
+		t.Fatalf("architecture.md pipeline list has no numbered backticked middleware names")
 	}
 	want := pipeline.DefaultPipelineNames()
 	if !reflect.DeepEqual(got, want) {

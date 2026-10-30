@@ -17,10 +17,10 @@ import (
 )
 
 var deferralPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)\buntil\b.{0,80}\b(?:bridge|support|wiring|rehydration|feature|implementation|work)\b.{0,40}\b(?:lands?|ships?)\b`),
-	regexp.MustCompile(`(?i)\bnot wired yet\b`),
-	regexp.MustCompile(`(?i)\bstill unused\b`),
-	regexp.MustCompile(`(?i)\breserved for the P[0-9]\b`),
+	regexp.MustCompile(`(?is)\buntil\b.{0,80}\b(?:bridge|support|wiring|rehydration|feature|implementation|work)\b.{0,40}\b(?:lands?|ships?)\b`),
+	regexp.MustCompile(`(?is)\bnot wired yet\b`),
+	regexp.MustCompile(`(?is)\bstill unused\b`),
+	regexp.MustCompile(`(?is)\breserved for the P[0-9]\b`),
 }
 
 var falsifiableReference = regexp.MustCompile(`\b(?:yaah|croft|shepherd-runtime-go|goatherd-runtime)-[a-z0-9]+\b`)
@@ -33,8 +33,15 @@ func TestDeferralCommentsNameFalsifiableReference(t *testing.T) {
 			return walkErr
 		}
 		if entry.IsDir() {
+			// Local-only tool directories and dependency/build trees are not
+			// part of this repository's source contract. Skip every hidden
+			// directory so .scratch, .sandbox, and future tool metadata cannot
+			// make a developer-machine run parse third-party Go.
+			if strings.HasPrefix(entry.Name(), ".") {
+				return filepath.SkipDir
+			}
 			switch entry.Name() {
-			case ".git", ".beads", ".dolt", ".kilo", ".serena", ".entire", "vendor", "node_modules", "dist":
+			case "vendor", "node_modules", "dist", "testdata":
 				return filepath.SkipDir
 			}
 			return nil

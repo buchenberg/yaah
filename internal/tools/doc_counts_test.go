@@ -16,8 +16,9 @@ func TestArchitectureLeafToolCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read architecture.md: %v", err)
 	}
-	want := fmt.Sprintf("%d of the\n%d leaf tools", len(leafTools)-1, len(leafTools))
-	if !strings.Contains(string(doc), want) {
+	want := fmt.Sprintf("%d of the %d leaf tools", len(leafTools)-1, len(leafTools))
+	normalized := strings.Join(strings.Fields(string(doc)), " ")
+	if !strings.Contains(normalized, want) {
 		t.Errorf("architecture.md does not state %q; leafTools has %d entries and one platform shell is selected", want, len(leafTools))
 	}
 }
