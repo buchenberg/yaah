@@ -312,7 +312,7 @@ The containment family is one contract with per-platform mechanisms
 `landlock` on Linux, `winacl` on Windows, `seatbelt` on macOS, and nothing
 (advisory only) elsewhere.
 
-| | Linux — shipped | Windows — shipped | macOS — shipped |
+| | Linux | Windows | macOS |
 |---|---|---|---|
 | Mechanism | Landlock rulesets: kernel-enforced filesystem rights, port-scoped network rules | Write-restricted token, per-root write capability SIDs, Low integrity level, no-write-up label | Seatbelt SBPL profiles |
 | Privilege | none | none (no elevation, container, or VM) | none (`sandbox-exec` ships with macOS) |
