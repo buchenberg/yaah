@@ -33,29 +33,33 @@ func (p staticReplyProvider) Send(context.Context, types.ChatRequest) (*types.Ch
 func TestSubAgentTraceIDUniquePerDispatch(t *testing.T) {
 	at := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
 
-	first := subAgentTraceID("analyst", "sess-1", at, 1)
-	second := subAgentTraceID("analyst", "sess-1", at, 2)
+	first := subAgentTraceID("analyst", "sess-1", at)
+	second := subAgentTraceID("analyst", "sess-1", at)
 	if first == second {
 		t.Fatalf("two dispatches in the same clock tick minted the same scope key %q", first)
 	}
 	if !strings.HasPrefix(first, "sub-analyst-sess-1-") {
-		t.Errorf("ID %q lost the sub-<role>-<session>-<stamp>-<seq> shape", first)
+		t.Errorf("ID %q lost the sub-<role>-<session>-<stamp>-<suffix> shape", first)
 	}
 
-	// The sequence resets per process, so the timestamp still has to
-	// separate runs: a resumed session must not collide with scopes that
-	// recovery rebuilt from the trace.
-	later := subAgentTraceID("analyst", "sess-1", at.Add(time.Second), 1)
-	if later == first {
-		t.Errorf("a later run reused %q", later)
+	// The suffix is 128 bits of crypto/rand: a batch of IDs minted from
+	// one instant must all differ, so uniqueness never rests on the
+	// clock.
+	seen := make(map[string]bool, 2000)
+	for range 2000 {
+		id := subAgentTraceID("analyst", "sess-1", at)
+		if seen[id] {
+			t.Fatalf("duplicate dispatch key %q", id)
+		}
+		seen[id] = true
 	}
 }
 
 // TestTaskRunner_ParallelDispatchesGetDistinctScopes reproduces the
 // reported failure end to end: two delegate calls in one turn, stamped
-// by the same clock reading. Before the per-dispatch sequence, the second
-// dispatch failed with "sub-agent scope: scope ... already exists" and
-// produced no work.
+// by the same clock reading. With a clock-only key the second dispatch
+// failed with "sub-agent scope: scope ... already exists" and produced no
+// work.
 func TestTaskRunner_ParallelDispatchesGetDistinctScopes(t *testing.T) {
 	initTestRoles(t)
 

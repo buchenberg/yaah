@@ -13,6 +13,8 @@ package runner
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -20,6 +22,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -447,13 +450,25 @@ func dispatchClock(opts taskRunnerOpts) time.Time {
 
 // subAgentTraceID mints the trace/scope owner ID for one dispatch. The
 // kernel registers the sub-agent scope under this exact string
-// ("scope:" + owner), so it must be unique per dispatch: the timestamp
-// separates processes and restarts, the sequence separates dispatches
-// that start within the same clock tick — which is what parallel
-// delegate calls in one turn do. Ordering the timestamp first keeps the
-// existing ID shape (and any trace-side expectations) recognisable.
-func subAgentTraceID(role subagent.SubAgentRole, parent string, at time.Time, seq uint64) string {
-	return fmt.Sprintf("sub-%s-%s-%d-%d", role, parent, at.UnixNano(), seq)
+// ("scope:" + owner), so it must be unique per dispatch: two parallel
+// delegate calls routinely start within one clock tick, which is why a
+// timestamp alone is not a key — the same reason NewEntryID abandoned
+// mem-<UnixNano>. The timestamp stays for ordering and readability in
+// traces; 128 bits of crypto/rand make uniqueness structural.
+func subAgentTraceID(role subagent.SubAgentRole, parent string, at time.Time) string {
+	return fmt.Sprintf("sub-%s-%s-%d-%s", role, parent, at.UnixNano(), dispatchSuffix())
+}
+
+// dispatchSuffix returns 128 bits of crypto/rand, hex-encoded, matching
+// newTurnID and NewEntryID. If the system entropy source is unavailable
+// the timestamp is the fallback, accepting the collision risk that only
+// a broken entropy source creates.
+func dispatchSuffix() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return strconv.FormatInt(time.Now().UnixNano(), 10)
+	}
+	return hex.EncodeToString(b[:])
 }
 
 // makeTaskRunner creates a sub-agent runner that honours roles, timeouts,
@@ -464,14 +479,6 @@ func subAgentTraceID(role subagent.SubAgentRole, parent string, at time.Time, se
 // is omitted from the sub-loop's registry, so nesting is bounded
 // structurally without relying on middleware alone. Depth is hardcoded to 1.
 func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
-	// Per-runner dispatch sequence. Two delegate calls in one turn start
-	// together; a timestamp alone can hand them the same key, and the
-	// kernel registers a sub-agent scope under exactly this string
-	// (goatherd ScopeManager.Create), so the loser of the race failed
-	// with "scope ... already exists" and its work was lost (95ri.1).
-	// The counter makes the key unique by construction.
-	var dispatchSeq atomic.Uint64
-
 	return func(ctx context.Context, prompt string, params tools.SubAgentParams) (string, error) {
 		// A per-dispatch world overrides the session's substrate for this
 		// dispatch only (yaah-ihfh.3). The shadow copy keeps the captured
@@ -576,7 +583,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		tools.WriteSubAgentModel(ctx, subModel)
 		tools.NotifySubAgentStart(ctx, subModel)
 
-		subTraceID := subAgentTraceID(role, opts.parentSession, dispatchClock(opts), dispatchSeq.Add(1))
+		subTraceID := subAgentTraceID(role, opts.parentSession, dispatchClock(opts))
 		traceContext := subAgentRetainedContext(ctx, opts, role, params.Workdir, subConf, subReg)
 		traceCWD := subAgentTraceCWD(opts, params.Workdir)
 
