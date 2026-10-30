@@ -65,13 +65,12 @@ type WorldAvailability struct {
 	// ContainerRetains reports that a container world can be sealed and
 	// settled. A retained container settles as a GitDelta change manifest
 	// (whole-path post-images) onto the host tree, so no shared state language
-	// between the git parent and the container child is needed. Automatic
-	// proposal containers are opt-in until manifest rehydration lands; the
-	// resolver reports that as false for an auto proposal even when the setup
-	// is wired.
+	// between the git parent and the container child is needed. It is true
+	// when this session wired per-dispatch container setup; manifest
+	// rehydration is already landed and is not the gate.
 	ContainerRetains bool
 	// ContainerRetainsReason explains ContainerRetains=false when Container is
-	// true (for example, the opt-in gate rather than a missing setup).
+	// true, for example because no per-dispatch container setup is wired.
 	ContainerRetainsReason string
 	// ContainerReason explains Container=false.
 	ContainerReason string
