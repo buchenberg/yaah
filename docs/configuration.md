@@ -316,6 +316,9 @@ rather than retrying a request that cannot succeed.
 | `prune_min_turns` | 1 | Recent turns always kept by soft-prune |
 | `supervisor` | enabled when tracing is on | Advisory supervision rules; see the supervision table below |
 
+The 2026-10-29 live recapture and controlled threshold probe are recorded in
+[evidence-guard.md](./evidence-guard.md): `nudge=6`, `halt=off`.
+
 Sub-agent inheritance is selective. `max_retries`, `retry_backoff_secs`,
 `max_tool_concurrency`, tool-result limits, prune settings, context window,
 and turn-checkpoint limits are passed down. `loop_detect_*`, compaction
