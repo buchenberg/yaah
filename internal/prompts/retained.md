@@ -32,8 +32,9 @@ listed, shown, or settleable here. `action: "show"` re-reads one, with its diff.
 proposal settles exactly once. Dispatch in parallel freely — each has its
 own dispatch world — and settle each once its report is in.
 
-A proposal envelope also carries `world` (`worktree` or `container`), and
-container proposals carry `target` (`host` or `session`). An optional
+A dispatch envelope carries `world` (`worktree` or `container`); a container
+proposal also carries `target` (`host` or `session`), and its settlement
+envelope repeats both. An optional
 `warning` says the dispatch ran in a degraded world instead of the one
 requested; read it before accepting. An optional `notes` records settlement
 caveats such as a failed teardown or stranded worktree.

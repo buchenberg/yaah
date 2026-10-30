@@ -35,9 +35,11 @@ From `subagent_tools.md`:
 
 - **`delegate`** blocks until the dispatch returns unless `background: true`
   is set, in which case it returns a `job_id` immediately. Multiple calls in
-  one turn run concurrently, each in its own world. Use it for independent
-  work that can run concurrently, and for exploration whose raw tool calls
-  would otherwise fill the orchestrator's context.
+  one turn run concurrently, each in the lane its role selects — a retained
+  dispatch gets a worktree or container world; a shared-mode dispatch runs on
+  the shared workspace. Use it for independent work that can run concurrently,
+  and for exploration whose raw tool calls would otherwise fill the
+  orchestrator's context.
 - The sub-agent never lands work: in the retained lane it returns a sealed
   proposal and the orchestrator settles it. That is the only gate; there is no
   mandatory review round. A reviewer role can still be dispatched explicitly or
