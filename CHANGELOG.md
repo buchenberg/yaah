@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.119.2](https://github.com/buchenberg/yaah/compare/v0.119.1...v0.119.2) (2026-10-30)
+
+
+### Bug Fixes
+
+* **sandbox:** omit host-network tools in container dispatches ([1372ae9](https://github.com/buchenberg/yaah/commit/1372ae9165a4226cfb68f8b02aab20dd02ffe4f2))
+* **sandbox:** omit host-network tools in container dispatches ([87d4acd](https://github.com/buchenberg/yaah/commit/87d4acde50efe5d75a17c70c94ad1fa356f18f21))
+
+
+### Documentation
+
+* describe container-lane tool omission and pin sandbox mode ([673187d](https://github.com/buchenberg/yaah/commit/673187d9da04b8dde2497b80ae4d7e8c90c7be41))
+* reconcile documentation drift and add inventory gates ([c3153ab](https://github.com/buchenberg/yaah/commit/c3153ab92d0fb39a245a2caf7710058a62a85ec8))
+* reconcile documentation drift and add inventory gates ([a7f8d11](https://github.com/buchenberg/yaah/commit/a7f8d1192f30230588d79df3573e8eea5f7f418c))
+
+
+### Tests
+
+* **docs:** harden inventory gates against formatting and local dirs ([68ad1f0](https://github.com/buchenberg/yaah/commit/68ad1f02b5b642602652da38152aa3b2220a310f))
+* **docs:** keep the deferral walk root traversable ([e9feb38](https://github.com/buchenberg/yaah/commit/e9feb3865139e57fb31574b1845c81ba82d2a910))
+
 ## [0.119.1](https://github.com/buchenberg/yaah/compare/v0.119.0...v0.119.1) (2026-10-30)
 
 
