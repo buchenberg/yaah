@@ -18,6 +18,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/jail"
+	"github.com/buchenberg/yaah/internal/update"
 	"github.com/buchenberg/yaah/internal/worldinfo"
 )
 
@@ -59,6 +60,7 @@ func RunChecks(opts Options) []Check {
 		CheckOTel(cfg, cfgErr),
 		CheckHomeWritable(),
 		CheckPlatform(),
+		CheckPendingUpdate(),
 		CheckEditor(cfg),
 	}
 }
@@ -684,6 +686,32 @@ func CheckPlatform() Check {
 		Status: "OK",
 		Detail: fmt.Sprintf("%s/%s %s", runtime.GOOS, runtime.GOARCH, runtime.Version()),
 	}
+}
+
+// CheckPendingUpdate reports a downloaded update that never reached the
+// installed binary — normally a Windows swap blocked by another running
+// yaah process holding the image open.
+func CheckPendingUpdate() Check {
+	const label = "Pending update"
+	pending, ok := update.Pending()
+	if !ok {
+		return Check{Label: label, Status: "OK", Detail: "none"}
+	}
+	detail := pending.Path + " has not been applied"
+	if pending.Log != "" {
+		detail += " — " + firstLine(pending.Log)
+	} else {
+		detail += " — close other yaah processes and run 'yaah update'"
+	}
+	return Check{Label: label, Status: "WARN", Detail: detail}
+}
+
+// firstLine returns s up to its first newline.
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 // CheckEditor checks the editor configuration.

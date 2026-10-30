@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -100,5 +101,127 @@ func TestLookupChecksum(t *testing.T) {
 	// A short non-64-char hex token must not be treated as a digest.
 	if got := lookupChecksum([]byte("deadbeef  yaah-x\n"), "yaah-x"); got != "" {
 		t.Errorf("short digest accepted: %q", got)
+	}
+}
+
+// A staged binary keeps the name yaah.exe.next, so verifying it must use
+// the release asset name rather than its on-disk name.
+func TestVerifyChecksumAs(t *testing.T) {
+	dir := t.TempDir()
+	staged := filepath.Join(dir, "yaah.exe.next")
+	content := []byte("staged binary")
+	if err := os.WriteFile(staged, content, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(content)
+	checksums := []byte(hex.EncodeToString(sum[:]) + "  yaah-windows-amd64.exe\n")
+
+	if err := VerifyChecksumAs(staged, "yaah-windows-amd64.exe", checksums); err != nil {
+		t.Fatalf("staged binary rejected: %v", err)
+	}
+	// Plain VerifyChecksum looks up the on-disk base name and must fail.
+	if err := VerifyChecksum(staged, checksums); err == nil {
+		t.Fatal("VerifyChecksum accepted the staged name; want missing-entry error")
+	}
+	if err := VerifyChecksumAs(staged, "yaah-windows-arm64.exe", checksums); err == nil {
+		t.Fatal("wrong asset name accepted")
+	}
+}
+
+func TestWindowsSwapScript(t *testing.T) {
+	script := windowsSwapScript(
+		`C:\bin\yaah.exe`,
+		`C:\bin\yaah.old.exe`,
+		`C:\bin\yaah.exe.next`,
+		`C:\bin\yaah.exe.update.ps1`,
+		`C:\bin\yaah.exe.update.log`,
+		4242,
+	)
+
+	for _, want := range []string{
+		`Get-Process -Id 4242`,
+		`Move-Item -Force`,
+		`catch { }`,
+		`-LiteralPath $next`,
+		`yaah.exe.update.log`,
+		`processes holding the binary`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("script missing %q", want)
+		}
+	}
+
+	// Hostile paths stay inside the double-quoted literals.
+	hostile := windowsSwapScript(`C:\$(calc)\"x\yaah.exe`, "o", "n", "s", "l", 1)
+	if strings.Contains(hostile, `"C:\$(calc)`) {
+		t.Error("dollar subexpression not escaped")
+	}
+}
+
+func TestPendingIn(t *testing.T) {
+	dir := t.TempDir()
+	staged := filepath.Join(dir, BinaryName(runtime.GOOS)+".next")
+	logPath := filepath.Join(dir, BinaryName(runtime.GOOS)+".update.log")
+
+	if _, ok := pendingIn(dir); ok {
+		t.Fatal("empty dir reported a pending update")
+	}
+
+	if err := os.WriteFile(staged, []byte("new binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pending, ok := pendingIn(dir)
+	if !ok {
+		t.Fatal("staged binary not reported")
+	}
+	if pending.Path != staged {
+		t.Errorf("Path = %q; want %q", pending.Path, staged)
+	}
+	if pending.Log != "" {
+		t.Errorf("Log = %q; want empty", pending.Log)
+	}
+
+	if err := os.WriteFile(logPath, []byte("swap failed\nprocesses: 1, 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pending, ok = pendingIn(dir)
+	if !ok || pending.LogPath != logPath {
+		t.Fatalf("failure log not reported: %+v", pending)
+	}
+	if !strings.Contains(pending.Log, "swap failed") {
+		t.Errorf("Log = %q; want failure text", pending.Log)
+	}
+}
+
+// Cleanup must keep the staged binary and its log: they are the retry
+// path after a blocked swap.
+func TestCleanOldBinariesIn(t *testing.T) {
+	dir := t.TempDir()
+	keep := []string{
+		filepath.Join(dir, BinaryName(runtime.GOOS)+".next"),
+		filepath.Join(dir, BinaryName(runtime.GOOS)+".update.log"),
+	}
+	drop := []string{
+		filepath.Join(dir, OldName(runtime.GOOS)),
+		filepath.Join(dir, OldName(runtime.GOOS)+".tmp"),
+		filepath.Join(dir, BinaryName(runtime.GOOS)+".update.ps1"),
+	}
+	for _, p := range append(append([]string{}, keep...), drop...) {
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cleanOldBinariesIn(dir)
+
+	for _, p := range keep {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("cleanup removed %s; it is the retry path", filepath.Base(p))
+		}
+	}
+	for _, p := range drop {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("cleanup kept %s", filepath.Base(p))
+		}
 	}
 }
