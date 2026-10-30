@@ -11,6 +11,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"reflect"
 	"regexp"
 	"slices"
@@ -66,28 +67,34 @@ func TestResultEnvelopeRegistryCoversNamedEnvelopes(t *testing.T) {
 		registered[entry.typ.Name()] = true
 	}
 
-	pkgs, err := parser.ParseDir(token.NewFileSet(), ".", nil, 0)
+	entries, err := os.ReadDir(".")
 	if err != nil {
-		t.Fatalf("parse package for envelope types: %v", err)
+		t.Fatalf("read package directory: %v", err)
 	}
-	for _, pkg := range pkgs {
-		for _, file := range pkg.Files {
-			for _, decl := range file.Decls {
-				gen, ok := decl.(*ast.GenDecl)
-				if !ok || gen.Tok != token.TYPE {
+	fset := token.NewFileSet()
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, entry.Name(), nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", entry.Name(), err)
+		}
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				ts, ok := spec.(*ast.TypeSpec)
+				if !ok || !strings.HasSuffix(ts.Name.Name, "Envelope") {
 					continue
 				}
-				for _, spec := range gen.Specs {
-					ts, ok := spec.(*ast.TypeSpec)
-					if !ok || !strings.HasSuffix(ts.Name.Name, "Envelope") {
-						continue
-					}
-					if _, ok := ts.Type.(*ast.StructType); !ok {
-						continue
-					}
-					if !registered[ts.Name.Name] {
-						t.Errorf("type %s is a JSON envelope but is not in resultEnvelopeDocs; add it and its model-facing doc", ts.Name.Name)
-					}
+				if _, ok := ts.Type.(*ast.StructType); !ok {
+					continue
+				}
+				if !registered[ts.Name.Name] {
+					t.Errorf("type %s is a JSON envelope but is not in resultEnvelopeDocs; add it and its model-facing doc", ts.Name.Name)
 				}
 			}
 		}
