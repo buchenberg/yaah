@@ -1,8 +1,8 @@
 # Shepherd parity: dispatch worlds
 
-Status: design + ledger. Applies to `yaah-ihfh` (EPIC: Shepherd parity
-closure). Mechanism port: `goatherd-kernel` + `goatherd-runtime`; reference:
-Shepherd (Python) `v0.3.1`.
+Status: design + ledger. `yaah-ihfh` (Shepherd parity closure) is closed;
+active divergences are tracked below. Mechanism port: `goatherd-kernel` +
+`goatherd-runtime`; reference: Shepherd (Python) `v0.3.1`.
 
 This page is the in-repo parity ledger and the design of record for
 `yaah-ihfh.3`. The external `yaah-shepherd-gap-report.md` is a snapshot; when
@@ -385,5 +385,8 @@ Pinned inputs (drift guard: `internal/parity`):
 | containment | landlock v0.1.2, winacl v0.1.1, seatbelt v0.1.0 |
 | grants | world-relative RW/RO roots, disjoint (config, not tools) |
 
-Remaining divergences are tracked only in `yaah-ihfh` and its children. A
-divergence not named there is a bug in this ledger.
+Remaining divergences are tracked in `yaah-1tkp` / `yaah-kit` (container
+adapter and live verification), `yaah-lmib` (grant and network lowering),
+`yaah-vlwm` (mode fidelity policy), and `yaah-qlf9` (comment truth). `yaah-ihfh` is the closed
+parity-closure epic and is historical; a divergence not named in an active
+owner is a bug in this ledger.

@@ -310,6 +310,14 @@ type proposalSummary struct {
 	Target     string   `json:"target,omitempty"`
 }
 
+// proposalListEnvelope is the JSON a `list` action answers with: the same
+// status/next frame as the other verbs, with one summary per open proposal.
+type proposalListEnvelope struct {
+	Status    string            `json:"status"`
+	Proposals []proposalSummary `json:"proposals"`
+	Next      []string          `json:"next,omitempty"`
+}
+
 // summaries renders the open proposals as prose, for a human reader.
 func (r *ProposalRegistry) summaries() string {
 	ps := r.all()
@@ -351,11 +359,7 @@ func (r *ProposalRegistry) listEnvelope() string {
 		}
 		list = append(list, proposalSummary{ProposalID: p.id, Files: files, Target: target})
 	}
-	env := struct {
-		Status    string            `json:"status"`
-		Proposals []proposalSummary `json:"proposals"`
-		Next      []string          `json:"next,omitempty"`
-	}{Status: "open", Proposals: list, Next: proposalVerbs()}
+	env := proposalListEnvelope{Status: "open", Proposals: list, Next: proposalVerbs()}
 	data, err := json.Marshal(env)
 	if err != nil {
 		return `{"status":"open","proposals":[]}`

@@ -93,10 +93,7 @@ func (t *SubAgentJobsTool) executeList() (string, error) {
 			pending++
 		}
 	}
-	out := struct {
-		Jobs    []jobs.BackgroundJobStatus `json:"jobs"`
-		Pending int                        `json:"pending"`
-	}{list, pending}
+	out := jobListEnvelope{Jobs: list, Pending: pending}
 	data, _ := json.Marshal(out)
 	return string(data), nil
 }
@@ -127,6 +124,13 @@ const (
 	// finished record was reaped.
 	cancelUnknown = "unknown"
 )
+
+// jobListEnvelope is the list result: every tracked job snapshot plus the
+// count that is still running.
+type jobListEnvelope struct {
+	Jobs    []jobs.BackgroundJobStatus `json:"jobs"`
+	Pending int                        `json:"pending"`
+}
 
 // cancelEnvelope is a cancel result: the verb's own outcome in Cancel, plus
 // the job snapshot when the job is known. The snapshot is a pointer so an id

@@ -1,6 +1,6 @@
 // Package jail selects yaah's per-platform containment backend.
 //
-// shepherd-runtime ships one containment.Backend per mechanism, each in its
+// goatherd-runtime ships one containment.Backend per mechanism, each in its
 // own nested module, and a host passes the one that fits into the sandbox
 // constructor. The runtime never imports a member, and build tags are
 // prohibited in this repo, so selection is a runtime.GOOS lookup into a
