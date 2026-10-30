@@ -369,8 +369,8 @@ func resolveTaskTimeout(callSeconds int, resolveDefault func(jobs.SubAgentParams
 	return 0
 }
 
-// backgroundDispatchResult is the immediate result of a background dispatch.
-type backgroundDispatchResult struct {
+// backgroundDispatchEnvelope is the immediate result of a background dispatch.
+type backgroundDispatchEnvelope struct {
 	Status string `json:"status"`
 	JobID  string `json:"job_id"`
 	Label  string `json:"label"`
@@ -381,7 +381,7 @@ type backgroundDispatchResult struct {
 // id it can use with the subagent_jobs tool (status/cancel); the actual
 // sub-agent output arrives later via a follow-up message.
 func structuredBackgroundResult(jobID, label string) string {
-	out := backgroundDispatchResult{
+	out := backgroundDispatchEnvelope{
 		Status: "running",
 		JobID:  jobID,
 		Label:  label,
@@ -393,9 +393,9 @@ func structuredBackgroundResult(jobID, label string) string {
 	return string(data)
 }
 
-// dispatchFailureResult is the payload returned when a dispatch did not
+// dispatchFailureEnvelope is the payload returned when a dispatch did not
 // complete normally.
-type dispatchFailureResult struct {
+type dispatchFailureEnvelope struct {
 	Error   string `json:"error"`
 	Role    string `json:"role,omitempty"`
 	Timeout string `json:"timeout,omitempty"`
@@ -411,7 +411,7 @@ func structuredTaskResult(reason, role string, timeout time.Duration, partial st
 	if timeout > 0 {
 		timeoutStr = fmt.Sprintf("%.0fs", timeout.Seconds())
 	}
-	out := dispatchFailureResult{
+	out := dispatchFailureEnvelope{
 		Error:   reason,
 		Role:    role,
 		Timeout: timeoutStr,

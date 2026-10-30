@@ -22,10 +22,12 @@ import (
 )
 
 // resultEnvelopeDocs is the registry of result envelopes and the prompt
-// file that documents them. New result envelopes must be added here; the
-// registry is explicit because a type can be platform-gated and therefore
-// absent from reflection on another build. Once registered, a new JSON
-// field fails the test until the doc names it.
+// file that documents them. Model-facing result envelopes are named
+// *Envelope; proposalSummary is the one summary entry and is covered by the
+// Summary suffix. New result envelopes must be added here; the registry is
+// explicit because a type can be platform-gated and therefore absent from
+// reflection on another build. Once registered, a new JSON field fails the
+// test until the doc names it.
 var resultEnvelopeDocs = []struct {
 	typ reflect.Type
 	doc string
@@ -36,8 +38,8 @@ var resultEnvelopeDocs = []struct {
 	{reflect.TypeOf(jobListEnvelope{}), "subagent_jobs"},
 	{reflect.TypeOf(cancelEnvelope{}), "subagent_jobs"},
 	{reflect.TypeOf(waitEnvelope{}), "subagent_jobs"},
-	{reflect.TypeOf(backgroundDispatchResult{}), "delegate"},
-	{reflect.TypeOf(dispatchFailureResult{}), "delegate"},
+	{reflect.TypeOf(backgroundDispatchEnvelope{}), "delegate"},
+	{reflect.TypeOf(dispatchFailureEnvelope{}), "delegate"},
 }
 
 // envelopeExemptions lists production *Envelope types that are not
@@ -79,7 +81,7 @@ func TestResultEnvelopeRegistryCoversNamedEnvelopes(t *testing.T) {
 			}
 			for _, spec := range gen.Specs {
 				ts, ok := spec.(*ast.TypeSpec)
-				if !ok || !strings.HasSuffix(ts.Name.Name, "Envelope") {
+				if !ok || (!strings.HasSuffix(ts.Name.Name, "Envelope") && !strings.HasSuffix(ts.Name.Name, "Summary")) {
 					continue
 				}
 				if _, ok := ts.Type.(*ast.StructType); !ok {
