@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.119.0](https://github.com/buchenberg/yaah/compare/v0.118.3...v0.119.0) (2026-10-30)
+
+
+### Features
+
+* **container:** seal proposals from the snapshot change set ([6d04730](https://github.com/buchenberg/yaah/commit/6d04730eb57cec080d4acb42ea4a5c749c91dc87))
+
+
+### Bug Fixes
+
+* **container:** address snapshot seal review findings ([907d7cd](https://github.com/buchenberg/yaah/commit/907d7cdfd65d16a5884f3495fae1410ca220dbe5))
+* **container:** keep snapshot review when directories change ([774aaa5](https://github.com/buchenberg/yaah/commit/774aaa5b6a4174a486b9c1cda329fc26f623d3db))
+
+
+### Documentation
+
+* **prompts:** align container-lane and supervisor guidance ([871b229](https://github.com/buchenberg/yaah/commit/871b229ba8f6d61c3be11ccefae5c368869cb8cf))
+* **prompts:** align container-lane and supervisor guidance ([75891ec](https://github.com/buchenberg/yaah/commit/75891ec0ec1bdf104393e9e57d31633f89a3e774))
+* **prompts:** condition apply_out guidance on tool availability ([1e04180](https://github.com/buchenberg/yaah/commit/1e04180ebe08d19c055d1099910871dbf40c8976))
+* **prompts:** tighten envelope provenance and lane wording ([2050688](https://github.com/buchenberg/yaah/commit/2050688275c4f0b8221469a530e7fcce1632b4fb))
+
 ## [0.118.3](https://github.com/buchenberg/yaah/compare/v0.118.2...v0.118.3) (2026-10-30)
 
 
