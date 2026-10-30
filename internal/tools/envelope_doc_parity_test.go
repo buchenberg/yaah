@@ -9,7 +9,6 @@ package tools
 
 import (
 	"go/ast"
-	"go/build"
 	"go/parser"
 	"go/token"
 	"os"
@@ -79,19 +78,14 @@ func TestResultEnvelopeRegistryCoversNamedEnvelopes(t *testing.T) {
 		t.Fatalf("read package directory: %v", err)
 	}
 	fset := token.NewFileSet()
+	seen := make(map[string]bool)
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
 			continue
 		}
-		// MatchFile keeps platform- and tag-gated files out of the scan;
-		// a result envelope should not depend on the runner's GOOS.
-		match, err := build.Default.MatchFile(".", entry.Name())
-		if err != nil {
-			t.Fatalf("match build constraints for %s: %v", entry.Name(), err)
-		}
-		if !match {
-			continue
-		}
+		// Parse every production file, including tag-gated ones. Coverage
+		// must not depend on which platform runs the test; an envelope that
+		// exists only on one platform still needs its doc.
 		file, err := parser.ParseFile(fset, entry.Name(), nil, 0)
 		if err != nil {
 			t.Fatalf("parse %s: %v", entry.Name(), err)
@@ -109,13 +103,23 @@ func TestResultEnvelopeRegistryCoversNamedEnvelopes(t *testing.T) {
 				if _, ok := ts.Type.(*ast.StructType); !ok {
 					continue
 				}
-				if _, ok := envelopeExemptions[ts.Name.Name]; ok {
+				seen[ts.Name.Name] = true
+				if bead, ok := envelopeExemptions[ts.Name.Name]; ok {
+					t.Logf("%s: exempt — %s", ts.Name.Name, bead)
 					continue
 				}
 				if !registered[ts.Name.Name] {
 					t.Errorf("type %s is a production envelope but is not in resultEnvelopeDocs; add it and its model-facing doc, or record an envelopeExemptions entry citing a bead", ts.Name.Name)
 				}
 			}
+		}
+	}
+	for name, bead := range envelopeExemptions {
+		if strings.TrimSpace(bead) == "" {
+			t.Errorf("envelopeExemptions[%s] must cite the bead that removes the exemption", name)
+		}
+		if !seen[name] {
+			t.Errorf("envelopeExemptions names %s, but no production *Envelope type exists", name)
 		}
 	}
 }
