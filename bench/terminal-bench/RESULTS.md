@@ -31,14 +31,23 @@ five tasks, so every row is directly comparable.
 | 2026-10-20 | 5d927a7+quickref-trim (trial 1) | yaah | 5/5 | 786,996 | 26,344 | 712,448 (91%) | 292s |
 | 2026-10-20 | 5d927a7+quickref-trim (trial 2) | yaah | 5/5 | 536,465 | 14,714 | 523,648 (98%) | 125s |
 | 2026-10-20 | 5d927a7+quickref-trim+sed-rm (trial 3) | yaah | 5/5 | 565,069 | 14,487 | 544,768 (96%) | 137s |
+| 2026-10-29 | 8eb063f | yaah | 5/5 | 759,265 | 19,498 | 745,600 (98%) | 184s |
+| 2026-10-29 | hermes-agent 0.19.0 | hermes | 5/5 | 423,427 | 6,977 | 384,000 (91%) | 176s |
+| 2026-10-29 | opencode 2.1.3 | opencode | 5/5 | 300,316 | 11,036 | 283,648 (94%) | 134s |
+
+OpenCode's 2026-10-29 `Out` includes 4,213 reasoning tokens; its raw output
+field is 6,823. The other arms do not report a separate reasoning bucket.
 
 Run ids: 2026-10-17__04-47-51 (yaah), hermes-coding 2026-10-17__18-34-17
 lineage (see the Hermes section below), 2026-10-20__15-49-57 (yaah),
 2026-10-20__15-55-38 (hermes), 2026-10-20__16-32-16, 2026-10-20__16-35-46,
 and 2026-10-20__16-46-31 (yaah, quickref-trimmed; trial 3 also drops the
-deprecated sed tool). The 2026-10-20 hermes run failed
-`assign-seats` on `has_correct_pairs` — the same task family it failed on
-2026-10-12 (broken-python then); single-trial variance is real.
+deprecated sed tool). The 2026-10-29 three-way rows are
+2026-10-29__18-40-18 (yaah), 2026-10-29__18-46-16 (hermes), and
+2026-10-29__18-52-00 (opencode); see the fresh three-way section below. The
+2026-10-20 hermes run failed `assign-seats` on `has_correct_pairs` — the same
+task family it failed on 2026-10-12 (broken-python then); single-trial
+variance is real.
 
 ## Full-suite vs opencode (2026-10-12, deepseek-flash)
 
@@ -524,3 +533,70 @@ so the extractor used its documented `TB_MODEL` fallback (`deepseek-flash`).
 
 Raw metrics are emitted by `extract_metrics.py --json` for the run IDs above;
 append future run IDs here rather than rewriting this section.
+
+## Fresh three-way comparison — current 5-task suite (2026-10-29)
+
+Same day, same five-task `suite.txt`, same model (`deepseek-flash`), same
+Terminal-Bench pin (`d28711d`), one trial per task, `--n-concurrent 1`. All
+three agents ran in fresh workspaces with their own agent-logs. This is the
+first three-way run on the **current** five-task suite (the 2026-10-12
+three-way used the older six-task list including `gomoku-planner`).
+
+- yaah: commit `8eb063f` (`v0.118.2`), run `2026-10-29__18-40-18`
+- Hermes: `hermes-agent 0.19.0`, run `2026-10-29__18-46-16`
+- OpenCode: `opencode 2.1.3`, run `2026-10-29__18-52-00`
+
+| Task | yaah | Hermes | OpenCode |
+|---|---|---|---|
+| hello-world | resolved 7s | resolved 15s | resolved 4s |
+| broken-python | resolved 49s | resolved 41s | resolved 37s |
+| csv-to-parquet | resolved 40s | resolved 61s | resolved 37s |
+| jsonl-aggregator | resolved 51s | resolved 35s | resolved 21s |
+| assign-seats | resolved 37s | resolved 24s | resolved 35s |
+| **score** | **5/5** | **5/5** | **5/5** |
+| **agent time** | **184s** | **176s** | **134s** |
+
+Token accounting, normalized to inclusive prompt tokens (uncached input +
+cache read). OpenCode reports reasoning separately; yaah and Hermes do not
+split it out. Costs are the shared `pricing.json` off-peak rates.
+
+| Metric | yaah | Hermes | OpenCode |
+|---|---:|---:|---:|
+| Resolved | 5/5 | 5/5 | 5/5 |
+| Prompt tokens (incl cache) | 759,265 | 423,427 | 300,316 |
+| Uncached input | 13,665 | 39,427 | 16,668 |
+| Output | 19,498 | 6,977 | 6,823 |
+| Reasoning | — | 0 | 4,213 |
+| Cache read | 745,600 (98.2%) | 384,000 (90.7%) | 283,648 (94.4%) |
+| Agent time | 184s | 176s | 134s |
+| Estimated cost | $0.0160 | $0.0113 | $0.0100 |
+| Steps (sum) | 46 | 34 | 40 |
+
+Reading:
+
+- All three resolve every task. OpenCode's old `broken-python` parse error
+  (2/2 runs on 2026-10-12) did not reproduce on 2.1.3; it resolved in 37s.
+- OpenCode is the cheapest and fastest on this trial. Its 300K prompt total
+  is 40% of yaah's and 71% of Hermes's. It made 40 steps, between Hermes's 34
+  and yaah's 46, so the token advantage is smaller prompts per turn, not fewer
+  turns. yaah has the highest cache-hit ratio (98.2%) and absolute cache read;
+  OpenCode is 94.4% and Hermes 90.7%.
+- Hermes has the smallest reported output (6,977). OpenCode reports 6,823
+  output plus 4,213 reasoning, so its completion + reasoning total is 11,036;
+  yaah's 19,498 output is the largest. Cost includes OpenCode's reasoning.
+- Single trial per CLI per task. These are smoke signals, not a statistical
+  ranking; do not infer an agent-quality ordering from one run.
+
+Reproduce with the adapters in this directory:
+
+```bash
+PYTHONPATH=bench/terminal-bench YAAH_BIN=/tmp/yaah-bin/yaah-threeway \
+  ../terminal-bench/.venv/bin/tb run --agent-import-path yaah_agent:YaahAgent \
+  -t hello-world -t broken-python -t csv-to-parquet -t jsonl-aggregator \
+  -t assign-seats --dataset-path ../terminal-bench/original-tasks \
+  --output-path /tmp/tb-threeway/yaah --n-concurrent 1
+```
+
+The same task list with `hermes_agent:HermesAgent` (`HERMES_PKG_DIR`) and
+`opencode_agent:OpenCodeAgent` (`OPENCODE_BIN`) produces the other two arms.
+Token/cost totals come from `extract_metrics.py --json <runs-dir> <run-id>`.
