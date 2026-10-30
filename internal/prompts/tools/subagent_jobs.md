@@ -18,3 +18,5 @@ three values:
   `failed`, `cancelled`).
 - `unknown` — no such job: never dispatched in this session, or its finished
   record was reaped. No job fields are reported, because there is no job.
+
+An envelope may carry `notes` when a call returned early or has a caveat: a cancellation request that has not stopped the job yet, a wait interrupted before the job finished, or a job record that disappeared. `notes` explains the early return; it does not change the reported `status` or `still_running` facts. It is absent when there is no caveat.

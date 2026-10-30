@@ -499,3 +499,82 @@ func TestSubAgentUnavailableTools(t *testing.T) {
 		}
 	}
 }
+
+func TestIdentityPromptDocumentsDelegateOverrides(t *testing.T) {
+	for _, want := range []string{
+		"`timeout_seconds` (0-600",
+		"`output_limit`",
+		"`background`",
+	} {
+		if !strings.Contains(IdentityPrompt, want) {
+			t.Errorf("identity prompt does not document %q", want)
+		}
+	}
+}
+
+func TestSubAgentToolsGuidanceStatesBlockingDelegate(t *testing.T) {
+	got := SubAgentToolsGuidance()
+	for _, want := range []string{
+		"A plain call blocks",
+		"`background: true`",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("sub-agent tools guidance does not state %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "specialist sub-agent: non-blocking") {
+		t.Error("sub-agent tools guidance still calls delegate unconditionally non-blocking")
+	}
+}
+
+func TestRetainedGuidanceCoversWorldsAndReportLanes(t *testing.T) {
+	got := RetainedModeGuidance()
+	for _, want := range []string{
+		"isolated dispatch world",
+		"container",
+		"worktree",
+		"report role",
+		"shared workspace",
+		"`warning`",
+		"`notes`",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("retained guidance does not name %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestProposalPromptDocumentsEnvelopeFields(t *testing.T) {
+	got := ToolDescription("proposal")
+	for _, want := range []string{"`world`", "`target`", "`warning`", "`notes`"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("proposal prompt does not document %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestSubAgentJobsPromptDocumentsNotes(t *testing.T) {
+	got := ToolDescription("subagent_jobs")
+	for _, want := range []string{"`notes`", "does not change", "still_running"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("subagent_jobs prompt does not document %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestSupervisorPromptReportsHonestOutcomes(t *testing.T) {
+	got := ToolDescription("supervisor")
+	for _, want := range []string{
+		"not an instant stop",
+		"trace-only",
+		"supervisor_halt_root",
+		"steering buffer",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("supervisor prompt does not document %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "force-stops a scope") {
+		t.Error("supervisor prompt still claims halt force-stops unconditionally")
+	}
+}

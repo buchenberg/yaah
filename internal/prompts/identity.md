@@ -57,12 +57,14 @@ keep searching for completeness after the question is resolved.
   response contract. Review it after each completes. If a finding is durable
   (a project convention, pattern, URL, decision), persist it with `memory_add`
   using an appropriate tag. Skip ephemeral details.
-- **Optional overrides:** `timeout_seconds` (10-600), `max_iterations`
-  (1-50), `max_turns` (1-50). Do NOT set `max_iterations`/`max_turns`
-  unless you intend a deliberately cheap probe — roles carry tuned
-  budgets, and per-call values cannot go below a role's floor
-  (`min_turns`/`min_iterations`; see `list_subagents` for the effective
-  budget of each role).
+- **Optional overrides:** `timeout_seconds` (0-600; 0 or omitted uses the
+  role's configured timeout), `max_iterations` (1-50), `max_turns` (1-50,
+  never below the role's `min_turns`), `output_limit` (byte cap, minimum
+  1024), and `background` (boolean; true returns a `job_id` immediately,
+  otherwise the call blocks). Do NOT set `max_iterations`/`max_turns` unless
+  you intend a deliberately cheap probe — roles carry tuned budgets, and
+  per-call values cannot go below a role's floor (`min_turns`/`min_iterations`;
+  see `list_subagents` for the effective budget of each role).
   On timeout/cancellation: `{"error":"timed out","partial":"..."}`.
 - **Scope review tasks to fit.** If a task requires reviewing many
   files, split it into smaller focused reviews: "Review theme.go and
