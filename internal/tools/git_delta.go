@@ -321,8 +321,11 @@ func captureContainerDelta(ctx context.Context, ss *SessionSandbox) (*GitDelta, 
 		if !filepath.IsLocal(filepath.FromSlash(rel)) {
 			return nil, "", fmt.Errorf("git delta: change path %q escapes the workspace root", c.Path)
 		}
-		if c.IsDir || excludedFromManifest(rel) || deniedBy(ss.deny, rel) != "" {
+		if excludedFromManifest(rel) || deniedBy(ss.deny, rel) != "" {
 			filtered = true
+			continue
+		}
+		if c.IsDir {
 			continue
 		}
 		if len(delta.Changes) >= gitDeltaMaxFiles {

@@ -539,7 +539,35 @@ func TestCaptureContainerDelta_ProducesManifest(t *testing.T) {
 		t.Errorf("gone.txt = %+v, want a delete with no content", c)
 	}
 	if !strings.Contains(review, "+from the container") {
-		t.Errorf("review must render the post-image:\n%s", review)
+		t.Errorf("review must render the added post-image:\n%s", review)
+	}
+	if !strings.Contains(review, "-before") || !strings.Contains(review, "+after") {
+		t.Errorf("review must show the real modify delta, not only the post-image:\n%s", review)
+	}
+}
+
+func TestCaptureContainerDelta_ReviewShowsDeltaAlongsideNewDirectory(t *testing.T) {
+	sb := sandboxfake.New()
+	ss := newDeltaSession(t, sb)
+	if err := sb.WriteFile(context.Background(), "/workspace/file.txt", []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	captureDeltaBaseline(t, ss)
+	if err := ss.ws.WriteFile(context.Background(), "/workspace/file.txt", []byte("after\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ss.ws.MkdirAll(context.Background(), "/workspace/newdir", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := ss.ws.WriteFile(context.Background(), "/workspace/newdir/new.txt", []byte("new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, review, err := captureContainerDelta(context.Background(), ss)
+	if err != nil {
+		t.Fatalf("captureContainerDelta: %v", err)
+	}
+	if !strings.Contains(review, "-before") || !strings.Contains(review, "+after") {
+		t.Fatalf("review must retain the real modify delta despite a directory entry:\n%s", review)
 	}
 }
 
