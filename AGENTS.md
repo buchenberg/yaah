@@ -12,19 +12,21 @@ at `~/.yaah/`, skills at `./.agents/` (project, tracked) and `~/.agents/`
 
 ## Local-only directories
 
-These are local to a developer's working copy and are gitignored. Never commit
-them:
+These are local to a developer's working copy. Never commit generated state
+from them:
 
 - **`.scratch/`** — scratch space for cloning third-party repos while building
   a skill. Real dependencies are pinned in `go.sum`.
-- **`.ghost/`, `.claude/`, `.qwen/`, `.hermes/`, etc.** — metadata for AI
-  coding tools.
+- **`.beads/`, `.dolt/`** — local beads issue-tracker state; the database is
+  local even though a few bootstrap files are tracked.
+- **`.ghost/`, `.claude/`, `.qwen/`, `.hermes/`, `.kilo/`, `.serena/`,
+  `.entire/`, etc.** — metadata for AI coding tools.
 
 ## Repo layout
 
 ```
 yaah/
-├── main.go                      # calls cmd/yaah.Execute()
+├── main.go                      # jail.MaybeRunTrampoline(os.Args), then cmd/yaah.Execute()
 ├── cmd/yaah/                    # cobra commands + composition root
 │   ├── root*.go                 # build-time vars, persistent flags, dispatch
 │   ├── session*.go              # agentSession plumbing and options
@@ -46,18 +48,23 @@ yaah/
 │   │   ├── events/              #   typed events + hooks
 │   │   ├── llm/                 #   LLM client: streaming, retry, fallback
 │   │   ├── pipeline/            #   middleware pipeline
+│   │   ├── recovery/            #   crash recovery for orphaned scopes
 │   │   ├── runner/              #   sub-agent dispatch wiring
 │   │   ├── subagent/            #   role definitions and registry
 │   │   └── supervision/         #   advisory rules and destructive guard
+│   ├── banner/                  # startup/status banner rendering
 │   ├── config/                  # config load, env substitution, validation
+│   ├── control/                 # typed control-plane messages (todos, questions, approvals)
 │   ├── cwdpath/                 # cwd canonicalization shared by store + filters
 │   ├── doctor/                  # `yaah doctor` checks
 │   ├── gitsandbox/              # untracked-file-preserving git sandbox wrapper
 │   ├── instructions/            # AGENTS.md/CLAUDE.md discovery
+│   ├── jail/                    # per-platform containment backend selection
 │   ├── jobs/                    # background jobs + sub-agent I/O contract
 │   ├── mcp/                     # MCP client + server (stdio + HTTP)
 │   ├── memory/                  # SQLite sessions, memory, FTS5, embeddings
 │   ├── observability/           # OpenTelemetry tracing + span buffer
+│   ├── parity/                  # Shepherd parity ledger drift guard
 │   ├── plans/                   # PLAN.md discovery/parsing
 │   ├── process/                 # background process manager
 │   ├── prompts/                 # identity, roles, tool docs, prompt assembly
@@ -68,14 +75,16 @@ yaah/
 │   ├── sandboxfake/             # in-memory sandbox test double
 │   ├── sessions/                # engine-level session registry (all views)
 │   ├── skills/                  # SKILL.md discovery/parsing
+│   ├── spinner/                 # terminal spinner primitives
+│   ├── todo/                    # todo-list model shared by the views
 │   ├── toolfmt/                 # shared tool result formatting
 │   ├── tools/                   # built-in tools
 │   ├── tui/                     # tview UI components
 │   ├── types/                   # message and chat request types
-│   └── update/                  # release checking and self-update
-├── docs/                        # architecture, configuration, features, sub-agents,
-│                                # prompts, agent instructions, code organization,
-│                                # TUI, web UI
+│   ├── update/                  # release checking and self-update
+│   └── worldinfo/               # resolved dispatch-world reporting
+├── docs/                        # user and developer docs; see docs/architecture.md
+│                                # and docs/configuration.md for the entry points
 ├── bench/                       # benchmark harnesses
 ├── .agents/                     # project skills and roles
 ├── .github/workflows/ci.yml     # CI: gofmt, vet, staticcheck, test, native build (ubuntu/macos/windows)
@@ -125,12 +134,12 @@ agent reconnects on the next request. Verify the swap via `status`
 known `trace_id`). One observable change per iteration; trust trace data over
 model self-report. Full workflow: `.agents/skills/yaah-dev-loop/SKILL.md`.
 
-`cmd/yaah/serve.go` registers the same tools for stdio and HTTP via
+`cmd/yaah/serve_tools.go` registers the same tools for stdio and HTTP via
 `registerServeTools()`.
 
 ## Conventions
 
-- **Go 1.26+** (the croft dependency requires go >= 1.26.3).
+- **Go 1.26.3+** (`go.mod` requires 1.26.3).
 - **No codegen, no build tags, no `go generate`.**
 - **cobra + pflag** for CLI.
 - **`internal/` for everything private.** `pkg/` is reserved for future
@@ -193,7 +202,7 @@ see `internal/agent/events/events.go`.
 | Consumer | View impl | File |
 |---|---|---|
 | TUI | `App.HandleEvent` (`App` is the `agent.View`) | `internal/tui/proxy.go` |
-| REPL | `terminalView` / `replView` | `cmd/yaah/view_terminal.go` |
+| REPL | `terminalView` | `cmd/yaah/view_terminal.go` |
 | Web | `sseView` | `cmd/yaah/web_view.go` |
 | Sub-agents | `agent.NoopView` | `internal/agent/runner/runner.go` |
 | MCP serve | `agent.NoopView` | `cmd/yaah/serve.go` |

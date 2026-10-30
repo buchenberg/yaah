@@ -1,6 +1,6 @@
 ---
 name: yaah-dev-loop
-description: Build, run, and iterate on yaah server modes (MCP, ACP) from inside a Kilo session or via stdio JSON-RPC. Use when developing yaah itself (internal/mcp, cmd/yaah/serve, cmd/yaah/acp_cmd.go, prompt/tools) and you want to exercise the change through a live connection without restarting the host agent.
+description: Build, run, and iterate on yaah's server modes (MCP, ACP) from inside a Kilo session or via stdio JSON-RPC. Use when developing yaah itself (internal/mcp, cmd/yaah/serve, cmd/yaah/acp_cmd.go, prompt/tools) and you want to exercise the change through a live connection without restarting the host agent.
 version: 1.0.0
 author: local
 license: MIT
@@ -15,7 +15,7 @@ metadata:
 
 # yaah Dev Loop (MCP hot-reload via HTTP+SSE)
 
-The dev loop: **edit yaah source → `go build` → restart `yaah serve --http` → call
+The dev loop: **edit yaah source → `go build` → restart `yaah mcp serve --listen` → call
 MCP tools from Kilo → inspect OpenTelemetry spans**. Kilo itself does **not**
 restart — the running yaah process is just swapped underneath it.
 
@@ -29,7 +29,7 @@ ritual, one comparable signal (the next MCP tool call returns the new behavior).
 
 | Requirement | Why |
 |---|---|
-| Go 1.25+ | yaah uses Go 1.25+ generics and `log/slog` patterns |
+| Go 1.26.3+ | `go.mod` requires Go 1.26.3 |
 | Kilo with `mcp__yaah__*` tools loaded | otherwise there is nothing to call |
 | Port `127.0.0.1:7333` free | the MCP server bind address (configurable) |
 | `~/.yaah/config.yaml` with a working provider | needed for the `prompt` tool to actually call an LLM |
@@ -77,7 +77,7 @@ at process start; config changes are not picked up by a new session alone.
 Pick one port — `7333` is the convention. Run from the repo root:
 
 ```bash
-yaah serve --http 127.0.0.1:7333
+yaah mcp serve --listen 127.0.0.1:7333
 ```
 
 You should see:
@@ -102,10 +102,10 @@ go build -o yaah.exe .                                # ~3 s cold, <1 s warm
 
 # 3. Swap the running process (Windows PowerShell)
 Get-Process yaah | Stop-Process -Force
-yaah.exe serve --http 127.0.0.1:7333 &                 # background
+yaah.exe mcp serve --listen 127.0.0.1:7333 &                 # background
 
 # (Linux/macOS)
-pkill -f 'yaah serve --http' && ./yaah serve --http 127.0.0.1:7333 &
+pkill -f 'yaah mcp serve --listen' && ./yaah mcp serve --listen 127.0.0.1:7333 &
 ```
 
 Total swap time: **~1 s** (kill + relaunch). Kilo's MCP client sees the new
@@ -176,7 +176,7 @@ HTTP+SSE transport. Rebuild:
 ```bash
 go build -o yaah.exe .
 Get-Process yaah | Stop-Process -Force
-yaah.exe serve --http 127.0.0.1:7333
+yaah.exe mcp serve --listen 127.0.0.1:7333
 ```
 
 Verify with:
@@ -197,9 +197,9 @@ hang waiting for it.
 Fix is in `internal/mcp/framing.go`: `ID int64 \`json:"id"\`` (no omitempty).
 Rebuild after any change there.
 
-### `yaah serve --http` exits immediately with `unknown command serve`
+### Old binary lacks the server command
 
-The binary on `PATH` is older than your checkout. Check both:
+The binary on `PATH` may predate `yaah mcp serve` (or the deprecated `yaah serve` alias). Check both:
 
 ```bash
 Get-Item C:\Code\Personal\agentic\yaah\yaah.exe      # repo build
@@ -213,8 +213,8 @@ yourself (recommended — the whole point of this skill).
 
 ### Stale binary at `C:\Users\gbuch\go\bin\yaah.exe`
 
-Older Kilo sessions and orphaned `yaah serve` processes can leave a binary on
-disk that lacks `serve`. Symptoms: command not found, immediate exit, Kilo
+Older Kilo sessions and orphaned `yaah mcp serve` processes can leave a binary on
+disk that lacks the `mcp serve` command. Symptoms: command not found, immediate exit, Kilo
 30 s timeout. Fix:
 
 ```bash
@@ -226,7 +226,7 @@ yaah --version   # confirm commit hash matches your checkout
 ### Server keeps an old `pid` in `status`
 
 You swapped but Kilo is still talking to a child process, or you forgot to
-kill the previous `yaah serve`. Verify only one `yaah.exe` is running:
+kill the previous `yaah mcp serve`. Verify only one `yaah.exe` is running:
 
 ```bash
 Get-Process yaah | Format-Table Id, StartTime
@@ -246,7 +246,7 @@ config problems.
 Either no `prompt` has run in this session yet, or the in-memory ring has been
 flushed (process restart with no new calls). Run a `prompt` first, then query
 traces within the same process lifetime. The ring holds the last ~1k spans
-across all sessions hosted by one `yaah serve` process.
+across all sessions hosted by one `yaah mcp serve` process.
 
 ### Tests fail after edit but `go build` is clean
 
@@ -258,7 +258,7 @@ go test ./internal/mcp/... -run TestHTTP -v
 go test ./...
 ```
 
-CI parity is `gofmt -l . && go vet ./... && go test ./... && staticcheck ./...`.
+CI parity is `gofmt -l . && go vet ./... && go run honnef.co/go/tools/cmd/staticcheck@latest ./... && go test -shuffle=on ./...`.
 
 ### Port 7333 already in use
 
@@ -266,7 +266,7 @@ Either another yaah is running, or something else owns the port. Pick a new
 port and update both the server flag and `kilo.json`:
 
 ```bash
-yaah serve --http 127.0.0.1:7334
+yaah mcp serve --listen 127.0.0.1:7334
 # then edit kilo.json: "url": "http://127.0.0.1:7334/mcp"
 # restart Kilo once
 ```
@@ -282,7 +282,7 @@ Save as `scripts/dev-loop-smoke.ps1` and run from the repo root:
 $ErrorActionPreference = 'Stop'
 go build -o yaah.exe . | Out-Null
 $port = 7333
-$proc = Start-Process .\yaah.exe -ArgumentList "serve --http 127.0.0.1:$port" `
+$proc = Start-Process .\yaah.exe -ArgumentList "mcp serve --listen 127.0.0.1:$port" `
     -RedirectStandardOutput nul -RedirectStandardError nul -PassThru -NoNewWindow
 try {
     Start-Sleep -Seconds 1
@@ -305,20 +305,20 @@ If green, the dev loop is ready.
 
 ### ACP dev loop variant
 
-`yaah acp-serve` runs over stdio with newline-delimited JSON-RPC 2.0 and
+`yaah acp serve` runs over stdio with newline-delimited JSON-RPC 2.0 and
 speaks Agent Client Protocol v1 (agentclientprotocol.com). The swap cycle
 is the same (build → kill → restart) but you drive it from an ACP client
 (e.g. the Zed editor or a VS Code ACP client extension):
 
 ```bash
-go build -o yaah . && pkill -f 'yaah acp-serve' 2>/dev/null
-yaah acp-serve &
+go build -o yaah . && pkill -f 'yaah acp serve' 2>/dev/null
+yaah acp serve &
 ```
 
 Test the ACP initialize handshake by piping a JSON-RPC request:
 
 ```bash
-printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":true,"writeTextFile":true}},"clientInfo":{"name":"test","version":"1"}}}\n' | timeout 2 yaah acp-serve 2>/dev/null
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":true,"writeTextFile":true}},"clientInfo":{"name":"test","version":"1"}}}\n' | timeout 2 yaah acp serve 2>/dev/null
 ```
 
 Expected output:
@@ -332,5 +332,5 @@ approvals arrive as session/request_permission requests the client must
 answer):
 
 ```bash
-printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientInfo":{"name":"test"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized"}\n{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"'$PWD'","mcpServers":[]}}\n' | timeout 5 yaah acp-serve 2>/dev/null
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientInfo":{"name":"test"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized"}\n{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"'$PWD'","mcpServers":[]}}\n' | timeout 5 yaah acp serve 2>/dev/null
 ```

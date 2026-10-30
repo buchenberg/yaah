@@ -635,12 +635,12 @@ type CancelParams struct {
 
 // ElicitationParams are the params of elicitation/create: the agent's
 // request for structured user input. Only the form mode is produced
-// (question-tool prompts); url mode needs OAuth flows and is not wired.
+// (question-tool prompts); url mode needs OAuth flows and is reserved.
 // The session binding is required here, matching the spec's
 // Session alternative.
 type ElicitationParams struct {
 	Message         string          `json:"message"`
-	Mode            string          `json:"mode"` // form | url
+	Mode            string          `json:"mode"` // form only; url is reserved
 	SessionID       string          `json:"sessionId"`
 	RequestedSchema json.RawMessage `json:"requestedSchema"`
 }

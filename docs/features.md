@@ -30,6 +30,8 @@ Running `yaah` with no arguments starts a readline REPL:
 | `/clear` | Clear the screen |
 | `/compact` | Summarize old context |
 | `/help`, `/?` | Show commands |
+| `/roles`, `/reload-roles` | Reload role files |
+| `/login`, `/logout` | Manage provider OAuth login |
 
 History persists at `~/.yaah/history` (or `$YAAH_HOME/history` when `YAAH_HOME` is set).
 
@@ -59,7 +61,7 @@ FTS5 remains the exact-match fallback. See
 
 Memory is **tiered**: `global` atoms are durable across sessions, while
 `session` atoms are working context distilled by the consolidator (see
-[compaction-as-sleep.md](./compaction-as-sleep.md)). A cadence-driven nudge
+[compaction and consolidation](./compaction-as-sleep.md)). A cadence-driven nudge
 fires the consolidator, which writes `source:compaction` atoms; a conservative
 hygiene sweep later reclaims only the ones that were never recalled — an atom
 that has been accessed is never pruned. `yaah memory stats` renders the
@@ -180,7 +182,7 @@ Built-in tools include:
 | Go | `go_outline`, `go_refactor`, `go_test`, `go_mod`, `staticcheck` |
 | Web | `http`, `webfetch` |
 | Utility | `calculate`, `question` |
-| Memory | `memory_search`, `memory_add`, `memory_update`, `memory_delete`, `memory_search_sessions` |
+| Memory | `memory_search`, `memory_add`, `memory_update`, `memory_delete`, `memory_promote`, `memory_search_sessions` |
 | Orchestration | `delegate`, `list_subagents`, `subagent_jobs`, `role`, `proposal`, `supervisor` |
 | Session | `plan`, `todowrite`, `skill`, `background_process` |
 | Isolated sessions | `apply_out` (only when a container-backed workspace is active) |

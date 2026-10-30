@@ -17,7 +17,7 @@ Four roles are built in and work in any project with no setup:
 | `developer` | Charley | 75 iterations (cap 50), 24 turns, 900s | Implement features, fix bugs, edit files |
 | `analyst` | Jack | 75 iterations (cap 50), 24 turns, 600s | Research from code, docs, and the web; no file changes |
 | `tester` | Casey | 30 iterations, 8 turns, 300s | Run suites, analyze failures, measure coverage |
-| `reviewer` | Tim | 25 iterations, 12 turns, 480s | Inspect code, complexity, dead code, maintainability |
+| `reviewer` | Tim | 25 iterations, 12 turns, 600s | Inspect code, complexity, dead code, maintainability |
 
 There is no default role and no full-tools fallback: every dispatch names a
 role. Unknown role names are rejected when the registry-backed role list is
@@ -33,9 +33,9 @@ Multiple `delegate` calls in one turn fan out in parallel, bounded by
 
 Project-level roles live in `.agents/roles/*.md`; user-level roles live in
 `~/.agents/roles/*.md`. This repository ships examples (security auditor,
-Go developer/tester, single-command checker, counter, and a couple of
-no-tool novelty roles). Built-in role names always win; custom roles are
-additive.
+Go developer/tester, single-command checker, counter, consolidator, and a
+couple of no-tool novelty roles). Built-in role names always win; custom roles
+are additive.
 
 ## Custom roles
 

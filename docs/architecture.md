@@ -105,7 +105,8 @@ whether to work inline or dispatch a sub-agent.
 ```
 1. Orchestrator emits delegate(role, description, prompt)
 2. makeTaskRunner resolves the role, budget, provider/model, and lane
-3. Retained lane: fork an isolated worktree, run the sub-agent, seal a proposal
+3. Retained lane: fork an isolated dispatch world (worktree or per-dispatch
+   container), run the sub-agent, seal a proposal
    Direct lane:  run the sub-agent on the host/shared workspace
 4. Result returns as a tool result (or a proposal the orchestrator settles)
 5. Orchestrator evaluates the result and may dispatch more sub-agents
@@ -185,15 +186,18 @@ func (p *Pipeline) RunPrepareStep(ctx context.Context, step *Step) (*Step, error
 ```
 
 The pipeline is built in `buildPipeline()` with a config-driven order:
-1. `SteerMiddleware` - high-priority mid-turn messages
-2. `FollowupMiddleware` - queued between-turn messages
-3. `CompactionMiddleware` - context window enforcement (LLM summarization)
-4. `SoftPruneMiddleware` - tier-0 tool-output elision (non-LLM, reclaims context)
-5. `ApprovalMiddleware` - enforces the approval policy in `PostModel`: dangerous calls are stripped and replaced by synthesized denial tool-results (classification, user prompting, and hook emission are injected callbacks from `toPipelineConfig`)
-6. `InlineLimitMiddleware` - caps calls dispatched per turn in `PostModel`, synthesizing drop results for calls beyond `MaxInlineToolsPerTurn`
-7. `ToolConcurrencyMiddleware` - shares the Loop-owned semaphore (`PipelineConfig.ToolConc`); one live instance per loop
-8. `LoopDetectionMiddleware` - detect stuck loops
-9. `ConflictDetectMiddleware` - `PostTool` conflict reports driven by the injected tracker via `DetectAndReset()`
+1. `steer` — high-priority mid-turn messages
+2. `followup` — queued between-turn messages
+3. `compaction` — context window enforcement (LLM summarization)
+4. `soft_prune` — tier-0 tool-output elision (non-LLM, reclaims context)
+5. `approval` — enforces the approval policy in `PostModel`: dangerous calls are stripped and replaced by synthesized denial tool-results (classification, user prompting, and hook emission are injected callbacks from `toPipelineConfig`)
+6. `inline_limit` — caps calls dispatched per turn in `PostModel`, synthesizing drop results for calls beyond `MaxInlineToolsPerTurn`
+7. `tool_concurrency` — shares the Loop-owned semaphore (`PipelineConfig.ToolConc`); one live instance per loop
+8. `shepherd_trace` — records tool declarations, observations, and transcript facts in the kernel trace
+9. `loop_detection` — detects identical-call loops
+10. `intent_loop` — detects repeated cross-turn plans and can steer or halt
+11. `evidence_guard` — nudges or halts exploration that stops producing new evidence
+12. `conflict_detect` — `PostTool` conflict reports driven by the injected tracker via `DetectAndReset()`
 
 The default set is defined in `defaultPipelineNames` in `config.go`. Users can override which middleware runs via `config.yaml`:
 
@@ -319,7 +323,7 @@ Each sub-agent runs under a **role** that selects its tool set and default limit
 | `analyst` (Jack) | 75 (cap 50) | 24 (5) | 600s | read/search/web + shell, git, diff, go_outline |
 | `developer` (Charley) | 75 (cap 50) | 24 (6) | 900s | analyst set + write/edit/delete/patch + Go tools |
 | `tester` (Casey) | 30 | 8 (4) | 300s | read/search + shell + go_test + git/diff |
-| `reviewer` (Tim) | 25 | 12 (8) | 480s | read/search + git/diff/staticcheck; no shell or web |
+| `reviewer` (Tim) | 25 | 12 (8) | 600s | read/search + git/diff/staticcheck; no shell or web |
 
 Role iteration limits above the tool schema's hard ceiling of 50 resolve to 50.
 
@@ -520,19 +524,19 @@ When an agent dispatches multiple parallel sub-agents in a single turn, those su
 
 Files: `internal/tools/retained.go`, `internal/tools/proposal.go`, `internal/tools/supervisor.go`, `internal/agent/runner/checkpoint.go`
 
-A retained dispatch runs the sub-agent in a **worktree of its own** and seals its output into a proposal; the orchestrator settles it. Nothing reaches the parent tree before settlement, so a rejected attempt is discarded rather than rolled back.
+A retained dispatch runs the sub-agent in an **isolated dispatch world** — a git worktree, or a per-dispatch container when configured — and seals its output into a proposal; the orchestrator settles it. Nothing reaches the parent tree before settlement, so a rejected attempt is discarded rather than rolled back.
 
-- **The world.** `ScopeManager.ForkIsolated` gives the dispatch an isolated child scope owning a `NewWorktreeSandbox`. Retained is the default when a trace store is configured; `agents.subagent.mode: shared` is the explicit opt-out that runs the sub-agent directly on the host.
-- **The settlement.** `select` fast-forwards and fails closed if the tree moved; `apply` is a three-way merge that lands only when the change sets are path-disjoint; `release` keeps whatever landed and drops the record; `discard` throws the work away and removes the worktree. A sealed output is consumed exactly once (`ErrOutputConsumed`), and a settlement that landed an effect but failed its causal merge reports the diagnostic instead of inviting a retry that would apply it twice.
+- **The world.** A local session's worktree lane uses `ScopeManager.ForkIsolated` with a `NewWorktreeSandbox`; the container lane uses the wired per-dispatch container setup and destroys it at seal. A container session uses its session container for proposals and a sibling container for report dispatches. Retained is the default when a trace store is configured; `agents.subagent.mode: shared` is the explicit opt-out that runs the sub-agent directly on the host.
+- **The settlement.** `select` fast-forwards onto the dispatch basis and fails closed if the basis moved; `apply` is path-disjoint and uses a three-way merge on the worktree lane or whole-path post-images on the container lane. `release` exports the sealed delta to a retention path before tearing a worktree down; a container world is already gone, so only its manifest is consumed. `discard` throws the work away and removes the worktree or manifest directory. A sealed output is consumed exactly once (`ErrOutputConsumed`), and a settlement that landed an effect but failed its causal merge reports the diagnostic instead of inviting a retry that would apply it twice.
 - **The judgement.** It is the orchestrator's, not a sub-agent's: the retained lane returns a diff and the orchestrator decides. No reviewer sub-agent is inserted automatically.
 
 **Turn checkpoints.** `ShepherdTurnCheckpointer` (`internal/agent/runner/checkpoint.go`) adapts `goatherd.ScopeManager` to the loop's `TurnCheckpointer` interface. A checkpoint captures the workspace *and* the conversation, and a restore consumes it, so the two stay in step. This is per-attempt robustness inside a dispatch (a role sets `turn_checkpoints`), not a settlement mechanism — the worktree already makes the attempt disposable.
 
 **Confinement.** Isolation is only real if the sub-agent's tools actually operate in the worktree, so the dispatch carries `SubAgentParams.Workdir`. `buildSubAgentRegistry` turns that into a per-scope `PathValidator` — rooted at the worktree, inheriting deny patterns and the approval callback, with a fresh approval cache — and `bash`/`powershell` use it as `cmd.Dir`. Confinement then rides that root: `agents.subagent.containment` jails writes to it, and `agents.subagent.network` governs egress from it.
 
-**Teardown.** The worktree lives until settlement: `select`/`apply`/`discard` end the child scope and remove it, `release` tears it down explicitly. A worktree left behind by a killed run is detected through the git worktree registry, cleared, and retried once on the next `Create`. Recovery reports stale entries instead of deleting them automatically.
+**Teardown.** A worktree lives until settlement: `select`/`apply`/`discard` end the child scope and remove it, and `release` tears it down explicitly. A container world is destroyed at seal, so its manifest is the proposal and no live world remains to settle. A worktree left behind by a killed run is detected through the git worktree registry, cleared, and retried once on the next `Create`. Recovery reports stale entries instead of deleting them automatically.
 
-**Limits.** A worktree checks out tracked files only, so gitignored build inputs must be recreated by `retained_worktree_bootstrap`. Isolation is filesystem-level: dispatches share the host process, network, and object store. Egress is therefore a separate axis, not a side effect of isolation — see the [isolation vs egress matrix](./configuration.md#the-isolation-vs-egress-matrix) for what each lane governs and what it does not.
+**Limits.** A worktree checks out tracked files only, so gitignored build inputs must be recreated by `retained_worktree_bootstrap`. The worktree lane shares the host process, network, and object store; the container lane's boundary is the container. Egress is therefore a separate axis, not a side effect of isolation — see the [isolation vs egress matrix](./configuration.md#the-isolation-vs-egress-matrix) for what each lane governs and what it does not.
 
 ---
 
@@ -543,8 +547,8 @@ A retained dispatch runs the sub-agent in a **worktree of its own** and seals it
 File: `internal/tools/tools.go`
 
 `NewRegistry()` pre-registers the built-in leaf tools. One shell tool is
-platform-selected (`powershell` on Windows, `bash` elsewhere), so 25 of the 26
-register on a given OS:
+platform-selected (`powershell` on Windows, `bash` elsewhere), so 24 of the
+25 leaf tools register on a given OS:
 
 | Category | Tools |
 |---|---|
@@ -558,7 +562,7 @@ register on a given OS:
 | Utility | `calculate`, `question` |
 
 Additional tools are registered by the CLI layer after `NewRegistry()`:
-- `memory_search`, `memory_add`, `memory_delete`, `memory_update`, `memory_search_sessions`
+- `memory_search`, `memory_add`, `memory_delete`, `memory_update`, `memory_promote`, `memory_search_sessions`
 - `skill`, `plan`, `todowrite`
 - `delegate`, `list_subagents`, `subagent_jobs`
 - `role` (host mode), `supervisor` (when tracing/supervision is live), `proposal` (retained mode), `apply_out` (isolated workspace)
@@ -602,7 +606,7 @@ process-spawning tools (`git`, `diff`, `go_mod`, `go_test`, `staticcheck`,
 `bisect`), which run with the workspace as their working directory. A
 sub-agent's tools therefore act on its worktree, not the yaah process's cwd.
 
-**Host-only by design (3).** `role` (manages harness role files the host reads), `background_process` (drives the in-memory host process manager), and `go_refactor`, which reads the filesystem through `golang.org/x/tools` (`imports.Process`, `packages.Load`) — a path `Workspace` cannot intercept. Isolating it means reimplementing it on in-sandbox `gofmt`/`goimports` calls, not swapping calls.
+**Host-only by design (3).** `role` (manages harness role files the host reads), `background_process` (drives the in-memory host process manager), and `go_refactor`, whose dependency view uses `imports.Process` and `importer.Default()` export data from the host toolchain. Its project-file reads and writes go through the injected `Workspace`; what keeps it host-only is dependency metadata, not source access. Isolating it means providing that metadata inside the sandbox, not swapping calls.
 
 **Isolation gate.** `Registry.SetWorkspace` refuses a non-local workspace, reporting unmigrated and host-only tools as separate categories. The refusal is unconditional with respect to the markers, so a forgotten annotation cannot silently weaken it; the markers only produce those diagnostics. `TestRegistry_EveryToolIsClassified` requires every registered tool to be a `FilesystemTool`, a `HostOnlyTool`, or on a short deliberate non-filesystem allowlist, so an unclassified tool fails the build rather than becoming an isolation hole.
 
@@ -644,7 +648,7 @@ type DangerClassifier interface {
 ```
 
 Tools that always require approval (the filesystem mutators `WriteTool`,
-`EditTool`, `ReplaceTool`, `DeleteTool`, `PatchTool`, `SedTool`, and the shells
+`EditTool`, `ReplaceTool`, `DeleteTool`, `PatchTool`, and the shells
 `BashTool`, `PowerShellTool`) return `true` unconditionally. `GitTool`,
 `JSONQueryTool`, and `HTTPTool` classify per-action by inspecting their JSON
 arguments — e.g. `git add`/`commit` are dangerous while `git status`/`diff` are
@@ -658,8 +662,9 @@ middleware (`pipeline/approval.go`) uses this single path for all tools, and
 also applies `MCPApproval` to MCP-served tools.
 
 All file-path-accepting tools support `~` expansion via `expandHomeDir()`
-in `helpers.go`. Shared tool utilities (`rgAvailable`, `commonIgnoreDirs`,
-`truncateOutput`) also live there.
+in `helpers.go`. Shared filesystem helpers (`rgAvailable`, `commonIgnoreDirs`)
+also live there; output truncation (`truncateOutput`) lives in `result.go`
+with the other result caps.
 
 ---
 
@@ -1144,7 +1149,7 @@ The agent loop creates the broker and `BrokerView` internally in `applyDefaults`
 | Consumer | View impl | File |
 |----------|-----------|------|
 | TUI | `App.HandleEvent` (type switch; `App` is the `agent.View`) | `internal/tui/proxy.go` |
-| REPL | `terminalView` / `replView` | `cmd/yaah/view_terminal.go` |
+| REPL | `terminalView` | `cmd/yaah/view_terminal.go` |
 | Sub-agents | `agent.NoopView` | `internal/agent/runner/runner.go` |
 | MCP serve | `agent.NoopView` | `cmd/yaah/serve.go` |
 | ACP serve | `acp.View` + `acp.ViewWithWrite` | `internal/acp/view.go` |
@@ -1181,7 +1186,7 @@ yaah emits traces via OTLP HTTP to any OpenTelemetry-compatible backend. Tracing
 
 ### In-memory span buffer
 
-`BufferingSpanProcessor` in `internal/observability/buffer.go` collects completed spans in a ring buffer (capped at 10,000 spans). It supports flat queries (`Traces()`), hierarchical tree rendering (`TraceTree(traceID)`), and reset between runs. The `yaah serve` MCP server exposes this via the `traces` tool.
+`BufferingSpanProcessor` in `internal/observability/buffer.go` collects completed spans in a ring buffer (capped at 10,000 spans). It supports flat queries (`Traces()`), hierarchical tree rendering (`TraceTree(traceID)`), and reset between runs. The `yaah mcp serve` MCP server exposes this via the `traces` tool.
 
 ### Span hierarchy
 

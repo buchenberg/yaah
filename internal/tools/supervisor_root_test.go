@@ -14,13 +14,13 @@ import (
 )
 
 // TestSupervisorTool_RootScopeHaltGuarded pins the A1/A2 safety rail:
-// halt refuses the session's root scope until the halt bridge lands
-// (adoption plan A3, gated by supervisor.halt_root). A halted root would
-// silently break every subsequent Fork — the scope manager refuses to
-// fork from a non-active parent, and the runner ignores that error,
-// leaving later sub-agents with no scope at all. Inject is not guarded
-// (A2): the root is registered against the session's steering channel,
-// so injecting into it steers the session itself.
+// the halt bridge has landed, and a root halt is gated by the
+// agents.default.supervisor_halt_root opt-in (adoption plan A3). A halted
+// root would silently break every subsequent Fork — the scope manager
+// refuses to fork from a non-active parent, and the runner ignores that
+// error, leaving later sub-agents with no scope at all. Inject is not
+// guarded (A2): the root is registered against the session's steering
+// channel, so injecting into it steers the session itself.
 func TestSupervisorTool_RootScopeHaltGuarded(t *testing.T) {
 	store, err := shepherdtrace.NewSQLiteTraceStore(":memory:")
 	if err != nil {

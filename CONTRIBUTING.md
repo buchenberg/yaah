@@ -46,8 +46,9 @@ one of them, it will be rejected even if the code is correct.
 
 ## How to submit a PR
 
-1. **Fork and branch.** Branch names are short and hyphen-separated, no
-   slashes or type prefixes (`session-recovery`, not `feat/session-recovery`).
+1. **Fork and branch.** Use a short, descriptive name. A scope prefix such as
+   `feat/` or `fix/` is welcome (`feat/session-recovery`), and existing
+   branches use both prefixed and unprefixed names.
 
 2. **Conventional commits.** PR titles and commit messages follow
    `type(scope): summary`. Valid types: `feat`, `fix`, `docs`, `chore`,
@@ -62,13 +63,15 @@ one of them, it will be rejected even if the code is correct.
    [docs/isolated-workspace-testing.md](docs/isolated-workspace-testing.md) for
    the one-time socket setup, image build, and environment knobs.
 
-5. **Lint clean.** CI runs `gofmt -l .` (must be empty), `go vet ./...`,
-   and `staticcheck ./...`. If any of those fail, the PR will be
-   blocked. Run them locally first:
+5. **Lint and test clean.** CI runs `gofmt -l .` (must be empty),
+   `go vet ./...`, `go run honnef.co/go/tools/cmd/staticcheck@latest ./...`,
+   and `go test -shuffle=on ./...` across Ubuntu, macOS, and Windows. If any
+   of those fail, the PR will be blocked. Run them locally first:
    ```bash
    gofmt -l . | tee /dev/stderr
    go vet ./...
    go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+   go test -shuffle=on ./...
    ```
 
 6. **One concern per PR.** Don't mix a bug fix with a refactor with a
@@ -114,7 +117,7 @@ yaah follows **idiomatic Go** conventions. This section highlights the most impo
 
 - Run `gofmt -w .` before committing
 - Run `go vet ./...` - must be clean
-- Run `staticcheck ./...` - must be clean
+- Run `go run honnef.co/go/tools/cmd/staticcheck@latest ./...` - must be clean
 - Line length: Prefer < 100 chars when reasonable
 
 ### Naming

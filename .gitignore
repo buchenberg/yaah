@@ -53,6 +53,8 @@ go.work.sum
 .sourcegraph/
 .ghost/
 .kilo/
+.serena/
+.entire/
 .pi/
 .opencode/
 .codex/
