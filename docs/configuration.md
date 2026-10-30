@@ -682,18 +682,19 @@ Four things to know about the guarantee:
   a jail cannot govern them — a restrictive posture therefore **omits those tools**
   from the dispatch (and says so in the sub-agent's prompt) rather than leaving a
   one-call hole. A client the sub-agent runs *itself* is governed normally.
-- **This key governs the host lanes.** It is decided per dispatch, before any lane
-  gate, so a workdir-less dispatch counts too (shared mode, or a model-supplied
-  empty workdir): a restrictive posture there is refused as well, since nothing
-  would jail the sub-agent. An isolated session is the exception — its sub-agents
-  run in a container whose network posture is the container's, so this key is
-  neither applied nor refused there. It does not omit tools or describe an egress
-  rule the container does not have either (the container's loopback is not the
-  host's, so a broker proxy address would be wrong there) — and note that the
-  container's posture does **not** cover `http`/`webfetch`, which still make their
-  request in this process, outside the container. So in an isolated session a
-  restrictive `network` neither protects those two tools nor blocks them: use the
-  container's own egress controls.
+- **This key governs host and container dispatches, with one lane caveat.** It is
+  decided per dispatch, before any lane gate, so a workdir-less dispatch counts
+  too (shared mode, or a model-supplied empty workdir): a restrictive posture
+  there is refused as well, since nothing would jail the sub-agent. A
+  per-dispatch container world that asks for a restrictive posture is refused by
+  world resolution, so that dispatch never starts. An isolated session is
+  different: its sub-agents run inside the session container, and the shell's
+  egress is the container's own posture, not this key. But `http`/`webfetch`
+  still make their request in the yaah process outside that netns, so a
+  restrictive posture now omits those tools from the isolated dispatch too and
+  names the omission. A `network: deny_all` can therefore refuse a per-dispatch
+  container world while an isolated-session dispatch runs with those two host
+  tools omitted; the container still supplies the shell's egress boundary.
 
 A confined sub-agent is told its posture up front ("there is no network egress"
 or "egress is limited to an allowlist"), so a blocked fetch is not something it
@@ -724,7 +725,7 @@ here rather than restating it.
 | `mode: shared` dispatch | the host tree, same as the root | none — and a restrictive `network` is **refused**, because there is no workdir to jail | the URL guard |
 | Retained dispatch (`proposal` / `report` lane, worktree) | worktree-only writable root under `containment`; advisory where no jail exists | `agents.subagent.network`: `allow_all` (default), `deny_all`, or `broker` + `network_hosts` | the URL guard — and a *restrictive* posture **omits** both tools, because they would bypass the jail |
 | Per-dispatch container (`world: container`, or `auto` for a report lane) | the container | the container's netns (loopback-only); a restrictive `agents.subagent.network` is **refused** for a container world | the URL guard — `http`/`webfetch` run in the yaah process, outside the container |
-| Isolated session (`workspace.backend: containerd`), and every dispatch inside it | the container | the container's own posture; `agents.subagent.network` is neither applied nor refused | the URL guard — the request is still made by the yaah process, **outside** the container, so the container neither protects nor blocks these two tools |
+| Isolated session (`workspace.backend: containerd`), and every dispatch inside it | the container | the container's own posture; `agents.subagent.network` does not govern the container shell | the URL guard — under a restrictive posture both tools are omitted, because the request is still made by the yaah process **outside** the container |
 
 **What the URL guard blocks (`http`, `webfetch`; always on, in every lane).**
 Both tools validate the URL before any request and share one guarded HTTP
@@ -750,8 +751,9 @@ the code.
 **What the guard is not.** It is not a firewall and it governs no child process.
 `bash`/`powershell` (`curl`, `npm i`, `go get`), `git` fetch/push, the Go tool
 chain (`go_mod`, `go_test`, `staticcheck`), and MCP servers are reached through
-processes the jail — not the guard — governs, which is exactly why the retained
-lane omits `http`/`webfetch` instead of trusting the guard there. Nor does
+processes the jail — not the guard — governs, which is exactly why a restrictive
+dispatch omits `http`/`webfetch` on both host and container lanes instead of
+trusting the guard there. Nor does
 anything here reach traffic that is not a tool call: model requests (including
 embeddings used by `memory_search`) and the update check are made by the yaah
 process itself, so **`deny_all` does not make a dispatch silent** — the

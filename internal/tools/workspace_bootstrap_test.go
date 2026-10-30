@@ -370,8 +370,18 @@ func TestApplyOut_DoesNotPropagateSetuid(t *testing.T) {
 
 	ws := ss.Workspace()
 	readme, _ := ws.ResolvePath("readme.txt")
-	if err := ws.WriteFile(context.Background(), readme, []byte("hello\n"), 0o7755); err != nil {
+	// Write through the backend, not sandboxWorkspace.WriteFile: the workspace
+	// API deliberately masks permission bits, while copy-in uses the backend
+	// directly and preserves the full mode.
+	if err := ss.sb.WriteFile(context.Background(), readme, []byte("hello\n"), 0o7755); err != nil {
 		t.Fatalf("write privileged mode in the sandbox: %v", err)
+	}
+	sandboxInfo, err := ws.Stat(context.Background(), readme)
+	if err != nil {
+		t.Fatalf("stat privileged file in the sandbox: %v", err)
+	}
+	if sandboxInfo.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) == 0 {
+		t.Fatalf("sandbox stored mode %v without the privilege bits; the copy-out assertion would be vacuous", sandboxInfo.Mode())
 	}
 	if err := ss.ApplyOut(context.Background(), src); err != nil {
 		t.Fatalf("ApplyOut: %v", err)
