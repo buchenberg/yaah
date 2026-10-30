@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.118.3](https://github.com/buchenberg/yaah/compare/v0.118.2...v0.118.3) (2026-10-30)
+
+
+### Documentation
+
+* clarify the three-way output note ([acd539e](https://github.com/buchenberg/yaah/commit/acd539e6bd8a5c88987b311f63e8ca058cf4203c))
+* keep three-way output columns comparable ([06f73d5](https://github.com/buchenberg/yaah/commit/06f73d570113848a3fe4c715c4309bd81772cca9))
+
 ## [0.118.2](https://github.com/buchenberg/yaah/compare/v0.118.1...v0.118.2) (2026-10-30)
 
 
