@@ -33,10 +33,11 @@ five tasks, so every row is directly comparable.
 | 2026-10-20 | 5d927a7+quickref-trim+sed-rm (trial 3) | yaah | 5/5 | 565,069 | 14,487 | 544,768 (96%) | 137s |
 | 2026-10-29 | 8eb063f | yaah | 5/5 | 759,265 | 19,498 | 745,600 (98%) | 184s |
 | 2026-10-29 | hermes-agent 0.19.0 | hermes | 5/5 | 423,427 | 6,977 | 384,000 (91%) | 176s |
-| 2026-10-29 | opencode 2.1.3 | opencode | 5/5 | 300,316 | 11,036 | 283,648 (94%) | 134s |
+| 2026-10-29 | opencode 2.1.3 | opencode | 5/5 | 300,316 | 6,823 | 283,648 (94%) | 134s |
 
-OpenCode's 2026-10-29 `Out` includes 4,213 reasoning tokens; its raw output
-field is 6,823. The other arms do not report a separate reasoning bucket.
+OpenCode's 2026-10-29 `Out` is 6,823 output tokens plus a separate 4,213
+reasoning tokens; the cost includes reasoning. The other arms do not report a
+separate reasoning bucket.
 
 Run ids: 2026-10-17__04-47-51 (yaah), hermes-coding 2026-10-17__18-34-17
 lineage (see the Hermes section below), 2026-10-20__15-49-57 (yaah),
@@ -566,7 +567,7 @@ split it out. Costs are the shared `pricing.json` off-peak rates.
 | Prompt tokens (incl cache) | 759,265 | 423,427 | 300,316 |
 | Uncached input | 13,665 | 39,427 | 16,668 |
 | Output | 19,498 | 6,977 | 6,823 |
-| Reasoning | — | 0 | 4,213 |
+| Reasoning | — | — | 4,213 |
 | Cache read | 745,600 (98.2%) | 384,000 (90.7%) | 283,648 (94.4%) |
 | Agent time | 184s | 176s | 134s |
 | Estimated cost | $0.0160 | $0.0113 | $0.0100 |
