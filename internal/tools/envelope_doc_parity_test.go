@@ -73,7 +73,7 @@ func TestResultEnvelopeRegistryCoversNamedEnvelopes(t *testing.T) {
 	}
 	fset := token.NewFileSet()
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
 			continue
 		}
 		file, err := parser.ParseFile(fset, entry.Name(), nil, 0)
@@ -90,7 +90,8 @@ func TestResultEnvelopeRegistryCoversNamedEnvelopes(t *testing.T) {
 				if !ok || !strings.HasSuffix(ts.Name.Name, "Envelope") {
 					continue
 				}
-				if _, ok := ts.Type.(*ast.StructType); !ok {
+				st, ok := ts.Type.(*ast.StructType)
+				if !ok || !structHasJSONTag(st) {
 					continue
 				}
 				if !registered[ts.Name.Name] {
@@ -141,6 +142,21 @@ func jsonEnvelopeFields(typ reflect.Type) []string {
 	}
 	slices.Sort(fields)
 	return slices.Compact(fields)
+}
+
+// structHasJSONTag reports whether the struct itself carries a JSON tag. The
+// name-suffix scan is deliberately limited to tagged production structs so an
+// unrelated *Envelope helper is not forced into the registry.
+func structHasJSONTag(st *ast.StructType) bool {
+	if st == nil {
+		return false
+	}
+	for _, field := range st.Fields.List {
+		if field.Tag != nil && strings.Contains(field.Tag.Value, `json:"`) {
+			return true
+		}
+	}
+	return false
 }
 
 // indirectStruct follows pointers to an embedded struct type, returning nil
