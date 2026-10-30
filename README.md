@@ -79,6 +79,13 @@ From source (Go 1.26.3+):
 go install github.com/buchenberg/yaah@latest
 ```
 
+`yaah update` replaces the binary in place. On Windows the swap happens after
+the updating process exits and needs exclusive access to `yaah.exe`, so close
+any other running yaah process (TUI, `acp serve`, `mcp serve`) first. A swap
+that could not be applied is reported by the next `yaah update` and by
+`yaah doctor`; when the release publishes `checksums.txt` the staged download
+is reused, so the retry needs no download.
+
 Docker with OTLP tracing:
 
 ```bash

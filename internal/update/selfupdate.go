@@ -115,7 +115,14 @@ func Download(ctx context.Context, url, path string) error {
 // one "<hex>  <filename>" per line). It fails closed: a missing entry
 // or a digest mismatch aborts the update (review finding S5).
 func VerifyChecksum(assetPath string, checksums []byte) error {
-	name := filepath.Base(assetPath)
+	return VerifyChecksumAs(assetPath, filepath.Base(assetPath), checksums)
+}
+
+// VerifyChecksumAs is VerifyChecksum for a file whose on-disk name
+// differs from its release asset name — a staged yaah.exe.next reusing
+// the yaah-windows-amd64.exe entry, for example.
+func VerifyChecksumAs(assetPath, assetName string, checksums []byte) error {
+	name := filepath.Base(assetName)
 	want := lookupChecksum(checksums, name)
 	if want == "" {
 		return fmt.Errorf("no SHA-256 checksum entry for %q — refusing to apply", name)
@@ -169,43 +176,56 @@ func isHexDigest(s string) bool {
 	return true
 }
 
+// installDir returns the directory holding the installed binary and the
+// path this package manages for it. Apply, Pending, and the cleanup
+// helpers all derive the artifact location from here so they cannot
+// disagree about where yaah.exe.next lives.
+func installDir() (dir, target string, err error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", "", fmt.Errorf("cannot locate current binary: %w", err)
+	}
+	dir = filepath.Dir(exe)
+	target = filepath.Join(dir, BinaryName(runtime.GOOS))
+	// A binary installed under another name or reached through a link
+	// keeps its artifacts next to the real install.
+	if target != exe {
+		if resolved, err := filepath.EvalSymlinks(exe); err == nil && resolved != exe {
+			dir = filepath.Dir(resolved)
+			target = filepath.Join(dir, BinaryName(runtime.GOOS))
+		}
+	}
+	return dir, target, nil
+}
+
 // Apply replaces the current running binary with the downloaded one at
 // newPath.
 //
-// On Unix, the running binary is renamed to .old and the new binary is
-// written in its place. The OS preserves the running process's inode
-// reference after the rename, so the replace is safe.
+// On Unix the replacement happens in-process: the running binary is
+// renamed to .old and the new binary is written in its place, so Apply
+// reports false (the swap is already done). The OS preserves the running
+// process's inode reference after the rename.
 //
-// On Windows, the running binary cannot be reliably replaced in-process.
-// Instead, the new binary is staged alongside as yaah.exe.next and a
-// detached PowerShell script is launched to swap it after this process
-// exits. The stale .next is cleaned up on the next startup.
-func Apply(newPath string) error {
-	currentPath, err := os.Executable()
+// On Windows the running binary cannot be replaced in-process. The new
+// binary is staged alongside as yaah.exe.next and a detached PowerShell
+// script swaps it after this process exits, so Apply reports true (the
+// swap is deferred). When newPath is already the staged .next, staging
+// is skipped and only the swap is (re)launched — that is the retry path
+// after a swap blocked by another running yaah process.
+func Apply(newPath string) (deferred bool, err error) {
+	binDir, targetPath, err := installDir()
 	if err != nil {
-		return fmt.Errorf("cannot locate current binary: %w", err)
-	}
-
-	binDir := filepath.Dir(currentPath)
-	binName := BinaryName(runtime.GOOS)
-	targetPath := filepath.Join(binDir, binName)
-
-	if targetPath != currentPath {
-		resolved, err := filepath.EvalSymlinks(currentPath)
-		if err == nil && resolved != currentPath {
-			binDir = filepath.Dir(resolved)
-			targetPath = filepath.Join(binDir, binName)
-		}
+		return false, err
 	}
 
 	if err := checkWriteAccess(binDir); err != nil {
-		return err
+		return false, err
 	}
 
 	if runtime.GOOS == "windows" {
 		return applyWindows(newPath, targetPath)
 	}
-	return applyUnix(newPath, targetPath, binDir)
+	return false, applyUnix(newPath, targetPath, binDir)
 }
 
 func checkWriteAccess(dir string) error {
@@ -248,59 +268,141 @@ func applyUnix(newPath, targetPath, binDir string) error {
 	return nil
 }
 
-func applyWindows(newPath, targetPath string) error {
+const (
+	// windowsSwapWait bounds how long the detached swap waits for the
+	// updating process to exit before trying anyway.
+	windowsSwapWait = 2 * time.Minute
+	// windowsSwapRetry bounds the move retries after that wait.
+	windowsSwapRetry = 2 * time.Minute
+	// windowsSwapInterval is the pause between retry attempts.
+	windowsSwapInterval = 500 * time.Millisecond
+	// windowsScriptTTL is how old a leftover per-process swap script
+	// must be before cleanup removes it. It is derived from the script's
+	// real maximum lifetime so a live script is never deleted.
+	windowsScriptTTL = windowsSwapWait + windowsSwapRetry + 10*time.Minute
+)
+
+func applyWindows(newPath, targetPath string) (bool, error) {
 	nextPath := targetPath + ".next"
 	oldPath := filepath.Join(filepath.Dir(targetPath), OldName(runtime.GOOS))
+	logPath := targetPath + ".update.log"
 
-	if err := copyFileEx(newPath, nextPath); err != nil {
-		return fmt.Errorf("stage new binary: %w", err)
+	// newPath == nextPath happens when a previously staged binary is
+	// being retried; copying a file onto itself would truncate it.
+	if filepath.Clean(newPath) != filepath.Clean(nextPath) {
+		if err := copyFileEx(newPath, nextPath); err != nil {
+			return false, fmt.Errorf("stage new binary: %w", err)
+		}
 	}
 
-	scriptPath := targetPath + ".update.ps1"
-	pid := os.Getpid()
-
-	// The swap runs detached after this process exits. It backs the
-	// current binary up to .old first and restores it if the move
-	// fails — mirroring the Unix rollback (review finding S5).
-	script := fmt.Sprintf(
-		`$id = %[5]d
-$timeout = 60
-while ($timeout -gt 0 -and (Get-Process -Id $id -ErrorAction SilentlyContinue)) {
-	Start-Sleep -Milliseconds 250
-	$timeout--
-}
-Start-Sleep -Milliseconds 500
-Copy-Item -Force -LiteralPath "%[1]s" -Destination "%[2]s"
-Move-Item -Force -LiteralPath "%[3]s" -Destination "%[1]s"
-Start-Sleep -Milliseconds 500
-if (Test-Path -LiteralPath "%[1]s") {
-	Remove-Item -LiteralPath "%[2]s" -Force -ErrorAction SilentlyContinue
-} else {
-	Move-Item -Force -LiteralPath "%[2]s" -Destination "%[1]s" -ErrorAction SilentlyContinue
-}
-Remove-Item -LiteralPath "%[4]s" -Force -ErrorAction SilentlyContinue
-`,
-		escapePSPath(targetPath),
-		escapePSPath(oldPath),
-		escapePSPath(nextPath),
-		escapePSPath(scriptPath),
-		pid,
-	)
-
+	scriptPath := fmt.Sprintf("%s.update-%d.ps1", targetPath, os.Getpid())
+	script := windowsSwapScript(targetPath, oldPath, nextPath, scriptPath, logPath, os.Getpid())
 	if err := os.WriteFile(scriptPath, []byte(script), 0o644); err != nil {
-		return fmt.Errorf("write update script: %w", err)
+		return false, fmt.Errorf("write update script: %w", err)
 	}
 
 	cmd := exec.Command("powershell.exe",
+		"-NoProfile",
+		"-NonInteractive",
 		"-WindowStyle", "Hidden",
 		"-ExecutionPolicy", "Bypass",
 		"-File", scriptPath,
 	)
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("launch update script: %w", err)
+		return false, fmt.Errorf("launch update script: %w", err)
 	}
 
-	return nil
+	return true, nil
+}
+
+// windowsSwapScript builds the detached swap script. It waits for the
+// updating process to exit, then retries the move for two minutes:
+// antivirus scanners and other running yaah processes keep the image
+// mapped, and a single attempt loses that race silently.
+//
+// Every outcome is durable. On success the backup and any stale failure
+// log are removed; on failure the staged .next stays put and a log names
+// the error and the processes still holding the binary, so the next
+// `yaah update` can report it and retry without re-downloading.
+func windowsSwapScript(targetPath, oldPath, nextPath, scriptPath, logPath string, pid int) string {
+	waitSeconds := int(windowsSwapWait / time.Second)
+	attempts := int(windowsSwapRetry / windowsSwapInterval)
+	intervalMilliseconds := int(windowsSwapInterval / time.Millisecond)
+
+	return fmt.Sprintf(`$target = "%[1]s"
+$old    = "%[2]s"
+$next   = "%[3]s"
+$log    = "%[5]s"
+
+# Wait for the updater to exit, then let Windows release the image mapping.
+$deadline = (Get-Date).AddSeconds(%[7]d)
+while ((Get-Process -Id %[6]d -ErrorAction SilentlyContinue) -and ((Get-Date) -lt $deadline)) {
+	Start-Sleep -Milliseconds %[9]d
+}
+Start-Sleep -Milliseconds %[9]d
+
+# One backup copy of the binary being replaced; the move below either
+# succeeds or leaves the target untouched. A locked target is expected
+# and must not abort the script.
+$applied = $false
+$lastError = ''
+for ($i = 0; $i -lt %[8]d -and -not $applied; $i++) {
+	try {
+		if (-not (Test-Path -LiteralPath $next)) {
+			# A concurrent invocation may have completed the swap (or a
+			# newer run discarded the staged file). With a working target
+			# there is nothing left to do and nothing to report.
+			if (Test-Path -LiteralPath $target) { $applied = $true; break }
+			throw 'staged binary is missing'
+		}
+		if (-not (Test-Path -LiteralPath $old)) {
+			Copy-Item -Force -LiteralPath $target -Destination ($old + '.tmp') -ErrorAction Stop
+			Move-Item -Force -LiteralPath ($old + '.tmp') -Destination $old -ErrorAction Stop
+		}
+		Move-Item -Force -LiteralPath $next -Destination $target -ErrorAction Stop
+		$applied = $true
+	} catch {
+		$lastError = $_.Exception.Message.Trim()
+		# A partial replace can leave the target missing; restore it
+		# before retrying so a working binary always exists.
+		if ((-not (Test-Path -LiteralPath $target)) -and (Test-Path -LiteralPath $old)) {
+			try { Move-Item -Force -LiteralPath $old -Destination $target -ErrorAction Stop } catch { }
+		}
+		Start-Sleep -Milliseconds %[9]d
+	}
+}
+
+if ($applied -and (Test-Path -LiteralPath $target)) {
+	try { Remove-Item -LiteralPath $old -Force -ErrorAction Stop } catch { }
+	try { Remove-Item -LiteralPath ($old + '.tmp') -Force -ErrorAction Stop } catch { }
+	try { Remove-Item -LiteralPath $log -Force -ErrorAction Stop } catch { }
+} else {
+	$holders = @(Get-Process -Name yaah -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Id)" }) -join ', '
+	if ($holders -eq '') { $holders = 'none detected (a scanner or another user may hold the file)' }
+	if ((-not (Test-Path -LiteralPath $target)) -and (Test-Path -LiteralPath $old)) {
+		try { Move-Item -Force -LiteralPath $old -Destination $target -ErrorAction Stop } catch { }
+	}
+	try {
+		@(
+			"yaah update could not replace $target",
+			"error: $lastError",
+			"processes holding the binary: $holders",
+			"Close every running yaah process, then run 'yaah update' again."
+		) | Set-Content -LiteralPath $log -Encoding ASCII -ErrorAction Stop
+	} catch { }
+}
+try { Remove-Item -LiteralPath "%[4]s" -Force -ErrorAction Stop } catch { }
+`,
+		escapePSPath(targetPath),
+		escapePSPath(oldPath),
+		escapePSPath(nextPath),
+		escapePSPath(scriptPath),
+		escapePSPath(logPath),
+		pid,
+		waitSeconds,
+		attempts,
+		intervalMilliseconds,
+	)
 }
 
 // escapePSPath escapes p for embedding inside a DOUBLE-quoted
@@ -338,16 +440,97 @@ func copyFileEx(srcPath, dstPath string) error {
 	return err
 }
 
-// CleanOldBinaries removes leftover update artifacts (.old, .next,
-// .update.ps1) next to the current executable. Called lazily by the
-// update command — not on every yaah invocation.
+// PendingState describes a downloaded update that has not been swapped
+// into place yet.
+type PendingState struct {
+	Path     string    // staged binary (yaah.exe.next)
+	StagedAt time.Time // when the staged binary was written
+	LogPath  string    // failure log written by the swap script, if any
+	Log      string    // contents of that log
+}
+
+// Pending reports a staged-but-unapplied update next to the running
+// binary. On Windows this is the normal state between `yaah update` and
+// the exit of the updating process; a state that survives the exit means
+// the swap was blocked (another yaah process held the binary) or the
+// machine shut down first.
+func Pending() (PendingState, bool) {
+	dir, _, err := installDir()
+	if err != nil {
+		return PendingState{}, false
+	}
+	return pendingIn(dir)
+}
+
+func pendingIn(dir string) (PendingState, bool) {
+	staged := filepath.Join(dir, BinaryName(runtime.GOOS)+".next")
+	fi, err := os.Stat(staged)
+	if err != nil || fi.IsDir() {
+		return PendingState{}, false
+	}
+	st := PendingState{Path: staged, StagedAt: fi.ModTime()}
+	logPath := filepath.Join(dir, BinaryName(runtime.GOOS)+".update.log")
+	if b, err := os.ReadFile(logPath); err == nil {
+		st.LogPath = logPath
+		st.Log = strings.TrimSpace(string(b))
+	}
+	return st, true
+}
+
+// CleanOldBinaries removes leftover update artifacts next to the
+// current executable. Called lazily by the update command — not on every
+// yaah invocation.
+//
+// The staged .next and its failure log are deliberately kept: they are
+// the retry path when a swap could not be applied, and `yaah update`
+// reuses a checksum-verified staged binary instead of downloading it
+// again.
 func CleanOldBinaries() {
-	exe, err := os.Executable()
+	dir, _, err := installDir()
 	if err != nil {
 		return
 	}
-	dir := filepath.Dir(exe)
+	cleanOldBinariesIn(dir)
+}
+
+func cleanOldBinariesIn(dir string) {
 	os.Remove(filepath.Join(dir, OldName(runtime.GOOS)))
-	os.Remove(filepath.Join(dir, BinaryName(runtime.GOOS)+".next"))
+	os.Remove(filepath.Join(dir, OldName(runtime.GOOS)+".tmp"))
 	os.Remove(filepath.Join(dir, BinaryName(runtime.GOOS)+".update.ps1"))
+	// Per-process swap scripts belong to a run that may still be
+	// retrying; only scripts past their maximum lifetime are leftovers
+	// from a crashed run.
+	removeStaleScripts(dir, windowsScriptTTL)
+}
+
+// removeStaleScripts deletes per-process swap scripts older than
+// olderThan. A pid is not a reliable liveness signal across reboots, so
+// age is the guard.
+func removeStaleScripts(dir string, olderThan time.Duration) {
+	matches, _ := filepath.Glob(filepath.Join(dir, BinaryName(runtime.GOOS)+".update-*.ps1"))
+	for _, match := range matches {
+		info, err := os.Stat(match)
+		if err != nil || time.Since(info.ModTime()) < olderThan {
+			continue
+		}
+		os.Remove(match)
+	}
+}
+
+// DiscardStaged removes a staged update and every artifact around it.
+// Used when the running binary is already at least as new as the staged
+// release, so the staged file can never be applied.
+func DiscardStaged() {
+	dir, _, err := installDir()
+	if err != nil {
+		return
+	}
+	discardStagedIn(dir)
+}
+
+func discardStagedIn(dir string) {
+	os.Remove(filepath.Join(dir, BinaryName(runtime.GOOS)+".next"))
+	os.Remove(filepath.Join(dir, BinaryName(runtime.GOOS)+".update.log"))
+	os.Remove(filepath.Join(dir, OldName(runtime.GOOS)))
+	os.Remove(filepath.Join(dir, OldName(runtime.GOOS)+".tmp"))
 }
