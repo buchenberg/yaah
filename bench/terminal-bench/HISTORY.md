@@ -948,9 +948,16 @@ independent derivations agreeing is the strongest evidence here that the
 aggregate movement is the gate and not the step draw.
 
 Caveats: single trial per task per arm. yaah's arm ran on `728b016` plus
-the tool-gating diff, cited as `728b016+tool-gating` in `RESULTS.md`; that
-diff was uncommitted at run time and has since landed on
-`perf/main-session-tool-gating` (PR #697), so the run is now reproducible
-from those commits. Hermes's and OpenCode's totals are one trial each at
-their recorded versions. `subagent_tokens` is 0 for all three arms, so this
-suite says nothing about orchestration cost — see `../orchestration-tasks`.
+the then-uncommitted gating diff, cited in `RESULTS.md` as
+`728b016+tool-gating`. That diff landed as `b0bc407` on
+`perf/main-session-tool-gating` (PR #697), and **`b0bc407` is the commit
+these rows reproduce from — not the branch tip.** Two later commits touched
+the same gate (`8098589`, `258d5ad`) but are behaviour-neutral for this
+configuration: the bench sets no `agents.default.tools` allowlist and runs
+the local workspace backend, so both the registry-derived memory flag and
+the isolated-mode `go_refactor` guard resolve exactly as they did when
+benched. The floor figures therefore still hold, but a rerun at the tip is
+not byte-identical by construction and should be recorded as its own row.
+Hermes's and OpenCode's totals are one trial each at their recorded
+versions. `subagent_tokens` is 0 for all three arms, so this suite says
+nothing about orchestration cost — see `../orchestration-tasks`.
