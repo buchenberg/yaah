@@ -460,7 +460,7 @@ Two full-suite trials after the trim, both 5/5 resolved:
 | assign-seats | 161,274 | 258,448 | 93,880 |
 | **Total** | **724,088** | **786,996** | **565,069** |
 
-(The pre-trim per-task column sums to 724,088; the tracking table above
+(The pre-trim per-task column sums to 724,088; the `RESULTS.md` table
 carries 724,083 from the extractor's own aggregate — a 5-token difference
 in how the run's session totals were read, not a data change.)
 
@@ -479,7 +479,7 @@ lane under the yaah-7yf derivation instead of paying for a worktree.
 
 Verdict: floor cut confirmed; trimmed-run totals 787K / 536K / 565K vs
 724K pre-trim (mean 630K, −13%), with trial 3 the first to also carry the
-sed removal. Keep both trims; the tracking table carries all three trials
+sed removal. Keep both trims; `RESULTS.md` carries all three trials
 until more runs accumulate.
 
 ## Baseline smoke + common metrics (2026-10-29, deepseek-flash)
@@ -893,8 +893,11 @@ the output rate (this reproduces the extractor's totals exactly):
 | Output (+reasoning) | $0.00856 (74.8%) | $0.00956 (10.8%) | $0.00585 (65.6%) |
 | Total | $0.0114 | $0.0881 | $0.0089 |
 
-Per-call floor, from `hello-world` (3 calls, negligible transcript —
-the deterministic instrument):
+Per-call floor, from `hello-world` — the deterministic instrument, whose
+transcript is negligible next to the prefix. All three arms took 3 calls
+on it *in this run*, so each figure is that arm's own `in / 3`. (The
+Hermes 0.22.5 repack run above drew 2 calls on this task; do not read
+its per-task row into this table.)
 
 | Floor per call | yaah | Hermes | OpenCode |
 |---|---:|---:|---:|
@@ -944,9 +947,10 @@ prompt per step fell **16,506 → 12,723 (−22.9%)**, which matches the
 independent derivations agreeing is the strongest evidence here that the
 aggregate movement is the gate and not the step draw.
 
-Caveats: single trial per task per arm; yaah's arm is an uncommitted
-diff on `728b016`, so it is cited as `728b016+tool-gating` in the
-tracking table and is not reproducible from a commit alone until that
-diff lands. Hermes's and OpenCode's totals are one trial each at their
-recorded versions. `subagent_tokens` is 0 for all three arms, so this
+Caveats: single trial per task per arm. yaah's arm ran on `728b016` plus
+the tool-gating diff, cited as `728b016+tool-gating` in `RESULTS.md`; that
+diff was uncommitted at run time and has since landed on
+`perf/main-session-tool-gating` (PR #697), so the run is now reproducible
+from those commits. Hermes's and OpenCode's totals are one trial each at
+their recorded versions. `subagent_tokens` is 0 for all three arms, so this
 suite says nothing about orchestration cost — see `../orchestration-tasks`.
