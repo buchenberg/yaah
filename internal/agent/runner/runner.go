@@ -231,9 +231,10 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 				}
 				return ""
 			},
-			Containment: opts.SubCfg.Containment,
-			Network:     opts.SubCfg.Network,
-			Grants:      opts.SubCfg.Grants,
+			Containment:  opts.SubCfg.Containment,
+			Network:      opts.SubCfg.Network,
+			NetworkHosts: append([]string(nil), opts.SubCfg.NetworkHosts...),
+			Grants:       opts.SubCfg.Grants,
 			GrantsForRole: func(role string) []config.GrantConfig {
 				if rc, ok := opts.SubCfg.Roles[role]; ok {
 					return rc.Grants

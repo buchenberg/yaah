@@ -10,6 +10,7 @@ import (
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	goatherd "github.com/buchenberg/goatherd-runtime"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/jobs"
 )
 
@@ -58,7 +59,7 @@ func dispatchWorldPreflightFailure(res subagent.WorldResolution, cause error) (s
 // container's captured state, so a sibling sees the session's current world
 // rather than a stale host copy. It returns a live sandbox on success; every
 // failure path destroys whatever was opened.
-func openDispatchWorld(ctx context.Context, rt RetainedRuntime) (*SessionSandbox, shepherdtrace.WorkspaceState, string, error) {
+func openDispatchWorld(ctx context.Context, rt RetainedRuntime, authority dispatchAuthority) (*SessionSandbox, shepherdtrace.WorkspaceState, string, error) {
 	var noBasis shepherdtrace.WorkspaceState
 	dw := rt.DispatchWorlds
 	if dw == nil || dw.Opener == nil {
@@ -66,6 +67,7 @@ func openDispatchWorld(ctx context.Context, rt RetainedRuntime) (*SessionSandbox
 	}
 	startCtx, cancel := context.WithTimeout(ctx, dispatchWorldStartTimeout)
 	defer cancel()
+	dispatchCfg := authority.apply(dw.Config)
 
 	if dw.SessionSandbox != nil {
 		if dw.SessionSandbox.sb == nil {
@@ -99,7 +101,7 @@ func openDispatchWorld(ctx context.Context, rt RetainedRuntime) (*SessionSandbox
 			}
 			return dw.SessionSandbox.ReleaseCapture(context.WithoutCancel(startCtx), state)
 		}
-		ss, err := StartSessionSandbox(startCtx, dw.Config, dw.Opener, "", dw.Deny)
+		ss, err := StartSessionSandbox(startCtx, dispatchCfg, dw.Opener, "", dw.Deny)
 		if err != nil {
 			return nil, noBasis, "", errors.Join(err, release())
 		}
@@ -130,8 +132,108 @@ func openDispatchWorld(ctx context.Context, rt RetainedRuntime) (*SessionSandbox
 	if rt.RepoPath == "" {
 		return nil, noBasis, "", fmt.Errorf("no repository to seed the dispatch container from")
 	}
-	ss, err := StartSessionSandbox(startCtx, dw.Config, dw.Opener, rt.RepoPath, dw.Deny)
-	return ss, noBasis, "", err
+	if !authority.shaped() {
+		ss, err := StartSessionSandbox(startCtx, dispatchCfg, dw.Opener, rt.RepoPath, dw.Deny)
+		return ss, noBasis, "", err
+	}
+	return openShapedHostWorld(startCtx, ctx, rt, dw, dispatchCfg)
+}
+
+// openShapedHostWorld seeds a grant-shaped host-session container. The shaping
+// init makes the workspace read-only before any user process can write, so the
+// copy-in cannot run in the final sandbox: a bootstrap write to a non-granted
+// path would fail with EROFS. Copy-in therefore runs in an unshaped staging
+// sandbox (which is never exposed to the sub-agent), its captured state is
+// applied to the shaped sandbox, and the staging world is destroyed. The
+// shaped sandbox's baseline is the applied state, so the snapshot-native seal
+// measures exactly the body's delta.
+func openShapedHostWorld(startCtx, parentCtx context.Context, rt RetainedRuntime, dw *DispatchWorlds, shaped config.WorkspaceConfig) (*SessionSandbox, shepherdtrace.WorkspaceState, string, error) {
+	var noBasis shepherdtrace.WorkspaceState
+
+	stagingCfg := shaped
+	stagingCfg.WritableRoots = nil
+	stagingCfg.MaskWorkspace = false
+	// Copy-in needs no egress; keeping the staging container loopback-only
+	// also avoids starting the shaped container's broker twice.
+	stagingCfg.Network = "none"
+	stagingCfg.BrokerHosts = nil
+
+	staging, err := StartSessionSandbox(startCtx, stagingCfg, dw.Opener, rt.RepoPath, dw.Deny)
+	if err != nil {
+		return nil, noBasis, "", fmt.Errorf("seed the shaped dispatch container: %w", err)
+	}
+	// Probe before Capture: Capture pins a layer, and a guard after it would
+	// refuse only after the pin already exists (the sibling path has the same
+	// ordering rule).
+	if !staging.Releasable() && staging.sb.Capabilities().Isolated {
+		return nil, noBasis, "", errors.Join(
+			fmt.Errorf("staging backend %q captures state but does not expose ReleaseState", staging.sb.Backend()),
+			destroySessionSandbox(parentCtx, staging),
+		)
+	}
+	state, err := staging.Capture(startCtx)
+	if err != nil {
+		return nil, noBasis, "", errors.Join(
+			fmt.Errorf("capture the seeded dispatch state: %w", err),
+			destroySessionSandbox(parentCtx, staging),
+		)
+	}
+
+	// Create runs the shaping init, which creates absent grant roots before
+	// masking the workspace. Apply then seeds their contents from the captured
+	// state; the roots need not exist in the base image.
+	ss, err := StartSessionSandbox(startCtx, shaped, dw.Opener, "", dw.Deny)
+	if err != nil {
+		return nil, noBasis, "", errors.Join(
+			err,
+			releaseStaging(parentCtx, staging, state),
+			destroySessionSandbox(parentCtx, staging),
+		)
+	}
+	if err := ss.sb.Apply(startCtx, state); err != nil {
+		return nil, noBasis, "", errors.Join(
+			fmt.Errorf("apply the seeded state to the shaped dispatch container: %w", err),
+			destroySessionSandbox(parentCtx, ss),
+			releaseStaging(parentCtx, staging, state),
+			destroySessionSandbox(parentCtx, staging),
+		)
+	}
+	ss.baseline = &state
+	if err := releaseStaging(parentCtx, staging, state); err != nil {
+		return nil, noBasis, "", errors.Join(
+			err,
+			destroySessionSandbox(parentCtx, ss),
+			destroySessionSandbox(parentCtx, staging),
+		)
+	}
+	if err := destroySessionSandbox(parentCtx, staging); err != nil {
+		return nil, noBasis, "", errors.Join(
+			fmt.Errorf("destroy the shaped dispatch staging container: %w", err),
+			destroySessionSandbox(parentCtx, ss),
+		)
+	}
+	return ss, noBasis, "", nil
+}
+
+func releaseStaging(ctx context.Context, staging *SessionSandbox, state shepherdtrace.WorkspaceState) error {
+	if !staging.Releasable() {
+		return nil
+	}
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), dispatchWorldDestroyTimeout)
+	defer cancel()
+	if err := staging.ReleaseCapture(releaseCtx, state); err != nil {
+		return fmt.Errorf("release the seeded dispatch capture: %w", err)
+	}
+	return nil
+}
+
+func destroySessionSandbox(ctx context.Context, ss *SessionSandbox) error {
+	if ss == nil {
+		return nil
+	}
+	destroyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), dispatchWorldDestroyTimeout)
+	defer cancel()
+	return ss.Destroy(destroyCtx)
 }
 
 // runDispatchContainer runs one report dispatch inside its own container world.

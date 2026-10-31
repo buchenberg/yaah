@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"strings"
 
 	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
@@ -44,15 +45,17 @@ import (
 // The returned sandbox is NOT provisioned: Create remains the caller's
 // explicit lifecycle step, per the Sandbox contract.
 func OpenContainerdWorkspaceSandbox(w config.WorkspaceConfig) (goatherdsandbox.Sandbox, error) {
+	if err := validateContainerAuthority(w); err != nil {
+		return nil, fmt.Errorf("workspace: %w", err)
+	}
 	// FIFODir passes through so the client's task/exec stdio FIFOs land in a
 	// directory yaah's uid can write — containerd's default is root-only.
 	//
-	// Network is deliberately left unset, which selects the adapter's isolated
-	// default: the container gets its own unshared network namespace, so it is
-	// loopback-only with no egress. That netns — not a paddock — is this lane's
-	// egress boundary, which is why yaah's config surface does not expose it
-	// yet. Sharing the host network would need an explicit config field and a
-	// decision about how it interacts with the egress posture vocabulary.
+	// A session container leaves Network unset, which selects the adapter's
+	// isolated default: its own unshared namespace, loopback-only. A
+	// per-dispatch container is built from a WorkspaceConfig carrying the
+	// lowered dispatch posture instead (host/none/broker); this opener maps
+	// whatever the caller supplied and does not re-decide it here.
 	sb, err := goatherdsandbox.OpenSandbox(croftadapter.BackendName, containerdAdapterConfig(w))
 	if err != nil {
 		return nil, fmt.Errorf("workspace: open containerd sandbox: %w", err)
@@ -61,6 +64,38 @@ func OpenContainerdWorkspaceSandbox(w config.WorkspaceConfig) (goatherdsandbox.S
 		return nil, fmt.Errorf("workspace: the registry returned no sandbox for config %+v", w.Containerd)
 	}
 	return sb, nil
+}
+
+// validateContainerAuthority re-checks the dispatch overrides at the opener.
+// The config layer validates workspace.root, but the per-dispatch fields are
+// filled internally; refusing a malformed root here keeps the mapping from
+// silently passing a host path or an out-of-workspace grant to croft.
+func validateContainerAuthority(w config.WorkspaceConfig) error {
+	root := path.Clean(w.Root)
+	for _, r := range w.WritableRoots {
+		clean := path.Clean(r)
+		if !path.IsAbs(clean) {
+			return fmt.Errorf("writable root %q is not absolute", r)
+		}
+		if root == "." || root == "" {
+			return fmt.Errorf("workspace root is empty, so writable root %q cannot be scoped", r)
+		}
+		if clean == root {
+			return fmt.Errorf("writable root %q names the whole workspace; omit grants for whole-world access", r)
+		}
+		if !strings.HasPrefix(clean, root+"/") {
+			return fmt.Errorf("writable root %q is outside the workspace root %q", r, root)
+		}
+	}
+	switch w.Network {
+	case "", "none", "host", "broker":
+	default:
+		return fmt.Errorf("network posture %q is not one of: none, host, broker", w.Network)
+	}
+	if len(w.BrokerHosts) > 0 && w.Network != "broker" {
+		return fmt.Errorf("broker hosts are set with network posture %q, not broker", w.Network)
+	}
+	return nil
 }
 
 // containerdAdapterConfig maps yaah's workspace config onto the adapter's
@@ -82,7 +117,11 @@ func containerdAdapterConfig(w config.WorkspaceConfig) croftadapter.Config {
 		FIFODir:     w.Containerd.FIFODir,
 		// Root maps onto Workdir: the containment root every relative tool
 		// path resolves against inside the sandbox.
-		Workdir: w.Root,
+		Workdir:       w.Root,
+		WritableRoots: append([]string(nil), w.WritableRoots...),
+		MaskWorkspace: w.MaskWorkspace,
+		Network:       w.Network,
+		BrokerHosts:   append([]string(nil), w.BrokerHosts...),
 	}
 }
 

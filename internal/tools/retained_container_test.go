@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -272,31 +273,37 @@ func TestRetainedReport_ContainerSessionFallsBackToSession(t *testing.T) {
 	}
 }
 
-// TestRetainedReport_ContainerSessionPolicyFallback pins the availability rule
-// for a policy-refused sibling (deny_all cannot be enforced in a container):
-// an auto report still runs in the session container, with the reason recorded.
-func TestRetainedReport_ContainerSessionPolicyFallback(t *testing.T) {
+// TestRetainedReport_ContainerSessionBrokerFallbackRefused pins requirement-
+// preserving degradation for a broker posture: the session container has no
+// broker allowlist, so a sibling preflight failure fails the report instead of
+// running with egress the declaration did not grant.
+func TestRetainedReport_ContainerSessionBrokerFallbackRefused(t *testing.T) {
 	fx, repo, rootID := newSessionFixtures(t)
+	sessionOpen, _ := cleanOpener()
+	session, err := StartSessionSandbox(context.Background(), sessionTestConfig(), sessionOpen, "", nil)
+	if err != nil {
+		t.Fatalf("StartSessionSandbox(session): %v", err)
+	}
 	var dispatched bool
 	run := func(context.Context, string, SubAgentParams) (string, error) {
 		dispatched = true
-		return "policy fallback report", nil
+		return "preflight fallback report", nil
 	}
-	rt := containerReportRuntime(t, fx, repo, rootID, t.TempDir(), run, "auto", nil)
-	rt.DispatchWorlds.SessionSandbox = &SessionSandbox{}
-	rt.Network = "deny_all"
+	openFail := func(config.WorkspaceConfig) (goatherdsandbox.Sandbox, error) {
+		return nil, errors.New("broker unavailable")
+	}
+	rt := containerReportRuntime(t, fx, repo, rootID, t.TempDir(), run, "auto", openFail)
+	rt.DispatchWorlds.SessionSandbox = session
+	rt.Network = "broker"
+	rt.NetworkHosts = []string{"api.example.com"}
 
-	res, err := startRetainedRun(context.Background(), rt, "inspect", SubAgentParams{Role: "reviewer"}, 0, true)
-	if err != nil {
-		t.Fatalf("auto report must fall back to the session container: %v", err)
+	if _, err := startRetainedRun(context.Background(), rt, "inspect", SubAgentParams{Role: "reviewer"}, 0, true); err == nil {
+		t.Fatal("a broker-shaped report must fail when only the session container remains")
+	} else if !strings.Contains(err.Error(), "cannot preserve") || !strings.Contains(err.Error(), "broker unavailable") {
+		t.Fatalf("error = %v, want the authority downgrade and preflight cause", err)
 	}
-	if !dispatched {
-		t.Fatal("the report body did not run")
-	}
-	for _, want := range []string{"policy fallback report", "degraded", "network"} {
-		if !strings.Contains(res, want) {
-			t.Errorf("result must contain %q, got:\n%s", want, res)
-		}
+	if dispatched {
+		t.Fatal("the report body must not run after the fallback is refused")
 	}
 }
 
@@ -352,5 +359,252 @@ func TestRetainedReport_ContainerSessionRequiresRelease(t *testing.T) {
 		t.Fatal("a capturing backend without ReleaseState must fail closed")
 	} else if !strings.Contains(err.Error(), "ReleaseState") {
 		t.Fatalf("error = %q, want the release contract named", err)
+	}
+}
+
+// TestRetainedReport_ContainerWorldLowersAuthority pins the grant and network
+// lowering at the opener seam: the final shaped sandbox receives the container
+// roots, broker posture, and allowlist, while the bootstrap staging sandbox
+// stays unshaped and loopback-only.
+func TestRetainedReport_ContainerWorldLowersAuthority(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	base, fakes := cleanOpener()
+	var configs []config.WorkspaceConfig
+	open := func(w config.WorkspaceConfig) (goatherdsandbox.Sandbox, error) {
+		configs = append(configs, w)
+		return base(w)
+	}
+	run := func(context.Context, string, SubAgentParams) (string, error) {
+		return "shaped report", nil
+	}
+	rt := containerReportRuntime(t, fx, repo, rootID, t.TempDir(), run, "auto", open)
+	rt.Grants = []config.GrantConfig{{Path: "src", Access: "readwrite"}, {Path: "docs", Access: "readonly"}}
+	rt.Network = "broker"
+	rt.NetworkHosts = []string{"api.example.com"}
+
+	res, err := startRetainedRun(context.Background(), rt, "inspect", SubAgentParams{Role: "reviewer"}, 0, true)
+	if err != nil {
+		t.Fatalf("startRetainedRun: %v", err)
+	}
+	if res != "shaped report" {
+		t.Fatalf("result = %q", res)
+	}
+	if len(configs) != 4 {
+		t.Fatalf("opener calls = %d, want 4 (staging probe/session, shaped probe/session)", len(configs))
+	}
+	staging := configs[1]
+	if len(staging.WritableRoots) != 0 || staging.MaskWorkspace || staging.Network != "none" || len(staging.BrokerHosts) != 0 {
+		t.Errorf("staging config must stay unshaped and loopback-only: %+v", staging)
+	}
+	shaped := configs[3]
+	if !reflect.DeepEqual(shaped.WritableRoots, []string{"/workspace/src"}) {
+		t.Errorf("shaped writable roots = %v, want [/workspace/src]", shaped.WritableRoots)
+	}
+	if shaped.MaskWorkspace {
+		t.Error("a writable grant must not set MaskWorkspace")
+	}
+	if shaped.Network != "broker" || !reflect.DeepEqual(shaped.BrokerHosts, []string{"api.example.com"}) {
+		t.Errorf("shaped network = %q hosts = %v", shaped.Network, shaped.BrokerHosts)
+	}
+	for i, sb := range fakes() {
+		if !sb.Destroyed() {
+			t.Errorf("sandbox %d must be destroyed", i)
+		}
+	}
+}
+
+// TestRetainedReport_ContainerWorldReadOnlyMask pins the all-read-only grant
+// case: the shaped sandbox has no writable root but is explicitly masked, which
+// is what distinguishes it from the unshaped default.
+func TestRetainedReport_ContainerWorldReadOnlyMask(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	base, _ := cleanOpener()
+	var configs []config.WorkspaceConfig
+	open := func(w config.WorkspaceConfig) (goatherdsandbox.Sandbox, error) {
+		configs = append(configs, w)
+		return base(w)
+	}
+	run := func(context.Context, string, SubAgentParams) (string, error) {
+		return "read-only report", nil
+	}
+	rt := containerReportRuntime(t, fx, repo, rootID, t.TempDir(), run, "auto", open)
+	rt.Grants = []config.GrantConfig{{Path: "docs", Access: "readonly"}}
+
+	if _, err := startRetainedRun(context.Background(), rt, "inspect", SubAgentParams{Role: "reviewer"}, 0, true); err != nil {
+		t.Fatalf("startRetainedRun: %v", err)
+	}
+	if len(configs) != 4 {
+		t.Fatalf("opener calls = %d, want 4", len(configs))
+	}
+	shaped := configs[3]
+	if len(shaped.WritableRoots) != 0 || !shaped.MaskWorkspace {
+		t.Errorf("all-read-only grants must set the mask with no roots: %+v", shaped)
+	}
+}
+
+// TestRetainedReport_ContainerWorldNetworkOnlyAvoidsStaging pins the other
+// half: a network posture without grants does not need mount shaping, so the
+// copy-in runs directly in the final sandbox.
+func TestRetainedReport_ContainerWorldNetworkOnlyAvoidsStaging(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	base, _ := cleanOpener()
+	var configs []config.WorkspaceConfig
+	open := func(w config.WorkspaceConfig) (goatherdsandbox.Sandbox, error) {
+		configs = append(configs, w)
+		return base(w)
+	}
+	run := func(context.Context, string, SubAgentParams) (string, error) {
+		return "network-only report", nil
+	}
+	rt := containerReportRuntime(t, fx, repo, rootID, t.TempDir(), run, "auto", open)
+	rt.Network = "deny_all"
+
+	if _, err := startRetainedRun(context.Background(), rt, "inspect", SubAgentParams{Role: "reviewer"}, 0, true); err != nil {
+		t.Fatalf("startRetainedRun: %v", err)
+	}
+	if len(configs) != 2 {
+		t.Fatalf("opener calls = %d, want 2 (probe then dispatch sandbox)", len(configs))
+	}
+	if configs[1].Network != "none" || configs[1].MaskWorkspace || len(configs[1].WritableRoots) != 0 {
+		t.Errorf("network-only config = %+v", configs[1])
+	}
+}
+
+// TestRetainedProposal_ContainerWorldShapedGrants pins the proposal half of the
+// lowered authority: the body writes inside a granted root, the shaped sandbox
+// has that root as its only writable subtree, and the snapshot-native seal
+// produces a proposal against the applied staging baseline.
+func TestRetainedProposal_ContainerWorldShapedGrants(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	base, _ := cleanOpener()
+	var configs []config.WorkspaceConfig
+	open := func(w config.WorkspaceConfig) (goatherdsandbox.Sandbox, error) {
+		configs = append(configs, w)
+		return base(w)
+	}
+	run := func(ctx context.Context, _ string, _ SubAgentParams) (string, error) {
+		ws := DispatchWorkspace(ctx)
+		if ws == nil {
+			return "", errors.New("proposal body has no dispatch workspace")
+		}
+		if err := ws.WriteFile(ctx, "src/new.txt", []byte("hello\n"), 0o644); err != nil {
+			return "", err
+		}
+		return "wrote a granted file", nil
+	}
+	rt := containerReportRuntime(t, fx, repo, rootID, t.TempDir(), run, "auto", open)
+	rt.Grants = []config.GrantConfig{{Path: "src", Access: "readwrite"}}
+	rt.Network = "deny_all"
+
+	out, err := startRetainedRun(context.Background(), rt, "make a change", SubAgentParams{Role: "developer"}, 0, false)
+	if err != nil {
+		t.Fatalf("startRetainedRun: %v", err)
+	}
+	if !strings.Contains(out, `"status":"proposal"`) || !strings.Contains(out, "src/new.txt") {
+		t.Fatalf("proposal envelope = %s", out)
+	}
+	if len(configs) != 4 {
+		t.Fatalf("opener calls = %d, want 4", len(configs))
+	}
+	shaped := configs[3]
+	if !reflect.DeepEqual(shaped.WritableRoots, []string{"/workspace/src"}) || shaped.Network != "none" {
+		t.Fatalf("shaped proposal config = %+v", shaped)
+	}
+}
+
+// TestRetainedReport_ContainerSessionSiblingLowersAuthority pins the sibling
+// path: a container-session dispatch is shaped from the same grants and broker
+// posture, but is seeded by applying the session capture rather than a host
+// copy-in, so no staging container is needed.
+func TestRetainedReport_ContainerSessionSiblingLowersAuthority(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	sessionOpen, _ := cleanOpener()
+	session, err := StartSessionSandbox(context.Background(), sessionTestConfig(), sessionOpen, "", nil)
+	if err != nil {
+		t.Fatalf("StartSessionSandbox(session): %v", err)
+	}
+	base, _ := cleanOpener()
+	var configs []config.WorkspaceConfig
+	open := func(w config.WorkspaceConfig) (goatherdsandbox.Sandbox, error) {
+		configs = append(configs, w)
+		return base(w)
+	}
+	run := func(context.Context, string, SubAgentParams) (string, error) {
+		return "sibling report", nil
+	}
+	rt := containerReportRuntime(t, fx, repo, rootID, t.TempDir(), run, "auto", open)
+	rt.DispatchWorlds.SessionSandbox = session
+	rt.Grants = []config.GrantConfig{{Path: "src", Access: "readwrite"}}
+	rt.Network = "broker"
+	rt.NetworkHosts = []string{"api.example.com"}
+
+	if _, err := startRetainedRun(context.Background(), rt, "inspect", SubAgentParams{Role: "reviewer"}, 0, true); err != nil {
+		t.Fatalf("startRetainedRun: %v", err)
+	}
+	if len(configs) != 2 {
+		t.Fatalf("opener calls = %d, want 2 (probe then sibling)", len(configs))
+	}
+	shaped := configs[1]
+	if !reflect.DeepEqual(shaped.WritableRoots, []string{"/workspace/src"}) || shaped.Network != "broker" || !reflect.DeepEqual(shaped.BrokerHosts, []string{"api.example.com"}) {
+		t.Fatalf("sibling config = %+v", shaped)
+	}
+}
+
+// TestRetainedReport_ContainerSessionGrantFallbackRefused pins requirement-
+// preserving degradation: the session container is not shaped, so it cannot
+// enforce a sibling's grants. A preflight failure must fail the report rather
+// than run the body with wider write authority than declared.
+func TestRetainedReport_ContainerSessionGrantFallbackRefused(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	sessionOpen, _ := cleanOpener()
+	session, err := StartSessionSandbox(context.Background(), sessionTestConfig(), sessionOpen, "", nil)
+	if err != nil {
+		t.Fatalf("StartSessionSandbox(session): %v", err)
+	}
+	run := func(context.Context, string, SubAgentParams) (string, error) {
+		t.Fatal("a grant-shaped dispatch must not fall back to the unshaped session container")
+		return "", nil
+	}
+	openFail := func(config.WorkspaceConfig) (goatherdsandbox.Sandbox, error) {
+		return nil, errors.New("daemon unreachable")
+	}
+	rt := containerReportRuntime(t, fx, repo, rootID, t.TempDir(), run, "auto", openFail)
+	rt.DispatchWorlds.SessionSandbox = session
+	rt.Grants = []config.GrantConfig{{Path: "src", Access: "readwrite"}}
+	rt.Network = "deny_all"
+
+	if _, err := startRetainedRun(context.Background(), rt, "inspect", SubAgentParams{Role: "reviewer"}, 0, true); err == nil {
+		t.Fatal("a grant-shaped report must fail when only the unshaped session container remains")
+	} else if !strings.Contains(err.Error(), "cannot preserve") {
+		t.Fatalf("error = %v, want it to name the authority downgrade", err)
+	}
+}
+
+// TestRetainedReport_ContainerSessionDenyAllFallbackStillRuns pins the other
+// side: deny_all is preserved by the session container's loopback-only
+// namespace, so that fallback remains legal.
+func TestRetainedReport_ContainerSessionDenyAllFallbackStillRuns(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	sessionOpen, _ := cleanOpener()
+	session, err := StartSessionSandbox(context.Background(), sessionTestConfig(), sessionOpen, "", nil)
+	if err != nil {
+		t.Fatalf("StartSessionSandbox(session): %v", err)
+	}
+	run := func(context.Context, string, SubAgentParams) (string, error) {
+		return "session fallback with deny_all", nil
+	}
+	openFail := func(config.WorkspaceConfig) (goatherdsandbox.Sandbox, error) {
+		return nil, errors.New("daemon unreachable")
+	}
+	rt := containerReportRuntime(t, fx, repo, rootID, t.TempDir(), run, "auto", openFail)
+	rt.DispatchWorlds.SessionSandbox = session
+	rt.Network = "deny_all"
+
+	res, err := startRetainedRun(context.Background(), rt, "inspect", SubAgentParams{Role: "reviewer"}, 0, true)
+	if err != nil {
+		t.Fatalf("deny_all fallback must preserve the posture: %v", err)
+	}
+	if !strings.Contains(res, "session fallback with deny_all") {
+		t.Fatalf("result = %q", res)
 	}
 }

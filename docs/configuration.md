@@ -342,7 +342,7 @@ Sub-agents use their own curated pipeline and per-role directives.
 | `mode` | `retained` | Dispatch lane — `retained` (isolated worktree + proposal) or `shared` (direct to host) |
 | `world` | `auto` | Dispatch world — `auto` (per-dispatch container for report and proposal dispatches in a host session when `workspace.containerd.image` is set on Linux, else the worktree, recording any degradation; in a container session, report and proposal lanes use a sibling container; a proposal settles into the session container), `worktree` (never container), `container` (fails closed if unavailable). A proposal seals a GitDelta manifest and destroys its container at seal; a report never seals. Orthogonal to `mode`. See [shepherd-parity.md](./shepherd-parity.md#dispatch-worlds) |
 | `roles.<name>.world` | — | Per-role world override (`auto` / `worktree` / `container`); empty inherits `agents.subagent.world` |
-| `grants` | `[]` | Per-dispatch write authority — a list of `{path, access}` roots relative to the dispatch world. `readwrite` roots are writable, `readonly` roots are declared but denied writes; roots must be disjoint. Empty = the whole world (legacy) |
+| `grants` | `[]` | Per-dispatch write authority — a list of `{path, access}` roots relative to the dispatch world. `readwrite` roots are writable, `readonly` roots are declared but denied writes; roots must be disjoint. Empty = the whole world (legacy). Both the jail and a shaped container lower them; an all-read-only set masks the container workspace |
 | `roles.<name>.grants` | — | Per-role grant set; empty inherits `agents.subagent.grants` |
 | `containment` | `auto` | Syscall-jail placement — `auto` (jail if the host can, else advisory), `off`/`none`/`advisory`, `paddock`/`jail` (fails closed) |
 | `network` | `allow_all` | Egress posture for a confined dispatch — `allow_all`, `deny_all`, or `broker` (allowlist via the session's broker) |
@@ -450,10 +450,17 @@ leaves the host untouched until `apply_out`. The manifest and basis live under
 session-target proposals are session-lifetime (the parent container is gone, so
 they are left for audit rather than rebound to a new world). A preflight failure (open, probe, create, bootstrap) degrades
 `world: auto` to the worktree in a host session; in a container session a
-report falls back to the session container and a proposal fails closed.
-`world: container` fails closed. A restrictive `network` posture
-(`deny_all`/`broker`) is refused for a container world because
-`http`/`webfetch` run in this process, outside the container. This path is Linux-only, like the `containerd` backend itself.
+report falls back to the session container only when that container still
+enforces the dispatch's authority (no grants, no `broker`; `deny_all` is
+preserved by its loopback-only netns), and a proposal fails closed.
+`world: container` fails closed. `agents.subagent.network` is lowered onto the
+container's own posture: `allow_all` shares the host namespace, `deny_all` uses
+the container's unshared namespace, and `broker` uses a netns-local proxy that
+admits `network_hosts`. Under a restrictive posture, `http`/`webfetch` are
+omitted from the dispatch because they run in the yaah process outside the
+container. Grants are lowered by masking the container workspace read-only and
+remounting only the read-write roots; an all-read-only grant set masks the whole
+workspace. This path is Linux-only, like the `containerd` backend itself.
 
 The `containerd` backend requires a Linux containerd daemon: config
 validation refuses it at load on any other platform. The daemon's socket is
@@ -682,19 +689,17 @@ Four things to know about the guarantee:
   a jail cannot govern them — a restrictive posture therefore **omits those tools**
   from the dispatch (and says so in the sub-agent's prompt) rather than leaving a
   one-call hole. A client the sub-agent runs *itself* is governed normally.
-- **This key governs host and container dispatches, with one lane caveat.** It is
-  decided per dispatch, before any lane gate, so a workdir-less dispatch counts
-  too (shared mode, or a model-supplied empty workdir): a restrictive posture
-  there is refused as well, since nothing would jail the sub-agent. A
-  per-dispatch container world that asks for a restrictive posture is refused by
-  world resolution, so that dispatch never starts. An isolated session is
-  different: its sub-agents run inside the session container, and the shell's
-  egress is the container's own posture, not this key. But `http`/`webfetch`
-  still make their request in the yaah process outside that netns, so a
-  restrictive posture now omits those tools from the isolated dispatch too and
-  names the omission. A `network: deny_all` can therefore refuse a per-dispatch
-  container world while an isolated-session dispatch runs with those two host
-  tools omitted; the container still supplies the shell's egress boundary.
+- **This key governs host and container dispatches.** It is decided per
+  dispatch, before any lane gate, so a workdir-less dispatch counts too (shared
+  mode, or a model-supplied empty workdir): a restrictive posture there is
+  refused, since nothing would jail the sub-agent. A per-dispatch container
+  lowers the posture onto its netns: `allow_all` is host networking,
+  `deny_all` is loopback-only, and `broker` is a netns-local proxy pinned to the
+  session allowlist. The host-run `http`/`webfetch` tools are omitted under a
+  restrictive posture in every lane, because those requests happen in the yaah
+  process outside the container. An isolated session's shell uses that
+  container's own posture; a restrictive posture omits the same two tools from
+  its dispatches.
 
 A confined sub-agent is told its posture up front ("there is no network egress"
 or "egress is limited to an allowlist"), so a blocked fetch is not something it
@@ -724,8 +729,8 @@ here rather than restating it.
 | Orchestrator / root session (local) | path containment only: `--workspace`, `agents.default.workspace_deny_patterns` | none — unconfined, no jail | the URL guard (below) |
 | `mode: shared` dispatch | the host tree, same as the root | none — and a restrictive `network` is **refused**, because there is no workdir to jail | the URL guard |
 | Retained dispatch (`proposal` / `report` lane, worktree) | worktree-only writable root under `containment`; advisory where no jail exists | `agents.subagent.network`: `allow_all` (default), `deny_all`, or `broker` + `network_hosts` | the URL guard — and a *restrictive* posture **omits** both tools, because they would bypass the jail |
-| Per-dispatch container (`world: container`, or `auto` for a report lane) | the container | the container's netns (loopback-only); a restrictive `agents.subagent.network` is **refused** for a container world | the URL guard — `http`/`webfetch` run in the yaah process, outside the container |
-| Isolated session (`workspace.backend: containerd`), and every dispatch inside it | the container | the container's own posture; `agents.subagent.network` does not govern the container shell | the URL guard — under a restrictive posture both tools are omitted, because the request is still made by the yaah process **outside** the container |
+| Per-dispatch container (`world: container`, or `auto` for a report lane) | the container, grant-shaped where configured | `agents.subagent.network` lowered onto the container: `allow_all` host netns, `deny_all` loopback-only, `broker` + `network_hosts` netns-local proxy | the URL guard — a *restrictive* posture **omits** both tools, because the request is made by the yaah process, outside the container |
+| Isolated session (`workspace.backend: containerd`), and every dispatch inside it | the container | the container's own posture; `agents.subagent.network` does not govern the session container's shell | the URL guard — under a restrictive posture both tools are omitted, because the request is still made by the yaah process **outside** the container |
 
 **What the URL guard blocks (`http`, `webfetch`; always on, in every lane).**
 Both tools validate the URL before any request and share one guarded HTTP

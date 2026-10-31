@@ -11,17 +11,18 @@ import (
 	"github.com/buchenberg/yaah/internal/sandboxfake"
 )
 
-// cleanOpener hands out fresh fakes in call order — probe sandbox first,
-// session sandbox second — and reaches them through the returned slice. The
-// probe sandbox gets a passing ExecHook (the fake's shell does not implement
-// the contract script's loop surface, and the probe is not under test here);
-// the session sandbox keeps the working interpreter so sandboxWorkspace
-// operations round-trip real writes.
+// cleanOpener hands out fresh fakes in call order — probe sandbox, then
+// session sandbox — and reaches them through the returned slice. Every probe
+// (an even position) gets a passing ExecHook: the fake's shell does not
+// implement the contract script's loop surface, and the probe is not under
+// test here. Session sandboxes keep the working interpreter so sandboxWorkspace
+// operations, including a shaped dispatch's staging state, round-trip real
+// writes.
 func cleanOpener() (SandboxOpener, func() []*sandboxfake.Sandbox) {
 	var opened []*sandboxfake.Sandbox
 	open := func(config.WorkspaceConfig) (goatherdsandbox.Sandbox, error) {
 		sb := sandboxfake.New()
-		if len(opened) == 0 {
+		if len(opened)%2 == 0 {
 			sb.ExecHook = func(goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
 				return goatherdsandbox.ExecResult{ExitCode: 0}, nil
 			}

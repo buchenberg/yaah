@@ -358,3 +358,90 @@ func TestLive_ContainerSessionProposal(t *testing.T) {
 		t.Errorf("the host tree must stay untouched, stat err = %v", err)
 	}
 }
+
+// TestLive_DispatchContainerShapedGrant verifies the grant-shaped container
+// world against a real daemon: the body can write inside the granted subtree,
+// an outside write is refused, and the sealed manifest contains only the
+// granted change. The shaped path uses an unshaped staging container for the
+// host copy-in, then applies that state to the shaped sandbox.
+func TestLive_DispatchContainerShapedGrant(t *testing.T) {
+	addr := strings.TrimSpace(os.Getenv(liveAddrEnv))
+	image := strings.TrimSpace(os.Getenv(liveImageEnv))
+	if addr == "" || image == "" {
+		t.Skipf("set %s and %s to run the shaped authority live verification", liveAddrEnv, liveImageEnv)
+	}
+
+	timeout, err := time.ParseDuration(liveActivationEnv(liveTimeoutEnv, "10m"))
+	if err != nil || timeout <= 0 {
+		timeout = 10 * time.Minute
+	}
+	cfg := config.WorkspaceConfig{
+		Backend: config.BackendLocal,
+		Root:    liveActivationEnv(liveRootEnv, "/workspace"),
+		Containerd: config.ContainerdWorkspaceConfig{
+			Address:     addr,
+			Namespace:   liveActivationEnv(liveNamespaceEnv, "yaah-live"),
+			Image:       image,
+			Snapshotter: liveActivationEnv(liveSnapshotterEnv, ""),
+			FIFODir:     filepath.Join(t.TempDir(), "fifo"),
+		},
+	}
+	fx, repo, rootID := newSessionFixtures(t)
+	run := func(ctx context.Context, _ string, _ SubAgentParams) (string, error) {
+		ws := DispatchWorkspace(ctx)
+		if ws == nil {
+			return "", errors.New("dispatch workspace missing from context")
+		}
+		if err := ws.WriteFile(ctx, "outside.txt", []byte("must not land\n"), 0o644); err == nil {
+			return "", errors.New("an outside write succeeded under a shaped workspace")
+		}
+		if err := ws.WriteFile(ctx, "src/inside.txt", []byte("granted\n"), 0o644); err != nil {
+			return "", err
+		}
+		return "wrote only inside the grant", nil
+	}
+	rt := RetainedRuntime{
+		Runner:          run,
+		RepoPath:        repo,
+		ScopeManager:    fx.mgr,
+		RootScopeID:     rootID,
+		WorktreeRoot:    t.TempDir(),
+		Proposals:       NewProposalRegistry(),
+		World:           "container",
+		ContainerWorlds: true,
+		Containment:     "auto",
+		Network:         "deny_all",
+		Grants:          []config.GrantConfig{{Path: "src", Access: "readwrite"}},
+		DispatchWorlds: &DispatchWorlds{
+			Config: cfg,
+			Opener: OpenContainerdWorkspaceSandbox,
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	envelope, err := startRetainedRun(ctx, rt, "write inside the grant", SubAgentParams{Role: "developer"}, timeout, false)
+	if err != nil {
+		t.Fatalf("startRetainedRun: %v", err)
+	}
+	var parsed struct {
+		Status string `json:"status"`
+		Error  string `json:"error"`
+		Notes  string `json:"notes"`
+	}
+	if err := json.Unmarshal([]byte(envelope), &parsed); err != nil {
+		t.Fatalf("parse proposal envelope: %v", err)
+	}
+	if parsed.Status != "proposal" || !strings.Contains(envelope, "src/inside.txt") {
+		t.Fatalf("shaped proposal envelope = %s", envelope)
+	}
+	if parsed.Error != "" {
+		t.Fatalf("dispatch reported an error: %s", parsed.Error)
+	}
+	if parsed.Notes != "" {
+		t.Fatalf("dispatch teardown left a caveat (container or scope left behind): %s", parsed.Notes)
+	}
+	if strings.Contains(envelope, "outside.txt") {
+		t.Fatalf("the sealed manifest must not contain the refused outside write: %s", envelope)
+	}
+}

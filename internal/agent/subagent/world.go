@@ -48,7 +48,8 @@ type WorldRequest struct {
 	Network string
 
 	// RestrictiveGrants reports whether the dispatch declares grants a
-	// permissive world cannot enforce. False until per-binding grants land.
+	// permissive world cannot enforce. Both the jail and the shaped container
+	// lower them; an advisory world cannot.
 	RestrictiveGrants bool
 }
 
@@ -178,19 +179,11 @@ func containerRefusal(req WorldRequest, av WorldAvailability) string {
 	// containment: paddock is satisfied by the container boundary. The ledger
 	// records the tier as "contained", never "paddock".
 	//
-	// Egress is different. A restrictive posture is enforced for the shell
-	// children by the jail, but http/webfetch execute in this process on the
-	// host; a container netns cannot cover them. Refuse the world rather than
-	// silently weaken the declaration.
-	if restrictiveNetwork(req.Network) {
-		return "a restrictive network posture (" + strings.ToLower(strings.TrimSpace(req.Network)) + ") cannot be enforced for a container world; use a worktree world or allow_all"
-	}
-	// Restrictive grants are enforceable in a container only once the world
-	// adapter can lower them to mounts/roots. Until then the honest answer is
-	// that the container cannot promise the declared authority.
-	if req.RestrictiveGrants {
-		return "per-binding grants are not lowered onto container worlds yet"
-	}
+	// Grants and egress are authority axes the container tier now lowers onto
+	// the container itself: writable roots become mount shaping, and the
+	// network posture becomes the container netns (host/none/broker). The
+	// host-run http/webfetch tools are omitted under a restrictive posture by
+	// the runner, so the container netns is the only network path left.
 	return ""
 }
 

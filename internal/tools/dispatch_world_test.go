@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/buchenberg/yaah/internal/config"
 )
 
 func TestResolveDispatchWorld(t *testing.T) {
@@ -107,7 +108,7 @@ func TestResolveDispatchWorld(t *testing.T) {
 		}
 	})
 
-	t.Run("a restrictive egress posture refuses a container world", func(t *testing.T) {
+	t.Run("a restrictive egress posture chooses a container world", func(t *testing.T) {
 		rt := RetainedRuntime{
 			World:           "auto",
 			ContainerWorlds: true,
@@ -117,25 +118,38 @@ func TestResolveDispatchWorld(t *testing.T) {
 		}
 		res, err := resolveDispatchWorld(rt, "reviewer", true)
 		if err != nil {
-			// A host with no usable syscall jail (for example macOS without a
-			// Seatbelt backend) has no legal world for deny_all: the worktree
-			// cannot enforce it either. The container must still be refused
-			// for the network reason, not chosen.
-			if !strings.Contains(err.Error(), "network") {
-				t.Fatalf("error = %q, want it to name the network posture", err)
-			}
-		} else if res.Resolved != subagent.WorldWorktree || !res.Degraded {
-			t.Fatalf("got %+v, want a degraded worktree", res)
-		} else if !strings.Contains(res.Reason, "network") {
-			t.Fatalf("reason %q must name the network posture", res.Reason)
+			t.Fatalf("resolveDispatchWorld: %v", err)
+		}
+		if res.Resolved != subagent.WorldContainer || res.Degraded {
+			t.Fatalf("got %+v, want an undegraded container", res)
 		}
 
 		explicit := rt
 		explicit.World = "container"
-		if _, err := resolveDispatchWorld(explicit, "reviewer", true); err == nil {
-			t.Fatal("explicit container with deny_all must fail closed")
-		} else if !strings.Contains(err.Error(), "network") {
-			t.Fatalf("error = %q, want it to name the network posture", err)
+		res, err = resolveDispatchWorld(explicit, "reviewer", true)
+		if err != nil {
+			t.Fatalf("explicit container with deny_all: %v", err)
+		}
+		if res.Resolved != subagent.WorldContainer {
+			t.Fatalf("got %+v, want container", res)
+		}
+	})
+
+	t.Run("restrictive grants choose a container world", func(t *testing.T) {
+		rt := RetainedRuntime{
+			World:           "auto",
+			ContainerWorlds: true,
+			DispatchWorlds:  &DispatchWorlds{},
+			Containment:     "auto",
+			Network:         "allow_all",
+			Grants:          []config.GrantConfig{{Path: "src", Access: "readwrite"}},
+		}
+		res, err := resolveDispatchWorld(rt, "developer", false)
+		if err != nil {
+			t.Fatalf("resolveDispatchWorld: %v", err)
+		}
+		if res.Resolved != subagent.WorldContainer || res.Degraded {
+			t.Fatalf("got %+v, want an undegraded container", res)
 		}
 	})
 

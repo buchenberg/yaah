@@ -235,14 +235,22 @@ func TestContainerdAdapterConfig_Passthrough(t *testing.T) {
 			Snapshotter: "overlayfs",
 			FIFODir:     "/var/tmp/yaah-fifo",
 		},
+		WritableRoots: []string{"/sandbox/src"},
+		MaskWorkspace: true,
+		Network:       "broker",
+		BrokerHosts:   []string{"api.example.com"},
 	}
 	want := croftadapter.Config{
-		Address:     "/run/containerd/containerd.sock",
-		Namespace:   "prod",
-		Image:       "example/dev:latest",
-		Snapshotter: "overlayfs",
-		FIFODir:     "/var/tmp/yaah-fifo",
-		Workdir:     "/sandbox",
+		Address:       "/run/containerd/containerd.sock",
+		Namespace:     "prod",
+		Image:         "example/dev:latest",
+		Snapshotter:   "overlayfs",
+		FIFODir:       "/var/tmp/yaah-fifo",
+		Workdir:       "/sandbox",
+		WritableRoots: []string{"/sandbox/src"},
+		MaskWorkspace: true,
+		Network:       "broker",
+		BrokerHosts:   []string{"api.example.com"},
 	}
 	if got := containerdAdapterConfig(w); !reflect.DeepEqual(got, want) {
 		t.Errorf("containerdAdapterConfig() =\n\t%+v\nwant\n\t%+v", got, want)
@@ -291,5 +299,40 @@ func TestProbeImageContract_DestroyFailureJoinsContractError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "teardown exploded") {
 		t.Errorf("error = %v, want the teardown failure joined", err)
+	}
+}
+
+func TestValidateContainerAuthority(t *testing.T) {
+	base := sessionTestConfig()
+	cases := []struct {
+		name    string
+		mutate  func(*config.WorkspaceConfig)
+		wantErr bool
+	}{
+		{name: "session defaults"},
+		{name: "valid shaped", mutate: func(w *config.WorkspaceConfig) {
+			w.WritableRoots = []string{"/workspace/src"}
+			w.MaskWorkspace = true
+			w.Network = "broker"
+			w.BrokerHosts = []string{"api.example.com"}
+		}},
+		{name: "relative root", mutate: func(w *config.WorkspaceConfig) { w.Root = "workspace"; w.WritableRoots = []string{"/workspace/src"} }, wantErr: true},
+		{name: "relative writable root", mutate: func(w *config.WorkspaceConfig) { w.WritableRoots = []string{"src"} }, wantErr: true},
+		{name: "world-root writable root", mutate: func(w *config.WorkspaceConfig) { w.WritableRoots = []string{"/workspace"} }, wantErr: true},
+		{name: "outside writable root", mutate: func(w *config.WorkspaceConfig) { w.WritableRoots = []string{"/etc"} }, wantErr: true},
+		{name: "unknown network", mutate: func(w *config.WorkspaceConfig) { w.Network = "borker" }, wantErr: true},
+		{name: "hosts without broker", mutate: func(w *config.WorkspaceConfig) { w.Network = "none"; w.BrokerHosts = []string{"api.example.com"} }, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := base
+			if tc.mutate != nil {
+				tc.mutate(&w)
+			}
+			err := validateContainerAuthority(w)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("validateContainerAuthority() error = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
 	}
 }

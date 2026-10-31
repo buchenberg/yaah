@@ -81,16 +81,16 @@ func TestResolveWorld_Ladder(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "restrictive egress refuses an available container",
+			name: "restrictive egress chooses an available container",
 			req:  WorldRequest{Requested: "auto", Lane: "proposal", Retained: true, Network: "deny_all"},
 			av:   both,
-			want: WorldWorktree, degraded: true,
+			want: WorldContainer,
 		},
 		{
-			name:    "explicit container refuses a restrictive egress posture",
-			req:     WorldRequest{Requested: "container", Lane: "report", Network: "broker"},
-			av:      both,
-			wantErr: true, wantInErr: "network",
+			name: "explicit container accepts a restrictive egress posture",
+			req:  WorldRequest{Requested: "container", Lane: "report", Network: "broker"},
+			av:   both,
+			want: WorldContainer,
 		},
 		{
 			name:    "the opt-in gate names itself",
@@ -111,10 +111,10 @@ func TestResolveWorld_Ladder(t *testing.T) {
 			want: WorldContainer,
 		},
 		{
-			name: "restrictive grants refuse a container that cannot lower them",
+			name: "restrictive grants choose a container that lowers them",
 			req:  WorldRequest{Requested: "auto", Lane: "proposal", RestrictiveGrants: true},
 			av:   both,
-			want: WorldWorktree, degraded: true,
+			want: WorldContainer,
 		},
 		{
 			name:    "unknown world is rejected",
