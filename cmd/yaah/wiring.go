@@ -286,10 +286,18 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// subAgentUnavailableTools documents.
 	if !tools.GoToolAvailable(cwd) {
 		for _, name := range tools.GoToolchainLeafTools() {
-			toolReg.Unregister(name)
-			// The tools exist and this session merely cannot use them, so
-			// an allowlist naming one is not a typo.
+			// The tool exists and this session merely cannot use it, so an
+			// allowlist naming one is not a typo.
 			belt.Know(name)
+			// Only a tool this registry actually holds is dropped by it. In
+			// isolated mode go_refactor is already absent as host-only and
+			// already named in omittedTools; recording it a second time
+			// would duplicate the entry in the prompt delta and in the
+			// session's workspace_omitted_tools.
+			if toolReg.Get(name) == nil {
+				continue
+			}
+			toolReg.Unregister(name)
 			omittedTools = append(omittedTools, name)
 		}
 	}
@@ -401,23 +409,18 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		embedderAttached = attachEmbedder(db, cfg)
 	}
 
-	// --- Prompt assembly -------------------------------------------------
-	// Memory tools are wired only when there is a store to put them in AND
-	// the session can benefit from one. A one-shot run is a single
-	// non-interactive turn: there is no later conversation to recall into,
-	// and the store a CI or bench one-shot writes is typically discarded
-	// with its container — so the schemas are per-call cost, and an agent
-	// that "saves a finding" spends output tokens on a note nobody will
-	// read. Same precedent as `question` above.
-	//
-	// The Memory Guidelines block in the system prompt is gated on this
-	// SAME value: the prompt must never advertise a tool the session did
-	// not register.
-	memoryTools := db != nil && !opts.OneShot
-	systemPrompt := buildSystemPrompt(cfg, cwd, db, opts.ResumeSessionID, memoryTools)
+	// The six memory tools, as one list: it feeds the belt, the
+	// omitted-tools record, and the prompt gate below, so the three cannot
+	// disagree about what this session actually has.
+	memoryToolNames := []string{"memory_search", "memory_add", "memory_delete", "memory_update", "memory_promote", "memory_search_sessions"}
 
-	// Register memory tools (needs DB, not prompt logic).
-	if memoryTools {
+	// Register memory tools (needs DB, not prompt logic). A one-shot run
+	// gets none: it is a single non-interactive turn with no later
+	// conversation to recall into, and the store a CI or bench one-shot
+	// writes is typically discarded with its container — so the schemas are
+	// per-call cost, and an agent that "saves a finding" spends output
+	// tokens on a note nobody will read. Same precedent as `question` above.
+	if db != nil && !opts.OneShot {
 		toolReg.Register(&tools.MemorySearchTool{DB: db})
 		toolReg.Register(&tools.MemoryAddTool{DB: db})
 		toolReg.Register(&tools.MemoryPromoteTool{DB: db})
@@ -427,13 +430,26 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	} else {
 		// The tools exist but this session has nowhere to put them (no
 		// database) or no use for them (one-shot): the belt must know the
-		// names, or an allowlist that names them reads as a typo. One list
-		// feeds both the belt and the omitted-tools record, so the two
-		// cannot disagree about what was dropped.
-		memoryToolNames := []string{"memory_search", "memory_add", "memory_delete", "memory_update", "memory_promote", "memory_search_sessions"}
+		// names, or an allowlist that names them reads as a typo.
 		belt.Know(memoryToolNames...)
 		omittedTools = append(omittedTools, memoryToolNames...)
 	}
+
+	// --- Prompt assembly -------------------------------------------------
+	// The Memory Guidelines block is gated on what the registry actually
+	// holds, NOT on the intent above. An `agents.default.tools` allowlist
+	// that omits the memory tools makes Register refuse them through the
+	// belt, and gating on intent alone would leave the prompt advertising
+	// six tools that are not in the request. All-or-nothing, because the
+	// block names all six.
+	memoryTools := true
+	for _, name := range memoryToolNames {
+		if toolReg.Get(name) == nil {
+			memoryTools = false
+			break
+		}
+	}
+	systemPrompt := buildSystemPrompt(cfg, cwd, db, opts.ResumeSessionID, memoryTools)
 
 	// --- MCP servers ------------------------------------------------------
 	// Isolated mode omits MCP tools by policy: they execute on the host
