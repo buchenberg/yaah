@@ -424,8 +424,22 @@ func TestLive_DispatchContainerShapedGrant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("startRetainedRun: %v", err)
 	}
-	if !strings.Contains(envelope, `"status":"proposal"`) || !strings.Contains(envelope, "src/inside.txt") {
+	var parsed struct {
+		Status string `json:"status"`
+		Error  string `json:"error"`
+		Notes  string `json:"notes"`
+	}
+	if err := json.Unmarshal([]byte(envelope), &parsed); err != nil {
+		t.Fatalf("parse proposal envelope: %v", err)
+	}
+	if parsed.Status != "proposal" || !strings.Contains(envelope, "src/inside.txt") {
 		t.Fatalf("shaped proposal envelope = %s", envelope)
+	}
+	if parsed.Error != "" {
+		t.Fatalf("dispatch reported an error: %s", parsed.Error)
+	}
+	if parsed.Notes != "" {
+		t.Fatalf("dispatch teardown left a caveat (container or scope left behind): %s", parsed.Notes)
 	}
 	if strings.Contains(envelope, "outside.txt") {
 		t.Fatalf("the sealed manifest must not contain the refused outside write: %s", envelope)
