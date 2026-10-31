@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/buchenberg/yaah/internal/agent/subagent"
@@ -41,7 +42,7 @@ func (*ProposalTool) Schema() json.RawMessage {
 			"action": {
 				"type": "string",
 				"enum": ["list", "show", "select", "apply", "release", "discard"],
-				"description": "list: show open proposals; show: one proposal's diff and files; select: fast-forward onto the dispatch basis — fails closed if the basis moved since the dispatch; apply: apply path-disjoint onto a moved tree (a worktree proposal merges three-way, a container proposal writes whole-path post-images), refused on overlap; release: export the delta to a retention path (and tear a worktree down; a container world already ended at seal); discard: throw the proposal away"
+				"description": "list: show open proposals, their parent drift, and any pairwise path overlaps; show: one proposal's diff and files; select: fast-forward onto the dispatch basis — fails closed if the basis moved since the dispatch; apply: apply path-disjoint onto a moved tree (a worktree proposal merges three-way, a container proposal writes whole-path post-images), refused on overlap with a machine-readable conflict; release: export the delta to a retention path (and tear a worktree down; a container world already ended at seal); discard: throw the proposal away"
 			},
 			"proposal_id": {
 				"type": "string",
@@ -66,7 +67,7 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 
 	switch raw.Action {
 	case "list":
-		return t.Proposals.listEnvelope(), nil
+		return t.Proposals.listEnvelope(ctx), nil
 	case "show":
 		if raw.ProposalID == "" {
 			return "", fmt.Errorf("proposal: proposal_id required for show")
@@ -98,7 +99,30 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 		if raw.ProposalID == "" {
 			return "", fmt.Errorf("proposal: proposal_id required for %s", raw.Action)
 		}
-		return t.Proposals.settleRetainedProposal(ctx, raw.ProposalID, raw.Action)
+		out, err := t.Proposals.settleRetainedProposal(ctx, raw.ProposalID, raw.Action)
+		if err != nil {
+			var conflict *proposalApplyConflict
+			if raw.Action == "apply" && errors.As(err, &conflict) {
+				// A refusal is an outcome the orchestrator must act on, not a
+				// failed tool call: return the same JSON frame as a settlement,
+				// with the overlap paths named. The proposal stays open.
+				env := proposalEnvelope{
+					Status:     "conflict",
+					ProposalID: conflict.ProposalID,
+					Action:     raw.Action,
+					Error:      conflict.Error(),
+					Conflicts: []proposalConflict{{
+						Kind:      proposalConflictApply,
+						Paths:     conflict.Paths,
+						Proposals: []string{conflict.ProposalID},
+					}},
+					Next: proposalVerbs(),
+				}
+				return marshalProposalEnvelope(env), nil
+			}
+			return "", err
+		}
+		return out, nil
 	default:
 		return "", fmt.Errorf("proposal: unknown action %q (list, show, select, apply, release, discard)", raw.Action)
 	}

@@ -26,11 +26,18 @@ it with the `proposal` tool:
 
 `proposal` with `action: "list"` answers with the same JSON envelope as the other
 verbs: `proposals` is a list of summaries (id, files), and it is an
-explicit empty `[]` when nothing is open — not prose, not an error. Proposals
-belong to the session that sealed them, so another session's proposals are never
-listed, shown, or settleable here. `action: "show"` re-reads one, with its diff. A
-proposal settles exactly once. Dispatch in parallel freely — each has its
-own dispatch world — and settle each once its report is in.
+explicit empty `[]` when nothing is open — not prose, not an error. Each summary
+also carries `parent_drift` (paths the parent changed since that proposal's
+dispatch basis; `parent_drift_error` if the basis cannot be inspected) and its
+own `conflicts`. The envelope's global `conflicts` array names every pair of open
+proposals that changes the same path, with the shared `paths`. Treat that as an
+early warning: `apply` is path-disjoint, so an overlapping pair cannot both land
+unless one is discarded or resolved. `action: "show"` re-reads one, with its diff.
+If `apply` is refused, the response has `status: "conflict"`, names the overlap
+in `conflicts`, and leaves the proposal open. Proposals belong to the session
+that sealed them, so another session's proposals are never listed, shown, or
+settleable here. A proposal settles exactly once. Dispatch in parallel freely —
+each has its own dispatch world — and settle each once its report is in.
 
 A dispatch envelope carries `world` (`worktree` or `container`); a container
 proposal also carries `target` (`host` or `session`), and its settlement

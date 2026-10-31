@@ -522,13 +522,14 @@ When an agent dispatches multiple parallel sub-agents in a single turn, those su
 
 ### Retained sub-agents and workspace isolation
 
-Files: `internal/tools/retained.go`, `internal/tools/proposal.go`, `internal/tools/supervisor.go`, `internal/agent/runner/checkpoint.go`
+Files: `internal/tools/retained.go`, `internal/tools/proposal.go`, `internal/tools/proposal_conflict.go`, `internal/tools/supervisor.go`, `internal/agent/runner/checkpoint.go`
 
 A retained dispatch runs the sub-agent in an **isolated dispatch world** — a git worktree, or a per-dispatch container when configured — and seals its output into a proposal; the orchestrator settles it. Nothing reaches the parent tree before settlement, so a rejected attempt is discarded rather than rolled back.
 
 - **The world.** A local session's worktree lane uses `ScopeManager.ForkIsolated` with a `NewWorktreeSandbox`; the container lane uses the wired per-dispatch container setup and destroys it at seal. A container session uses its session container for proposals and a sibling container for report dispatches. Retained is the default when a trace store is configured; `agents.subagent.mode: shared` is the explicit opt-out that runs the sub-agent directly on the host.
 - **The settlement.** `select` fast-forwards onto the dispatch basis and fails closed if the basis moved; `apply` is path-disjoint and uses a three-way merge on the worktree lane or whole-path post-images on the container lane. `release` exports the sealed delta to a retention path before tearing a worktree down; a container world is already gone, so only its manifest is consumed. `discard` throws the work away and removes the worktree or manifest directory. A sealed output is consumed exactly once (`ErrOutputConsumed`), and a settlement that landed an effect but failed its causal merge reports the diagnostic instead of inviting a retry that would apply it twice.
 - **The judgement.** It is the orchestrator's, not a sub-agent's: the retained lane returns a diff and the orchestrator decides. No reviewer sub-agent is inserted automatically.
+- **The conflict view.** `proposal list` reports each open proposal's changed paths, the parent paths that moved since its dispatch basis, and every pairwise path overlap across open proposals. This is advisory evidence for choosing or discarding before settlement; `apply` remains authoritative and path-disjoint. A refused apply returns a structured `status: "conflict"` envelope naming the overlap and leaves the proposal open.
 
 **Turn checkpoints.** `ShepherdTurnCheckpointer` (`internal/agent/runner/checkpoint.go`) adapts `goatherd.ScopeManager` to the loop's `TurnCheckpointer` interface. A checkpoint captures the workspace *and* the conversation, and a restore consumes it, so the two stay in step. This is per-attempt robustness inside a dispatch (a role sets `turn_checkpoints`), not a settlement mechanism — the worktree already makes the attempt disposable.
 

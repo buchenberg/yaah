@@ -395,6 +395,13 @@ func TestGitDeltaSettle_ApplyRefusesOverlap(t *testing.T) {
 		t.Fatal("apply must refuse an overlapping path")
 	} else if !strings.Contains(err.Error(), "path-disjoint") || !strings.Contains(err.Error(), "README.md") {
 		t.Errorf("error = %v, want a path-disjoint refusal naming the path", err)
+	} else {
+		var conflict *proposalApplyConflict
+		if !errors.As(err, &conflict) {
+			t.Errorf("error = %T, want *proposalApplyConflict", err)
+		} else if len(conflict.Paths) != 1 || conflict.Paths[0] != "README.md" {
+			t.Errorf("typed conflict paths = %v, want README.md", conflict.Paths)
+		}
 	}
 	if got, _ := os.ReadFile(filepath.Join(f.repo, "README.md")); string(got) != "# the host's version\n" {
 		t.Errorf("apply must write nothing on overlap, README.md = %q", got)
