@@ -42,7 +42,7 @@ func (*ProposalTool) Schema() json.RawMessage {
 			"action": {
 				"type": "string",
 				"enum": ["list", "show", "select", "apply", "release", "discard"],
-				"description": "list: show open proposals, their parent drift, and any pairwise path overlaps; show: one proposal's diff and files; select: fast-forward onto the dispatch basis — fails closed if the basis moved since the dispatch; apply: apply path-disjoint onto a moved tree (a worktree proposal merges three-way, a container proposal writes whole-path post-images), refused on overlap with a machine-readable conflict; release: export the delta to a retention path (and tear a worktree down; a container world already ended at seal); discard: throw the proposal away"
+				"description": "list: show open proposals, their parent drift, and typed content-aware conflicts; show: one proposal's diff, files, changes, and conflicts; select: fast-forward onto the dispatch basis — fails closed if the basis moved since the dispatch; apply: apply path-disjoint onto a moved tree (a worktree proposal merges three-way, a container proposal writes whole-path post-images), refused on overlap with a machine-readable conflict; release: export the delta to a retention path (and tear a worktree down; a container world already ended at seal); discard: throw the proposal away"
 			},
 			"proposal_id": {
 				"type": "string",
@@ -94,6 +94,24 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 		}
 		env.Diff = clipDiff(p.reviewDiff())
 		env.Files = p.changedFiles()
+
+		// show carries the same typed conflict view as list, filtered to this
+		// proposal. It also records any newly observed conflict fact, so a
+		// caller that inspects one proposal still leaves the evidence behind.
+		analyses := t.Proposals.analyzeProposals(ctx)
+		conflicts := proposalConflicts(analyses)
+		t.Proposals.recordConflictFacts(ctx, analyses, conflicts)
+		for _, analysis := range analyses {
+			if analysis.proposal.id != p.id {
+				continue
+			}
+			env.Changes = analysis.changes
+			if analysis.changesErr != nil {
+				env.ChangesError = analysis.changesErr.Error()
+			}
+			break
+		}
+		env.Conflicts = conflictsWith(conflicts, p.id)
 		return marshalProposalEnvelope(env), nil
 	case "select", "apply", "release", "discard":
 		if raw.ProposalID == "" {
@@ -119,6 +137,7 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 						Kind:      proposalConflictApply,
 						Paths:     paths,
 						Proposals: []string{conflict.ProposalID},
+						Changes:   conflict.Changes,
 					}},
 					Next: proposalVerbs(),
 				}

@@ -4,15 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// TestProposalList_OverlapAndParentDrift pins the Phase 0 list contract
-// (yaah-9bq): open proposals name every shared path and every path the parent
-// changed since their dispatch basis, before either is settled.
-func TestProposalList_OverlapAndParentDrift(t *testing.T) {
-	runner := writingRunner(t, "README.md")
+// TestProposalList_DivergentOverlapAndParentDrift pins the Phase 1 typed model
+// (yaah-6xyl.1): two proposals that produce different post-images for the same
+// path are same_path_divergent, and the envelope retains the digests/modes that
+// prove it.
+func TestProposalList_DivergentOverlapAndParentDrift(t *testing.T) {
+	runner := &sessionRunner{}
+	runner.sideEffect = func(call int, _ string) {
+		writeTestFile(t, runner.workdirFor(t, call), "README.md", fmt.Sprintf("# approach %d\n", call))
+	}
 	rt := newRetainedTestEnv(t, runner)
 
 	first, err := startRetainedRun(context.Background(), rt, "first approach", SubAgentParams{Role: "worker"}, 0, false)
@@ -26,10 +32,12 @@ func TestProposalList_OverlapAndParentDrift(t *testing.T) {
 	firstEnv := decodeProposalEnvelope(t, first)
 	secondEnv := decodeProposalEnvelope(t, second)
 
-	// The parent moves after both dispatch bases were captured.
+	// The parent moves after both dispatch bases were captured; the drift is
+	// disjoint from README.md and therefore is not a parent_overlap.
 	writeTestFile(t, rt.RepoPath, "host-only.txt", "host change\n")
 
-	out, err := (&ProposalTool{Proposals: rt.Proposals}).Execute(context.Background(), `{"action":"list"}`)
+	tool := &ProposalTool{Proposals: rt.Proposals}
+	out, err := tool.Execute(context.Background(), `{"action":"list"}`)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -41,17 +49,29 @@ func TestProposalList_OverlapAndParentDrift(t *testing.T) {
 		t.Fatalf("proposals = %+v, want the two open proposals", listed.Proposals)
 	}
 	if len(listed.Conflicts) != 1 {
-		t.Fatalf("conflicts = %+v, want one pairwise overlap", listed.Conflicts)
+		t.Fatalf("conflicts = %+v, want one divergent conflict", listed.Conflicts)
 	}
 	conflict := listed.Conflicts[0]
-	if conflict.Kind != proposalConflictPathOverlap {
-		t.Errorf("conflict kind = %q, want %q", conflict.Kind, proposalConflictPathOverlap)
+	if conflict.Kind != proposalConflictSamePathDivergent {
+		t.Errorf("conflict kind = %q, want %q", conflict.Kind, proposalConflictSamePathDivergent)
 	}
 	if got := strings.Join(conflict.Paths, ","); got != "README.md" {
 		t.Errorf("conflict paths = %v, want README.md", conflict.Paths)
 	}
 	if !containsString(conflict.Proposals, firstEnv.ProposalID) || !containsString(conflict.Proposals, secondEnv.ProposalID) {
 		t.Errorf("conflict proposals = %v, want both %s and %s", conflict.Proposals, firstEnv.ProposalID, secondEnv.ProposalID)
+	}
+	if len(conflict.Changes) != 2 {
+		t.Fatalf("conflict changes = %+v, want both post-images", conflict.Changes)
+	}
+	if conflict.Changes[0].Digest == "" || conflict.Changes[1].Digest == "" {
+		t.Errorf("conflict changes missing digests: %+v", conflict.Changes)
+	}
+	if conflict.Changes[0].Digest == conflict.Changes[1].Digest {
+		t.Errorf("divergent changes share a digest: %+v", conflict.Changes)
+	}
+	if conflict.Changes[0].BaseDigest == "" || conflict.Changes[1].BaseDigest == "" {
+		t.Errorf("conflict changes missing base digests: %+v", conflict.Changes)
 	}
 
 	for _, summary := range listed.Proposals {
@@ -64,6 +84,364 @@ func TestProposalList_OverlapAndParentDrift(t *testing.T) {
 		if summary.ParentDriftError != "" {
 			t.Errorf("summary %s parent_drift_error = %q, want none", summary.ProposalID, summary.ParentDriftError)
 		}
+		if len(summary.Changes) != 1 || summary.Changes[0].Digest == "" || summary.Changes[0].Mode == "" {
+			t.Errorf("summary %s changes = %+v, want one digested change with mode", summary.ProposalID, summary.Changes)
+		}
+		if summary.ChangesError != "" {
+			t.Errorf("summary %s changes_error = %q, want none", summary.ProposalID, summary.ChangesError)
+		}
+	}
+
+	// show must expose the same typed conflict and change metadata.
+	showOut, err := tool.Execute(context.Background(), `{"action":"show","proposal_id":`+jsonString(firstEnv.ProposalID)+`}`)
+	if err != nil {
+		t.Fatalf("show: %v", err)
+	}
+	var shown proposalEnvelope
+	if err := json.Unmarshal([]byte(showOut), &shown); err != nil {
+		t.Fatalf("show result is not JSON: %v\n%s", err, showOut)
+	}
+	if len(shown.Changes) != 1 || shown.Changes[0].Digest == "" {
+		t.Errorf("show changes = %+v, want one digested change", shown.Changes)
+	}
+	if len(shown.Conflicts) != 1 || shown.Conflicts[0].Kind != proposalConflictSamePathDivergent {
+		t.Errorf("show conflicts = %+v, want the divergent pair", shown.Conflicts)
+	}
+}
+
+// TestProposalList_IdenticalDuplicateIsNotConflict pins the content-aware
+// distinction from Phase 0: two proposals producing the same post-image are a
+// benign duplicate, not a conflict.
+func TestProposalList_IdenticalDuplicateIsNotConflict(t *testing.T) {
+	rt := newRetainedTestEnv(t, writingRunner(t, "README.md"))
+
+	first, err := startRetainedRun(context.Background(), rt, "first approach", SubAgentParams{Role: "worker"}, 0, false)
+	if err != nil {
+		t.Fatalf("first dispatch: %v", err)
+	}
+	second, err := startRetainedRun(context.Background(), rt, "second approach", SubAgentParams{Role: "worker"}, 0, false)
+	if err != nil {
+		t.Fatalf("second dispatch: %v", err)
+	}
+	firstEnv := decodeProposalEnvelope(t, first)
+	secondEnv := decodeProposalEnvelope(t, second)
+
+	out, err := (&ProposalTool{Proposals: rt.Proposals}).Execute(context.Background(), `{"action":"list"}`)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var listed proposalListEnvelope
+	if err := json.Unmarshal([]byte(out), &listed); err != nil {
+		t.Fatalf("list result is not JSON: %v\n%s", err, out)
+	}
+	if len(listed.Conflicts) != 0 {
+		t.Fatalf("conflicts = %+v, want identical duplicates to be silent", listed.Conflicts)
+	}
+
+	var digests []string
+	for _, summary := range listed.Proposals {
+		if summary.ProposalID != firstEnv.ProposalID && summary.ProposalID != secondEnv.ProposalID {
+			t.Fatalf("unexpected summary %+v", summary)
+		}
+		if len(summary.Conflicts) != 0 {
+			t.Errorf("summary %s conflicts = %+v, want none", summary.ProposalID, summary.Conflicts)
+		}
+		if len(summary.Changes) != 1 || summary.Changes[0].Digest == "" {
+			t.Fatalf("summary %s changes = %+v, want one digested change", summary.ProposalID, summary.Changes)
+		}
+		digests = append(digests, summary.Changes[0].Digest)
+	}
+	if len(digests) != 2 || digests[0] != digests[1] {
+		t.Errorf("identical duplicate digests = %v, want equal", digests)
+	}
+}
+
+// TestProposalList_DeleteModify pins the delete/modify classification across
+// the worktree lane.
+func TestProposalList_DeleteModify(t *testing.T) {
+	runner := &sessionRunner{}
+	runner.sideEffect = func(call int, _ string) {
+		wd := runner.workdirFor(t, call)
+		if call == 0 {
+			if err := os.Remove(filepath.Join(wd, "README.md")); err != nil {
+				t.Fatalf("remove README: %v", err)
+			}
+			return
+		}
+		writeTestFile(t, wd, "README.md", "# modified\n")
+	}
+	rt := newRetainedTestEnv(t, runner)
+
+	if _, err := startRetainedRun(context.Background(), rt, "delete it", SubAgentParams{Role: "worker"}, 0, false); err != nil {
+		t.Fatalf("delete dispatch: %v", err)
+	}
+	if _, err := startRetainedRun(context.Background(), rt, "modify it", SubAgentParams{Role: "worker"}, 0, false); err != nil {
+		t.Fatalf("modify dispatch: %v", err)
+	}
+
+	out, err := (&ProposalTool{Proposals: rt.Proposals}).Execute(context.Background(), `{"action":"list"}`)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var listed proposalListEnvelope
+	if err := json.Unmarshal([]byte(out), &listed); err != nil {
+		t.Fatalf("list result is not JSON: %v\n%s", err, out)
+	}
+	if len(listed.Conflicts) != 1 {
+		t.Fatalf("conflicts = %+v, want one delete/modify conflict", listed.Conflicts)
+	}
+	conflict := listed.Conflicts[0]
+	if conflict.Kind != proposalConflictDeleteModify {
+		t.Errorf("conflict kind = %q, want %q", conflict.Kind, proposalConflictDeleteModify)
+	}
+	kinds := map[string]bool{}
+	for _, change := range conflict.Changes {
+		kinds[change.Kind] = true
+	}
+	if !kinds["delete"] || !kinds["modify"] {
+		t.Errorf("conflict changes = %+v, want a delete and a modify", conflict.Changes)
+	}
+}
+
+// TestProposalList_ParentOverlapIsTyped pins parent_overlap: a proposal path the
+// parent changed after the dispatch basis is a typed conflict, even when no
+// second proposal exists.
+func TestProposalList_ParentOverlapIsTyped(t *testing.T) {
+	rt := newRetainedTestEnv(t, writingRunner(t, "README.md"))
+
+	res, err := startRetainedRun(context.Background(), rt, "change the readme", SubAgentParams{Role: "worker"}, 0, false)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	env := decodeProposalEnvelope(t, res)
+	writeTestFile(t, rt.RepoPath, "README.md", "# host version\n")
+
+	out, err := (&ProposalTool{Proposals: rt.Proposals}).Execute(context.Background(), `{"action":"list"}`)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var listed proposalListEnvelope
+	if err := json.Unmarshal([]byte(out), &listed); err != nil {
+		t.Fatalf("list result is not JSON: %v\n%s", err, out)
+	}
+	if len(listed.Conflicts) != 1 {
+		t.Fatalf("conflicts = %+v, want one parent_overlap", listed.Conflicts)
+	}
+	conflict := listed.Conflicts[0]
+	if conflict.Kind != proposalConflictParentOverlap {
+		t.Errorf("conflict kind = %q, want %q", conflict.Kind, proposalConflictParentOverlap)
+	}
+	if len(conflict.Proposals) != 1 || conflict.Proposals[0] != env.ProposalID {
+		t.Errorf("conflict proposals = %v, want %s", conflict.Proposals, env.ProposalID)
+	}
+	if len(conflict.Paths) != 1 || conflict.Paths[0] != "README.md" {
+		t.Errorf("conflict paths = %v, want README.md", conflict.Paths)
+	}
+}
+
+// TestProposalList_RecordsConflictFact pins the trace contract: a detected
+// conflict records yaah.proposal.conflict.v1 with paths, proposals, kind, and
+// per-proposal digests. The registry deduplicates repeated list observations.
+func TestProposalList_RecordsConflictFact(t *testing.T) {
+	runner := &sessionRunner{}
+	runner.sideEffect = func(call int, _ string) {
+		writeTestFile(t, runner.workdirFor(t, call), "README.md", fmt.Sprintf("# approach %d\n", call))
+	}
+	fx, repo, rootID := newSessionFixtures(t)
+	rt := RetainedRuntime{
+		Runner:       runner.run(),
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+		Proposals:    NewProposalRegistry(),
+	}
+
+	if _, err := startRetainedRun(context.Background(), rt, "first approach", SubAgentParams{Role: "worker"}, 0, false); err != nil {
+		t.Fatalf("first dispatch: %v", err)
+	}
+	if _, err := startRetainedRun(context.Background(), rt, "second approach", SubAgentParams{Role: "worker"}, 0, false); err != nil {
+		t.Fatalf("second dispatch: %v", err)
+	}
+
+	tool := &ProposalTool{Proposals: rt.Proposals}
+	if _, err := tool.Execute(context.Background(), `{"action":"list"}`); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+
+	parent, ok := fx.mgr.Get(rootID)
+	if !ok {
+		t.Fatalf("root scope %s not found", rootID)
+	}
+	facts := findRetainedFacts(t, fx.store, parent.OwnerID(), SchemaProposalConflict)
+	if len(facts) != 1 {
+		t.Fatalf("conflict facts = %d, want 1", len(facts))
+	}
+	var got struct {
+		Kind      string           `json:"kind"`
+		Paths     []string         `json:"paths"`
+		Proposals []string         `json:"proposals"`
+		Changes   []proposalChange `json:"changes"`
+	}
+	data, err := json.Marshal(facts[0].Body.Payload)
+	if err != nil {
+		t.Fatalf("marshal conflict payload: %v", err)
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("conflict payload is not JSON: %v\n%s", err, data)
+	}
+	if got.Kind != proposalConflictSamePathDivergent {
+		t.Errorf("fact kind = %q, want %q", got.Kind, proposalConflictSamePathDivergent)
+	}
+	if len(got.Paths) != 1 || got.Paths[0] != "README.md" {
+		t.Errorf("fact paths = %v, want README.md", got.Paths)
+	}
+	if len(got.Proposals) != 2 {
+		t.Errorf("fact proposals = %v, want both", got.Proposals)
+	}
+	if len(got.Changes) != 2 {
+		t.Fatalf("fact changes = %+v, want both post-images", got.Changes)
+	}
+	for _, change := range got.Changes {
+		if change.BaseDigest == "" || change.Digest == "" || change.Mode == "" {
+			t.Errorf("fact change missing digest/mode metadata: %+v", change)
+		}
+	}
+
+	// The same conflict observed again must not append a duplicate fact.
+	if _, err := tool.Execute(context.Background(), `{"action":"list"}`); err != nil {
+		t.Fatalf("second list: %v", err)
+	}
+	if facts := findRetainedFacts(t, fx.store, parent.OwnerID(), SchemaProposalConflict); len(facts) != 1 {
+		t.Errorf("conflict facts after second list = %d, want 1", len(facts))
+	}
+}
+
+// TestProposalList_ContainerOverlapAndParentDrift covers the container lane's
+// typed conflict view.
+func TestProposalList_ContainerOverlapAndParentDrift(t *testing.T) {
+	f := newDeltaFixture(t)
+	f.add(t, "proposal:container-one", &GitDelta{Changes: []DeltaChange{{
+		Path: "README.md", Kind: deltaKindModify, Mode: 0o644, Content: []byte("# one\n"),
+	}}})
+	f.add(t, "proposal:container-two", &GitDelta{Changes: []DeltaChange{{
+		Path: "README.md", Kind: deltaKindModify, Mode: 0o644, Content: []byte("# two\n"),
+	}}})
+
+	writeTestFile(t, f.repo, "host-only.txt", "host change\n")
+
+	out, err := (&ProposalTool{Proposals: f.registry}).Execute(context.Background(), `{"action":"list"}`)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var listed proposalListEnvelope
+	if err := json.Unmarshal([]byte(out), &listed); err != nil {
+		t.Fatalf("list result is not JSON: %v\n%s", err, out)
+	}
+	if len(listed.Conflicts) != 1 {
+		t.Fatalf("conflicts = %+v, want one README.md conflict", listed.Conflicts)
+	}
+	conflict := listed.Conflicts[0]
+	if conflict.Kind != proposalConflictSamePathDivergent {
+		t.Errorf("conflict kind = %q, want %q", conflict.Kind, proposalConflictSamePathDivergent)
+	}
+	if len(conflict.Changes) != 2 || conflict.Changes[0].Digest == "" || conflict.Changes[1].Digest == "" {
+		t.Errorf("conflict changes = %+v, want both container post-images", conflict.Changes)
+	}
+	for _, summary := range listed.Proposals {
+		if !containsString(summary.ParentDrift, "host-only.txt") {
+			t.Errorf("summary %s parent_drift = %v, want host-only.txt", summary.ProposalID, summary.ParentDrift)
+		}
+		if len(summary.Changes) != 1 || summary.Changes[0].Digest == "" || summary.Changes[0].Mode == "" {
+			t.Errorf("summary %s changes = %+v, want container post-image metadata", summary.ProposalID, summary.Changes)
+		}
+	}
+}
+
+func TestProposalList_ContainerIdenticalAndModeDivergence(t *testing.T) {
+	t.Run("identical post-images are silent", func(t *testing.T) {
+		f := newDeltaFixture(t)
+		for _, id := range []string{"proposal:same-one", "proposal:same-two"} {
+			f.add(t, id, &GitDelta{Changes: []DeltaChange{{
+				Path: "README.md", Kind: deltaKindModify, Mode: 0o644, Content: []byte("# same\n"),
+			}}})
+		}
+		out, err := (&ProposalTool{Proposals: f.registry}).Execute(context.Background(), `{"action":"list"}`)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		var listed proposalListEnvelope
+		if err := json.Unmarshal([]byte(out), &listed); err != nil {
+			t.Fatalf("list result is not JSON: %v\n%s", err, out)
+		}
+		if len(listed.Conflicts) != 0 {
+			t.Fatalf("conflicts = %+v, want identical post-images to be silent", listed.Conflicts)
+		}
+	})
+
+	t.Run("mode divergence conflicts", func(t *testing.T) {
+		f := newDeltaFixture(t)
+		f.add(t, "proposal:mode-one", &GitDelta{Changes: []DeltaChange{{
+			Path: "README.md", Kind: deltaKindModify, Mode: 0o644, Content: []byte("# same\n"),
+		}}})
+		f.add(t, "proposal:mode-two", &GitDelta{Changes: []DeltaChange{{
+			Path: "README.md", Kind: deltaKindModify, Mode: 0o755, Content: []byte("# same\n"),
+		}}})
+		out, err := (&ProposalTool{Proposals: f.registry}).Execute(context.Background(), `{"action":"list"}`)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		var listed proposalListEnvelope
+		if err := json.Unmarshal([]byte(out), &listed); err != nil {
+			t.Fatalf("list result is not JSON: %v\n%s", err, out)
+		}
+		if len(listed.Conflicts) != 1 || listed.Conflicts[0].Kind != proposalConflictSamePathDivergent {
+			t.Fatalf("conflicts = %+v, want one mode-divergence conflict", listed.Conflicts)
+		}
+	})
+}
+
+func TestProposalList_ContainerDeleteModify(t *testing.T) {
+	f := newDeltaFixture(t)
+	f.add(t, "proposal:delete", &GitDelta{Changes: []DeltaChange{{
+		Path: "README.md", Kind: deltaKindDelete, Mode: 0o644,
+	}}})
+	f.add(t, "proposal:modify", &GitDelta{Changes: []DeltaChange{{
+		Path: "README.md", Kind: deltaKindModify, Mode: 0o644, Content: []byte("# modified\n"),
+	}}})
+	out, err := (&ProposalTool{Proposals: f.registry}).Execute(context.Background(), `{"action":"list"}`)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var listed proposalListEnvelope
+	if err := json.Unmarshal([]byte(out), &listed); err != nil {
+		t.Fatalf("list result is not JSON: %v\n%s", err, out)
+	}
+	if len(listed.Conflicts) != 1 || listed.Conflicts[0].Kind != proposalConflictDeleteModify {
+		t.Fatalf("conflicts = %+v, want one delete/modify conflict", listed.Conflicts)
+	}
+}
+
+func TestProposalList_ContainerParentOverlap(t *testing.T) {
+	f := newDeltaFixture(t)
+	p := f.add(t, "proposal:parent", &GitDelta{Changes: []DeltaChange{{
+		Path: "README.md", Kind: deltaKindModify, Mode: 0o644, Content: []byte("# proposal\n"),
+	}}})
+	writeTestFile(t, f.repo, "README.md", "# host\n")
+
+	out, err := (&ProposalTool{Proposals: f.registry}).Execute(context.Background(), `{"action":"list"}`)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var listed proposalListEnvelope
+	if err := json.Unmarshal([]byte(out), &listed); err != nil {
+		t.Fatalf("list result is not JSON: %v\n%s", err, out)
+	}
+	if len(listed.Conflicts) != 1 || listed.Conflicts[0].Kind != proposalConflictParentOverlap {
+		t.Fatalf("conflicts = %+v, want one parent_overlap", listed.Conflicts)
+	}
+	if len(listed.Conflicts[0].Proposals) != 1 || listed.Conflicts[0].Proposals[0] != p.id {
+		t.Errorf("conflict proposals = %v, want %s", listed.Conflicts[0].Proposals, p.id)
 	}
 }
 
@@ -154,43 +532,14 @@ func TestProposalTool_ApplyConflictIsStructured(t *testing.T) {
 	if len(conflict.Proposals) != 1 || conflict.Proposals[0] != env.ProposalID {
 		t.Errorf("conflict proposals = %v, want %s", conflict.Proposals, env.ProposalID)
 	}
+	if len(conflict.Changes) != 1 || conflict.Changes[0].Digest == "" {
+		t.Errorf("conflict changes = %+v, want the proposal's change metadata", conflict.Changes)
+	}
 
 	// Refusal must not consume the proposal: the orchestrator can still
 	// discard or retry after resolving the parent overlap.
 	if _, err := rt.Proposals.get(env.ProposalID); err != nil {
 		t.Errorf("a refused apply must leave the proposal open: %v", err)
-	}
-}
-
-// TestProposalList_ContainerOverlapAndParentDrift covers the container lane's
-// list view: its manifest paths and persisted basis feed the same report as a
-// worktree proposal.
-func TestProposalList_ContainerOverlapAndParentDrift(t *testing.T) {
-	f := newDeltaFixture(t)
-	f.add(t, "proposal:container-one", &GitDelta{Changes: []DeltaChange{{
-		Path: "README.md", Kind: deltaKindModify, Mode: 0o644, Content: []byte("# one\n"),
-	}}})
-	f.add(t, "proposal:container-two", &GitDelta{Changes: []DeltaChange{{
-		Path: "README.md", Kind: deltaKindModify, Mode: 0o644, Content: []byte("# two\n"),
-	}}})
-
-	writeTestFile(t, f.repo, "host-only.txt", "host change\n")
-
-	out, err := (&ProposalTool{Proposals: f.registry}).Execute(context.Background(), `{"action":"list"}`)
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	var listed proposalListEnvelope
-	if err := json.Unmarshal([]byte(out), &listed); err != nil {
-		t.Fatalf("list result is not JSON: %v\n%s", err, out)
-	}
-	if len(listed.Conflicts) != 1 || len(listed.Conflicts[0].Paths) != 1 || listed.Conflicts[0].Paths[0] != "README.md" {
-		t.Fatalf("conflicts = %+v, want one README.md overlap", listed.Conflicts)
-	}
-	for _, summary := range listed.Proposals {
-		if !containsString(summary.ParentDrift, "host-only.txt") {
-			t.Errorf("summary %s parent_drift = %v, want host-only.txt", summary.ProposalID, summary.ParentDrift)
-		}
 	}
 }
 
