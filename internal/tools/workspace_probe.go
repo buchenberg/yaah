@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"strings"
 
 	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
@@ -44,6 +45,9 @@ import (
 // The returned sandbox is NOT provisioned: Create remains the caller's
 // explicit lifecycle step, per the Sandbox contract.
 func OpenContainerdWorkspaceSandbox(w config.WorkspaceConfig) (goatherdsandbox.Sandbox, error) {
+	if err := validateContainerAuthority(w); err != nil {
+		return nil, fmt.Errorf("workspace: %w", err)
+	}
 	// FIFODir passes through so the client's task/exec stdio FIFOs land in a
 	// directory yaah's uid can write — containerd's default is root-only.
 	//
@@ -60,6 +64,35 @@ func OpenContainerdWorkspaceSandbox(w config.WorkspaceConfig) (goatherdsandbox.S
 		return nil, fmt.Errorf("workspace: the registry returned no sandbox for config %+v", w.Containerd)
 	}
 	return sb, nil
+}
+
+// validateContainerAuthority re-checks the dispatch overrides at the opener.
+// The config layer validates workspace.root, but the per-dispatch fields are
+// filled internally; refusing a malformed root here keeps the mapping from
+// silently passing a host path or an out-of-workspace grant to croft.
+func validateContainerAuthority(w config.WorkspaceConfig) error {
+	root := path.Clean(w.Root)
+	for _, r := range w.WritableRoots {
+		clean := path.Clean(r)
+		if !path.IsAbs(clean) {
+			return fmt.Errorf("writable root %q is not absolute", r)
+		}
+		if root == "." || root == "" {
+			return fmt.Errorf("workspace root is empty, so writable root %q cannot be scoped", r)
+		}
+		if clean != root && !strings.HasPrefix(clean, root+"/") {
+			return fmt.Errorf("writable root %q is outside the workspace root %q", r, root)
+		}
+	}
+	switch w.Network {
+	case "", "none", "host", "broker":
+	default:
+		return fmt.Errorf("network posture %q is not one of: none, host, broker", w.Network)
+	}
+	if len(w.BrokerHosts) > 0 && w.Network != "broker" {
+		return fmt.Errorf("broker hosts are set with network posture %q, not broker", w.Network)
+	}
+	return nil
 }
 
 // containerdAdapterConfig maps yaah's workspace config onto the adapter's

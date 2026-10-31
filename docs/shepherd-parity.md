@@ -187,11 +187,13 @@ seals; a proposal seals a `GitDelta` manifest before teardown.
 - Grants are lowered by mount shaping: the container workspace is masked
   read-only and each read-write grant is remounted over its own subtree. A
   declared all-read-only set sets the explicit mask with no writable roots.
-  The launch probe refuses if a write outside the grants succeeds or a write
-  inside a grant fails.
+  croft's launch probe refuses if a write outside the grants succeeds or a
+  write inside a grant fails.
 - A host-session copy-in runs in an unshaped staging container, then the
   captured state is applied to the shaped container; the shaping init would
-  otherwise reject the bootstrap writes to non-granted paths.
+  otherwise reject the bootstrap writes to non-granted paths. The shaping init
+  creates absent grant roots before masking the workspace, so the applied state
+  can seed them even when they did not exist in the image.
 - **Container-session proposals settle into the session container.** The host
   tree is untouched; `apply_out` remains the explicit host bridge. The
   manifest and basis are persisted for audit, but a session-target proposal is

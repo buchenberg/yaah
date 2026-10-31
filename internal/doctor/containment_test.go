@@ -34,7 +34,7 @@ func TestContainmentCheck(t *testing.T) {
 		{"absent/auto", false, "auto", "WARN"},
 	}
 	for _, c := range cases {
-		got := containmentCheck(c.available, "test-backend", "retained", c.placement, "", 0, true)
+		got := containmentCheck(c.available, "test-backend", "retained", c.placement, "", 0, true, false)
 		if got.Status != c.want {
 			t.Errorf("%s: status = %q, want %q (%s)", c.name, got.Status, c.want, got.Detail)
 		}
@@ -52,30 +52,34 @@ func TestContainmentCheck_EgressPosture(t *testing.T) {
 		network     string
 		hosts       int
 		capable     bool
+		container   bool
 		want        string
 	}{
-		{"jailed + deny_all", true, "auto", "deny_all", 0, true, "OK"},
-		{"jailed + broker", true, "paddock", "broker", 2, true, "OK"},
-		{"jailed + allow_all", true, "auto", "allow_all", 0, true, "OK"},
-		{"no jail + allow_all", false, "off", "allow_all", 0, true, "OK"},
+		{"jailed + deny_all", true, "auto", "deny_all", 0, true, false, "OK"},
+		{"jailed + broker", true, "paddock", "broker", 2, true, false, "OK"},
+		{"jailed + allow_all", true, "auto", "allow_all", 0, true, false, "OK"},
+		{"no jail + allow_all", false, "off", "allow_all", 0, true, false, "OK"},
 		// Filesystem-only Landlock (ABI 1-3): the jail exists, the network rule
 		// does not, and the dispatch refuses rather than running open.
-		{"jailed but no net + deny_all", true, "auto", "deny_all", 0, false, "FAIL"},
-		{"jailed but no net + broker", true, "paddock", "broker", 1, false, "FAIL"},
+		{"jailed but no net + deny_all", true, "auto", "deny_all", 0, false, false, "FAIL"},
+		{"jailed but no net + broker", true, "paddock", "broker", 1, false, false, "FAIL"},
 		// No jail at all is the same outcome: the posture cannot be applied, and
 		// the dispatch refuses rather than dropping it.
-		{"no jail + deny_all", false, "auto", "deny_all", 0, false, "FAIL"},
-		{"jail off + deny_all", true, "off", "deny_all", 0, true, "FAIL"},
-		{"jail off + broker", true, "advisory", "broker", 1, true, "FAIL"},
+		{"no jail + deny_all", false, "auto", "deny_all", 0, false, false, "FAIL"},
+		{"jail off + deny_all", true, "off", "deny_all", 0, true, false, "FAIL"},
+		{"jail off + broker", true, "advisory", "broker", 1, true, false, "FAIL"},
+		// A per-dispatch container is an enforcement substrate of its own.
+		{"container + no jail + deny_all", false, "auto", "deny_all", 0, false, true, "OK"},
+		{"container + no net + broker", true, "auto", "broker", 2, false, true, "OK"},
 	}
 	for _, c := range cases {
-		got := containmentCheck(c.available, "test-backend", "retained", c.containment, c.network, c.hosts, c.capable)
+		got := containmentCheck(c.available, "test-backend", "retained", c.containment, c.network, c.hosts, c.capable, c.container)
 		if got.Status != c.want {
 			t.Errorf("%s: status = %q, want %q (%s)", c.name, got.Status, c.want, got.Detail)
 		}
 	}
 	// The detail must show the posture and, for a broker, its allowlist size.
-	ok := containmentCheck(true, "test-backend", "retained", "auto", "broker", 3, true)
+	ok := containmentCheck(true, "test-backend", "retained", "auto", "broker", 3, true, false)
 	for _, want := range []string{"egress broker", "3 allowed host(s)", "enforced by the jail"} {
 		if !strings.Contains(ok.Detail, want) {
 			t.Errorf("detail %q must mention %q", ok.Detail, want)

@@ -478,7 +478,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		// configuration error and must surface.
 		if containerSession && report && !explicitWorld && errors.Is(werr, subagent.ErrWorldUnavailable) {
 			if !sessionContainerFallbackAllowed(rt, subParams.Role) {
-				return "", fmt.Errorf("delegate: container world unavailable, and the session container cannot preserve the dispatch grants or broker allowlist: %w", werr)
+				return "", fmt.Errorf("delegate: container world unavailable, and the session container cannot preserve the dispatch authority: %w", werr)
 			}
 			// The session container is the predecessor world in the ladder;
 			// a report seals nothing, so it can run there unretained.
@@ -541,12 +541,12 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 				return "", fmt.Errorf("delegate: sibling container unavailable in a container session: %w", perr)
 			}
 			if !sessionContainerFallbackAllowed(rt, subParams.Role) {
-				return "", fmt.Errorf("delegate: sibling container unavailable, and the session container cannot preserve the dispatch grants or broker allowlist: %w", perr)
+				return "", fmt.Errorf("delegate: sibling container unavailable, and the session container cannot preserve the dispatch authority: %w", perr)
 			}
 			return sessionContainerFallback(ctx, rt, prompt, subParams, timeout, worldRes.Requested, worldRes.Reason)
 		}
 		if worldRes.Resolved == subagent.WorldWorktree && !worktreeFallbackAllowed(rt, subParams.Role, report) {
-			return "", fmt.Errorf("delegate: container world unavailable, and the worktree cannot preserve the dispatch grants or network posture: %w", perr)
+			return "", fmt.Errorf("delegate: container world unavailable, and the worktree cannot preserve the dispatch authority: %w", perr)
 		}
 		// The world changed (a preflight failure stepped auto down): the
 		// event must carry the world the dispatch actually runs in.

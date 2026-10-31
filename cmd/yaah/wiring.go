@@ -1228,14 +1228,7 @@ func wireSubAgentNetwork(sc config.SubAgentConfig) (confinement.NetworkPolicy, *
 // trailing-dot entry does exactly what it looks like. Without this an exact-host
 // allowlist silently never matches.
 func normalizeBrokerHosts(hosts []string) []string {
-	out := make([]string, 0, len(hosts))
-	for _, h := range hosts {
-		h = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(h)), ".")
-		if h != "" {
-			out = append(out, h)
-		}
-	}
-	return out
+	return tools.NormalizeBrokerHosts(hosts)
 }
 
 // retainedLaneActive decides whether NewDelegateTool should build the retained

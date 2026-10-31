@@ -364,15 +364,29 @@ func CheckContainment(cfg *config.Config, cfgErr error) Check {
 		netMode = confinement.NetAllowAll
 	}
 	netCapable := backend != nil && backend.SupportsNetwork(netMode)
+	// A per-dispatch container enforces the network in its own netns. Doctor
+	// must not FAIL a posture that the configured world actually provides.
+	containerWorld := containerWorldsBothLanes(cfg)
 
-	return containmentCheck(available, backendDesc, sc.Mode, sc.Containment, sc.Network, len(sc.NetworkHosts), netCapable)
+	return containmentCheck(available, backendDesc, sc.Mode, sc.Containment, sc.Network, len(sc.NetworkHosts), netCapable, containerWorld)
+}
+
+// containerWorldsBothLanes reports whether the configured world resolves to a
+// per-dispatch container for both lanes. Both is deliberate: a posture that is
+// only enforceable for a report is not a session-wide control.
+func containerWorldsBothLanes(cfg *config.Config) bool {
+	res := worldinfo.Resolve(cfg, cfg.Workspace.Backend == config.BackendContainerd)
+	if res.ProposalErr != nil || res.ReportErr != nil {
+		return false
+	}
+	return res.Proposal.Resolved == subagent.WorldContainer && res.Report.Resolved == subagent.WorldContainer
 }
 
 // containmentCheck is the pure decision behind CheckContainment, split out so
 // the present-but-unusable backend case is testable (the jail selection gates
 // every platform on Available, so Detect never returns one, but a future
 // backend or a race could).
-func containmentCheck(available bool, backendDesc, mode, containment, network string, hosts int, networkCapable bool) Check {
+func containmentCheck(available bool, backendDesc, mode, containment, network string, hosts int, networkCapable, containerWorld bool) Check {
 	m := strings.ToLower(strings.TrimSpace(mode))
 	if m == "" {
 		m = "retained"
@@ -397,7 +411,10 @@ func containmentCheck(available bool, backendDesc, mode, containment, network st
 		// put it, and the posture is a setting rather than a control.
 		detail += " — enforced by the jail"
 	}
-	if n != "allow_all" && !networkCapable {
+	if containerWorld && n != "allow_all" {
+		detail += " — the container world enforces it in its own netns"
+	}
+	if n != "allow_all" && !networkCapable && !containerWorld {
 		// The dispatch refuses (a policy that cannot be applied is not applied
 		// quietly), so this is not a warning about a weak control: sub-agent
 		// dispatches will not run at all. Split the cause: a host without a
@@ -413,6 +430,9 @@ func containmentCheck(available bool, backendDesc, mode, containment, network st
 	switch p {
 	case "paddock", "jail":
 		if !available {
+			if containerWorld {
+				return Check{Label: "Containment", Status: "OK", Detail: detail + " — the container boundary satisfies paddock"}
+			}
 			return Check{Label: "Containment", Status: "FAIL", Detail: detail + " — placement=paddock fails closed with no usable backend; every dispatch would refuse"}
 		}
 		return Check{Label: "Containment", Status: "OK", Detail: detail + " — sub-agents are jailed"}
@@ -420,16 +440,19 @@ func containmentCheck(available bool, backendDesc, mode, containment, network st
 		if available {
 			return Check{Label: "Containment", Status: "OK", Detail: detail + " — sub-agents are jailed"}
 		}
+		if containerWorld {
+			return Check{Label: "Containment", Status: "OK", Detail: detail + " — the container world supplies enforcement"}
+		}
 		return Check{Label: "Containment", Status: "WARN", Detail: detail + " — auto degrades visibly to advisory here"}
 	default: // off / none / advisory
 		// A restrictive egress posture with no jail to enforce it is refused at
 		// dispatch, not quietly dropped — so this is a FAIL, not a warning about
 		// a weak control: sub-agent dispatches will not run at all.
-		if n != "allow_all" {
+		if n != "allow_all" && !containerWorld {
 			return Check{Label: "Containment", Status: "FAIL",
 				Detail: detail + " — sub-agents run unconfined on the host and a restrictive egress posture is refused rather than run open; set containment: auto (or paddock) to enforce it, or network: allow_all"}
 		}
-		return Check{Label: "Containment", Status: "OK", Detail: detail + " — sub-agents run unconfined on the host"}
+		return Check{Label: "Containment", Status: "OK", Detail: detail + " — sub-agents are jailed or container-bound"}
 	}
 }
 

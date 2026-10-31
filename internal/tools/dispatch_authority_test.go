@@ -157,3 +157,51 @@ func TestDispatchAuthority_ApplyCopies(t *testing.T) {
 		t.Fatalf("apply mutated the session config: %+v", base)
 	}
 }
+
+func TestResolveContainerGrants_Table(t *testing.T) {
+	cases := []struct {
+		name   string
+		root   string
+		grant  config.GrantConfig
+		wantOK bool
+	}{
+		{name: "relative readwrite", root: "/workspace", grant: config.GrantConfig{Path: "src", Access: "readwrite"}, wantOK: true},
+		{name: "nested readonly", root: "/workspace", grant: config.GrantConfig{Path: "docs/api", Access: "readonly"}, wantOK: true},
+		{name: "empty path", root: "/workspace", grant: config.GrantConfig{Path: "", Access: "readwrite"}},
+		{name: "whitespace path", root: "/workspace", grant: config.GrantConfig{Path: "   ", Access: "readwrite"}},
+		{name: "world root", root: "/workspace", grant: config.GrantConfig{Path: ".", Access: "readwrite"}},
+		{name: "absolute path", root: "/workspace", grant: config.GrantConfig{Path: "/etc", Access: "readwrite"}},
+		{name: "escape", root: "/workspace", grant: config.GrantConfig{Path: "../etc", Access: "readwrite"}},
+		{name: "unknown access", root: "/workspace", grant: config.GrantConfig{Path: "src", Access: "write"}},
+		{name: "non-absolute root", root: "workspace", grant: config.GrantConfig{Path: "src", Access: "readwrite"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := resolveContainerGrants([]config.GrantConfig{tc.grant}, tc.root)
+			if (err == nil) != tc.wantOK {
+				t.Fatalf("resolveContainerGrants() error = %v, wantOK %v", err, tc.wantOK)
+			}
+		})
+	}
+}
+
+func TestResolveDispatchAuthority_UnknownNetwork(t *testing.T) {
+	rt := RetainedRuntime{
+		Network:         "borker",
+		ContainerWorlds: true,
+		DispatchWorlds:  &DispatchWorlds{Config: sessionTestConfig()},
+	}
+	if _, err := resolveDispatchAuthority(rt, "developer"); err == nil {
+		t.Fatal("an unknown network mode must fail")
+	} else if !strings.Contains(err.Error(), "agents.subagent.network") {
+		t.Fatalf("error = %v, want it to name the config key", err)
+	}
+}
+
+func TestNormalizeBrokerHosts(t *testing.T) {
+	got := NormalizeBrokerHosts([]string{" API.Example.COM. ", "", "api.example.com", "other.example"})
+	want := []string{"api.example.com", "api.example.com", "other.example"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("NormalizeBrokerHosts() = %v, want %v", got, want)
+	}
+}

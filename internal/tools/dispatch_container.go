@@ -162,6 +162,15 @@ func openShapedHostWorld(startCtx, parentCtx context.Context, rt RetainedRuntime
 	if err != nil {
 		return nil, noBasis, "", fmt.Errorf("seed the shaped dispatch container: %w", err)
 	}
+	// Probe before Capture: Capture pins a layer, and a guard after it would
+	// refuse only after the pin already exists (the sibling path has the same
+	// ordering rule).
+	if !staging.Releasable() && staging.sb.Capabilities().Isolated {
+		return nil, noBasis, "", errors.Join(
+			fmt.Errorf("staging backend %q captures state but does not expose ReleaseState", staging.sb.Backend()),
+			destroySessionSandbox(parentCtx, staging),
+		)
+	}
 	state, err := staging.Capture(startCtx)
 	if err != nil {
 		return nil, noBasis, "", errors.Join(
@@ -169,13 +178,10 @@ func openShapedHostWorld(startCtx, parentCtx context.Context, rt RetainedRuntime
 			destroySessionSandbox(parentCtx, staging),
 		)
 	}
-	if !staging.Releasable() && staging.sb.Capabilities().Isolated {
-		return nil, noBasis, "", errors.Join(
-			fmt.Errorf("staging backend %q captures state but does not expose ReleaseState", staging.sb.Backend()),
-			destroySessionSandbox(parentCtx, staging),
-		)
-	}
 
+	// Create runs the shaping init, which creates absent grant roots before
+	// masking the workspace. Apply then seeds their contents from the captured
+	// state; the roots need not exist in the base image.
 	ss, err := StartSessionSandbox(startCtx, shaped, dw.Opener, "", dw.Deny)
 	if err != nil {
 		return nil, noBasis, "", errors.Join(

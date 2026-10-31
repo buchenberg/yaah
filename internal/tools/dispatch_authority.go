@@ -56,7 +56,7 @@ func resolveDispatchAuthority(rt RetainedRuntime, role string) (dispatchAuthorit
 		}
 		resolved, err := resolveContainerGrants(grants, worldRoot)
 		if err != nil {
-			return dispatchAuthority{}, fmt.Errorf("delegate: lower container grants: %w", err)
+			return dispatchAuthority{}, fmt.Errorf("lower container grants: %w", err)
 		}
 		a.writableRoots = resolved.Writable
 		// A declared set with no writable root is all-read-only. The token
@@ -147,6 +147,21 @@ func resolveContainerGrants(grants []config.GrantConfig, worldRoot string) (Disp
 	return g, nil
 }
 
+// NormalizeBrokerHosts puts allowlist entries into the form both egress
+// brokers match: trimmed, lower-cased, and without a trailing dot. A padded or
+// upper-cased entry must not behave differently in a container world than it
+// does through the host broker.
+func NormalizeBrokerHosts(hosts []string) []string {
+	out := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		h = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(h)), ".")
+		if h != "" {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
 // lowerContainerNetwork maps agents.subagent.network to croft's posture
 // vocabulary. allow_all is host networking by definition; deny_all is the
 // container's own namespace with loopback only; broker is the netns-local
@@ -158,8 +173,8 @@ func lowerContainerNetwork(mode string, hosts []string) (string, []string, error
 	case "deny_all":
 		return "none", nil, nil
 	case "broker":
-		return "broker", append([]string(nil), hosts...), nil
+		return "broker", NormalizeBrokerHosts(hosts), nil
 	default:
-		return "", nil, fmt.Errorf("delegate: agents.subagent.network %q is not one of: allow_all, deny_all, broker", mode)
+		return "", nil, fmt.Errorf("agents.subagent.network %q is not one of: allow_all, deny_all, broker", mode)
 	}
 }
