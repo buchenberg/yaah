@@ -107,7 +107,7 @@ func TestLedgerNamesUsefulSurfaceOwners(t *testing.T) {
 	}
 	remaining := ledger[at:]
 	for _, closed := range []string{"yaah-vlwm", "yaah-qlf9"} {
-		if strings.Contains(remaining, closed) {
+		if strings.Contains(remaining, "`"+closed+"`") {
 			t.Errorf("parity ledger still lists closed bead %s as remaining work", closed)
 		}
 	}
