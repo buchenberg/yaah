@@ -46,11 +46,38 @@ type proposalApplyConflict struct {
 	Paths      []string
 }
 
+// parentDriftResult caches one basis-relative diff for a listing. Proposals
+// from the same dispatch basis share this result, so a speculation fan-out pays
+// for one parent diff rather than one per proposal.
+type parentDriftResult struct {
+	paths []string
+	err   error
+}
+
+// basisKey identifies the parent state a proposal was measured against. It is
+// empty when the basis is unavailable or cannot be digested; that proposal gets
+// its own inspection rather than sharing an unkeyed result.
+func (p *retainedProposal) basisKey() string {
+	switch {
+	case p.delta != nil:
+		return p.basisDigest
+	case p.output != nil:
+		if digest, err := p.output.Baseline().Digest(); err == nil {
+			return digest
+		}
+	}
+	return ""
+}
+
 func (e *proposalApplyConflict) Error() string {
+	paths := strings.Join(e.Paths, ", ")
+	if paths == "" {
+		paths = "overlap paths unavailable"
+	}
 	return fmt.Sprintf(
 		"proposal %s: the parent changed paths this proposal also changes (%s); apply is path-disjoint only — resolve the overlap, then apply or discard",
 		e.ProposalID,
-		strings.Join(e.Paths, ", "),
+		paths,
 	)
 }
 

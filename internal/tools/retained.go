@@ -368,6 +368,7 @@ func (r *ProposalRegistry) summaries() string {
 func (r *ProposalRegistry) listEnvelope(ctx context.Context) string {
 	ps := r.all()
 	conflicts := proposalOverlaps(ps)
+	driftCache := make(map[string]parentDriftResult)
 	list := make([]proposalSummary, 0, len(ps))
 	for _, p := range ps {
 		files := p.changedFiles()
@@ -384,10 +385,21 @@ func (r *ProposalRegistry) listEnvelope(ctx context.Context) string {
 			Target:     target,
 			Conflicts:  conflictsWith(conflicts, p.id),
 		}
-		if drift, err := p.parentDrift(ctx); err != nil {
-			summary.ParentDriftError = err.Error()
+		var drift parentDriftResult
+		if key := p.basisKey(); key != "" {
+			if cached, ok := driftCache[key]; ok {
+				drift = cached
+			} else {
+				drift.paths, drift.err = p.parentDrift(ctx)
+				driftCache[key] = drift
+			}
 		} else {
-			summary.ParentDrift = drift
+			drift.paths, drift.err = p.parentDrift(ctx)
+		}
+		if drift.err != nil {
+			summary.ParentDriftError = drift.err.Error()
+		} else {
+			summary.ParentDrift = drift.paths
 		}
 		list = append(list, summary)
 	}
@@ -1002,16 +1014,15 @@ func (r *ProposalRegistry) settleRetainedProposal(ctx context.Context, id, actio
 			return "", fmt.Errorf("proposal %s was already settled — a sealed output is consumed once", id)
 		case errors.Is(settleErr, goatherd.ErrApplyConflict):
 			// The kernel refuses an overlap but does not expose the paths in a
-			// typed form. Re-read the parent drift so the refusal can carry the
-			// same machine-readable shape as the container lane. If the drift
-			// cannot be inspected, keep the kernel error rather than inventing
-			// an empty path set.
+			// typed form. Re-read the parent drift so the refusal carries the
+			// same machine-readable shape as the container lane. The envelope
+			// is unconditional; if the basis can no longer be inspected, its
+			// paths are empty rather than guessed.
+			var overlap []string
 			if drift, derr := p.parentDrift(ctx); derr == nil {
-				if overlap := overlappingPaths(p.changedFiles(), drift); len(overlap) > 0 {
-					return "", &proposalApplyConflict{ProposalID: id, Paths: overlap}
-				}
+				overlap = overlappingPaths(p.changedFiles(), drift)
 			}
-			return "", fmt.Errorf("proposal %s: the parent changed paths this proposal also changes (%w); resolve the overlap, then apply or discard", id, settleErr)
+			return "", &proposalApplyConflict{ProposalID: id, Paths: overlap}
 		case errors.Is(settleErr, goatherd.ErrSettleEffectLanded):
 			// The work is on the parent; only the causal merge failed to finish.
 			// End the proposal with the failure noted — a retry would re-apply

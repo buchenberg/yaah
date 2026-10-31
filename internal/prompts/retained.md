@@ -34,7 +34,7 @@ proposals that changes the same path, with the shared `paths`. Treat that as an
 early warning: `apply` is path-disjoint, so an overlapping pair cannot both land
 unless one is discarded or resolved. `action: "show"` re-reads one, with its diff.
 If `apply` is refused, the response has `status: "conflict"`, names the overlap
-in `conflicts`, and leaves the proposal open. Proposals belong to the session
+in `conflicts` when it can be re-derived, and leaves the proposal open. Proposals belong to the session
 that sealed them, so another session's proposals are never listed, shown, or
 settleable here. A proposal settles exactly once. Dispatch in parallel freely —
 each has its own dispatch world — and settle each once its report is in.
