@@ -2,7 +2,9 @@
 """Extract per-task metrics from Terminal-Bench run directories.
 
 Prints verdict, agent wall time, normalized token accounting, steps, and
-cost for each task in a run — the same numbers recorded in RESULTS.md.
+cost for each task in a run — the per-task numbers behind the run totals
+recorded in RESULTS.md, and the source for the per-task tables in
+HISTORY.md.
 Accounting sources: yaah sums its in-container state.db (sessions table,
 tokens_in includes cached); hermes and aider read their usage-report JSONs,
 whose input_tokens exclude (hermes) or include (aider) cached buckets —

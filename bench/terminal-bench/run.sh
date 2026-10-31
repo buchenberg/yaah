@@ -22,12 +22,17 @@
 # shared verifier helpers are vendored into each task before the run.
 #
 # Token budget (calibrated on deepseek-flash, see README.md and
-# RESULTS.md): the fixed per-session cost is ~30K input tokens
-# (identity + tool schemas; the hello-world smoke IS that baseline at
-# 30.6K), and multi-step tasks land 4-5x that. The default 6-task
-# suite measured ~0.98M tokens on the recorded yaah run, ~89% of
-# prompt tokens served from cache. Run the 2-task smoke first if the
-# budget matters.
+# HISTORY.md): the fixed per-CALL floor is ~10.5K input tokens
+# (identity ~1.3K + tool schemas; measured 2026-10-31 after the
+# Go-toolchain and one-shot memory gates — it was ~13.4K before them).
+# Every turn re-sends it, so a task's prompt total is roughly
+# floor x turns plus the accumulating transcript; hello-world is the
+# clean instrument at 3 calls / ~31.8K total. Multi-step tasks land
+# 5-15x the floor. The five-task suite measured 0.48-0.76M prompt
+# tokens on the recorded yaah runs, 95-98% served from cache — so the
+# floor is a latency and window-headroom cost far more than a dollar
+# one (cache reads bill at 1/50th of input). Run the 2-task smoke
+# first if the budget matters.
 
 set -euo pipefail
 
