@@ -77,13 +77,15 @@ type RetainedRuntime struct {
 
 	// Containment and Network are the configured authority axes for a
 	// confined dispatch. They participate in world resolution because a
-	// fallback is legal only when it can still enforce them.
-	Containment string
-	Network     string
+	// fallback is legal only when it can still enforce them. NetworkHosts is
+	// the broker allowlist and matters only with Network "broker".
+	Containment  string
+	Network      string
+	NetworkHosts []string
 
 	// Grants is the configured dispatch grant set; GrantsForRole supplies a
-	// per-role override. They participate in world resolution: a container
-	// world cannot lower grants yet, so a restrictive set refuses one.
+	// per-role override. They participate in world resolution because an
+	// advisory world cannot enforce a restrictive set.
 	Grants        []config.GrantConfig
 	GrantsForRole func(role string) []config.GrantConfig
 
@@ -475,6 +477,9 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		// typo'd world or an explicit worktree/container request is a
 		// configuration error and must surface.
 		if containerSession && report && !explicitWorld && errors.Is(werr, subagent.ErrWorldUnavailable) {
+			if !sessionContainerFallbackAllowed(rt, subParams.Role) {
+				return "", fmt.Errorf("delegate: container world unavailable, and the session container cannot preserve the dispatch grants or broker allowlist: %w", werr)
+			}
 			// The session container is the predecessor world in the ladder;
 			// a report seals nothing, so it can run there unretained.
 			return sessionContainerFallback(ctx, rt, prompt, subParams, timeout, requestedKind, werr.Error())
@@ -510,7 +515,11 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 			}
 			basisDigest = digest
 		}
-		ss, seedBasis, seedDigest, perr := openDispatchWorld(ctx, rt)
+		authority, aerr := resolveDispatchAuthority(rt, subParams.Role)
+		if aerr != nil {
+			return "", fmt.Errorf("delegate: %w", aerr)
+		}
+		ss, seedBasis, seedDigest, perr := openDispatchWorld(ctx, rt, authority)
 		if perr == nil {
 			if report {
 				return runDispatchContainer(ctx, rt, parent, prompt, subParams, timeout, worldRes, ss)
@@ -531,7 +540,13 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 			if !report {
 				return "", fmt.Errorf("delegate: sibling container unavailable in a container session: %w", perr)
 			}
+			if !sessionContainerFallbackAllowed(rt, subParams.Role) {
+				return "", fmt.Errorf("delegate: sibling container unavailable, and the session container cannot preserve the dispatch grants or broker allowlist: %w", perr)
+			}
 			return sessionContainerFallback(ctx, rt, prompt, subParams, timeout, worldRes.Requested, worldRes.Reason)
+		}
+		if worldRes.Resolved == subagent.WorldWorktree && !worktreeFallbackAllowed(rt, subParams.Role, report) {
+			return "", fmt.Errorf("delegate: container world unavailable, and the worktree cannot preserve the dispatch grants or network posture: %w", perr)
 		}
 		// The world changed (a preflight failure stepped auto down): the
 		// event must carry the world the dispatch actually runs in.
@@ -756,12 +771,7 @@ func resolveDispatchWorld(rt RetainedRuntime, role string, report bool) (subagen
 		Jail:                   jailAvailable(),
 	}
 
-	grants := rt.Grants
-	if rt.GrantsForRole != nil {
-		if g := rt.GrantsForRole(role); len(g) > 0 {
-			grants = g
-		}
-	}
+	grants := dispatchGrants(rt, role)
 	return subagent.ResolveWorld(subagent.WorldRequest{
 		Requested:         requested,
 		Lane:              lane,

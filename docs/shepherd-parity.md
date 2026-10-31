@@ -97,8 +97,8 @@ declared. This generalises the reference's placement-honesty rule
 |---|---|---|
 | `containment: auto` | the fallback has some enforcement | advisory, recorded |
 | `containment: paddock` | the fallback is jailed, or is a container boundary (tier `contained` — a substitute, not a composition) | fail |
-| `network: deny_all` / `broker` | the fallback can enforce it for both shell children and host-run `http`/`webfetch` (Landlock ABI ≥ 4); a container netns covers only the shell children, so a container world is refused | fail |
-| `ReadOnly` grants | the fallback can enforce them | fail |
+| `network: deny_all` / `broker` | the fallback can enforce it for shell children (Landlock ABI ≥ 4, or a container netns) and omits host-run `http`/`webfetch` | fail |
+| `ReadOnly` grants | the fallback can enforce them (a jail, or a grant-shaped container) | fail |
 | settlement (`mode: retained`) | the fallback is a retained world | fail, or explicitly opt out of retention |
 
 Rule of thumb: **step down only along axes that were not required.**
@@ -165,8 +165,11 @@ seals; a proposal seals a `GitDelta` manifest before teardown.
   with `workspace.containerd.image` set. A container-session sibling is seeded
   from the session container's captured state, not a stale host copy.
 - `world: auto` prefers the container for both lanes; a **preflight** failure
-  (open, probe, create, bootstrap) steps down to the worktree with
-  `Degraded=true` and a reason naming the failure.
+  (open, probe, create, bootstrap) steps down only where the fallback still
+  enforces the declaration: to a jail-capable worktree in a host session, or to
+  the session container in a container session when it preserves the posture
+  (no grants, no broker). Otherwise the dispatch fails rather than widening
+  authority.
 - `world: container` fails closed on the same failure — a dispatch is never
   transparently re-run in another world.
 - The resolution is recorded as `yaah.subagent.world.v1`, and a degraded report
@@ -175,13 +178,20 @@ seals; a proposal seals a `GitDelta` manifest before teardown.
   a host session the manifest settles onto the host git tree and is rehydrated
   after a restart; in a container session it settles into the **session
   container** and is session-lifetime (see below).
-- A restrictive `network` posture (`deny_all`/`broker`) is refused for a
-  per-dispatch container world: the shell children are netns-bound, but
-  `http`/`webfetch` execute in the yaah process on the host, which a container
-  netns cannot cover. `allow_all` is the only posture that container world
-  accepts. An isolated session differs: its container supplies the shell's
-  egress, and a restrictive posture now omits those two host-process tools from
-  its dispatches rather than leaving them silently host-networked.
+- `agents.subagent.network` is lowered onto a per-dispatch container:
+  `allow_all` shares the host network namespace, `deny_all` uses the
+  container's unshared loopback-only namespace, and `broker` starts a
+  netns-local proxy admitting `network_hosts`. Under `deny_all`/`broker`,
+  `http`/`webfetch` are omitted because they execute in the yaah process
+  outside the container; the shell children see only the container's netns.
+- Grants are lowered by mount shaping: the container workspace is masked
+  read-only and each read-write grant is remounted over its own subtree. A
+  declared all-read-only set sets the explicit mask with no writable roots.
+  The launch probe refuses if a write outside the grants succeeds or a write
+  inside a grant fails.
+- A host-session copy-in runs in an unshaped staging container, then the
+  captured state is applied to the shaped container; the shaping init would
+  otherwise reject the bootstrap writes to non-granted paths.
 - **Container-session proposals settle into the session container.** The host
   tree is untouched; `apply_out` remains the explicit host bridge. The
   manifest and basis are persisted for audit, but a session-target proposal is
@@ -350,11 +360,14 @@ repo) are deliberately deferred: they would change the world seeding and
 validator contract, and read-only git already works inside a worktree without
 a grant.
 
-Container worlds do not lower grants. The croft adapter has no per-root
-writable-root shaping and the container boundary is whole-world, so a
-restrictive set refuses a container world: `auto` falls back to the worktree
-and an explicit `container` fails closed. This is the recorded decision, not a
-silent downgrade (`yaah-tqrv`).
+Both worlds lower grants. The worktree lane lowers read-write roots to
+`ConfinementSpec.WritableRoots`; the container lane masks the workspace
+read-only and remounts each read-write root. Read-only roots are never listed as
+writable, so writes under them are refused. A declared all-read-only set sets
+`MaskWorkspace` (an empty root list alone would mean the historical unshaped
+container). A host-session copy-in uses an unshaped staging container because
+the shaped view cannot accept bootstrap writes; the captured state is applied
+to the shaped container before the body starts.
 
 ## Review provenance
 
@@ -384,12 +397,12 @@ Pinned inputs (drift guard: `internal/parity`):
 | trace ABI | `shepherd2` abi.v0, golden vectors |
 | kernel | `goatherd-kernel v0.18.0` |
 | runtime | `goatherd-runtime v0.21.0` |
-| container world | `goatherd-runtime/sandbox/croft v0.2.0` / `goatherd-croft v0.9.1` |
+| container world | `goatherd-runtime/sandbox/croft v0.2.1-0.20261031192038-da4e06c59318` / `goatherd-croft v0.9.2-0.20261031191238-a6d5f72a9b04` |
 | containment | landlock v0.1.2, winacl v0.1.1, seatbelt v0.1.0 |
 | grants | world-relative RW/RO roots, disjoint (config, not tools) |
 
 Remaining divergences are tracked in `yaah-1tkp` / `yaah-kit` (container
-adapter and live verification), `yaah-lmib` (grant and network lowering),
-`yaah-vlwm` (mode fidelity policy), and `yaah-qlf9` (comment truth). `yaah-ihfh` is the closed
+live verification), `yaah-vlwm` (mode fidelity policy), and `yaah-qlf9`
+(comment truth). `yaah-ihfh` is the closed
 parity-closure epic and is historical; a divergence not named in an active
 owner is a bug in this ledger.

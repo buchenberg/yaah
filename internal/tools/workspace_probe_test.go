@@ -235,14 +235,22 @@ func TestContainerdAdapterConfig_Passthrough(t *testing.T) {
 			Snapshotter: "overlayfs",
 			FIFODir:     "/var/tmp/yaah-fifo",
 		},
+		WritableRoots: []string{"/sandbox/src"},
+		MaskWorkspace: true,
+		Network:       "broker",
+		BrokerHosts:   []string{"api.example.com"},
 	}
 	want := croftadapter.Config{
-		Address:     "/run/containerd/containerd.sock",
-		Namespace:   "prod",
-		Image:       "example/dev:latest",
-		Snapshotter: "overlayfs",
-		FIFODir:     "/var/tmp/yaah-fifo",
-		Workdir:     "/sandbox",
+		Address:       "/run/containerd/containerd.sock",
+		Namespace:     "prod",
+		Image:         "example/dev:latest",
+		Snapshotter:   "overlayfs",
+		FIFODir:       "/var/tmp/yaah-fifo",
+		Workdir:       "/sandbox",
+		WritableRoots: []string{"/sandbox/src"},
+		MaskWorkspace: true,
+		Network:       "broker",
+		BrokerHosts:   []string{"api.example.com"},
 	}
 	if got := containerdAdapterConfig(w); !reflect.DeepEqual(got, want) {
 		t.Errorf("containerdAdapterConfig() =\n\t%+v\nwant\n\t%+v", got, want)

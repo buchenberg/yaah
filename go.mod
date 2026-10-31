@@ -30,7 +30,7 @@ require (
 )
 
 require (
-	github.com/buchenberg/goatherd-croft v0.9.1 // indirect
+	github.com/buchenberg/goatherd-croft v0.9.2-0.20261031191238-a6d5f72a9b04 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
 )
 
@@ -39,7 +39,7 @@ require (
 	github.com/Microsoft/go-winio v0.6.3-0.20251027160822-ad3df93bed29 // indirect
 	github.com/Microsoft/hcsshim v0.15.0-rc.1 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
-	github.com/buchenberg/goatherd-runtime/sandbox/croft v0.2.0
+	github.com/buchenberg/goatherd-runtime/sandbox/croft v0.2.1-0.20261031192038-da4e06c59318
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

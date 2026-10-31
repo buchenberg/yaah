@@ -47,12 +47,11 @@ func OpenContainerdWorkspaceSandbox(w config.WorkspaceConfig) (goatherdsandbox.S
 	// FIFODir passes through so the client's task/exec stdio FIFOs land in a
 	// directory yaah's uid can write — containerd's default is root-only.
 	//
-	// Network is deliberately left unset, which selects the adapter's isolated
-	// default: the container gets its own unshared network namespace, so it is
-	// loopback-only with no egress. That netns — not a paddock — is this lane's
-	// egress boundary, which is why yaah's config surface does not expose it
-	// yet. Sharing the host network would need an explicit config field and a
-	// decision about how it interacts with the egress posture vocabulary.
+	// A session container leaves Network unset, which selects the adapter's
+	// isolated default: its own unshared namespace, loopback-only. A
+	// per-dispatch container is built from a WorkspaceConfig carrying the
+	// lowered dispatch posture instead (host/none/broker); this opener maps
+	// whatever the caller supplied and does not re-decide it here.
 	sb, err := goatherdsandbox.OpenSandbox(croftadapter.BackendName, containerdAdapterConfig(w))
 	if err != nil {
 		return nil, fmt.Errorf("workspace: open containerd sandbox: %w", err)
@@ -82,7 +81,11 @@ func containerdAdapterConfig(w config.WorkspaceConfig) croftadapter.Config {
 		FIFODir:     w.Containerd.FIFODir,
 		// Root maps onto Workdir: the containment root every relative tool
 		// path resolves against inside the sandbox.
-		Workdir: w.Root,
+		Workdir:       w.Root,
+		WritableRoots: append([]string(nil), w.WritableRoots...),
+		MaskWorkspace: w.MaskWorkspace,
+		Network:       w.Network,
+		BrokerHosts:   append([]string(nil), w.BrokerHosts...),
 	}
 }
 

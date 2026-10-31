@@ -42,6 +42,24 @@ type WorkspaceConfig struct {
 	// Containerd holds the containerd backend's connection and image
 	// settings. Only meaningful when Backend is "containerd".
 	Containerd ContainerdWorkspaceConfig `yaml:"containerd"`
+
+	// The fields below are per-dispatch authority overrides, not user
+	// config. RetainedRuntime fills them from the dispatch's grants and
+	// network posture before a sibling container is opened; yaml:"-" keeps
+	// them out of the session config surface.
+	//
+	// WritableRoots are container-absolute paths under Root; an empty list
+	// with MaskWorkspace set means the workspace is read-only.
+	WritableRoots []string `yaml:"-"`
+	// MaskWorkspace shapes the workspace read-only even when no writable
+	// root is granted. It distinguishes an all-read-only grant declaration
+	// from the unshaped default.
+	MaskWorkspace bool `yaml:"-"`
+	// Network is the sandbox network posture after lowering: "host",
+	// "none", or "broker". Empty keeps the backend default ("none").
+	Network string `yaml:"-"`
+	// BrokerHosts is the exact-host allowlist for Network "broker".
+	BrokerHosts []string `yaml:"-"`
 }
 
 // ContainerdWorkspaceConfig is the containerd backend's settings block.
