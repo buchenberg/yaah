@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.120.1](https://github.com/buchenberg/yaah/compare/v0.120.0...v0.120.1) (2026-10-31)
+
+
+### Documentation
+
+* **parity:** publish the full Shepherd scorecard and owner map ([440b8e1](https://github.com/buchenberg/yaah/commit/440b8e1805acc83789814ee7f1eb0006df2a3964))
+* **parity:** publish the full Shepherd scorecard and owner map ([944b155](https://github.com/buchenberg/yaah/commit/944b155ac0ee1f472b4272d12f01aca7ec96023a))
+* **parity:** tighten the scorecard guard and record the mode decision ([a8a1abd](https://github.com/buchenberg/yaah/commit/a8a1abdeed792ec41c7f2485b35e73b572b115c5))
+
+
+### Tests
+
+* **parity:** bound the closed-bead guard ([7cbc914](https://github.com/buchenberg/yaah/commit/7cbc91414f9a1420348e968452da419685dde73d))
+
 ## [0.120.0](https://github.com/buchenberg/yaah/compare/v0.119.4...v0.120.0) (2026-10-31)
 
 
