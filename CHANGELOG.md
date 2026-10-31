@@ -5,10 +5,26 @@
 
 ### Bug Fixes
 
+* **prompts:** stop hard-naming go_outline in the batching rule ([0abaf09](https://github.com/buchenberg/yaah/commit/0abaf09018f263f51c8b9530fc507635a5c5607e))
 * **proposal:** address conflict review feedback ([efc4e79](https://github.com/buchenberg/yaah/commit/efc4e793c701995a80a68bf9cfe54fb4ea864b4a))
 * **proposal:** harden conflict envelope handling ([e4bad6f](https://github.com/buchenberg/yaah/commit/e4bad6f5752ce314390d3c69ceee2bd14e461615))
 * **proposal:** surface path overlaps and parent drift ([8a90466](https://github.com/buchenberg/yaah/commit/8a90466fb4c46c86e98ed1da5212b502058a46ae))
 * **proposal:** surface path overlaps and parent drift ([88fdd07](https://github.com/buchenberg/yaah/commit/88fdd076c24a767bdd86cf88809bd12b1cc5dbc9))
+* **tools:** derive the memory-prompt gate from the registry, not intent ([258d5ad](https://github.com/buchenberg/yaah/commit/258d5ad03f28b92896b1726cebb3337de004917e))
+* **tools:** drop the append loop staticcheck flagged in the memory gate ([8098589](https://github.com/buchenberg/yaah/commit/809858974203d45bfcf401cc6fdaf799808899da))
+
+
+### Performance Improvements
+
+* **tools:** gate unusable tools out of the main-session registry ([3024033](https://github.com/buchenberg/yaah/commit/30240331ab09207ef8a1d6b13cfc3e9e935dc908))
+* **tools:** gate unusable tools out of the main-session registry ([b0bc407](https://github.com/buchenberg/yaah/commit/b0bc407d9951a0f91f42b2953dc88500778f80d9))
+
+
+### Documentation
+
+* **bench:** fix cross-references and a two-run citation ([6d36d30](https://github.com/buchenberg/yaah/commit/6d36d3094f03a732455db50ef3e99552b5707515))
+* **bench:** name the commit the gated runs actually reproduce from ([8e7b4a4](https://github.com/buchenberg/yaah/commit/8e7b4a42fce2f356612be4c446278c4c01780385))
+* **bench:** one results table, with the narrative moved to HISTORY ([fad7271](https://github.com/buchenberg/yaah/commit/fad7271906d2671f287f900b8f8d740fa195969a))
 
 
 ### Tests
