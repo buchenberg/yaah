@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.119.4](https://github.com/buchenberg/yaah/compare/v0.119.3...v0.119.4) (2026-10-31)
+
+
+### Bug Fixes
+
+* **runner:** give each dispatch a unique sub-agent scope key ([9d1f870](https://github.com/buchenberg/yaah/commit/9d1f870fb9f1201efd870123ed49cacdf1ccc12f))
+* **runner:** give each dispatch a unique sub-agent scope key ([e5ff754](https://github.com/buchenberg/yaah/commit/e5ff754f10af7dc0454bd6b76c097009c4817fc0))
+* **runner:** key dispatch scopes by crypto/rand, not the clock ([6437ad7](https://github.com/buchenberg/yaah/commit/6437ad7028be0256f7ecfb06e36e856939be5c18))
+
 ## [0.119.3](https://github.com/buchenberg/yaah/compare/v0.119.2...v0.119.3) (2026-10-30)
 
 
