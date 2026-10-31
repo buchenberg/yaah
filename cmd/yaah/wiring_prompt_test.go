@@ -128,12 +128,49 @@ func TestBuildSubAgentBasePrompt_MemoryFactsWithoutToolGuidelines(t *testing.T) 
 	if !strings.Contains(got, "the widget config lives in configs/widget.yaml") {
 		t.Errorf("sub-agent base must carry stored memory facts:\n%s", got)
 	}
-	// The main-session builder appends memory-tool guidelines whenever db is
-	// non-nil; the sub-agent base must carry the facts but not the guidelines,
-	// since no sub-agent role has memory tools.
+	// The main-session builder appends memory-tool guidelines when the
+	// session registered the memory tools; the sub-agent base must carry
+	// the facts but not the guidelines, since no sub-agent role has memory
+	// tools.
 	for _, banned := range []string{"Memory Guidelines", "memory_add", "memory_search"} {
 		if strings.Contains(got, banned) {
 			t.Errorf("sub-agent base must not contain memory-tool guidance %q:\n%s", banned, got)
 		}
+	}
+}
+
+// TestBuildSystemPrompt_MemoryGuidelinesGatedOnTools pins the invariant
+// the wiring relies on: the Memory Guidelines block is advertised exactly
+// when the session registered the memory tools. A one-shot session gets
+// neither, so the prompt cannot tell the model to call memory_add in a
+// run that has no memory tools — and pays no tokens for the block.
+func TestBuildSystemPrompt_MemoryGuidelinesGatedOnTools(t *testing.T) {
+	t.Setenv("YAAH_HOME", t.TempDir())
+
+	cfg := &config.Config{
+		Providers: map[string]config.Provider{"zai": {}},
+		Agent: config.AgentConfig{
+			Default: config.Defaults{Provider: "zai", Model: "GLM-5.3"},
+		},
+	}
+	dir := t.TempDir()
+
+	withTools := buildSystemPrompt(cfg, dir, nil, "", true)
+	if !strings.Contains(withTools, "## Memory Guidelines") {
+		t.Error("a session with memory tools must carry the Memory Guidelines block")
+	}
+
+	withoutTools := buildSystemPrompt(cfg, dir, nil, "", false)
+	for _, banned := range []string{"## Memory Guidelines", "memory_add", "memory_search", "memory_promote"} {
+		if strings.Contains(withoutTools, banned) {
+			t.Errorf("a session without memory tools must not advertise %q", banned)
+		}
+	}
+
+	// A resumed session never gets the guidelines even with the tools
+	// registered — the pre-existing rule, unchanged by the gate.
+	resumed := buildSystemPrompt(cfg, dir, nil, "sess-123", true)
+	if strings.Contains(resumed, "## Memory Guidelines") {
+		t.Error("a resumed session must not re-append the Memory Guidelines block")
 	}
 }

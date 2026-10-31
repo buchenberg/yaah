@@ -9,14 +9,16 @@ the Terminal-Bench harness as an installed agent.
   in git history; recorded runs cite their pinned commits)
 - Agent adapter: `yaah_agent.py` (import path `yaah_agent:YaahAgent`)
 - Comparison adapters: `hermes_agent.py` for hermes (import path
-  `hermes_agent:HermesAgent`; ships a prebuilt package tree per Python
-  minor version — see its module docstring for the tarball build), and
-  `opencode_agent.py` for OpenCode (import path
-  `opencode_agent:OpenCodeAgent`; copies the static binary and keeps the
-  session database under the mounted `agent-logs` path)
+  `hermes_agent:HermesAgent`; ships a single prebuilt tarball with its
+  own CPython 3.14 runtime + the hermes source checkout — see its module
+  docstring for the tarball build), and `opencode_agent.py` for OpenCode
+  (import path `opencode_agent:OpenCodeAgent`; copies the static binary
+  and keeps the session database under the mounted `agent-logs` path)
 - Container setup: `yaah-setup.sh.j2` (config written in-container)
 - Runner: `run.sh`
-- Results: [RESULTS.md](RESULTS.md)
+- Results: [RESULTS.md](RESULTS.md) — one row per run, nothing else
+- History: [HISTORY.md](HISTORY.md) — methodology, per-task breakdowns,
+  run-over-run analysis
 
 ## One-time host setup
 
@@ -214,7 +216,7 @@ in `../orchestration-tasks/RESULTS.md`.
    absent) — overwriting the file would drop mirrors, registry
    mappings, or security settings a user configured there.
 2. **Upstream task defects at the pin**: see
-   [RESULTS.md](RESULTS.md#task-defects-found-at-the-harness-pin-d28711d)
+   [HISTORY.md](HISTORY.md#task-defects-found-at-the-harness-pin-d28711d)
    — fix-git is unbuildable everywhere (deleted fixture repo) and
    png-generation's compose file omits the agent-logs volume (its
    token accounting is lost).
@@ -224,8 +226,16 @@ in `../orchestration-tasks/RESULTS.md`.
 
 ## Recording results
 
-- Task tables, scores, and caveats: append a new dated section to
-  [RESULTS.md](RESULTS.md) — existing sections are never rewritten. This is
-  the results ledger.
+Two documents, one job each:
+
+- [RESULTS.md](RESULTS.md) is a single table, one row per run, ordered by
+  date. Nothing else lives there — no prose, no per-run sections. A cell
+  that was never measured stays blank rather than being restated from
+  another run. Add a row; do not rewrite existing ones.
+- [HISTORY.md](HISTORY.md) is the narrative archive: methodology, per-task
+  breakdowns, run-over-run analysis, and caveats. Append a new dated
+  section per run; existing sections are never rewritten. A section may
+  quote figures to make its argument, but the `RESULTS.md` row is the only
+  record of a run's totals — never maintain a second ledger here.
 - [BENCHMARKS.md](../../BENCHMARKS.md) is methodology and comparison context
   only; new run results go in `RESULTS.md`, not that page.

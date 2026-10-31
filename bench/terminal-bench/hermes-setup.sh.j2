@@ -2,34 +2,27 @@
 # hermes install script for Terminal-Bench task containers.
 # Rendered by the agent adapter; runs inside the task container with the
 # env from setup-env.sh already sourced (DEEPSEEK_API_KEY, HERMES_MODEL
-# are set; none are echoed to the pane). The prebuilt package tarballs
-# were copied to /installed-agent/ by the adapter — the container's own
-# pip is never used (broken-python's fixture deletes it on purpose;
-# static CLIs are immune and so is this).
+# are set; none are echoed to the pane). The prebuilt package tarball was
+# copied to /installed-agent/ by the adapter — the container's own
+# pip/python are never used (broken-python's fixture deletes them on
+# purpose; the tarball carries its own CPython 3.14 runtime, so any
+# container Python works).
 set -eu
 
-# Pick the tarball matching the container's interpreter: the compiled
-# wheels (pydantic_core etc.) are ABI-specific per minor version.
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "hermes: python3 not found in the task container" >&2
-  exit 1
-fi
-PYV="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
-case "$PYV" in
-  3.12) TARBALL=hermes-pkg-py312.tar.gz ;;
-  3.13) TARBALL=hermes-pkg-py313.tar.gz ;;
-  *) echo "hermes: no package tarball for Python $PYV" >&2; exit 1 ;;
-esac
+# Unpack the self-contained tree (python/, repo/, libs/ under /opt/hermes).
+mkdir -p /opt
+tar xzf /installed-agent/hermes-pkg-py314.tar.gz -C /opt
 
-# Unpack the self-contained package tree.
-mkdir -p /opt/hermes
-tar xzf "/installed-agent/$TARBALL" -C /opt/hermes
-
-# Wrapper: PYTHONPATH makes the package importable; exec-ing python3
-# on the console script overrides its build-time shebang.
+# Wrapper: the bundled interpreter resolves its stdlib from its own
+# location; LD_LIBRARY_PATH covers the shared libs the docker-python
+# build links outside its tree (sqlite3, ssl, ...) which minimal task
+# images lack. Exec-ing the interpreter on the console script overrides
+# its build-time shebang.
 cat > /tmp/hermes-wrapper <<'EOF'
 #!/bin/sh
-PYTHONPATH=/opt/hermes/hermes-pkg exec python3 /opt/hermes/hermes-pkg/bin/hermes "$@"
+HERMES_HOME=/opt/hermes
+export LD_LIBRARY_PATH="$HERMES_HOME/python/lib:$HERMES_HOME/libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+exec "$HERMES_HOME/python/bin/python3" "$HERMES_HOME/python/bin/hermes" "$@"
 EOF
 if cp /tmp/hermes-wrapper /usr/local/bin/hermes 2>/dev/null; then
   chmod +x /usr/local/bin/hermes
@@ -45,4 +38,4 @@ fi
 # run command (the harness mounts agent-logs into the container).
 mkdir -p /agent-logs
 
-hermes --version 2>/dev/null || hermes --help >/dev/null 2>&1 || true
+hermes --version

@@ -569,6 +569,29 @@ Additional tools are registered by the CLI layer after `NewRegistry()`:
 - `role` (host mode), `supervisor` (when tracing/supervision is live), `proposal` (retained mode), `apply_out` (isolated workspace)
 - Any MCP tools from connected servers
 
+Two environment gates then subtract from that set, because a tool that
+cannot run in this session is per-call prompt cost that buys a failed
+call later:
+
+- **Go toolchain** — `go_test`, `go_mod`, `go_outline`, `go_refactor`,
+  `staticcheck` are dropped when the project root is not inside a Go
+  module (`GoToolAvailable`). The same rule already governed sub-agent
+  registries; the main session now honours it too. `GoToolchainLeafTools()`
+  and `IsGoToolchainTool` read one list, so the two paths cannot gate
+  different tools.
+- **Memory** — the six `memory_*` tools are dropped in a one-shot session
+  (`yaah "prompt"`), which is a single non-interactive turn with no later
+  conversation to recall into. The `## Memory Guidelines` prompt block is
+  gated on the same value, so the prompt never advertises a tool that is
+  not registered.
+
+Both gates resolve **once**, at wiring time. The tools array is part of
+the cached prompt prefix, so a set that changed mid-session would
+invalidate the provider's cache on every later call and cost more than
+the schemas save. Dropped names are recorded in the session's
+`workspace_omitted_tools`, keeping "the model didn't" distinguishable
+from "the model couldn't".
+
 ### Workspace seam (`internal/tools/workspace.go`)
 
 Every filesystem and process operation a tool performs goes through one interface, so a single tool implementation can run on the host during a normal session and inside an isolated substrate during an isolated run:

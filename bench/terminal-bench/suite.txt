@@ -11,7 +11,7 @@
 # gomoku-planner was removed on 2026-10-20: the vision-adjacent outlier
 # dominated every total (≈40% of tokens, 2/3 of wall time) and compressed
 # the signal of the other five tasks; its recorded runs stay comparable
-# via the per-task tables in RESULTS.md.
+# via the per-task tables in HISTORY.md.
 #
 # Fresh same-day comparison (runs 2026-10-12__17-26-54 /
 # 2026-10-12__17-35-13, deepseek-flash, one trial each): yaah 6/6

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 )
 
@@ -78,5 +79,47 @@ func ancestorInModule(dir string) bool {
 			return false
 		}
 		abs = parent
+	}
+}
+
+// TestGoToolchainLeafTools pins the exported name list against the
+// per-name predicate: a registry curation that drops GoToolchainLeafTools
+// and a caller that tests IsGoToolchainTool must select the same set, or
+// the main session and the sub-agent path gate different tools.
+func TestGoToolchainLeafTools(t *testing.T) {
+	names := GoToolchainLeafTools()
+	if len(names) == 0 {
+		t.Fatal("GoToolchainLeafTools returned no names")
+	}
+	if !slices.IsSorted(names) {
+		t.Errorf("GoToolchainLeafTools must be sorted (callers put it in a prompt prefix): %v", names)
+	}
+	for _, name := range names {
+		if !IsGoToolchainTool(name) {
+			t.Errorf("GoToolchainLeafTools names %q but IsGoToolchainTool rejects it", name)
+		}
+		if NewLeafTool(name) == nil {
+			t.Errorf("GoToolchainLeafTools names %q, which is not a registered leaf tool", name)
+		}
+	}
+	// The other direction: no leaf tool is Go toolchain machinery unless
+	// the list names it, so a new Go tool cannot slip past the gate.
+	for name := range leafTools {
+		if IsGoToolchainTool(name) && !slices.Contains(names, name) {
+			t.Errorf("leaf tool %q is Go toolchain machinery but missing from GoToolchainLeafTools", name)
+		}
+	}
+}
+
+// TestGoToolchainLeafToolsIsolation pins that the returned slice is a
+// copy: a caller that sorts or appends to it must not reorder the
+// package-level list another caller reads.
+func TestGoToolchainLeafToolsIsolation(t *testing.T) {
+	first := GoToolchainLeafTools()
+	before := slices.Clone(first)
+	first[0] = "mutated"
+	second := GoToolchainLeafTools()
+	if !slices.Equal(second, before) {
+		t.Errorf("GoToolchainLeafTools shares backing storage with its caller: %v vs %v", second, before)
 	}
 }

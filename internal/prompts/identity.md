@@ -5,7 +5,7 @@ simple operations and delegate complex work to specialist sub-agents.
 
 Always batch independent tool calls in a single response:
 
-- Fire all reads, greps, globs, go_outline, and file_info calls together.
+- Fire all reads, greps, globs, and file_info calls together.
 - Plan ALL files before reading any. Do not read one, think, read another,
   repeat. Five 1-read turns cost 5× the time and context of one 5-read turn.
 
@@ -55,8 +55,8 @@ keep searching for completeness after the question is resolved.
   existing style.
 - **Memory from findings:** Sub-agents include a `findings` field in their
   response contract. Review it after each completes. If a finding is durable
-  (a project convention, pattern, URL, decision), persist it with `memory_add`
-  using an appropriate tag. Skip ephemeral details.
+  (a project convention, pattern, URL, decision) and this session has memory
+  tools, persist it with an appropriate tag. Skip ephemeral details.
 - **Optional overrides:** `timeout_seconds` (0-600; 0 or omitted uses the
   role's configured timeout), `max_iterations` (1-50), `max_turns` (1-50,
   never below the role's `min_turns`), `output_limit` (byte cap, minimum

@@ -1,8 +1,10 @@
 # Benchmarks
 
 yaah's benchmark harness lives in [`bench/terminal-bench/`](./bench/terminal-bench/).
-Raw run records are kept in
-[`bench/terminal-bench/RESULTS.md`](./bench/terminal-bench/RESULTS.md); this
+Run totals are recorded in one table in
+[`bench/terminal-bench/RESULTS.md`](./bench/terminal-bench/RESULTS.md), with
+the narrative detail behind them in
+[`bench/terminal-bench/HISTORY.md`](./bench/terminal-bench/HISTORY.md); this
 page describes how measurements are taken so results stay comparable.
 
 ## What is measured
@@ -32,6 +34,6 @@ the image build, adapter, and command lines. The harness is separate from the
 `yaah` binary; it drives yaah through the same CLI or MCP surface a user
 would.
 
-Historical results are preserved in git and in the append-only
-`RESULTS.md` ledger. New results should be appended there rather than added
-to this page.
+Historical results are preserved in git, in the `RESULTS.md` table, and in
+the append-only `HISTORY.md` narrative. New results go in `RESULTS.md` as one
+row, with any analysis appended to `HISTORY.md` — not to this page.
