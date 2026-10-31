@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.120.2](https://github.com/buchenberg/yaah/compare/v0.120.1...v0.120.2) (2026-10-31)
+
+
+### Bug Fixes
+
+* **proposal:** address conflict review feedback ([efc4e79](https://github.com/buchenberg/yaah/commit/efc4e793c701995a80a68bf9cfe54fb4ea864b4a))
+* **proposal:** harden conflict envelope handling ([e4bad6f](https://github.com/buchenberg/yaah/commit/e4bad6f5752ce314390d3c69ceee2bd14e461615))
+* **proposal:** surface path overlaps and parent drift ([8a90466](https://github.com/buchenberg/yaah/commit/8a90466fb4c46c86e98ed1da5212b502058a46ae))
+* **proposal:** surface path overlaps and parent drift ([88fdd07](https://github.com/buchenberg/yaah/commit/88fdd076c24a767bdd86cf88809bd12b1cc5dbc9))
+
+
+### Tests
+
+* **proposal:** exercise truncated conflict envelopes ([8811244](https://github.com/buchenberg/yaah/commit/8811244f34ebce53825635fd433832ec65089699))
+
 ## [0.120.1](https://github.com/buchenberg/yaah/compare/v0.120.0...v0.120.1) (2026-10-31)
 
 
