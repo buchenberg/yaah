@@ -46,7 +46,7 @@ not claim it wholesale.
 | Contexts / effect fold | workspace, session, KV, DB, MCP, appstore | own state/memory/MCP + kernel effect bus | **Partial**; decision `yaah-hxk3.4` |
 | Citation checking | Shepherd 0.3.1 citation checker | none | **Not ported**; `yaah-hxk3.2` |
 | Export / transform | dedicated packages | none | **Declined** for the coding-agent scope |
-| Devices / remote carriers | device and remote backends | git worktree + containerd only | **Declined** beyond current carriers |
+| Devices / remote carriers | device and remote backends | git worktree + croft container only | **Declined** beyond current carriers |
 | Provider SDK shape | Python provider protocol/adapters | yaah provider layer | **Different surface, not a parity target** |
 
 The useful missing surface is scoped in `yaah-hxk3`; that epic owns the
@@ -335,6 +335,13 @@ capped; exceeding it fails the seal with a clear message rather than truncating.
 5. Tests run without a daemon (sandbox fake + temp repos).
 
 ## Decision records
+
+### Closed — apply-out mode fidelity (`yaah-vlwm`)
+
+Copy-out deliberately keeps the sandbox file's `.Perm()`; container-authored
+setuid/setgid/sticky bits never reach the host. Host-side tool writes keep
+`atomicWriteFile`'s existing-mode behavior. This is the recorded mode-fidelity
+decision, not a remaining parity gap.
 
 ### D6 — TaskControl is not adopted
 

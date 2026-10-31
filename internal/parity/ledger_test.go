@@ -96,12 +96,18 @@ func TestLedgerNamesUsefulSurfaceOwners(t *testing.T) {
 		"yaah-1tkp.1",
 		"yaah-bp4",
 	} {
-		if !strings.Contains(ledger, ref) {
-			t.Errorf("parity ledger does not name %s; the scorecard owner list drifted", ref)
+		if !strings.Contains(ledger, "`"+ref+"`") {
+			t.Errorf("parity ledger does not name %s as a bounded bead reference; the scorecard owner list drifted", ref)
 		}
 	}
+	marker := "Remaining useful framework work"
+	at := strings.Index(ledger, marker)
+	if at < 0 {
+		t.Fatalf("parity ledger has no %q section", marker)
+	}
+	remaining := ledger[at:]
 	for _, closed := range []string{"yaah-vlwm", "yaah-qlf9"} {
-		if strings.Contains(ledger, closed) {
+		if strings.Contains(remaining, closed) {
 			t.Errorf("parity ledger still lists closed bead %s as remaining work", closed)
 		}
 	}
