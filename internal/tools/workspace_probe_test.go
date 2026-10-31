@@ -318,6 +318,7 @@ func TestValidateContainerAuthority(t *testing.T) {
 		}},
 		{name: "relative root", mutate: func(w *config.WorkspaceConfig) { w.Root = "workspace"; w.WritableRoots = []string{"/workspace/src"} }, wantErr: true},
 		{name: "relative writable root", mutate: func(w *config.WorkspaceConfig) { w.WritableRoots = []string{"src"} }, wantErr: true},
+		{name: "world-root writable root", mutate: func(w *config.WorkspaceConfig) { w.WritableRoots = []string{"/workspace"} }, wantErr: true},
 		{name: "outside writable root", mutate: func(w *config.WorkspaceConfig) { w.WritableRoots = []string{"/etc"} }, wantErr: true},
 		{name: "unknown network", mutate: func(w *config.WorkspaceConfig) { w.Network = "borker" }, wantErr: true},
 		{name: "hosts without broker", mutate: func(w *config.WorkspaceConfig) { w.Network = "none"; w.BrokerHosts = []string{"api.example.com"} }, wantErr: true},

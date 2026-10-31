@@ -80,7 +80,10 @@ func validateContainerAuthority(w config.WorkspaceConfig) error {
 		if root == "." || root == "" {
 			return fmt.Errorf("workspace root is empty, so writable root %q cannot be scoped", r)
 		}
-		if clean != root && !strings.HasPrefix(clean, root+"/") {
+		if clean == root {
+			return fmt.Errorf("writable root %q names the whole workspace; omit grants for whole-world access", r)
+		}
+		if !strings.HasPrefix(clean, root+"/") {
 			return fmt.Errorf("writable root %q is outside the workspace root %q", r, root)
 		}
 	}

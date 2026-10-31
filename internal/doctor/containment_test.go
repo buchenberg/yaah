@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"errors"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -108,5 +109,23 @@ func TestCheckContainment(t *testing.T) {
 	}
 	if c := CheckContainment(nil, errors.New("boom")); c.Status != "WARN" {
 		t.Errorf("config error: status = %q, want WARN", c.Status)
+	}
+}
+
+func TestContainerWorldsBothLanes(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("per-dispatch container worlds are Linux-only")
+	}
+	cfg := &config.Config{}
+	cfg.Workspace.Containerd.Image = "registry.example/yaah:1"
+	cfg.Agent.SubAgent.Mode = "retained"
+	if !containerWorldsBothLanes(cfg) {
+		t.Fatal("auto should resolve both lanes to the container when an image is configured")
+	}
+	cfg.Agent.SubAgent.Roles = map[string]config.RoleConfig{
+		"reviewer": {World: "worktree"},
+	}
+	if containerWorldsBothLanes(cfg) {
+		t.Fatal("a role pinned to the worktree must stop the session-wide container claim")
 	}
 }

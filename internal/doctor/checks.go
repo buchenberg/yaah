@@ -372,14 +372,54 @@ func CheckContainment(cfg *config.Config, cfgErr error) Check {
 }
 
 // containerWorldsBothLanes reports whether the configured world resolves to a
-// per-dispatch container for both lanes. Both is deliberate: a posture that is
-// only enforceable for a report is not a session-wide control.
+// per-dispatch container for both lanes and every role override. Both is
+// deliberate: a posture that is only enforceable for a report, or for the
+// session default while a role silently uses a worktree, is not a session-wide
+// control.
 func containerWorldsBothLanes(cfg *config.Config) bool {
-	res := worldinfo.Resolve(cfg, cfg.Workspace.Backend == config.BackendContainerd)
-	if res.ProposalErr != nil || res.ReportErr != nil {
+	if cfg == nil {
 		return false
 	}
-	return res.Proposal.Resolved == subagent.WorldContainer && res.Report.Resolved == subagent.WorldContainer
+	if worldinfo.Mode(cfg) == "shared" {
+		return false
+	}
+	sc := cfg.Agent.SubAgent
+	av := worldinfo.Availability(cfg, cfg.Workspace.Backend == config.BackendContainerd)
+	containment := worldinfo.Containment(cfg)
+	network := worldinfo.Network(cfg)
+
+	container := func(world string, grants []config.GrantConfig, lane string, retained bool) bool {
+		if strings.TrimSpace(world) == "" {
+			world = worldinfo.RequestedWorld(cfg)
+		}
+		res, err := subagent.ResolveWorld(subagent.WorldRequest{
+			Requested:         world,
+			Lane:              lane,
+			Retained:          retained,
+			Containment:       containment,
+			Network:           network,
+			RestrictiveGrants: len(grants) > 0,
+		}, av)
+		return err == nil && res.Resolved == subagent.WorldContainer
+	}
+	both := func(world string, grants []config.GrantConfig) bool {
+		return container(world, grants, "proposal", true) && container(world, grants, "report", false)
+	}
+
+	if !both(sc.World, sc.Grants) {
+		return false
+	}
+	for _, rc := range sc.Roles {
+		world := rc.World
+		grants := rc.Grants
+		if len(grants) == 0 {
+			grants = sc.Grants
+		}
+		if !both(world, grants) {
+			return false
+		}
+	}
+	return true
 }
 
 // containmentCheck is the pure decision behind CheckContainment, split out so
