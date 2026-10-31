@@ -13,6 +13,8 @@ package runner
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -20,6 +22,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -428,6 +431,44 @@ type taskRunnerOpts struct {
 	// a nil resolver means per-role provider overrides fall through to
 	// the planner's provider.
 	resolveProviderByName func(pmap map[string]config.Provider, name string) agent.Provider
+
+	// now mints dispatch timestamps for the sub-agent trace ID. Nil means
+	// time.Now; tests pin it to force two dispatches into the same clock
+	// tick and prove the per-dispatch sequence keeps their scope keys
+	// apart.
+	now func() time.Time
+}
+
+// dispatchClock returns the clock that stamps dispatch IDs: the test
+// override when set, time.Now otherwise.
+func dispatchClock(opts taskRunnerOpts) time.Time {
+	if opts.now != nil {
+		return opts.now()
+	}
+	return time.Now()
+}
+
+// subAgentTraceID mints the trace/scope owner ID for one dispatch. The
+// kernel registers the sub-agent scope under this exact string
+// ("scope:" + owner), so it must be unique per dispatch: two parallel
+// delegate calls routinely start within one clock tick, which is why a
+// timestamp alone is not a key — the same reason NewEntryID abandoned
+// mem-<UnixNano>. The timestamp stays for ordering and readability in
+// traces; 128 bits of crypto/rand make uniqueness structural.
+func subAgentTraceID(role subagent.SubAgentRole, parent string, at time.Time) string {
+	return fmt.Sprintf("sub-%s-%s-%d-%s", role, parent, at.UnixNano(), dispatchSuffix())
+}
+
+// dispatchSuffix returns 128 bits of crypto/rand, hex-encoded, matching
+// newTurnID and NewEntryID. If the system entropy source is unavailable
+// the timestamp is the fallback, accepting the collision risk that only
+// a broken entropy source creates.
+func dispatchSuffix() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return strconv.FormatInt(time.Now().UnixNano(), 10)
+	}
+	return hex.EncodeToString(b[:])
 }
 
 // makeTaskRunner creates a sub-agent runner that honours roles, timeouts,
@@ -542,7 +583,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		tools.WriteSubAgentModel(ctx, subModel)
 		tools.NotifySubAgentStart(ctx, subModel)
 
-		subTraceID := fmt.Sprintf("sub-%s-%s-%d", role, opts.parentSession, time.Now().UnixNano())
+		subTraceID := subAgentTraceID(role, opts.parentSession, dispatchClock(opts))
 		traceContext := subAgentRetainedContext(ctx, opts, role, params.Workdir, subConf, subReg)
 		traceCWD := subAgentTraceCWD(opts, params.Workdir)
 
