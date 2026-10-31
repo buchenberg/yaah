@@ -173,7 +173,7 @@ func TestIntentLoop_ProgressClassification(t *testing.T) {
 		{"proposal select", ToolResult{Name: "proposal", Args: `{"action":"select"}`, Result: "settled"}, true},
 		{"proposal apply settled", ToolResult{Name: "proposal", Args: `{"action":"apply"}`, Result: `{"status":"settled"}`}, true},
 		{"proposal apply conflict", ToolResult{Name: "proposal", Args: `{"action":"apply"}`, Result: `{"status":"conflict"}`}, false},
-		{"proposal apply conflict truncated", ToolResult{Name: "proposal", Args: `{"action":"apply"}`, Result: `{"status":"conflict","conflicts":[{"paths":["` + strings.Repeat("x", 600) + `"]}]`}, false},
+		{"proposal apply conflict truncated", ToolResult{Name: "proposal", Args: `{"action":"apply"}`, Result: `{"status":"conflict","conflicts":[{"paths":["` + strings.Repeat("x", 600)}, false},
 		{"proposal apply error", ToolResult{Name: "proposal", Args: `{"action":"apply"}`, Result: `{"status":"error"}`}, false},
 		{"json_query read", ToolResult{Name: "json_query", Args: `{"action":"query"}`, Result: "[]"}, false},
 		{"json_query write", ToolResult{Name: "json_query", Args: `{"action":"write"}`, Result: "ok"}, true},

@@ -57,9 +57,10 @@ func (e *proposalApplyConflict) Unwrap() error { return e.Cause }
 // its own inspection rather than sharing an unkeyed result.
 func (p *retainedProposal) basisKey() string {
 	// Include the fields parentDrift reads so a future registry with mixed
-	// targets/parents cannot share a result it should not. The manager pointer
-	// distinguishes the same basis digest arriving through different scopes.
-	prefix := fmt.Sprintf("%s\x00%s\x00%p\x00", p.target, p.parentID, p.mgr)
+	// targets/parents cannot share a result it should not. The manager and
+	// session pointers distinguish the same basis digest arriving through
+	// different live scopes.
+	prefix := fmt.Sprintf("%s\x00%s\x00%p\x00%p\x00", p.target, p.parentID, p.mgr, p.session)
 	switch {
 	case p.delta != nil:
 		return prefix + p.basisDigest
