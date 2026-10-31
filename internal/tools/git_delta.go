@@ -1101,7 +1101,7 @@ func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retain
 			return "", fmt.Errorf("proposal %s: apply: cannot determine the parent's changes since the dispatch, refusing to write: %w", p.id, err)
 		}
 		if overlap := overlappingPaths(p.delta.Paths(), changed); len(overlap) > 0 {
-			return "", &proposalApplyConflict{ProposalID: p.id, Paths: overlap}
+			return "", &proposalApplyConflict{ProposalID: p.id, Paths: overlap, Cause: goatherd.ErrApplyConflict}
 		}
 		if sessionTarget {
 			err = applyGitDeltaWorkspace(ctx, p.session.Workspace(), p.delta)

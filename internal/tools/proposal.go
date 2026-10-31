@@ -106,6 +106,10 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 				// A refusal is an outcome the orchestrator must act on, not a
 				// failed tool call: return the same JSON frame as a settlement,
 				// with the overlap paths named. The proposal stays open.
+				paths := conflict.Paths
+				if paths == nil {
+					paths = []string{}
+				}
 				env := proposalEnvelope{
 					Status:     "conflict",
 					ProposalID: conflict.ProposalID,
@@ -113,7 +117,7 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 					Error:      conflict.Error(),
 					Conflicts: []proposalConflict{{
 						Kind:      proposalConflictApply,
-						Paths:     conflict.Paths,
+						Paths:     paths,
 						Proposals: []string{conflict.ProposalID},
 					}},
 					Next: proposalVerbs(),

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
 	"github.com/buchenberg/goatherd-runtime/effect"
 	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 	"github.com/buchenberg/yaah/internal/config"
@@ -401,6 +402,9 @@ func TestGitDeltaSettle_ApplyRefusesOverlap(t *testing.T) {
 			t.Errorf("error = %T, want *proposalApplyConflict", err)
 		} else if len(conflict.Paths) != 1 || conflict.Paths[0] != "README.md" {
 			t.Errorf("typed conflict paths = %v, want README.md", conflict.Paths)
+		}
+		if !errors.Is(err, goatherd.ErrApplyConflict) {
+			t.Errorf("error = %v, want the goatherd.ErrApplyConflict sentinel preserved", err)
 		}
 	}
 	if got, _ := os.ReadFile(filepath.Join(f.repo, "README.md")); string(got) != "# the host's version\n" {

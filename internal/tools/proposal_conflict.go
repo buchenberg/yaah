@@ -44,26 +44,28 @@ type proposalConflict struct {
 type proposalApplyConflict struct {
 	ProposalID string
 	Paths      []string
+	// Cause preserves the settlement sentinel for direct registry callers.
+	// ProposalTool renders the structured envelope; Unwrap keeps
+	// errors.Is(err, goatherd.ErrApplyConflict) working underneath it.
+	Cause error
 }
 
-// parentDriftResult caches one basis-relative diff for a listing. Proposals
-// from the same dispatch basis share this result, so a speculation fan-out pays
-// for one parent diff rather than one per proposal.
-type parentDriftResult struct {
-	paths []string
-	err   error
-}
+func (e *proposalApplyConflict) Unwrap() error { return e.Cause }
 
 // basisKey identifies the parent state a proposal was measured against. It is
 // empty when the basis is unavailable or cannot be digested; that proposal gets
 // its own inspection rather than sharing an unkeyed result.
 func (p *retainedProposal) basisKey() string {
+	// Include the fields parentDrift reads so a future registry with mixed
+	// targets/parents cannot share a result it should not. The manager pointer
+	// distinguishes the same basis digest arriving through different scopes.
+	prefix := fmt.Sprintf("%s\x00%s\x00%p\x00", p.target, p.parentID, p.mgr)
 	switch {
 	case p.delta != nil:
-		return p.basisDigest
+		return prefix + p.basisDigest
 	case p.output != nil:
 		if digest, err := p.output.Baseline().Digest(); err == nil {
-			return digest
+			return prefix + digest
 		}
 	}
 	return ""

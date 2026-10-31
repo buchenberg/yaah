@@ -375,16 +375,14 @@ func mutationSucceeded(result ToolResult) bool {
 			return false
 		}
 		// A refused apply is returned as a structured result with a nil Go
-		// error, so the success flag alone is not evidence of progress. Read
-		// the envelope status; a malformed/legacy result keeps the previous
-		// behavior rather than silently downgrading a real settlement.
-		var env struct {
-			Status string `json:"status"`
+		// error, so the success flag alone is not evidence of progress. Match
+		// the head-anchored status instead of unmarshaling the whole result:
+		// the loop caps tool output, so a long conflict envelope can be cut
+		// mid-JSON and a full parse would misread the refusal as progress.
+		if match := delegateStatus.FindStringSubmatch(result.Result); len(match) == 2 {
+			return match[1] != "conflict" && match[1] != "error"
 		}
-		if err := json.Unmarshal([]byte(result.Result), &env); err != nil {
-			return true
-		}
-		return env.Status != "conflict" && env.Status != "error"
+		return true
 	case "json_query":
 		var args struct {
 			Action string `json:"action"`

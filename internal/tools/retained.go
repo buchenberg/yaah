@@ -368,7 +368,9 @@ func (r *ProposalRegistry) summaries() string {
 func (r *ProposalRegistry) listEnvelope(ctx context.Context) string {
 	ps := r.all()
 	conflicts := proposalOverlaps(ps)
-	driftCache := make(map[string]parentDriftResult)
+	// Cache successful drift per basis. Errors are not cached: they embed the
+	// producing proposal's id and must not be replayed under another summary.
+	driftCache := make(map[string][]string)
 	list := make([]proposalSummary, 0, len(ps))
 	for _, p := range ps {
 		files := p.changedFiles()
@@ -385,21 +387,16 @@ func (r *ProposalRegistry) listEnvelope(ctx context.Context) string {
 			Target:     target,
 			Conflicts:  conflictsWith(conflicts, p.id),
 		}
-		var drift parentDriftResult
-		if key := p.basisKey(); key != "" {
-			if cached, ok := driftCache[key]; ok {
-				drift = cached
-			} else {
-				drift.paths, drift.err = p.parentDrift(ctx)
+		key := p.basisKey()
+		if cached, ok := driftCache[key]; ok && key != "" {
+			summary.ParentDrift = cached
+		} else if drift, err := p.parentDrift(ctx); err != nil {
+			summary.ParentDriftError = err.Error()
+		} else {
+			summary.ParentDrift = drift
+			if key != "" {
 				driftCache[key] = drift
 			}
-		} else {
-			drift.paths, drift.err = p.parentDrift(ctx)
-		}
-		if drift.err != nil {
-			summary.ParentDriftError = drift.err.Error()
-		} else {
-			summary.ParentDrift = drift.paths
 		}
 		list = append(list, summary)
 	}
@@ -1018,11 +1015,11 @@ func (r *ProposalRegistry) settleRetainedProposal(ctx context.Context, id, actio
 			// same machine-readable shape as the container lane. The envelope
 			// is unconditional; if the basis can no longer be inspected, its
 			// paths are empty rather than guessed.
-			var overlap []string
+			overlap := []string{}
 			if drift, derr := p.parentDrift(ctx); derr == nil {
 				overlap = overlappingPaths(p.changedFiles(), drift)
 			}
-			return "", &proposalApplyConflict{ProposalID: id, Paths: overlap}
+			return "", &proposalApplyConflict{ProposalID: id, Paths: overlap, Cause: settleErr}
 		case errors.Is(settleErr, goatherd.ErrSettleEffectLanded):
 			// The work is on the parent; only the causal merge failed to finish.
 			// End the proposal with the failure noted — a retry would re-apply
