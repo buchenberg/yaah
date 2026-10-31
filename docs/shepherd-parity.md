@@ -1,12 +1,16 @@
-# Shepherd parity: dispatch worlds
+# Shepherd parity: dispatch worlds and framework scope
 
-Status: design + ledger. `yaah-ihfh` (Shepherd parity closure) is closed;
-active divergences are tracked below. Mechanism port: `goatherd-kernel` +
-`goatherd-runtime`; reference: Shepherd (Python) `v0.3.1`.
+Status: in-repo ledger. `yaah-ihfh` (Shepherd parity closure) is closed;
+the remaining useful Python-framework surface is owned by `yaah-hxk3`.
+Mechanism port: `goatherd-kernel` + `goatherd-runtime`; reference: Shepherd
+(Python) `v0.3.1`.
 
 This page is the in-repo parity ledger and the design of record for
-`yaah-ihfh.3`. The external `yaah-shepherd-gap-report.md` is a snapshot; when
-the two disagree, this page and the drift guard win.
+`yaah-ihfh.3`. It is deliberately **not** a claim of byte-for-byte Python SDK
+parity: yaah adopts the execution, world, authority, and record mechanics that
+fit an interactive coding agent, and explicitly declines the rest. The external
+`yaah-shepherd-gap-report.md` is a historical snapshot; when the two disagree,
+this page and the drift guard win.
 
 ## The four concerns
 
@@ -22,6 +26,32 @@ question about which one is missing:
 
 The container tier is a **world**, never an authority. A container substitutes
 for the jail; it does not compose with one.
+
+## Scope and scorecard
+
+Parity is assessed at two levels. The first is the execution-mechanics layer
+yaah actually uses. The second is the wider Python framework surface; yaah does
+not claim it wholesale.
+
+| Layer | Shepherd (Python) | yaah | Status |
+|---|---|---|---|
+| Kernel / record | `shepherd2` `abi.v0` | `goatherd-kernel v0.18.0`, golden vectors | **Shipped, exact** |
+| Retained runs / settlement | `workspace.run` + four settlement verbs | `delegate` + `proposal` verbs | **Shipped** |
+| Dispatch worlds | `vcs-core` carriers | git worktree + croft container | **Shipped**; live container verification in `yaah-kit` |
+| Authority | Landlock / Seatbelt | Landlock / winacl / Seatbelt | **Shipped** |
+| Per-binding grants | `May[GitRepo, ReadOnly/ReadWrite]` | world-relative RW/RO config grants | **Shipped**, different surface |
+| Egress postures | not modeled in the Python reference | `allow_all` / `deny_all` / `broker` | **Shipped, beyond reference** |
+| Supervision | `JudgePredicate`, gates, permission plans | rule-based supervisor + blocking guard | **Partial**; `yaah-hxk3.1` |
+| Task / step / combinators | `task`, `step`, gate/retry/parallel/race | own streaming loop + delegate | **Not ported**; decision `yaah-hxk3.5` |
+| Contexts / effect fold | workspace, session, KV, DB, MCP, appstore | own state/memory/MCP + kernel effect bus | **Partial**; decision `yaah-hxk3.4` |
+| Citation checking | Shepherd 0.3.1 citation checker | none | **Not ported**; `yaah-hxk3.2` |
+| Export / transform | dedicated packages | none | **Declined** for the coding-agent scope |
+| Devices / remote carriers | device and remote backends | git worktree + containerd only | **Declined** beyond current carriers |
+| Provider SDK shape | Python provider protocol/adapters | yaah provider layer | **Different surface, not a parity target** |
+
+The useful missing surface is scoped in `yaah-hxk3`; that epic owns the
+adopt/decline decisions so this table does not become a wish list. Scorecard
+maintenance and the decline register are themselves tracked as `yaah-hxk3.3`.
 
 ## Dispatch worlds
 
@@ -203,10 +233,12 @@ seals; a proposal seals a `GitDelta` manifest before teardown.
 
 `croft-dlb` shipped (the pinned versions are in the ledger table below):
 unchanged captures return the previous state verbatim, so the kernel's
-digest-stability contract holds without a per-capture content diff. The adapter enables croft's
-`ContentDigest` option, so `WorkspaceState.ContentDigest` rides the state's
-`Data`; yaah does not currently read it, because the kernel digest includes
-`Revision` and settlement compares the host basis separately.
+digest-stability contract holds without a per-capture content diff. The
+`sandbox/croft` adapter deliberately does **not** carry croft's
+`ContentDigest`: a capture's digest must include `Revision`, and settlement
+compares the host basis separately, so the field would not buy cross-timeline
+content equality here. The underlying croft option remains available to a host
+that wants it; yaah does not read it.
 
 yaah's settlement path does not use a croft state across backends. In a host
 session the parent root is a **git** sandbox while the dispatch world is croft,
@@ -303,6 +335,24 @@ capped; exceeding it fails the seal with a clear message rather than truncating.
 5. Tests run without a daemon (sandbox fake + temp repos).
 
 ## Decision records
+
+### D6 — TaskControl is not adopted
+
+The Python reference exposes Ring 2 `TaskControl` (`spawn`, `adopt`,
+`abandon`, `publish`) as its programmatic execution surface. yaah keeps its
+own streaming, provider-agnostic agent loop and its own `TaskRunner`; it does
+not pretend the Go runtime's `task` package is the production driver. The
+runtime primitives remain available and tested upstream, but wiring them into
+the interactive session is a deliberate non-goal, not a missing implementation.
+
+### D7 — materialize/substrate receipts are bypassed
+
+Shepherd's vNext `materialize` orchestrator records substrate receipts and
+witness-stamped dispatch. yaah instead routes every filesystem and process
+operation through the `Workspace` interface and records typed workspace effects
+where the backend supports them. The receipt protocol is not reproduced; the
+authority and effect semantics it was protecting are enforced at the
+`Workspace`/sandbox seam.
 
 ### D8 — the orchestrator is not a retained run (yaah-ihfh.4)
 
@@ -403,8 +453,9 @@ Pinned inputs (drift guard: `internal/parity`):
 | containment | landlock v0.1.2, winacl v0.1.1, seatbelt v0.1.0 |
 | grants | world-relative RW/RO roots, disjoint (config, not tools) |
 
-Remaining divergences are tracked in `yaah-1tkp` / `yaah-kit` (container
-live verification), `yaah-vlwm` (mode fidelity policy), and `yaah-qlf9`
-(comment truth). `yaah-ihfh` is the closed
+Remaining useful framework work is owned by `yaah-hxk3`. Open
+containment-adjacent work stays in `yaah-1tkp`: `yaah-kit` (live container
+verification), `yaah-1tkp.1` (powershell read-only command policy), and
+`yaah-bp4` (retire the gitsandbox decorator). `yaah-ihfh` is the closed
 parity-closure epic and is historical; a divergence not named in an active
 owner is a bug in this ledger.

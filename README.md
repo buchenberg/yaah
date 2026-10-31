@@ -366,7 +366,7 @@ yaah version
 | Doc | Contents |
 |---|---|
 | [architecture.md](./docs/architecture.md) | Agent loop, middleware pipeline, tool dispatch, context management, streaming, persistence, traces |
-| [shepherd-parity.md](./docs/shepherd-parity.md) | Shepherd parity ledger: dispatch worlds, settlement, intentional divergences |
+| [shepherd-parity.md](./docs/shepherd-parity.md) | Shepherd parity ledger: full scorecard, dispatch worlds, settlement, intentional divergences |
 | [acp.md](./docs/acp.md) | Agent Client Protocol server, methods, and editor integration |
 | [storage.md](./docs/storage.md) | `state.db` / `trace.db` ownership, intentional overlap, fidelity limits, retention |
 | [sub-agents.md](./docs/sub-agents.md) | Roles, budgets, escalation, quality gates, retained proposals, custom roles |

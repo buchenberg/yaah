@@ -79,3 +79,42 @@ func TestLedgerNamesTheContainmentFamily(t *testing.T) {
 		}
 	}
 }
+
+// TestLedgerNamesUsefulSurfaceOwners keeps the full parity scorecard tied to
+// the epic that owns it. The dispatch-world ledger used to list closed beads as
+// "remaining"; this guard makes the owner list falsifiable.
+func TestLedgerNamesUsefulSurfaceOwners(t *testing.T) {
+	ledger := read(t, ledgerPath)
+	for _, ref := range []string{
+		"yaah-hxk3",
+		"yaah-hxk3.1",
+		"yaah-hxk3.2",
+		"yaah-hxk3.3",
+		"yaah-hxk3.4",
+		"yaah-hxk3.5",
+		"yaah-kit",
+		"yaah-1tkp.1",
+		"yaah-bp4",
+	} {
+		if !strings.Contains(ledger, ref) {
+			t.Errorf("parity ledger does not name %s; the scorecard owner list drifted", ref)
+		}
+	}
+	for _, closed := range []string{"yaah-vlwm", "yaah-qlf9"} {
+		if strings.Contains(ledger, closed) {
+			t.Errorf("parity ledger still lists closed bead %s as remaining work", closed)
+		}
+	}
+}
+
+// TestLedgerStatesDeliberateBypasses pins the decisions that explain why the
+// Python task/materialize surfaces are absent. Without these, a reader sees an
+// unimplemented feature rather than a recorded divergence.
+func TestLedgerStatesDeliberateBypasses(t *testing.T) {
+	ledger := read(t, ledgerPath)
+	for _, marker := range []string{"D6 — TaskControl", "D7 — materialize"} {
+		if !strings.Contains(ledger, marker) {
+			t.Errorf("parity ledger does not record the deliberate bypass %q", marker)
+		}
+	}
+}
