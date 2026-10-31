@@ -270,6 +270,30 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		toolReg.Unregister("question")
 	}
 
+	// Go toolchain tools in a workspace that is not a Go module: the
+	// same rule the sub-agent path already applies (runner.go's
+	// subAgentUnavailableTools, yaah-9n0). go_test/go_mod/go_outline/
+	// go_refactor/staticcheck drive the Go toolchain against the
+	// workspace, so outside a module they cannot succeed — the schema is
+	// per-call cost that buys a failed call later.
+	//
+	// Resolved ONCE here, from the project root, and never re-checked:
+	// the tools array is part of the cached prompt prefix, so a set that
+	// flipped mid-session (the agent runs `go mod init`) would invalidate
+	// the cache on every later call and cost far more than the schemas
+	// save. In isolated mode the container holds a copy of this project,
+	// so the host root is the right proxy — the same substitution
+	// subAgentUnavailableTools documents.
+	if !tools.GoToolAvailable(cwd) {
+		for _, name := range tools.GoToolchainLeafTools() {
+			toolReg.Unregister(name)
+			// The tools exist and this session merely cannot use them, so
+			// an allowlist naming one is not a typo.
+			belt.Know(name)
+			omittedTools = append(omittedTools, name)
+		}
+	}
+
 	// Workspace containment. Exactly one substrate may be installed:
 	//
 	//   - containerd backend: the session's sandbox is constructed, image-
@@ -378,10 +402,22 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	}
 
 	// --- Prompt assembly -------------------------------------------------
-	systemPrompt := buildSystemPrompt(cfg, cwd, db, opts.ResumeSessionID)
+	// Memory tools are wired only when there is a store to put them in AND
+	// the session can benefit from one. A one-shot run is a single
+	// non-interactive turn: there is no later conversation to recall into,
+	// and the store a CI or bench one-shot writes is typically discarded
+	// with its container — so the schemas are per-call cost, and an agent
+	// that "saves a finding" spends output tokens on a note nobody will
+	// read. Same precedent as `question` above.
+	//
+	// The Memory Guidelines block in the system prompt is gated on this
+	// SAME value: the prompt must never advertise a tool the session did
+	// not register.
+	memoryTools := db != nil && !opts.OneShot
+	systemPrompt := buildSystemPrompt(cfg, cwd, db, opts.ResumeSessionID, memoryTools)
 
 	// Register memory tools (needs DB, not prompt logic).
-	if db != nil {
+	if memoryTools {
 		toolReg.Register(&tools.MemorySearchTool{DB: db})
 		toolReg.Register(&tools.MemoryAddTool{DB: db})
 		toolReg.Register(&tools.MemoryPromoteTool{DB: db})
@@ -389,10 +425,13 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		toolReg.Register(&tools.MemoryUpdateTool{DB: db})
 		toolReg.Register(&tools.MemorySessionSearchTool{DB: db})
 	} else {
-		// The tools exist but this session has nowhere to put them: the
-		// belt must know the names, or an allowlist that names them reads
-		// as a typo.
+		// The tools exist but this session has nowhere to put them (no
+		// database) or no use for them (one-shot): the belt must know the
+		// names, or an allowlist that names them reads as a typo.
 		belt.Know("memory_search", "memory_add", "memory_delete", "memory_update", "memory_promote", "memory_search_sessions")
+		for _, name := range []string{"memory_search", "memory_add", "memory_delete", "memory_update", "memory_promote", "memory_search_sessions"} {
+			omittedTools = append(omittedTools, name)
+		}
 	}
 
 	// --- MCP servers ------------------------------------------------------

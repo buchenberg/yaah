@@ -25,6 +25,17 @@ func IsGoToolchainTool(name string) bool {
 	return slices.Contains(goToolchainTools, name)
 }
 
+// GoToolchainLeafTools returns the sorted names of the Go toolchain leaf
+// tools — the same list IsGoToolchainTool reads, so a registry curation
+// and the per-name predicate can never disagree about which tools a
+// non-Go workspace is missing. Callers that drop these from a registry
+// use it to name what was left out.
+func GoToolchainLeafTools() []string {
+	out := slices.Clone(goToolchainTools)
+	slices.Sort(out)
+	return out
+}
+
 // ShellToolAvailable reports whether a shell tool can actually run here.
 // bash is everywhere but Windows; powershell needs a PowerShell on PATH
 // (pwsh on Unix, always present on Windows). A role that names a shell

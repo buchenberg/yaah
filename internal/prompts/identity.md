@@ -55,8 +55,8 @@ keep searching for completeness after the question is resolved.
   existing style.
 - **Memory from findings:** Sub-agents include a `findings` field in their
   response contract. Review it after each completes. If a finding is durable
-  (a project convention, pattern, URL, decision), persist it with `memory_add`
-  using an appropriate tag. Skip ephemeral details.
+  (a project convention, pattern, URL, decision) and this session has memory
+  tools, persist it with an appropriate tag. Skip ephemeral details.
 - **Optional overrides:** `timeout_seconds` (0-600; 0 or omitted uses the
   role's configured timeout), `max_iterations` (1-50), `max_turns` (1-50,
   never below the role's `min_turns`), `output_limit` (byte cap, minimum

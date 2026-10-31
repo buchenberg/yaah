@@ -13,13 +13,16 @@ import (
 // buildSystemPrompt assembles the main-session base system prompt from
 // config, environment, instructions, and memory. When db is non-nil,
 // stored memories are loaded into the prompt layers. Memory guidelines
-// are appended for fresh sessions (resumeSessionID == "") only.
+// are appended for fresh sessions (resumeSessionID == "") only, and only
+// when memoryTools says the session actually registered the memory tools
+// — the caller passes the same value it gates registration on, so the
+// prompt can never advertise a tool that is not in the request.
 //
 // The returned systemPrompt is the main-session base prompt (clean of
 // top-level directives). The caller derives mainPrompt by injecting
 // directives. Sub-agents get their own lean base from
 // buildSubAgentBasePrompt instead of this one.
-func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSessionID string) string {
+func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSessionID string, memoryTools bool) string {
 	layers := prompts.Layers{
 		Identity:               prompts.IdentityPrompt,
 		Environment:            prompts.DetectEnvironment(cwd),
@@ -31,7 +34,7 @@ func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSess
 	}
 
 	systemPrompt := prompts.Build(layers)
-	if db != nil && resumeSessionID == "" {
+	if memoryTools && resumeSessionID == "" {
 		systemPrompt += `
 ## Memory Guidelines
 - Use memory_search to find relevant memories before answering personal/project questions. It uses semantic vector search when an embedding model is configured (understands paraphrases and meaning, not just keywords) and falls back to keyword full-text matching when semantic recall is unavailable, fails, or returns no candidates — each result names the path that ran. A tag filters by category but selects keyword-only matching and withdraws semantic recall, so omit the tag when searching by paraphrase; an empty query lists the most recent entries instead of searching. Results default to cross-session facts; pass scope "session" (or "all") to also reach atoms distilled from earlier conversations.
