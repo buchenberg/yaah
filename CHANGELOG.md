@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.120.0](https://github.com/buchenberg/yaah/compare/v0.119.4...v0.120.0) (2026-10-31)
+
+
+### Features
+
+* **dispatch:** lower grants and network onto container worlds ([d45e15b](https://github.com/buchenberg/yaah/commit/d45e15b634b3f751522d27aa75db1b82186a338e))
+
+
+### Bug Fixes
+
+* **dispatch:** close container authority review gaps ([291822e](https://github.com/buchenberg/yaah/commit/291822e97a5d4f7f652ba405e9c558e204bb644d))
+* **dispatch:** enforce the documented authority invariants ([a9b4abe](https://github.com/buchenberg/yaah/commit/a9b4abe0d80fc73ff533dbcca96a91b7ee1c8591))
+
+
+### Tests
+
+* **dispatch:** fail the live shaped case on teardown caveats ([e396bc4](https://github.com/buchenberg/yaah/commit/e396bc4e82243738b06682024267f1f86c0e993a))
+
 ## [0.119.4](https://github.com/buchenberg/yaah/compare/v0.119.3...v0.119.4) (2026-10-31)
 
 
