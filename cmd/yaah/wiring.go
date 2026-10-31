@@ -427,11 +427,12 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	} else {
 		// The tools exist but this session has nowhere to put them (no
 		// database) or no use for them (one-shot): the belt must know the
-		// names, or an allowlist that names them reads as a typo.
-		belt.Know("memory_search", "memory_add", "memory_delete", "memory_update", "memory_promote", "memory_search_sessions")
-		for _, name := range []string{"memory_search", "memory_add", "memory_delete", "memory_update", "memory_promote", "memory_search_sessions"} {
-			omittedTools = append(omittedTools, name)
-		}
+		// names, or an allowlist that names them reads as a typo. One list
+		// feeds both the belt and the omitted-tools record, so the two
+		// cannot disagree about what was dropped.
+		memoryToolNames := []string{"memory_search", "memory_add", "memory_delete", "memory_update", "memory_promote", "memory_search_sessions"}
+		belt.Know(memoryToolNames...)
+		omittedTools = append(omittedTools, memoryToolNames...)
 	}
 
 	// --- MCP servers ------------------------------------------------------
