@@ -168,4 +168,17 @@ func TestTraceOwnerParentsReadOnly(t *testing.T) {
 		t.Errorf("unknown owner unexpectedly resolved: %+v", got)
 	}
 
+	t.Chdir(t.TempDir())
+	d3, err := Open("state.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d3.RecordTraceOwner("sub-rel", "sess-rel", "worker"); err != nil {
+		t.Fatal(err)
+	}
+	d3.Close()
+	got, err = TraceOwnerParentsReadOnly("state.db", []string{"sub-rel"})
+	if err != nil || got["sub-rel"] != "sess-rel" {
+		t.Errorf("relative path lookup = %+v, %v; want sub-rel -> sess-rel", got, err)
+	}
 }
