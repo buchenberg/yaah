@@ -369,11 +369,18 @@ func TestClientWorkspace_MissingReadContentFallsBackLocal(t *testing.T) {
 
 func TestClientWorkspace_LateTerminalCreateIsReleased(t *testing.T) {
 	h, _, reg, _ := clientWorkspaceHarness(t)
-	ctx, cancel := context.WithTimeout(tools.WithToolName(context.Background(), "bash"), 200*time.Millisecond)
+	// The bash tool is unavailable on Windows; use the platform shell so the
+	// late-terminal-create path is exercised on every OS (mirrors the sibling
+	// TestClientWorkspace_TerminalCreate setup).
+	toolName, toolArgs := "bash", `{"command":"echo late"}`
+	if runtime.GOOS == "windows" {
+		toolName, toolArgs = "powershell", `{"command":"Write-Output late"}`
+	}
+	ctx, cancel := context.WithTimeout(tools.WithToolName(context.Background(), toolName), 200*time.Millisecond)
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := reg.Execute(ctx, "bash", `{"command":"echo late"}`)
+		_, err := reg.Execute(ctx, toolName, toolArgs)
 		done <- err
 	}()
 
