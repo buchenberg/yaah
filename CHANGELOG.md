@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.123.0](https://github.com/buchenberg/yaah/compare/v0.122.0...v0.123.0) (2026-11-01)
+
+
+### Features
+
+* **conflict:** aggregate conflict evidence for prevention ([5aa289f](https://github.com/buchenberg/yaah/commit/5aa289f4f35c855e79c41333425b09d5db72fbda))
+
 ## [0.122.0](https://github.com/buchenberg/yaah/compare/v0.121.0...v0.122.0) (2026-11-01)
 
 
