@@ -778,7 +778,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		return marshalProposalEnvelope(env), nil
 	}
 
-	rt.Proposals.add(&retainedProposal{
+	proposal := &retainedProposal{
 		id:             id,
 		scopeID:        scopeID,
 		workdir:        wt,
@@ -790,8 +790,9 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		repoPath:       rt.RepoPath,
 		reviewProposal: reviewProposal,
 		reviewFactID:   reviewFactID,
-	})
-	rt.Proposals.recordCurrentConflictFacts(ctx)
+	}
+	rt.Proposals.add(proposal)
+	rt.Proposals.recordSealConflictFacts(ctx, proposal)
 
 	env.Status = "proposal"
 	env.Result = trimResult(result)

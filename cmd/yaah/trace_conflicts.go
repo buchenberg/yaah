@@ -50,10 +50,13 @@ func newShepherdTraceConflictsCmd() *cobra.Command {
 			}
 			defer store.Close(cmd.Context())
 
+			// Usage facts live under per-dispatch owners and conflict facts
+			// under the session root, so the session filter is applied after
+			// reading all owner paths rather than as an owner prefix.
 			slice, err := store.ReadOwnerPrefix(
 				cmd.Context(),
 				shepherdtrace.TrustedReadContext,
-				session, int(^uint(0)>>1), shepherdtrace.ModeBoth,
+				"", 99999, shepherdtrace.ModeBoth,
 			)
 			if err != nil {
 				return fmt.Errorf("read conflict evidence: %w", err)
@@ -84,9 +87,10 @@ func aggregateConflicts(slice shepherdtrace.Slice, session string) conflictAggre
 		window = "session " + session
 	}
 	report := conflictAggregate{
-		Window:     window,
-		Dispatches: make(map[string]int),
-		Kinds:      make(map[string]int),
+		Window:        window,
+		Dispatches:    make(map[string]int),
+		Kinds:         make(map[string]int),
+		RepeatedPaths: make([]conflictPathCount, 0),
 	}
 	paths := make(map[string]int)
 	conflictProposals := make(map[string]bool)
@@ -103,17 +107,30 @@ func aggregateConflicts(slice shepherdtrace.Slice, session string) conflictAggre
 			}
 			switch rec.Envelope.SchemaRef {
 			case "yaah.subagent.usage.v1":
-				sessionsSeen[owner] = true
+				parent, _ := rec.Body.Payload["parent_session"].(string)
+				if parent == "" {
+					parent = owner
+				}
+				if session != "" && parent != session {
+					continue
+				}
+				sessionsSeen[parent] = true
 				lane, _ := rec.Body.Payload["lane"].(string)
 				if lane == "" {
 					lane = "unknown"
 				}
 				report.Dispatches[lane]++
-				sessionDispatches[owner]++
-			case tools.SchemaProposalSealed:
+				sessionDispatches[parent]++
+			case tools.SchemaProposalSealed, "goatherd.merge.proposed.v1":
+				if session != "" && owner != session {
+					continue
+				}
 				sessionsSeen[owner] = true
 				report.SealedProposals++
 			case tools.SchemaProposalConflict:
+				if session != "" && owner != session {
+					continue
+				}
 				sessionsSeen[owner] = true
 				report.Conflicts++
 				sessionConflicts[owner] = true

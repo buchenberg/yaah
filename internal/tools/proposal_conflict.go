@@ -751,10 +751,38 @@ func conflictsWith(conflicts []proposalConflict, id string) []proposalConflict {
 	return out
 }
 
-// recordCurrentConflictFacts classifies the registry now and records any new
-// conflicts. Seal calls it so evidence exists even when no orchestrator later
-// asks for list/show; list/show call the same deduplicated path.
-func (r *ProposalRegistry) recordCurrentConflictFacts(ctx context.Context) {
+// recordSealConflictFacts records pair conflicts when a newly sealed proposal
+// shares a path with an open proposal. The cheap path check avoids running the
+// full post-image/drift analysis on every seal; list/show still record parent
+// overlaps and any later observations through the same deduplicated path.
+func (r *ProposalRegistry) recordSealConflictFacts(ctx context.Context, added *retainedProposal) {
+	if added == nil {
+		return
+	}
+	addedPaths := make(map[string]bool)
+	for _, path := range added.changedFiles() {
+		if norm := normalizeProposalPath(path); norm != "" {
+			addedPaths[pathKey(norm)] = true
+		}
+	}
+	overlap := false
+	for _, other := range r.all() {
+		if other.id == added.id {
+			continue
+		}
+		for _, path := range other.changedFiles() {
+			if addedPaths[pathKey(normalizeProposalPath(path))] {
+				overlap = true
+				break
+			}
+		}
+		if overlap {
+			break
+		}
+	}
+	if !overlap {
+		return
+	}
 	analyses := r.analyzeProposals(ctx)
 	conflicts, _ := proposalConflicts(analyses)
 	r.recordConflictFacts(ctx, analyses, conflicts)

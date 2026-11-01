@@ -414,7 +414,7 @@ func runDispatchContainerProposal(
 		notes = append(notes, "trace: seal fact: "+ferr.Error())
 	}
 
-	rt.Proposals.add(&retainedProposal{
+	proposal := &retainedProposal{
 		id:          id,
 		delta:       delta,
 		review:      review,
@@ -430,8 +430,9 @@ func runDispatchContainerProposal(
 		world:       string(subagent.WorldContainer),
 		target:      target,
 		session:     session,
-	})
-	rt.Proposals.recordCurrentConflictFacts(ctx)
+	}
+	rt.Proposals.add(proposal)
+	rt.Proposals.recordSealConflictFacts(ctx, proposal)
 
 	env.Status = "proposal"
 	env.Result = trimResult(result)

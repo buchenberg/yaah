@@ -45,13 +45,13 @@ func TestTraceConflictsAggregate(t *testing.T) {
 		}
 	}
 
-	appendFact("sess-a", "yaah.subagent.usage.v1", "subagent:usage", shepherdtrace.Capture, map[string]any{"lane": "retained"})
-	appendFact("sess-a", "yaah.subagent.usage.v1", "subagent:usage:2", shepherdtrace.Capture, map[string]any{"lane": "shared"})
+	appendFact("sub-a1", "yaah.subagent.usage.v1", "subagent:usage", shepherdtrace.Capture, map[string]any{"lane": "retained", "parent_session": "sess-a"})
+	appendFact("sub-a2", "yaah.subagent.usage.v1", "subagent:usage:2", shepherdtrace.Capture, map[string]any{"lane": "shared", "parent_session": "sess-a"})
 	appendFact("sess-a", tools.SchemaProposalSealed, "proposal", shepherdtrace.Declaration, map[string]any{"proposal_id": "p1"})
 	appendFact("sess-a", tools.SchemaProposalConflict, "conflict", shepherdtrace.Declaration, map[string]any{
 		"kind": "same_path_divergent", "paths": []string{"a.txt", "b.txt"}, "proposals": []string{"p1", "p2"},
 	})
-	appendFact("sess-b", "yaah.subagent.usage.v1", "subagent:usage", shepherdtrace.Capture, map[string]any{"lane": "shared"})
+	appendFact("sub-b1", "yaah.subagent.usage.v1", "subagent:usage", shepherdtrace.Capture, map[string]any{"lane": "shared", "parent_session": "sess-b"})
 	appendFact("sess-b", tools.SchemaProposalConflict, "conflict", shepherdtrace.Declaration, map[string]any{
 		"kind": "delete_modify", "paths": []string{"a.txt"}, "proposals": []string{"p3", "p4"},
 	})
@@ -105,10 +105,10 @@ func TestTraceConflictsSessionWindow(t *testing.T) {
 	_, err = store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
 		AppendIntentID: "one",
 		Groups: []shepherdtrace.AppendGroup{{
-			TraceOwnerID: "sess-only",
+			TraceOwnerID: "sub-only",
 			FactDrafts: []shepherdtrace.RecordDraft{{
 				Mode: shepherdtrace.Capture, SchemaRef: "yaah.subagent.usage.v1", KindLabel: "subagent:usage",
-				Payload: map[string]any{"lane": "retained"},
+				Payload: map[string]any{"lane": "retained", "parent_session": "sess-only"},
 			}},
 		}},
 	})
