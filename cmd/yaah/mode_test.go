@@ -154,3 +154,157 @@ func TestModeDirective_NamesLeavingMechanismAndNotice(t *testing.T) {
 		})
 	}
 }
+
+// The mode-change notice is the in-band cue that a switch happened, so it must
+// name the new mode and the regime that mode enforces, and be deterministic
+// enough for a view to render verbatim.
+func TestModeChangeNotice(t *testing.T) {
+	cases := []struct {
+		name string
+		mode string
+		want []string
+		deny []string
+	}{
+		{
+			name: "plan names the mode and the withheld regime",
+			mode: acpModePlan,
+			want: []string{"Mode changed to Plan", "withheld", "inspection"},
+			deny: []string{"do not mutate", "Build"},
+		},
+		{
+			name: "build names the mode and the policy-only regime",
+			mode: acpModeBuild,
+			want: []string{"Mode changed to Build", "available", "do not mutate"},
+			deny: []string{"withheld", "Plan"},
+		},
+		{
+			name: "empty mode is build",
+			mode: "",
+			want: []string{"Mode changed to Build", "do not mutate"},
+			deny: []string{"withheld"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := modeChangeNotice(tc.mode)
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("modeChangeNotice(%q) = %q; want %q", tc.mode, got, want)
+				}
+			}
+			for _, deny := range tc.deny {
+				if strings.Contains(got, deny) {
+					t.Errorf("modeChangeNotice(%q) = %q; must not contain %q", tc.mode, got, deny)
+				}
+			}
+			if again := modeChangeNotice(tc.mode); again != got {
+				t.Errorf("modeChangeNotice(%q) is not deterministic: %q vs %q", tc.mode, got, again)
+			}
+		})
+	}
+}
+
+// The notice must reuse the directive's regime wording rather than restate it:
+// one copied sentence is what lets a notice promise a regime the loop does not
+// enforce.
+func TestModeChangeNotice_ReusesRegimeSentence(t *testing.T) {
+	for _, mode := range []string{acpModePlan, acpModeBuild, ""} {
+		level := agent.FullTools
+		if mode == planModeSpec.Mode {
+			level = planModeSpec.ToolsLevel
+		}
+		want := "Mode changed to " + modeLabel(mode) + " — " + regimeSentence(level)
+		if got := modeChangeNotice(mode); got != want {
+			t.Errorf("modeChangeNotice(%q) = %q; want %q", mode, got, want)
+		}
+	}
+}
+
+// SetMode announces the switch to the session's current view, so a mid-session
+// switch is observable in-band in every frontend.
+func TestSetModeDispatchesModeChangedEvent(t *testing.T) {
+	sess := &agentSession{}
+	view := &safeCaptureView{}
+	sess.SetView(view)
+
+	if err := sess.SetMode(acpModePlan); err != nil {
+		t.Fatalf("SetMode(%q) = %v", acpModePlan, err)
+	}
+	if len(view.events) != 1 {
+		t.Fatalf("view received %d event(s) on a mode switch, want 1", len(view.events))
+	}
+	evt, ok := view.events[0].(*agent.ModeChangedEvent)
+	if !ok {
+		t.Fatalf("dispatched event = %T; want *agent.ModeChangedEvent", view.events[0])
+	}
+	if evt.Mode != acpModePlan {
+		t.Errorf("event Mode = %q; want %q", evt.Mode, acpModePlan)
+	}
+	if evt.Notice == "" {
+		t.Fatal("event Notice is empty; the views render it verbatim")
+	}
+	if evt.Notice != modeChangeNotice(acpModePlan) {
+		t.Errorf("event Notice = %q; want %q", evt.Notice, modeChangeNotice(acpModePlan))
+	}
+	for _, want := range []string{"Plan", "withheld"} {
+		if !strings.Contains(evt.Notice, want) {
+			t.Errorf("plan notice %q missing %q", evt.Notice, want)
+		}
+	}
+
+	if err := sess.SetMode(acpModeBuild); err != nil {
+		t.Fatalf("SetMode(%q) = %v", acpModeBuild, err)
+	}
+	last, ok := view.events[len(view.events)-1].(*agent.ModeChangedEvent)
+	if !ok {
+		t.Fatalf("last event = %T; want *agent.ModeChangedEvent", view.events[len(view.events)-1])
+	}
+	if last.Mode != acpModeBuild {
+		t.Errorf("build event Mode = %q; want %q", last.Mode, acpModeBuild)
+	}
+	for _, want := range []string{"Build", "do not mutate"} {
+		if !strings.Contains(last.Notice, want) {
+			t.Errorf("build notice %q missing %q", last.Notice, want)
+		}
+	}
+}
+
+// A refused mode changes nothing and announces nothing: no notice may claim a
+// switch that did not happen.
+func TestSetModeRejectsUnknownModeWithoutNotice(t *testing.T) {
+	sess := &agentSession{}
+	view := &safeCaptureView{}
+	sess.SetView(view)
+
+	if err := sess.SetMode("yolo"); err == nil {
+		t.Fatalf("SetMode(%q) = nil; want an error", "yolo")
+	}
+	if len(view.events) != 0 {
+		t.Fatalf("view received %d event(s) for a refused mode, want 0", len(view.events))
+	}
+	if got := sess.Mode(); got != acpModeBuild {
+		t.Errorf("Mode() = %q after a refused switch; want %q", got, acpModeBuild)
+	}
+}
+
+// Views that must not be written between runs (REPL, ACP) get the notice when
+// the next run drains the buffer, so it still appears in-band.
+func TestSetModeNoticeBuffersForUnsafeView(t *testing.T) {
+	sess := &agentSession{}
+	view := &captureView{}
+	sess.SetView(view)
+
+	if err := sess.SetMode(acpModePlan); err != nil {
+		t.Fatalf("SetMode(%q) = %v", acpModePlan, err)
+	}
+	if len(view.events) != 0 {
+		t.Fatalf("unsafe view received %d event(s) between runs, want 0", len(view.events))
+	}
+	sess.deliverPendingEvents()
+	if len(view.events) != 1 {
+		t.Fatalf("view received %d event(s) after drain, want 1", len(view.events))
+	}
+	if _, ok := view.events[0].(*agent.ModeChangedEvent); !ok {
+		t.Fatalf("delivered event = %T; want *agent.ModeChangedEvent", view.events[0])
+	}
+}

@@ -58,6 +58,18 @@ func (s *agentSession) modeDirective(mode string) string {
 	})
 }
 
+// modeChangeNotice renders the one-line in-band notice announcing a switch to
+// mode. It names the new mode and the regime that mode enforces, and takes the
+// regime sentence from regimeSentence so the notice and the directive can never
+// describe different tool surfaces.
+func modeChangeNotice(mode string) string {
+	level := agent.FullTools
+	if mode == planModeSpec.Mode {
+		level = planModeSpec.ToolsLevel
+	}
+	return "Mode changed to " + modeLabel(mode) + " — " + regimeSentence(level)
+}
+
 // regimeSentence states what the tool gate actually enforces at level. It is
 // generated from the level, never written per mode, so the directive cannot
 // describe a regime the loop does not implement.

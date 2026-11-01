@@ -528,6 +528,12 @@ func (s *agentSession) SetMode(mode string) error {
 	s.mu.Lock()
 	s.mode = mode
 	s.mu.Unlock()
+	// Announce the switch in-band, after the lock is released: the notice
+	// states the regime the next run's tool gate enforces, so a mode change
+	// is observable from inside the conversation rather than only from the
+	// next prompt's directive. dispatchEvent buffers it for views that
+	// cannot take writes between runs (REPL, ACP).
+	s.dispatchEvent(&agent.ModeChangedEvent{Mode: mode, Notice: modeChangeNotice(mode)})
 	return nil
 }
 

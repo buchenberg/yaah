@@ -1149,6 +1149,7 @@ Concrete event types (all pointer receivers for clean nil checks in type switche
 | `SubAgentStartEvent` | Sub-agent dispatch begins (role, model, prompt) |
 | `SubAgentEndEvent` | Sub-agent dispatch completes (role, duration, error) |
 | `EscalationEvent` | Sub-agent raises a structured escalation (severity, summary, detail, suggestion) |
+| `ModeChangedEvent` | Session mode switches (new mode + the in-band notice stating the regime it enforces) |
 | `DoneEvent` | Agent loop finishes (response, error, context stats) |
 | `CompactionStartedEvent` | Context compaction begins (before/target tokens, reason) |
 | `CompactionDoneEvent` | Context compaction finishes (before/after tokens, savings %, method, elapsed) |

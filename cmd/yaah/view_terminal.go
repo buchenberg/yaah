@@ -90,6 +90,11 @@ func (v *terminalView) HandleEvent(evt agent.Event) {
 	case *agent.TitleSetEvent:
 		// Intentionally ignored: the terminal view has no session-title
 		// line; pickers read titles from the store.
+	case *agent.ModeChangedEvent:
+		// In-band mode marker: the REPL reaches this on the next run, when
+		// the buffered event is drained, so the transcript records which
+		// regime the turn runs under.
+		fmt.Fprintf(os.Stderr, "\n  %s\n", Dim(e.Notice))
 	case *agent.EscalationEvent:
 		severity := e.Severity
 		color := replYellow
