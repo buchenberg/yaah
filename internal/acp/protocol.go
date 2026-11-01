@@ -779,8 +779,8 @@ const (
 
 // SetConfigOptionParams are the params of session/set_config_option:
 // configId names one of the session's configOptions, and value is one
-// of that option's values. The model picker is yaah's only config
-// option, and its values are "<provider>/<model>".
+// of that option's values. yaah advertises the mode selector and, when a
+// catalog is wired, the model picker ("<provider>/<model>").
 //
 // value is a string, not the spec's string|boolean union: yaah
 // advertises select options only, so a boolean value is a client error
@@ -793,16 +793,14 @@ type SetConfigOptionParams struct {
 
 // SetConfigOptionResult is the result of session/set_config_option: the
 // session's whole configOptions set with currentValue updated, so the
-// client re-renders every picker from one response. The field is not
-// omitempty — the spec requires it — but it is nil when no catalog is
-// wired (the same shape session/new reports).
+// client re-renders every picker from one response.
 type SetConfigOptionResult struct {
 	ConfigOptions []SessionConfigOption `json:"configOptions"`
 }
 
 // SessionConfigOption is one session configuration option: a `select`
-// of a single current value, keyed by id. yaah advertises exactly one
-// (the model picker) and only when a model catalog is wired.
+// of a single current value, keyed by id. yaah advertises the mode
+// selector always and the model picker when a model catalog is wired.
 //
 // The wire shape flattens the kind into the option, per the spec: id,
 // name, description and category alongside type="select",

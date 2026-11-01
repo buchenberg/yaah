@@ -380,9 +380,8 @@ func (s *Server) handleSessionLoad(
 }
 
 // loadConfigOptions renders the config options a session/load response
-// re-advertises: the same model picker session/new reports, built from
-// the session's current selection. An unwired catalog yields nil, which
-// omits the field entirely.
+// re-advertises: the always-present mode selector and, when a catalog is
+// wired, the model picker.
 func (s *Server) loadConfigOptions(ctx context.Context, st *sessionState) []SessionConfigOption {
 	return buildSessionConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName(), st.sess.Mode())
 }

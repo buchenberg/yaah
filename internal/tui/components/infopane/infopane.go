@@ -79,6 +79,9 @@ func Format(s State, th *colors.Theme) string {
 		Version:  s.Version,
 		Status:   status,
 	}, th))
+	if s.SessionMode != "" {
+		b.WriteString(fmt.Sprintf("  Mode: %s\n", th.Tag(th.Detail, s.SessionMode)))
+	}
 	b.WriteString("\n")
 
 	b.WriteString(contextinfo.Format(s.ContextTokens, s.ContextWindow, th))
