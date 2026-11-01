@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.127.1](https://github.com/buchenberg/yaah/compare/v0.127.0...v0.127.1) (2026-11-01)
+
+
+### Bug Fixes
+
+* **serve:** gate headless prompts and refuse mid-turn compaction ([c5e154a](https://github.com/buchenberg/yaah/commit/c5e154a7bc6f28740829b71443426b8e0f0d39b3))
+* **tui:** serialize compaction with runs and reconcile the persist cursor ([d00a701](https://github.com/buchenberg/yaah/commit/d00a701e03fda0f34eaed728a3c865289ec3c9de))
+* **tui:** serialize prompt runs so a mid-turn Enter cannot fork session history ([3d17696](https://github.com/buchenberg/yaah/commit/3d176960b195ed1feeb31991a4ffb83d2aaf3920))
+
 ## [0.127.0](https://github.com/buchenberg/yaah/compare/v0.126.0...v0.127.0) (2026-11-01)
 
 
