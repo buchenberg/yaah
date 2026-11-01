@@ -73,6 +73,14 @@ func TestProposalList_DivergentOverlapAndParentDrift(t *testing.T) {
 	if conflict.Changes[0].BaseDigest == "" || conflict.Changes[1].BaseDigest == "" {
 		t.Errorf("conflict changes missing base digests: %+v", conflict.Changes)
 	}
+	if len(conflict.Details) != 2 {
+		t.Fatalf("conflict details = %+v, want base/current/proposed for both proposals", conflict.Details)
+	}
+	for _, detail := range conflict.Details {
+		if detail.Base == "" || detail.Current == "" || detail.Proposed == "" {
+			t.Errorf("detail = %+v, want base/current/proposed content", detail)
+		}
+	}
 
 	for _, summary := range listed.Proposals {
 		if len(summary.Conflicts) != 1 {
@@ -106,6 +114,9 @@ func TestProposalList_DivergentOverlapAndParentDrift(t *testing.T) {
 	}
 	if len(shown.Conflicts) != 1 || shown.Conflicts[0].Kind != proposalConflictSamePathDivergent {
 		t.Errorf("show conflicts = %+v, want the divergent pair", shown.Conflicts)
+	}
+	if len(shown.Conflicts) == 1 && len(shown.Conflicts[0].Details) != 2 {
+		t.Errorf("show conflict details = %+v, want two views", shown.Conflicts[0].Details)
 	}
 }
 
@@ -632,6 +643,9 @@ func TestProposalTool_ApplyConflictIsStructured(t *testing.T) {
 	}
 	if len(conflict.Changes) != 1 || conflict.Changes[0].Digest == "" {
 		t.Errorf("conflict changes = %+v, want the proposal's change metadata", conflict.Changes)
+	}
+	if len(conflict.Details) != 1 || conflict.Details[0].Current == "" {
+		t.Errorf("conflict details = %+v, want the apply refusal's base/current/proposed view", conflict.Details)
 	}
 
 	// Refusal must not consume the proposal: the orchestrator can still

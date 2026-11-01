@@ -15,7 +15,10 @@ it with the `proposal` tool:
   post-images. It fails closed if the basis moved since the dispatch.
 - `apply` — path-disjoint integration onto a moved tree. It uses a three-way
   merge on the worktree lane and whole-path post-images on the container lane,
-  and refuses if the parent changed any of the same paths.
+  and refuses if the parent changed any of the same paths. Pass
+  `strategy: "three_way"` only for the worktree lane when you deliberately want
+  Git to merge overlapping text changes; it fails closed on a textual conflict.
+  The container lane always writes whole-path post-images.
 - `release` — keep the proposal without integrating it: the sealed delta is
   exported to a retention path (reported in `retained`). A worktree is torn
   down after the export; a container world already ended at seal, so only its
@@ -31,7 +34,8 @@ also carries `parent_drift` (paths the parent changed since that proposal's
 dispatch basis; `parent_drift_error` if the basis cannot be inspected), its
 content-aware `changes` (`path`, `kind`, `base_digest`, `digest`, `mode`), a
 `changes_error` if a worktree post-image cannot be inspected, and its own
-`conflicts` and `duplicates`. The envelope's global arrays classify overlapping
+`conflicts` and `duplicates`; each conflicting path also carries bounded
+`base`/`current`/`proposed` `details` where the content can be inspected. The envelope's global arrays classify overlapping
 post-images: identical writes are `duplicates`, not conflicts; `same_path_divergent`
 means different content or mode; `delete_modify` means one side deletes what the
 other changes; `parent_overlap` means the parent moved a path the proposal also

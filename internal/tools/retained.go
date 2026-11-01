@@ -170,13 +170,23 @@ type proposalEnvelope struct {
 	Changes []proposalChange `json:"changes,omitempty"`
 	// ChangesError is set when a worktree proposal's post-images could not be
 	// inspected; it is not the same fact as no changes.
-	ChangesError string   `json:"changes_error,omitempty"`
-	Next         []string `json:"next,omitempty"`
+	ChangesError string `json:"changes_error,omitempty"`
+	// Strategy records the apply strategy used by a settlement.
+	Strategy string   `json:"strategy,omitempty"`
+	Next     []string `json:"next,omitempty"`
 }
 
 // proposalVerbs is the settlement vocabulary advertised to the orchestrator,
 // mirroring Shepherd's run select | apply | release | discard.
 func proposalVerbs() []string { return []string{"select", "apply", "release", "discard"} }
+
+// Apply strategies. Path-disjoint is the default and the only strategy a
+// container proposal can use. Three-way is an explicit worktree-only opt-in;
+// it never applies automatically and fails closed on a textual conflict.
+const (
+	proposalApplyPathDisjoint = "path_disjoint"
+	proposalApplyThreeWay     = "three_way"
+)
 
 // retainedReviewMaxDiffLines bounds the proposal diff used for review and its
 // digest. The trace fact stores the change metadata and digest, not the diff
@@ -389,6 +399,7 @@ func (r *ProposalRegistry) summaries() string {
 func (r *ProposalRegistry) listEnvelope(ctx context.Context) string {
 	analyses := r.analyzeProposals(ctx)
 	conflicts, duplicates := proposalConflicts(analyses)
+	conflicts = attachProposalConflictDetails(ctx, conflicts, analyses)
 	r.recordConflictFacts(ctx, analyses, conflicts)
 
 	list := make([]proposalSummary, 0, len(analyses))
@@ -776,6 +787,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		runErr:         bodyFailure,
 		parentID:       rt.RootScopeID,
 		mgr:            mgr,
+		repoPath:       rt.RepoPath,
 		reviewProposal: reviewProposal,
 		reviewFactID:   reviewFactID,
 	})
@@ -988,8 +1000,39 @@ func teardownReportScratch(ctx context.Context, rt RetainedRuntime, wt string, d
 	return fmt.Sprintf("worktree teardown reported an error (%v) but the worktree at %s is gone", err, wt)
 }
 
-// settleRetainedProposal settles one proposal with the given verb, once.
+// settleRetainedProposal settles one proposal with the default path-disjoint
+// strategy.
 func (r *ProposalRegistry) settleRetainedProposal(ctx context.Context, id, action string) (string, error) {
+	return r.settleRetainedProposalWithStrategy(ctx, id, action, proposalApplyPathDisjoint)
+}
+
+// settleRetainedProposalWithStrategy settles one proposal once. Three-way is
+// accepted only for an explicit worktree apply; every other verb and every
+// container proposal uses the path-disjoint lane.
+func (r *ProposalRegistry) settleRetainedProposalWithStrategy(ctx context.Context, id, action, strategy string) (string, error) {
+	if strategy == "" {
+		strategy = proposalApplyPathDisjoint
+	}
+	if strategy != proposalApplyPathDisjoint && strategy != proposalApplyThreeWay {
+		return "", fmt.Errorf("proposal: unknown apply strategy %q (path_disjoint, three_way)", strategy)
+	}
+	if strategy == proposalApplyThreeWay {
+		if action != "apply" {
+			return "", fmt.Errorf("proposal: strategy three_way is only valid with apply")
+		}
+		p, err := r.get(id)
+		if err != nil {
+			return "", err
+		}
+		if p.delta != nil {
+			return "", fmt.Errorf("proposal %s: three_way apply is worktree-lane only; the container lane writes whole-path post-images", id)
+		}
+		return r.settleWorktreeThreeWay(ctx, p)
+	}
+	return r.settleRetainedProposalDefault(ctx, id, action)
+}
+
+func (r *ProposalRegistry) settleRetainedProposalDefault(ctx context.Context, id, action string) (string, error) {
 	p, err := r.get(id)
 	if err != nil {
 		return "", err
@@ -1010,6 +1053,9 @@ func (r *ProposalRegistry) settleRetainedProposal(ctx context.Context, id, actio
 		ProposalID: id,
 		Action:     action,
 		Files:      p.changedFiles(),
+	}
+	if action == "apply" {
+		env.Strategy = proposalApplyPathDisjoint
 	}
 
 	// Release integrates nothing and leaves the isolated scope — and its
@@ -1045,6 +1091,7 @@ func (r *ProposalRegistry) settleRetainedProposal(ctx context.Context, id, actio
 			return "", &proposalApplyConflict{
 				ProposalID: id,
 				Paths:      overlap,
+				Strategy:   proposalApplyPathDisjoint,
 				Changes:    proposalChangesForPaths(ctx, p, overlap),
 				Cause:      settleErr,
 			}
