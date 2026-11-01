@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.125.0](https://github.com/buchenberg/yaah/compare/v0.124.1...v0.125.0) (2026-11-01)
+
+
+### Features
+
+* **acp:** add command palette, structured subagents, and auth logout ([ac39743](https://github.com/buchenberg/yaah/commit/ac39743db996aa006eab93336738442f5be7a758))
+* **acp:** command palette, structured subagents, and auth logout ([efa3d34](https://github.com/buchenberg/yaah/commit/efa3d34b8125f3303d8650a530da309b6530e5d4))
+
+
+### Bug Fixes
+
+* **acp:** address tier-3 review findings ([3bcded0](https://github.com/buchenberg/yaah/commit/3bcded07d56ac0853d0d872dea0267eb4aa689e0))
+* **acp:** answer batches per request and harden fallback ids ([bfa4bcc](https://github.com/buchenberg/yaah/commit/bfa4bcc39cd7106d0721e70d2729b011c6145e62))
+* **acp:** keep unwired list/delete method-not-found ([ebb734a](https://github.com/buchenberg/yaah/commit/ebb734abd2fd30da20127ecec5702afc1e0276dd))
+
+
+### Tests
+
+* **acp:** cover batch dispatch and document availability errors ([8336011](https://github.com/buchenberg/yaah/commit/83360119206fa597a584d8d1cec72f4587f20f7a))
+* **acp:** remove obsolete single-message batch assertion ([edddabc](https://github.com/buchenberg/yaah/commit/edddabcbd1b323212499a2a063d1d6b5a0a6b82a))
+
 ## [0.124.1](https://github.com/buchenberg/yaah/compare/v0.124.0...v0.124.1) (2026-11-01)
 
 
