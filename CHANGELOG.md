@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.124.0](https://github.com/buchenberg/yaah/compare/v0.123.0...v0.124.0) (2026-11-01)
+
+
+### Features
+
+* **acp:** add plan/build modes and reject dropped media ([44e246b](https://github.com/buchenberg/yaah/commit/44e246b63ba34c8f5a1f833f5813452f82627537))
+* **acp:** add plan/build modes and reject dropped media ([c3bda44](https://github.com/buchenberg/yaah/commit/c3bda44bbd9f6aeb8a05b3313229073b30106340))
+
+
+### Bug Fixes
+
+* **acp:** enforce plan mode at execution and harden modes ([69d6bf7](https://github.com/buchenberg/yaah/commit/69d6bf7fa9983e3fa20b46ae2d4d0f9d31e50eee))
+* **agent:** enforce every non-full tool level at dispatch ([bc4c54d](https://github.com/buchenberg/yaah/commit/bc4c54d4d59e02cb6c416eccc93972d3f2a7ff61))
+
+
+### Tests
+
+* **agent:** separate sub-agent tool-level gate coverage ([ab4110d](https://github.com/buchenberg/yaah/commit/ab4110dc9a3605d00c9abb8677c716bd8c3a614e))
+
 ## [0.123.0](https://github.com/buchenberg/yaah/compare/v0.122.0...v0.123.0) (2026-11-01)
 
 
