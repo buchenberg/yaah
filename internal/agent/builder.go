@@ -24,6 +24,9 @@ type LoopBuilder struct {
 	Provider Provider
 	// Registry is the tool registry.
 	Registry *tools.Registry
+	// ToolsLevel narrows the advertised tool set for this run. Zero means
+	// FullTools.
+	ToolsLevel ToolsLevel
 	// Model is the model name for the primary provider.
 	Model string
 	// SystemPrompt is the assembled system prompt.
@@ -132,7 +135,7 @@ func (b *LoopBuilder) Build(opts LoopBuildOptions) *Loop {
 		WithTitleHook(b.OnTitle),
 		WithBackgroundJobs(b.BackgroundJobs),
 		WithConflictTracker(b.ConflictTracker),
-		WithToolsLevel(FullTools),
+		WithToolsLevel(b.ToolsLevel),
 		WithOtel(otelEnabled, opts.OtelVerbose),
 		WithSubAgentConcurrency(
 			b.SubAgentMaxConcurrency,

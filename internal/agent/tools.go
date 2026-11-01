@@ -13,17 +13,75 @@ func (l *Loop) buildToolsForLevel() []types.ToolDef {
 	switch l.Config.ToolsLevel {
 	case SubAgentsOnly:
 		return l.agentTools()
+	case ReadOnlyTools:
+		return l.readOnlyTools()
 	default:
 		return l.buildToolDefs()
 	}
 }
 
-// agentTools returns only the sub-agent related tools.
-func (l *Loop) agentTools() []types.ToolDef {
-	agentToolNames := map[string]bool{"delegate": true, "list_subagents": true}
+// readOnlyToolNames is the plan-mode surface: inspection only. Shell, edit,
+// write, patch, delete, replace, plan (which writes .agents/plans), and
+// delegation are absent so a plan-mode turn cannot mutate the workspace or
+// widen its own authority.
+var readOnlyToolNames = map[string]bool{
+	"read":       true,
+	"grep":       true,
+	"glob":       true,
+	"ls":         true,
+	"file_info":  true,
+	"go_outline": true,
+	"calculate":  true,
+	"diff":       true,
+	"question":   true,
+}
+
+// allowsTool enforces the advertised tool level at execution time. Hiding a
+// tool definition is not enough: dialect recovery can synthesize calls the
+// model never saw in the tool array.
+func (l *Loop) allowsTool(name string) bool {
+	switch l.Config.ToolsLevel {
+	case ReadOnlyTools:
+		return readOnlyToolNames[name]
+	case SubAgentsOnly:
+		return subAgentToolNames[name]
+	default:
+		return true
+	}
+}
+
+func (l *Loop) readOnlyTools() []types.ToolDef {
+	if l.Registry == nil {
+		return nil
+	}
 	var defs []types.ToolDef
 	for _, name := range l.Registry.List() {
-		if agentToolNames[name] {
+		if !readOnlyToolNames[name] {
+			continue
+		}
+		t := l.Registry.Get(name)
+		if t == nil {
+			continue
+		}
+		defs = append(defs, types.ToolDef{
+			Type: "function",
+			Function: types.ToolFn{
+				Name:        t.Name(),
+				Description: t.Description(),
+				Parameters:  json.RawMessage(t.Schema()),
+			},
+		})
+	}
+	return defs
+}
+
+var subAgentToolNames = map[string]bool{"delegate": true, "list_subagents": true}
+
+// agentTools returns only the sub-agent related tools.
+func (l *Loop) agentTools() []types.ToolDef {
+	var defs []types.ToolDef
+	for _, name := range l.Registry.List() {
+		if subAgentToolNames[name] {
 			t := l.Registry.Get(name)
 			if t == nil {
 				continue

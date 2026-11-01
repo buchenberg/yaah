@@ -1,10 +1,19 @@
 package agent
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/buchenberg/yaah/internal/tools"
 )
+
+type namedTestTool string
+
+func (n namedTestTool) Name() string                                  { return string(n) }
+func (namedTestTool) Description() string                             { return "test tool" }
+func (namedTestTool) Schema() json.RawMessage                         { return json.RawMessage(`{"type":"object"}`) }
+func (namedTestTool) Execute(context.Context, string) (string, error) { return "", nil }
 
 func TestBuildToolDefs_cachedAcrossCalls(t *testing.T) {
 	reg := tools.NewEmptyRegistry()
@@ -63,5 +72,50 @@ func TestBuildToolDefs_nilRegistry(t *testing.T) {
 	loop := &Loop{}
 	if got := loop.buildToolDefs(); got != nil {
 		t.Errorf("buildToolDefs with nil registry = %#v, want nil", got)
+	}
+}
+
+func TestReadOnlyTools_WithholdsMutatingTools(t *testing.T) {
+	reg := tools.NewEmptyRegistry()
+	for _, name := range []string{"read", "grep", "write", "edit", "bash"} {
+		if tool := tools.NewLeafTool(name); tool != nil {
+			reg.Register(tool)
+		}
+	}
+	reg.Register(namedTestTool("delegate"))
+	reg.Register(&tools.PlanTool{})
+	loop := &Loop{Registry: reg}
+	loop.Config.ToolsLevel = ReadOnlyTools
+	defs := loop.buildToolsForLevel()
+	got := make(map[string]bool, len(defs))
+	for _, def := range defs {
+		got[def.Function.Name] = true
+	}
+	for _, want := range []string{"read", "grep"} {
+		if !got[want] {
+			t.Errorf("read-only tool set missing %q: %v", want, got)
+		}
+	}
+	for _, forbidden := range []string{"write", "edit", "bash", "delegate", "plan"} {
+		if got[forbidden] {
+			t.Errorf("read-only tool set exposes %q", forbidden)
+		}
+	}
+	if loop.allowsTool("write") {
+		t.Error("read-only execution gate allowed write")
+	}
+	if !loop.allowsTool("read") {
+		t.Error("read-only execution gate refused read")
+	}
+}
+
+func TestSubAgentsOnlyGate_WithholdsDirectTools(t *testing.T) {
+	loop := &Loop{}
+	loop.Config.ToolsLevel = SubAgentsOnly
+	if loop.allowsTool("write") {
+		t.Error("sub-agents-only execution gate allowed write")
+	}
+	if !loop.allowsTool("delegate") {
+		t.Error("sub-agents-only execution gate refused delegate")
 	}
 }

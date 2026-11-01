@@ -127,6 +127,9 @@ func (s *agentSession) loopBuilder(
 	fallbackModel string,
 	fallbackProviderName string,
 ) *agent.LoopBuilder {
+	// Sample the mode once: tools and prompt must describe the same mode even
+	// if session/set_mode lands concurrently with this build.
+	mode := s.Mode()
 	// The usage hooks are installed on the builder so EVERY loop this
 	// session builds — interactive (runPrompt), serve (runHeadless),
 	// compact — flushes incrementally. usageBeforeRun anchors the
@@ -228,8 +231,9 @@ func (s *agentSession) loopBuilder(
 		ConsolidateFn:              s.consolidateFn(),
 		Provider:                   prov,
 		Registry:                   s.toolReg,
+		ToolsLevel:                 s.toolsLevelForMode(mode),
 		Model:                      modelName,
-		SystemPrompt:               s.mainPrompt,
+		SystemPrompt:               s.systemPromptForMode(mode),
 		Messages:                   msgs,
 		SessionID:                  s.sessionID,
 		TraceStore:                 s.traceStore,

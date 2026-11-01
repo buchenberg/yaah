@@ -50,6 +50,10 @@ const (
 	FullTools ToolsLevel = iota
 	// SubAgentsOnly gives only the task tool — the agent coordinates through sub-agents.
 	SubAgentsOnly
+	// ReadOnlyTools exposes inspection tools only. It backs ACP plan mode:
+	// the model is never shown a mutating tool, and the dispatch gate refuses
+	// one even if a provider/dialect recovers a call that was not advertised.
+	ReadOnlyTools
 )
 
 // ToolResultMaxLen is a deprecated alias for context.DefaultTruncateMaxBytes.

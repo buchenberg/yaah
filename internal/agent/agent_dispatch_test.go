@@ -2,11 +2,13 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -108,6 +110,34 @@ func TestNewDispatch_OnlySpawnSubAgentTakesASubAgentSlot(t *testing.T) {
 		}
 	}
 }
+
+func TestDispatch_PlanModeRefusesUnadvertisedToolAtExecution(t *testing.T) {
+	reg := tools.NewEmptyRegistry()
+	tool := &countingTool{name: "write"}
+	reg.Register(tool)
+	l := NewLoop(nil, reg, WithToolsLevel(ReadOnlyTools))
+	l.Hooks = &HookEmitter{}
+	d := l.newDispatch(0, types.ToolCall{ID: "c1", Type: "function", Function: types.ToolCallFn{Name: "write", Arguments: `{}`}})
+	results := make(chan toolExecResult, 1)
+	d.run(context.Background(), results)
+	result := <-results
+	if tool.calls != 0 {
+		t.Fatalf("plan mode executed write %d times", tool.calls)
+	}
+	if result.err == nil || !strings.Contains(result.err.Error(), "not available at the current tool level") {
+		t.Fatalf("result err = %v, want tool-level refusal", result.err)
+	}
+}
+
+type countingTool struct {
+	name  string
+	calls int
+}
+
+func (c *countingTool) Name() string                                    { return c.name }
+func (c *countingTool) Description() string                             { return "counting test tool" }
+func (c *countingTool) Schema() json.RawMessage                         { return json.RawMessage(`{"type":"object"}`) }
+func (c *countingTool) Execute(context.Context, string) (string, error) { c.calls++; return "ran", nil }
 
 // The speculation guidance promises that `max_concurrency` bounds a fan-out of
 // parallel delegate calls. That bound is the sub-agent semaphore: each

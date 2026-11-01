@@ -59,7 +59,8 @@ Implemented:
   session/delete              Remove a session from the store
   session/prompt              Run a turn; responds with a stopReason
   session/cancel              Cancel the in-flight turn (notification)
-  session/set_mode            Acknowledged; mode switching is not modeled
+  session/set_mode            Switch Plan/Build mode; plan withholds mutating
+                              tools and emits current_mode_update
   session/update              Streaming updates: message/thought chunks,
                               tool calls, plans, usage, compaction
   session/request_permission  Tool approvals delegated to the client
