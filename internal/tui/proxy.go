@@ -104,6 +104,16 @@ func (t *App) HandleEvent(event agent.Event) {
 	case *agent.TitleSetEvent:
 		// Intentionally ignored: the TUI's in-app session display does
 		// not track titles yet; pickers read them from the store.
+	case *agent.ModeChangedEvent:
+		// In-band mode marker in the conversation, next to the compaction
+		// notes: the switch and the regime it enforces stay in the
+		// transcript rather than only in the info pane's mode line.
+		t.queueUpdateCritical(func() {
+			t.flushPendingTokens()
+			msg := fmt.Sprintf("[%s]%s[-]", t.Theme.Dim, e.Notice)
+			t.conversationLog = append(t.conversationLog, convItem{text: msg})
+			t.markDirty()
+		})
 	case *agent.DoneEvent:
 		t.queueUpdateDrawCritical(func() {
 			flushed := t.flushPendingTokens()

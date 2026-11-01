@@ -42,7 +42,6 @@ import (
 	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/memory"
 	processpkg "github.com/buchenberg/yaah/internal/process"
-	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 	"github.com/buchenberg/yaah/internal/worldinfo"
@@ -506,7 +505,8 @@ func (s *agentSession) TurnBudgetExhausted() bool {
 }
 
 // ACP session modes. Build is the normal coding mode; plan exposes only the
-// inspection/planning tool surface and a planning directive.
+// inspection/planning tool surface and a planning directive. planModeSpec in
+// mode.go is the single source of truth for both.
 const (
 	acpModeBuild = "build"
 	acpModePlan  = "plan"
@@ -528,23 +528,13 @@ func (s *agentSession) SetMode(mode string) error {
 	s.mu.Lock()
 	s.mode = mode
 	s.mu.Unlock()
+	// Announce the switch in-band, after the lock is released: the notice
+	// states the regime the next run's tool gate enforces, so a mode change
+	// is observable from inside the conversation rather than only from the
+	// next prompt's directive. dispatchEvent buffers it for views that
+	// cannot take writes between runs (REPL, ACP).
+	s.dispatchEvent(&agent.ModeChangedEvent{Mode: mode, Notice: modeChangeNotice(mode)})
 	return nil
-}
-
-func (s *agentSession) toolsLevelForMode(mode string) agent.ToolsLevel {
-	if mode == acpModePlan {
-		return agent.ReadOnlyTools
-	}
-	return agent.FullTools
-}
-
-func (s *agentSession) systemPromptForMode(mode string) string {
-	if mode != acpModePlan {
-		return s.mainPrompt
-	}
-	return prompts.InjectAfterIdentity(s.mainPrompt, []string{
-		"Plan mode is active. Inspect the workspace and propose an implementation plan; do not edit files, run mutating shell commands, or delegate work that could change the workspace. Ask for approval before leaving plan mode.",
-	})
 }
 
 // RunPrompt runs one prompt under a context the session owns: derived

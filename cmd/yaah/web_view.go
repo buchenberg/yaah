@@ -308,6 +308,11 @@ func (v *sseView) HandleEvent(evt agent.Event) {
 		// Intentionally ignored: the web UI has no session-title display
 		// yet; the /api/sessions endpoint serves titles from the store.
 		return
+	case *agent.ModeChangedEvent:
+		// One-line in-band marker in the status line, alongside the
+		// compaction notices. The header's mode badge is updated
+		// separately by SetSessionMode.
+		we = sseWireEvent{Type: "ctrl.status", Text: e.Notice}
 	default:
 		// Deliberately unmatched events emit no wire frame — the
 		// previous fallthrough wrote an empty {"type":""} SSE event

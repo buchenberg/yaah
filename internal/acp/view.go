@@ -353,6 +353,15 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 			Title:         e.Title,
 			UpdatedAt:     time.Unix(e.UpdatedAt, 0).UTC().Format(time.RFC3339),
 		})
+	case *agent.ModeChangedEvent:
+		// A mid-session switch is a one-line in-band marker so the client's
+		// transcript records the regime the next turn runs under. Plain
+		// text, not a capability-gated card: the switch is already
+		// acknowledged by session/set_mode and pushed as a config option.
+		send(sessionID, ChunkUpdate{
+			SessionUpdate: UpdateAgentMessageChunk,
+			Content:       textContent("[" + e.Notice + "]"),
+		})
 	case *agent.DoneEvent:
 		// End-of-turn usage: the context occupancy mirrors the
 		// control.ContextInfo path, and the _meta bag carries the

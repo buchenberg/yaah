@@ -134,6 +134,17 @@ type TitleSetEvent struct {
 
 func (*TitleSetEvent) eventMarker() {}
 
+// ModeChangedEvent is emitted when the session mode switches (plan ↔ build).
+// It carries the new mode and a ready-to-render one-line notice so every view
+// can show the switch in-band, with the regime the new mode actually
+// enforces — the cue an agent (and a user) could not observe before.
+type ModeChangedEvent struct {
+	Mode   string // new mode: "plan" or "build"
+	Notice string // one-line in-band notice: new mode + effective regime
+}
+
+func (*ModeChangedEvent) eventMarker() {}
+
 // DoneEvent is emitted when the agent loop completes (success or error).
 // It carries the final response text (if any), error information,
 // context window statistics for the status bar, finish reason from the last
@@ -209,6 +220,7 @@ var (
 	_ Event = (*ToolEndEvent)(nil)
 	_ Event = (*SubAgentStartEvent)(nil)
 	_ Event = (*SubAgentEndEvent)(nil)
+	_ Event = (*ModeChangedEvent)(nil)
 	_ Event = (*DoneEvent)(nil)
 	_ Event = (*CompactionStartedEvent)(nil)
 	_ Event = (*CompactionDoneEvent)(nil)
