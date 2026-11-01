@@ -1,6 +1,12 @@
 package memory
 
-import "time"
+import (
+	"database/sql"
+	"errors"
+	"io/fs"
+	"os"
+	"time"
+)
 
 // RecordTraceOwner persists the mapping from a Shepherd trace owner ID
 // (the session ID for main agents, a synthetic `sub-{role}-{parent}-{ts}`
@@ -25,4 +31,38 @@ func (d *DB) TraceOwnerParent(ownerID string) (string, error) {
 		return "", err // sql.ErrNoRows when unknown
 	}
 	return parent, nil
+}
+
+// TraceOwnerParentsReadOnly resolves trace owners without opening the mutable
+// database path: reports must not create or migrate state.db. A missing database
+// is an empty mapping, not an error.
+func TraceOwnerParentsReadOnly(path string, ownerIDs []string) (map[string]string, error) {
+	if len(ownerIDs) == 0 {
+		return nil, nil
+	}
+	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	out := make(map[string]string, len(ownerIDs))
+	for _, owner := range ownerIDs {
+		var parent string
+		err := db.QueryRow(`SELECT parent_session FROM trace_owners WHERE owner_id = ?`, owner).Scan(&parent)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if parent != "" {
+			out[owner] = parent
+		}
+	}
+	return out, nil
 }

@@ -65,6 +65,7 @@ func TestTraceConflictsAggregate(t *testing.T) {
 		t.Fatalf("close state db: %v", err)
 	}
 	appendFact("sub-old", "yaah.subagent.usage.v1", "subagent:usage:old", shepherdtrace.Capture, map[string]any{"lane": "shared"})
+	appendFact("sub-unmapped", "yaah.subagent.usage.v1", "subagent:usage:unmapped", shepherdtrace.Capture, map[string]any{"lane": "shared"})
 	appendFact("sess-b", tools.SchemaProposalConflict, "conflict", shepherdtrace.Declaration, map[string]any{
 		"kind": "delete_modify", "paths": []string{"a.txt"}, "proposals": []string{"p3", "p4"},
 	})
@@ -86,8 +87,11 @@ func TestTraceConflictsAggregate(t *testing.T) {
 	if got.Sessions != 2 || got.Conflicts != 2 || got.ConflictSessions != 2 {
 		t.Errorf("sessions/conflicts = %d/%d/%d, want 2/2/2 (report %+v)", got.Sessions, got.Conflicts, got.ConflictSessions, got)
 	}
-	if got.Dispatches["retained"] != 1 || got.Dispatches["shared"] != 3 {
-		t.Errorf("dispatches = %+v, want retained=1 shared=3", got.Dispatches)
+	if got.Dispatches["retained"] != 1 || got.Dispatches["shared"] != 4 {
+		t.Errorf("dispatches = %+v, want retained=1 shared=4", got.Dispatches)
+	}
+	if got.UnresolvedDispatches != 1 {
+		t.Errorf("unresolved dispatches = %d, want 1", got.UnresolvedDispatches)
 	}
 	if got.SealedProposals != 2 || got.ConflictProposals != 4 {
 		t.Errorf("sealed/proposals = %d/%d, want 2/4", got.SealedProposals, got.ConflictProposals)

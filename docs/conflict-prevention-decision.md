@@ -73,7 +73,9 @@ must provide a fan-out/dispatch denominator and record conflicts when they are
 detected rather than only when a caller happens to inspect a proposal. The
 resulting report is `yaah shepherd-trace conflicts [--session <id>] [--json]`;
 it groups conflicts by kind and repeated path and gives a session-level
-fan-out proxy because turn ids are not recorded in trace facts.
+fan-out proxy because turn ids are not recorded in trace facts. Facts whose
+child owner cannot be joined to a session are reported as unresolved rather
+than counted as invented sessions.
 
 ## If prevention is later adopted
 

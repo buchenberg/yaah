@@ -35,6 +35,9 @@ type conflictAggregate struct {
 	FanoutSessionsWithConflicts int                 `json:"fanout_sessions_with_conflicts"`
 	Kinds                       map[string]int      `json:"kinds"`
 	RepeatedPaths               []conflictPathCount `json:"repeated_paths"`
+	UnresolvedDispatches        int                 `json:"unresolved_dispatches"`
+	UnresolvedFacts             int                 `json:"unresolved_facts"`
+	Warnings                    []string            `json:"warnings,omitempty"`
 }
 
 func newShepherdTraceConflictsCmd() *cobra.Command {
@@ -63,8 +66,11 @@ func newShepherdTraceConflictsCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("read conflict evidence: %w", err)
 			}
-			legacyParents := loadLegacyParents(slice)
+			legacyParents, legacyErr := loadLegacyParents(slice)
 			report := aggregateConflicts(slice, session, legacyParents)
+			if legacyErr != nil {
+				report.Warnings = append(report.Warnings, "legacy trace-owner mapping unavailable: "+legacyErr.Error())
+			}
 
 			if asJSON {
 				raw, err := json.MarshalIndent(report, "", "  ")
@@ -87,28 +93,17 @@ func newShepherdTraceConflictsCmd() *cobra.Command {
 // loadLegacyParents resolves pre-parent_session trace owners through the
 // durable subTraceID -> parent session mapping in state.db. New usage facts
 // carry parent_session directly; this keeps existing stores usable.
-func loadLegacyParents(slice shepherdtrace.Slice) map[string]string {
-	owners := make(map[string]bool)
+func loadLegacyParents(slice shepherdtrace.Slice) (map[string]string, error) {
+	owners := make([]string, 0)
 	for owner := range slice.OwnerPaths {
 		if strings.HasPrefix(owner, "sub-") {
-			owners[owner] = true
+			owners = append(owners, owner)
 		}
 	}
 	if len(owners) == 0 {
-		return nil
+		return nil, nil
 	}
-	db, err := memory.OpenDefault()
-	if err != nil {
-		return nil
-	}
-	defer db.Close()
-	out := make(map[string]string, len(owners))
-	for owner := range owners {
-		if parent, err := db.TraceOwnerParent(owner); err == nil && parent != "" {
-			out[owner] = parent
-		}
-	}
-	return out
+	return memory.TraceOwnerParentsReadOnly(memory.DefaultPath(), owners)
 }
 
 func aggregateConflicts(slice shepherdtrace.Slice, session string, legacyParents map[string]string) conflictAggregate {
@@ -146,27 +141,38 @@ func aggregateConflicts(slice shepherdtrace.Slice, session string, legacyParents
 			if parent == "" {
 				parent = legacyParents[owner]
 			}
-			if parent == "" {
-				parent = owner
+			unresolved := parent == "" && strings.HasPrefix(owner, "sub-")
+			if unresolved {
+				report.UnresolvedDispatches++
+				if session != "" {
+					continue
+				}
+			} else {
+				if parent == "" {
+					parent = owner
+				}
+				parentByOwner[owner] = parent
+				if session != "" && parent != session {
+					continue
+				}
+				sessionsSeen[parent] = true
+				sessionDispatches[parent]++
 			}
-			parentByOwner[owner] = parent
-			if session != "" && parent != session {
-				continue
-			}
-			sessionsSeen[parent] = true
 			lane, _ := rec.Body.Payload["lane"].(string)
 			if lane == "" {
 				lane = "unknown"
 			}
 			report.Dispatches[lane]++
-			sessionDispatches[parent]++
 		}
 	}
-	sessionFor := func(owner string) string {
+	sessionFor := func(owner string) (string, bool) {
 		if parent := parentByOwner[owner]; parent != "" {
-			return parent
+			return parent, true
 		}
-		return owner
+		if strings.HasPrefix(owner, "sub-") {
+			return "", false
+		}
+		return owner, true
 	}
 
 	// Pass 2: sealed and conflict facts live on either a session root or a
@@ -178,7 +184,11 @@ func aggregateConflicts(slice shepherdtrace.Slice, session string, legacyParents
 			if !ok {
 				continue
 			}
-			resolved := sessionFor(owner)
+			resolved, ok := sessionFor(owner)
+			if !ok {
+				report.UnresolvedFacts++
+				continue
+			}
 			if session != "" && resolved != session {
 				continue
 			}
@@ -253,6 +263,15 @@ func writeConflictAggregate(out io.Writer, report conflictAggregate) {
 	fmt.Fprintf(w, "conflict proposals\t%d\n", report.ConflictProposals)
 	fmt.Fprintf(w, "sessions with >1 dispatch\t%d\n", report.FanoutSessions)
 	fmt.Fprintf(w, "  ...with conflicts\t%d\n", report.FanoutSessionsWithConflicts)
+	if report.UnresolvedDispatches > 0 {
+		fmt.Fprintf(w, "unresolved dispatches\t%d (no parent_session or trace_owners mapping)\n", report.UnresolvedDispatches)
+	}
+	if report.UnresolvedFacts > 0 {
+		fmt.Fprintf(w, "unresolved facts\t%d (excluded from session grouping)\n", report.UnresolvedFacts)
+	}
+	for _, warning := range report.Warnings {
+		fmt.Fprintf(w, "warning\t%s\n", warning)
+	}
 	if len(report.Kinds) > 0 {
 		fmt.Fprintln(w, "\nkinds")
 		for _, kind := range sortedLaneNames(report.Kinds) {
