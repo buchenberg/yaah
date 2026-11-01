@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.122.0](https://github.com/buchenberg/yaah/compare/v0.121.0...v0.122.0) (2026-11-01)
+
+
+### Features
+
+* **proposal:** add conflict views and explicit three-way apply ([8c171df](https://github.com/buchenberg/yaah/commit/8c171dfda340fcfb8ed1aac110a68d30a5b161d5))
+* **proposal:** add conflict views and explicit three-way apply ([bdbf2ce](https://github.com/buchenberg/yaah/commit/bdbf2ced7704c43d7e6c2622e156326fca06035f))
+
+
+### Bug Fixes
+
+* **conflict:** address evidence tracker review feedback ([a4ca629](https://github.com/buchenberg/yaah/commit/a4ca6296633a74168877f907b9802cb7f94d34bd))
+* **conflict:** harden shell and snapshot evidence ([f0cc716](https://github.com/buchenberg/yaah/commit/f0cc71637e25c126bc226ac657377f71bd10c34e))
+* **conflict:** keep unknown snapshots as unverified evidence ([bfccb19](https://github.com/buchenberg/yaah/commit/bfccb1909d47e68c12302153618337ddf6f13637))
+* **conflict:** record evidence-backed execution conflicts ([b1435f0](https://github.com/buchenberg/yaah/commit/b1435f0d659ac362939dc5b9be60e9ac7436ae30))
+* **conflict:** record evidence-backed execution conflicts ([c18e94c](https://github.com/buchenberg/yaah/commit/c18e94c8602d3d5cef6202a9f3451299655a2259))
+* **proposal:** align conflict resolution edge handling ([e3efa45](https://github.com/buchenberg/yaah/commit/e3efa45305396a2b2e6ba84c5f005d92530fd715))
+* **proposal:** harden conflict resolution review findings ([2c0931b](https://github.com/buchenberg/yaah/commit/2c0931b946fc29ddaf0d1144e67995b9cc9778b7))
+* **proposal:** tighten conflict resolution edges ([aba4628](https://github.com/buchenberg/yaah/commit/aba4628cfa9e6222b08ca0b859a10d48c7bddb76))
+
+
+### Documentation
+
+* **conflict:** decline preventive path claims for now ([73f53c3](https://github.com/buchenberg/yaah/commit/73f53c32829f53004236b16d9ccc41028c91bda1))
+* **conflict:** decline preventive path claims for now ([c692809](https://github.com/buchenberg/yaah/commit/c692809f7deeb8978904b704bce34e7316aca038))
+* **conflict:** schedule conflict aggregation before prevention ([e2d0fd1](https://github.com/buchenberg/yaah/commit/e2d0fd1e10fbd7882288f4128b8876123277c0be))
+
+
+### Tests
+
+* **proposal:** cover malformed mode parsing ([9ce7d7e](https://github.com/buchenberg/yaah/commit/9ce7d7efab6a7a8d445452735c7a7328652eecb7))
+
 ## [0.121.0](https://github.com/buchenberg/yaah/compare/v0.120.2...v0.121.0) (2026-11-01)
 
 
