@@ -147,6 +147,12 @@ func newLocalWorkspace(pv *PathValidator) *localWorkspace {
 	return &localWorkspace{pv: pv}
 }
 
+// NewLocalWorkspace exposes the host workspace for callers that construct a
+// tool registry outside the composition root (tests, protocol adapters).
+func NewLocalWorkspace(pv *PathValidator) Workspace {
+	return newLocalWorkspace(pv)
+}
+
 // NewConfinedLocalWorkspace returns a local workspace whose commands run under
 // backend's syscall jail, with the workspace's working directory as the sole
 // writable root. placement resolves whether the jail is used: PlacementPaddock
@@ -170,8 +176,12 @@ func (w *localWorkspace) WithWritableRoots(roots []string) *localWorkspace {
 	return &clone
 }
 
-// Confined reports whether this workspace carries a syscall-jail backend.
-func (w *localWorkspace) Confined() bool { return w.confiner != nil }
+// Confined reports whether this local workspace runs commands under a
+// confinement backend, or is configured to fail closed without one. A client
+// workspace overlay must not bypass either posture.
+func (w *localWorkspace) Confined() bool {
+	return w.confiner != nil || w.placement == containment.PlacementPaddock
+}
 
 // WithEnv returns a copy of the workspace with extra environment variables
 // applied to every confined command (keys here override the process
@@ -197,6 +207,15 @@ func (w *localWorkspace) WorkDir() string {
 func (w *localWorkspace) Local() bool { return true }
 
 func (w *localWorkspace) Join(elem ...string) string { return filepath.Join(elem...) }
+
+// WorkspaceConfined reports whether a workspace declares confinement. The
+// optional interface keeps sandbox implementations free to omit it.
+func WorkspaceConfined(ws Workspace) bool {
+	if c, ok := ws.(interface{ Confined() bool }); ok {
+		return c.Confined()
+	}
+	return false
+}
 
 func (w *localWorkspace) Shell() (string, string) {
 	if runtime.GOOS != "windows" {

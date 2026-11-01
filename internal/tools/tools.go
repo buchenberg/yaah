@@ -544,6 +544,7 @@ func (r *Registry) Get(name string) Tool {
 
 // Execute dispatches a tool call by name and returns the result.
 func (r *Registry) Execute(ctx context.Context, name, args string) (string, error) {
+	ctx = WithToolName(ctx, name)
 	t := r.Get(name)
 	if t == nil {
 		return "", ToolNotFoundError{Name: name}

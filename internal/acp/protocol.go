@@ -419,6 +419,70 @@ type ResourceBundle struct {
 	Text     string `json:"text,omitempty"`
 }
 
+// === fs/* (agent -> client) ===
+
+// ReadTextFileParams are the params of fs/read_text_file.
+type ReadTextFileParams struct {
+	SessionID string `json:"sessionId"`
+	Path      string `json:"path"`
+	Line      int    `json:"line,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
+}
+
+// ReadTextFileResult carries the client's (possibly unsaved) file content.
+type ReadTextFileResult struct {
+	Content string `json:"content"`
+}
+
+// WriteTextFileParams are the params of fs/write_text_file.
+type WriteTextFileParams struct {
+	SessionID string `json:"sessionId"`
+	Path      string `json:"path"`
+	Content   string `json:"content"`
+}
+
+// === terminal/* (agent -> client) ===
+
+// TerminalCreateParams are the params of terminal/create.
+type TerminalCreateParams struct {
+	SessionID       string        `json:"sessionId"`
+	Command         string        `json:"command"`
+	Args            []string      `json:"args,omitempty"`
+	Env             []EnvVariable `json:"env,omitempty"`
+	Cwd             string        `json:"cwd,omitempty"`
+	OutputByteLimit int           `json:"outputByteLimit,omitempty"`
+}
+
+// TerminalCreateResult returns the client's terminal handle.
+type TerminalCreateResult struct {
+	TerminalID string `json:"terminalId"`
+}
+
+// TerminalIDParams identify one terminal for output/wait/kill/release.
+type TerminalIDParams struct {
+	SessionID  string `json:"sessionId"`
+	TerminalID string `json:"terminalId"`
+}
+
+// TerminalExitStatus is present once the command has exited.
+type TerminalExitStatus struct {
+	ExitCode *int    `json:"exitCode"`
+	Signal   *string `json:"signal"`
+}
+
+// TerminalOutputResult is the current output plus optional exit status.
+type TerminalOutputResult struct {
+	Output     string              `json:"output"`
+	Truncated  bool                `json:"truncated"`
+	ExitStatus *TerminalExitStatus `json:"exitStatus,omitempty"`
+}
+
+// TerminalWaitResult is returned by terminal/wait_for_exit.
+type TerminalWaitResult struct {
+	ExitCode *int    `json:"exitCode"`
+	Signal   *string `json:"signal"`
+}
+
 // PromptResult is the result of session/prompt — sent ONLY when the
 // turn is over. StopReason values are defined below.
 type PromptResult struct {
@@ -519,6 +583,9 @@ type UpdateContent struct {
 	Path    string  `json:"path,omitempty"`
 	OldText *string `json:"oldText,omitempty"`
 	NewText *string `json:"newText,omitempty"`
+
+	// Terminal variant (Type == "terminal"): the client's terminal handle.
+	TerminalID string `json:"terminalId,omitempty"`
 }
 
 // CompactionUpdate is the ID-addressed compaction upsert (the spec's

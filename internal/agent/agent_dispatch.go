@@ -109,6 +109,12 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 		}
 	}
 
+	callID := d.call.ID
+	if callID == "" {
+		callID = fmt.Sprintf("t%d", d.toolID)
+	}
+	runCtx = tools.WithToolCallID(runCtx, callID)
+
 	if allowed && d.isDelegate && !d.isBackground {
 		runCtx = d.setupSubAgent(runCtx)
 		// The child accumulates usage on runCtx; fold it into the loop's
