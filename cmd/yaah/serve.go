@@ -247,6 +247,20 @@ func serveHTTPTransport(st *serveState, srv *mcp.Server) error {
 // conversation state in the session so successive calls form a multi-turn
 // dialogue, and returns the response plus the loop's token usage.
 func (s *agentSession) runHeadless(ctx context.Context, prompt string) (string, types.Usage, error) {
+	var (
+		response string
+		usage    types.Usage
+		err      error
+	)
+	// Serve prompts mutate the same transcript as interactive runs; take
+	// the run gate so a concurrent prompt or compact cannot fork it.
+	s.serialize(func() {
+		response, usage, err = s.runHeadlessLocked(ctx, prompt)
+	})
+	return response, usage, err
+}
+
+func (s *agentSession) runHeadlessLocked(ctx context.Context, prompt string) (string, types.Usage, error) {
 	compactProvider, compactModel, fallbackProvider, fallbackModel, fallbackProviderName := s.auxProviders()
 
 	// Snapshot session state under the mutex, mirroring runPrompt's pattern.

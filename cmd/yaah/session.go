@@ -54,7 +54,9 @@ import (
 // on this interface, not on *agentSession directly.
 type Session interface {
 	RunPrompt(ctx context.Context, prompt string) (string, bool, error)
-	Compact()
+	// Compact reports whether compaction started; false means a prompt
+	// run holds the session's run gate.
+	Compact() bool
 	Steer(string)
 	FollowUp(string)
 	SetView(agent.View)
@@ -385,16 +387,27 @@ func (s *agentSession) close() {
 
 func (s *agentSession) Close() { s.close() }
 
-// Compact runs :compact under the session's run gate so it cannot replace
-// s.messages/s.msgIdx while a prompt run is mid-turn.
-func (s *agentSession) Compact() { s.serialize(s.compactContext) }
+// Compact attempts :compact under the session's run gate. It refuses rather
+// than blocking when a prompt run holds the gate, so synchronous frontends
+// (web, MCP serve) never hang behind an in-flight turn. It reports whether
+// compaction actually started.
+func (s *agentSession) Compact() bool {
+	if !s.runMu.TryLock() {
+		s.sendCtrl(&control.Status{Text: "cannot compact while a turn is running"})
+		return false
+	}
+	defer s.runMu.Unlock()
+	s.compactContext()
+	return true
+}
 
 // serialize runs fn while holding the session's run gate. Every operation
 // that reads a snapshot of the transcript and writes it back — prompt runs
-// and compaction — must go through here: the loop builders snapshot
-// s.messages/s.msgIdx at start and swap them back at the end, so
-// interleaved work would each branch from a stale transcript and persist
-// onto the same message indices.
+// (including headless serve prompts) — must go through here: the loop
+// builders snapshot s.messages/s.msgIdx at start and swap them back at the
+// end, so interleaved work would each branch from a stale transcript and
+// persist onto the same message indices. Compaction shares the same gate
+// through Compact's TryLock.
 func (s *agentSession) serialize(fn func()) {
 	s.runMu.Lock()
 	defer s.runMu.Unlock()

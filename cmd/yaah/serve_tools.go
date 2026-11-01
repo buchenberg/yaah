@@ -171,7 +171,12 @@ func registerServeTools(
 			if sess == nil {
 				return "", fmt.Errorf("session not ready")
 			}
-			sess.Compact()
+			if !sess.Compact() {
+				return marshalJSON(map[string]string{
+					"result": "not_compacted",
+					"reason": "a turn is running",
+				})
+			}
 			return marshalJSON(map[string]string{"result": "compacted"})
 		},
 	})

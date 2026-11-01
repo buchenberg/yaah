@@ -63,9 +63,10 @@ func TestAgentSession_SerializesRuns(t *testing.T) {
 	}
 }
 
-// :compact replaces s.messages/s.msgIdx, so it must share the run gate with
-// prompt runs rather than branch the transcript mid-turn.
-func TestAgentSession_CompactWaitsForRun(t *testing.T) {
+// :compact replaces s.messages/s.msgIdx, so it must not start while a run
+// holds the gate. It refuses immediately (frontends must not block) instead
+// of queuing behind the run.
+func TestAgentSession_CompactRefusesDuringRun(t *testing.T) {
 	ch := make(chan control.Msg, 4)
 	s := &agentSession{ctrlCh: ch}
 
@@ -78,32 +79,45 @@ func TestAgentSession_CompactWaitsForRun(t *testing.T) {
 	})
 
 	held := make(chan struct{})
-	go s.serialize(func() {
-		close(held)
-		<-release
-	})
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		s.serialize(func() {
+			close(held)
+			<-release
+		})
+	}()
 	<-held
 
-	compactDone := make(chan struct{})
-	go func() {
-		s.Compact()
-		close(compactDone)
-	}()
+	ran := make(chan bool, 1)
+	go func() { ran <- s.Compact() }()
+
+	select {
+	case ok := <-ran:
+		if ok {
+			t.Fatal("Compact reported success while a run held the gate")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Compact blocked behind an in-flight run")
+	}
 
 	select {
 	case msg := <-ch:
-		t.Fatalf("compact ran while a run held the gate: %T", msg)
-	case <-time.After(50 * time.Millisecond):
+		status, ok := msg.(*control.Status)
+		if !ok || !strings.Contains(status.Text, "cannot compact") {
+			t.Fatalf("refusal status = %#v; want the cannot-compact notice", msg)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Compact gave no refusal status")
 	}
 
 	close(release)
 	closed = true
-	select {
-	case <-compactDone:
-	case <-time.After(time.Second):
-		t.Fatal("compact never completed after the gate released")
-	}
+	<-finished
 
+	if !s.Compact() {
+		t.Fatal("Compact refused after the gate released")
+	}
 	select {
 	case msg := <-ch:
 		status, ok := msg.(*control.Status)
