@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.127.0](https://github.com/buchenberg/yaah/compare/v0.126.0...v0.127.0) (2026-11-01)
+
+
+### Features
+
+* **acp:** bridge client filesystem and terminal capabilities ([cdcee64](https://github.com/buchenberg/yaah/commit/cdcee64655fbed9b8c5cff76a32dfbbe12d19ccf))
+* **acp:** bridge client filesystem and terminal capabilities ([dd54214](https://github.com/buchenberg/yaah/commit/dd54214610183ff7aa9b6b91b667fa402733f9bf))
+
+
+### Bug Fixes
+
+* **acp:** close remaining client workspace gaps ([ec52e67](https://github.com/buchenberg/yaah/commit/ec52e6798292d56f372e90365a84ea395361095f))
+* **acp:** harden client workspace bridge ([bae9cc8](https://github.com/buchenberg/yaah/commit/bae9cc863ddd7dcc9cafd5ccbb67fecf2355a409))
+
+
+### Tests
+
+* **acp:** canonicalize temporary workspace paths ([bf56864](https://github.com/buchenberg/yaah/commit/bf568641c33f472dd0a147a662801ae35555e048))
+
 ## [0.126.0](https://github.com/buchenberg/yaah/compare/v0.125.0...v0.126.0) (2026-11-01)
 
 
