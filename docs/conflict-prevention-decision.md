@@ -23,12 +23,16 @@ The conflict system now records evidence rather than guessing:
 
 There is **no production aggregate** of conflict rates yet. The facts exist,
 but they are per-session trace records and are not rolled up into a metric such
-as "conflicts per speculation fan-out" or "repeated path pairs." Local tests and
-the development sessions that produced this feature are not a representative
+as "conflicts per speculation fan-out" or "repeated path pairs." The facts are
+also emitted only when `proposal list`/`show` observes them, not at seal or
+settlement, and there is no dispatch/fan-out denominator. Local tests and the
+development sessions that produced this feature are not a representative
 sample.
 
 That absence is itself the decisive evidence: adopting a scheduler or requiring
 up-front claims now would be based on intuition, not observed conflict rates.
+Measuring the criteria is a precondition, not a detail; it is tracked as
+`yaah-6xyl.5` (aggregate conflict facts).
 
 ## Options
 
@@ -56,14 +60,17 @@ Keep **visibility and resolution** as the control:
 Revisit this decision only after conflict facts have been aggregated across
 real sessions. The trigger is at least one of:
 
-- a meaningful share of parallel fan-outs produces a `same_path_divergent` or
-  `parent_overlap` conflict;
-- the same proposal pair/path repeats across sessions;
+- a meaningful share of parallel dispatches/fan-outs produces a
+  `same_path_divergent`, `delete_modify`, `parent_overlap`, or `path_overlap`
+  conflict;
+- the same path pair repeats across sessions (proposal ids are per-process, so
+  repetition is measured by path, not proposal id);
 - discarded or released work is repeatedly attributed to avoidable overlap;
 - users routinely ask for a way to declare or reserve paths before dispatch.
 
-The first step would be to add a small aggregation/reporting path over the
-existing facts, not a scheduler.
+The first step is the measurement path in `yaah-6xyl.5`, not a scheduler. It
+must provide a fan-out/dispatch denominator and record conflicts when they are
+detected rather than only when a caller happens to inspect a proposal.
 
 ## If prevention is later adopted
 
