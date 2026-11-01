@@ -2,6 +2,7 @@ package acp
 
 import (
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -40,6 +41,9 @@ type View struct {
 	escalationSeq atomic.Int64
 	// escalationNext, when set, allocates session-scoped escalation ids.
 	escalationNext func() string
+	// fallbackAgents correlates sub-agent start/end events that lack an id.
+	fallbackAgents map[string][]string
+	fallbackSeq    atomic.Int64
 }
 
 // NewView creates a View ready to translate agent events.
@@ -47,6 +51,7 @@ func NewView() *View {
 	return &View{
 		announced:      make(map[string]bool),
 		compactionOpen: make(map[string]string),
+		fallbackAgents: make(map[string][]string),
 	}
 }
 
@@ -225,7 +230,7 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 		title := text("Sub-agent %s: %s", label, truncate(e.Prompt, 80))
 		send(sessionID, ToolCallUpdate{
 			SessionUpdate: UpdateToolCall,
-			ToolCallID:    subAgentCallID(e.SubAgentID, e.Role, e.Prompt),
+			ToolCallID:    v.subAgentCallID(e.SubAgentID, e.Role, e.Prompt, false),
 			Title:         title,
 			Name:          "sub-agent",
 			Kind:          KindOther,
@@ -248,7 +253,7 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 		body += worldChunkSuffix(e.World, e.WorldDegraded, e.WorldReason)
 		send(sessionID, ToolCallUpdate{
 			SessionUpdate: UpdateToolCallUpdate,
-			ToolCallID:    subAgentCallID(e.SubAgentID, e.Role, e.Prompt),
+			ToolCallID:    v.subAgentCallID(e.SubAgentID, e.Role, e.Prompt, true),
 			Title:         text("Sub-agent %s: %s", label, truncate(e.Prompt, 80)),
 			Name:          "sub-agent",
 			Kind:          KindOther,
@@ -258,7 +263,8 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 	case *agent.EscalationEvent:
 		id := v.escalationID()
 		status := StatusCompleted
-		if e.Severity == "blocker" || e.Severity == "critical" {
+		switch strings.ToLower(strings.TrimSpace(e.Severity)) {
+		case "blocker", "critical", "error", "fatal":
 			status = StatusFailed
 		}
 		body := text("severity: %s\nrole: %s\nsummary: %s", e.Severity, e.SubAgentRole, e.Summary)
@@ -376,11 +382,31 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 }
 
 // subAgentCallID keeps start/end correlated even when an event lacks an id.
-func subAgentCallID(id, role, prompt string) string {
-	if id == "" {
-		id = role + ":" + truncate(prompt, 40)
+// The counter prevents different fallback agents from sharing a row; the map
+// ties the matching end event back to the start.
+func (v *View) subAgentCallID(id, role, prompt string, end bool) string {
+	if id != "" {
+		return "subagent:" + id
 	}
-	return "subagent:" + id
+	key := role + "\x00" + prompt
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if end {
+		if pending := v.fallbackAgents[key]; len(pending) > 0 {
+			id := pending[0]
+			if len(pending) == 1 {
+				delete(v.fallbackAgents, key)
+			} else {
+				v.fallbackAgents[key] = pending[1:]
+			}
+			return id
+		}
+	}
+	generated := "subagent-fallback-" + strconv.FormatInt(v.fallbackSeq.Add(1), 10)
+	if !end {
+		v.fallbackAgents[key] = append(v.fallbackAgents[key], generated)
+	}
+	return generated
 }
 
 // ViewWithWrite wraps View and sends session/update notifications

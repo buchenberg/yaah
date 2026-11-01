@@ -268,15 +268,20 @@ type capturedUpdate struct {
 	update    any
 }
 
-func TestBatchHasRequest(t *testing.T) {
-	if batchHasRequest([]byte(`[{"jsonrpc":"2.0","method":"notifications/initialized"}]`)) {
-		t.Error("notification-only batch reported as request-bearing")
+func TestBatchUnsupportedResponses(t *testing.T) {
+	if got := batchUnsupportedResponses([]byte(`[{"jsonrpc":"2.0","method":"notifications/initialized"}]`)); len(got) != 0 {
+		t.Errorf("notification-only batch responses = %+v, want none", got)
 	}
-	if !batchHasRequest([]byte(`[{"jsonrpc":"2.0","id":1,"method":"initialize"}]`)) {
-		t.Error("request batch not detected")
+	got := batchUnsupportedResponses([]byte(`[{"jsonrpc":"2.0","id":1,"method":"initialize"}]`))
+	if len(got) != 1 || string(got[0].ID) != "1" || got[0].Error == nil {
+		t.Errorf("request batch responses = %+v", got)
 	}
-	if !batchHasRequest([]byte(`not json`)) {
-		t.Error("malformed batch should be request-bearing for the error reply")
+	got = batchUnsupportedResponses([]byte(`not json`))
+	if len(got) != 1 || string(got[0].ID) != "null" || got[0].Error == nil {
+		t.Errorf("malformed batch responses = %+v", got)
+	}
+	if got := batchUnsupportedResponses([]byte(`[]`)); len(got) != 1 || string(got[0].ID) != "null" {
+		t.Errorf("empty batch responses = %+v", got)
 	}
 }
 

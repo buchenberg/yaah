@@ -523,3 +523,27 @@ func TestView_escalationIDsUseSessionAllocatorAndSeverityStatus(t *testing.T) {
 		t.Errorf("critical status = %v, want failed", b["status"])
 	}
 }
+
+func TestView_fallbackSubAgentIDsDoNotCollide(t *testing.T) {
+	var got []any
+	v := NewView()
+	v.SendTo("s", captureUpdate(&got), &agent.SubAgentStartEvent{Role: "dev", Prompt: "same"})
+	v.SendTo("s", captureUpdate(&got), &agent.SubAgentStartEvent{Role: "dev", Prompt: "same"})
+	v.SendTo("s", captureUpdate(&got), &agent.SubAgentEndEvent{Role: "dev", Prompt: "same"})
+	v.SendTo("s", captureUpdate(&got), &agent.SubAgentEndEvent{Role: "dev", Prompt: "same"})
+	if len(got) != 4 {
+		t.Fatalf("updates = %d", len(got))
+	}
+	ids := make(map[string]bool)
+	for _, u := range got {
+		m := decodeUpdate(t, u)
+		id, _ := m["toolCallId"].(string)
+		if id == "" || id == "subagent:" {
+			t.Fatalf("bad id %q", id)
+		}
+		ids[id] = true
+	}
+	if len(ids) != 2 {
+		t.Fatalf("fallback ids = %v, want two distinct start/end pairs", ids)
+	}
+}

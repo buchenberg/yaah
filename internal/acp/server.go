@@ -408,26 +408,43 @@ func (s *Server) stopRun() {
 	}
 }
 
-// batchHasRequest reports whether a JSON-RPC batch contains any request
-// (an entry with a non-empty id). Malformed batches are treated as
-// request-bearing so the client sees an error.
-func batchHasRequest(raw []byte) bool {
+// batchUnsupportedResponses builds per-request invalid-request errors for a
+// JSON-RPC batch. Notifications get no response; an empty or malformed batch
+// gets one id:null error.
+func batchUnsupportedResponses(raw []byte) []Message {
+	const message = "JSON-RPC batches are not supported by this ACP server"
+	invalid := func(id json.RawMessage) Message {
+		if len(id) == 0 {
+			id = json.RawMessage("null")
+		}
+		return Message{
+			JSONRPC: "2.0",
+			ID:      id,
+			Error:   &RPCError{Code: codeInvalidRequest, Message: message},
+		}
+	}
 	var items []json.RawMessage
 	if err := json.Unmarshal(raw, &items); err != nil {
-		return true
+		return []Message{invalid(nil)}
 	}
+	if len(items) == 0 {
+		return []Message{invalid(nil)}
+	}
+	out := make([]Message, 0, len(items))
 	for _, item := range items {
 		var entry struct {
 			ID json.RawMessage `json:"id"`
 		}
 		if err := json.Unmarshal(item, &entry); err != nil {
-			return true
+			out = append(out, invalid(nil))
+			continue
 		}
-		if len(entry.ID) > 0 {
-			return true
+		if len(entry.ID) == 0 {
+			continue
 		}
+		out = append(out, invalid(entry.ID))
 	}
-	return false
+	return out
 }
 
 // dispatch reads and executes protocol messages until EOF.
@@ -455,11 +472,11 @@ func (s *Server) dispatch(
 		}
 
 		if strings.HasPrefix(strings.TrimSpace(line), "[") {
-			// Batches are not supported. A request-bearing batch gets an
-			// error; a notification-only batch gets no response per
-			// JSON-RPC 2.0.
-			if batchHasRequest([]byte(line)) {
-				respErr(json.RawMessage("null"), codeInvalidRequest, "JSON-RPC batches are not supported by this ACP server")
+			// Batches are not supported. Answer each request entry with
+			// its own invalid-request error (never a bare id:null), skip
+			// notification-only entries, and answer an empty batch once.
+			if responses := batchUnsupportedResponses([]byte(line)); len(responses) > 0 {
+				c.write(responses)
 			}
 			continue
 		}
