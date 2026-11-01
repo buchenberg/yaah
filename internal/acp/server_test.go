@@ -168,6 +168,7 @@ type acpHarness struct {
 	inW     io.Writer
 	send    func(method string, id any, params string) error
 	recv    func(t *testing.T) Message
+	recvRaw func(t *testing.T) string
 	done    func()
 	resumes func() []string
 	cwd     string
@@ -271,6 +272,19 @@ func newACPHarnessFactory(t *testing.T, factory func(resumeID string) (Session, 
 			case <-time.After(5 * time.Second):
 				t.Fatal("timed out waiting for server message")
 				return Message{}
+			}
+		},
+		recvRaw: func(t *testing.T) string {
+			t.Helper()
+			select {
+			case line, ok := <-lines:
+				if !ok {
+					t.Fatal("server output closed")
+				}
+				return line
+			case <-time.After(5 * time.Second):
+				t.Fatal("timed out waiting for server message")
+				return ""
 			}
 		},
 		done: cancel,
@@ -2260,5 +2274,21 @@ func TestServer_logoutAndTerminalAuth(t *testing.T) {
 	}
 	if loggedOut != 1 {
 		t.Fatalf("logout callbacks = %d, want 1", loggedOut)
+	}
+}
+
+func TestServer_batchRequestRejectedAsArray(t *testing.T) {
+	h := newACPHarness(t, &fakeSession{id: "sess-batch"})
+	initialize(t, h)
+	if _, err := io.WriteString(h.inW, `[{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}]`+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	line := h.recvRaw(t)
+	var responses []Message
+	if err := json.Unmarshal([]byte(line), &responses); err != nil {
+		t.Fatalf("batch response is not an array: %v (%s)", err, line)
+	}
+	if len(responses) != 1 || string(responses[0].ID) != "1" || responses[0].Error == nil || responses[0].Error.Code != codeInvalidRequest {
+		t.Fatalf("batch response = %+v", responses)
 	}
 }

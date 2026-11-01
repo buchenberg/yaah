@@ -471,6 +471,8 @@ func (s *Server) handleSessionList(
 	respErr func(id json.RawMessage, code int, message string),
 ) {
 	if s.ListSessions == nil {
+		// The method is known; -32603 says this deployment lacks the
+		// optional session-store wiring, not that the method is absent.
 		respErr(msg.ID, codeInternal, "session/list is not available in this server configuration")
 		return
 	}
@@ -658,9 +660,11 @@ func (s *Server) handleSessionDelete(
 		return
 	}
 	if s.DeleteSession == nil {
-		// Defensively typed before any side effect: capabilities never
-		// advertise delete without wiring, but a client may still ask —
-		// and that must not have already torn down a live session.
+		// The method is known; -32603 says this deployment lacks the
+		// optional session-store wiring, not that the method is absent.
+		// Checked before any side effect: capabilities never advertise
+		// delete without wiring, but a client may still ask — and that
+		// must not have already torn down a live session.
 		respErr(msg.ID, codeInternal, "session/delete is not available in this server configuration")
 		return
 	}
