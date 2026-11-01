@@ -7,8 +7,9 @@
 yaah is a vendor-free AI agent harness: one Go static binary, minimal config
 at `~/.yaah/`, skills at `./.agents/` (project, tracked) and `~/.agents/`
 (cross-tool standard, per-machine), and MCP over stdio and HTTP. See
-[README.md](./README.md) for the user-facing pitch and
-[docs/architecture.md](./docs/architecture.md) for the runtime design.
+[README.md](./README.md) for the user-facing pitch,
+[docs/architecture.md](./docs/architecture.md) for the runtime design, and
+[docs/acp.md](./docs/acp.md) for the ACP v1 server surface and client setup.
 
 ## Local-only directories
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -236,5 +237,43 @@ func TestACPCatalogOptionsWaitIsBounded(t *testing.T) {
 	close(release)
 	if got := catalog.Options(context.Background()); len(got) != 1 || got[0].Model != "m" {
 		t.Errorf("next options = %#v, want the discovered model", got)
+	}
+}
+
+func TestMCPManifestsFromACP(t *testing.T) {
+	got := mcpManifestsFromACP([]acp.McpServerRef{
+		{
+			Name:    "fs",
+			Command: "/bin/fs",
+			Args:    []string{"--root", "/repo"},
+			Env:     []acp.EnvVariable{{Name: "TOKEN", Value: "x"}, {Name: ""}},
+		},
+		{Name: "empty"},
+	})
+	if len(got) != 2 {
+		t.Fatalf("manifests = %+v, want two", got)
+	}
+	fs := got["fs"]
+	if fs.Command != "/bin/fs" || !reflect.DeepEqual(fs.Args, []string{"--root", "/repo"}) {
+		t.Errorf("fs manifest = %+v", fs)
+	}
+	if fs.Transport != "stdio" || fs.Env["TOKEN"] != "x" || len(fs.Env) != 1 {
+		t.Errorf("fs transport/env = %+v", fs)
+	}
+	if _, ok := got["empty"]; !ok {
+		t.Errorf("empty manifest missing: %+v", got)
+	}
+}
+
+func TestACPServeCmdHelpMentionsModes(t *testing.T) {
+	cmd := newACPServeCmd("acp-serve-test", false)
+	if cmd.Use != "acp-serve-test" || cmd.Short == "" {
+		t.Errorf("command = %+v", cmd)
+	}
+	help := cmd.Long
+	for _, want := range []string{"session/set_mode", "Plan/Build", "session/set_config_option"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("help missing %q", want)
+		}
 	}
 }
