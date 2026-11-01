@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.124.1](https://github.com/buchenberg/yaah/compare/v0.124.0...v0.124.1) (2026-11-01)
+
+
+### Tests
+
+* **acp:** add direct unit coverage and split the server ([7a69a0f](https://github.com/buchenberg/yaah/commit/7a69a0fb406002eae99f17aa84e00e39e66fb123))
+
 ## [0.124.0](https://github.com/buchenberg/yaah/compare/v0.123.0...v0.124.0) (2026-11-01)
 
 
