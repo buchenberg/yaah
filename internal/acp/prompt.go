@@ -12,6 +12,8 @@ import (
 	"github.com/buchenberg/yaah/internal/control"
 )
 
+// handleCancel cancels the in-flight turn if it belongs to the given
+// session, ignoring malformed params — cancel is idempotent.
 func (s *Server) handleCancel(msg Message) {
 	var p CancelParams
 	if len(msg.Params) > 0 {

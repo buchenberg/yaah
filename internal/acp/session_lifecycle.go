@@ -18,6 +18,10 @@ import (
 	"github.com/buchenberg/yaah/internal/worldinfo"
 )
 
+// canonicalCwd validates the client's working directory per ACP: it
+// MUST be absolute, and it MUST be used for the session. The canonical
+// form (absolute, symlink-resolved) is what the session factory gets and
+// what a later session/load's cwd is compared against.
 func canonicalCwd(cwd string) (string, error) {
 	if cwd == "" {
 		return "", fmt.Errorf("cwd is required")

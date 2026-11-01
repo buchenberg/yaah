@@ -272,11 +272,6 @@ func (c *connection) sendRequest(id int, method string, params any) {
 	})
 }
 
-// canonicalCwd validates the client's working directory per ACP: it
-// MUST be absolute, and it MUST be used for the session. The canonical
-// form (absolute, symlink-resolved) is what the session factory gets and
-// what a later session/load's cwd is compared against.
-
 func (s *Server) close() {
 	s.mu.Lock()
 	sessions := make([]*sessionState, 0, len(s.sessions))
@@ -562,6 +557,3 @@ func (s *Server) canonicalID(id json.RawMessage) string {
 	}
 	return string(b)
 }
-
-// handleCancel cancels the in-flight turn if it belongs to the given
-// session, ignoring malformed params — cancel is idempotent.
