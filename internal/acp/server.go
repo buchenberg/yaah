@@ -159,6 +159,10 @@ type Server struct {
 	// waits for the client's decision. Default 5 minutes.
 	PermissionTimeout time.Duration
 
+	// sendUpdate is the live session/update sender. Set once when Run
+	// starts; used by client-workspace terminal embedding.
+	sendUpdate updateSender
+
 	// conn is the live connection the server is serving over. Set once
 	// when Run starts; server-initiated requests
 	// (session/request_permission, elicitation/create) flow through it.
@@ -326,6 +330,9 @@ func (s *Server) Run(ctx context.Context) error {
 			Params:  rawOf(updateEnvelope{SessionID: sessionID, Update: raw}),
 		})
 	}
+	s.mu.Lock()
+	s.sendUpdate = sendUpdate
+	s.mu.Unlock()
 
 	respErr := func(id json.RawMessage, code int, message string) {
 		c.write(Message{

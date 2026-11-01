@@ -147,6 +147,12 @@ func newLocalWorkspace(pv *PathValidator) *localWorkspace {
 	return &localWorkspace{pv: pv}
 }
 
+// NewLocalWorkspace exposes the host workspace for callers that construct a
+// tool registry outside the composition root (tests, protocol adapters).
+func NewLocalWorkspace(pv *PathValidator) Workspace {
+	return newLocalWorkspace(pv)
+}
+
 // NewConfinedLocalWorkspace returns a local workspace whose commands run under
 // backend's syscall jail, with the workspace's working directory as the sole
 // writable root. placement resolves whether the jail is used: PlacementPaddock

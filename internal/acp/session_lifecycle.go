@@ -131,6 +131,10 @@ func (s *Server) buildSession(opts BuildOptions, expectedID string) (*sessionSta
 		return nil, fmt.Errorf("resumed session %q does not match requested %q", id, expectedID)
 	}
 	st := &sessionState{id: id, sess: sess, cwd: opts.Cwd}
+	if err := s.wrapClientWorkspace(st); err != nil {
+		sess.Close()
+		return nil, err
+	}
 	s.mu.Lock()
 	if _, exists := s.sessions[id]; exists {
 		s.mu.Unlock()

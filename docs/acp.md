@@ -384,9 +384,17 @@ Or the generic stdio client loop (any language; one JSON object per line):
   content parts. Unrecognized block types are preserved as inline
   `[unsupported content block: …]` text for forward compatibility. Outbound
   tool-call content is text plus `diff` blocks for `write`/`edit` tool calls.
-- **`fs/` and `terminal/` client capabilities** — a read-only terminal and
-  file system access that ACP allows agents to request from clients are
-  not used; yaah's tools act in the session cwd only.
+- **`fs/` and `terminal/` client capabilities** — when the client advertises
+  `clientCapabilities.fs.readTextFile` / `writeTextFile`, text reads and
+  writes go through the client, so open unsaved editor buffers are visible.
+  When it advertises `clientCapabilities.terminal`, the user-facing `bash`
+  and `powershell` tools run in a client terminal; the tool call gets a
+  `terminal` content block with the terminal id, and every terminal is
+  released when the command ends or the turn is cancelled. Internal commands
+  (`rg`, `git`, `go test`, and similar plumbing) stay local, as do sessions on
+  an isolated/container workspace where the client cannot see the files.
+  Without those capabilities, yaah's local tools act in the session cwd
+  unchanged. Binary writes fall back to the local workspace.
 - **`additionalDirectories`** — not advertised; sessions act in the cwd
   the lifecycle request named.
 - **Compaction replay** — with the client advertising
