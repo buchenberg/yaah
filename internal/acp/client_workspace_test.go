@@ -16,6 +16,11 @@ import (
 func clientWorkspaceHarness(t *testing.T) (*acpHarness, *fakeSession, *tools.Registry, string) {
 	t.Helper()
 	cwd := t.TempDir()
+	// macOS t.TempDir() lives under /var, while ResolvePath canonicalizes the
+	// symlink to /private/var. Compare against the same canonical root.
+	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = resolved
+	}
 	reg := tools.NewRegistry()
 	pv := tools.NewPathValidator(cwd, false, nil)
 	pv.WorkDir = pv.WorkspaceRoot
@@ -208,6 +213,11 @@ func TestClientWorkspace_NonzeroExitIsAnError(t *testing.T) {
 
 func TestClientWorkspace_NoCapabilitiesStaysLocal(t *testing.T) {
 	cwd := t.TempDir()
+	// macOS t.TempDir() lives under /var, while ResolvePath canonicalizes the
+	// symlink to /private/var. Compare against the same canonical root.
+	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = resolved
+	}
 	reg := tools.NewRegistry()
 	pv := tools.NewPathValidator(cwd, false, nil)
 	pv.WorkDir = pv.WorkspaceRoot
