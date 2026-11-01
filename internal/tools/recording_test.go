@@ -134,20 +134,55 @@ func TestRecordingTool_DivergentWritesConflictAndNormalize(t *testing.T) {
 }
 
 func TestRecordingTool_ShellMutationIsUnknown(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		want    bool
+	}{
+		{"redirect", "echo hi > out.txt", true},
+		{"common mutator", "make test", true},
+		{"quoted redirect", "git log --format='%h > %s'", false},
+		{"read only", "git status", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tracker := &ConflictTracker{}
+			inner := &recordingTestTool{name: "bash", fn: func(context.Context, string) (string, error) {
+				return "ok", nil
+			}}
+			rt := NewRecordingTool(inner, tracker)
+			if _, err := rt.Execute(WithConflictDispatch(context.Background(), "worker", ConflictLaneShared), `{"command":`+jsonString(tc.command)+`}`); err != nil {
+				t.Fatalf("bash: %v", err)
+			}
+			report := tracker.DetectAndResetReport()
+			if tc.want {
+				if report == nil || len(report.Unknown) != 1 {
+					t.Fatalf("report = %+v, want an unknown shell mutation", report)
+				}
+				if got := report.Render(); !strings.Contains(got, "UNKNOWN MUTATIONS") {
+					t.Errorf("render = %q, want unknown mutation warning", got)
+				}
+				return
+			}
+			if report != nil {
+				t.Fatalf("read-only command produced a report: %+v", report)
+			}
+		})
+	}
+}
+
+func TestRecordingTool_FailedShellStillUnknown(t *testing.T) {
 	tracker := &ConflictTracker{}
 	inner := &recordingTestTool{name: "bash", fn: func(context.Context, string) (string, error) {
-		return "ok", nil
+		return "", errors.New("exit status 1 after writing")
 	}}
 	rt := NewRecordingTool(inner, tracker)
-	if _, err := rt.Execute(WithConflictDispatch(context.Background(), "worker", ConflictLaneShared), `{"command":"echo hi > out.txt"}`); err != nil {
-		t.Fatalf("bash: %v", err)
+	if _, err := rt.Execute(WithConflictDispatch(context.Background(), "worker", ConflictLaneShared), `{"command":"make test"}`); err == nil {
+		t.Fatal("expected the fake shell to fail")
 	}
 	report := tracker.DetectAndResetReport()
 	if report == nil || len(report.Unknown) != 1 {
-		t.Fatalf("report = %+v, want an unknown shell mutation", report)
-	}
-	if got := report.Render(); !strings.Contains(got, "UNKNOWN MUTATIONS") {
-		t.Errorf("render = %q, want unknown mutation warning", got)
+		t.Fatalf("report = %+v, want an unknown mutation from the failed command", report)
 	}
 }
 

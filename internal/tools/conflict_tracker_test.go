@@ -150,6 +150,24 @@ func TestConflictTracker_RetainedOverlapIsSpeculative(t *testing.T) {
 	}
 }
 
+func TestConflictTracker_UnknownEvidenceIsUnverified(t *testing.T) {
+	ct := &ConflictTracker{}
+	for _, rec := range []FileRecord{
+		{DispatchID: "a", SubAgentLabel: "worker a", FilePath: "big.bin", ToolName: "write", Known: false, AfterExists: true, AfterMode: "-rw-r--r--"},
+		{DispatchID: "b", SubAgentLabel: "worker b", FilePath: "big.bin", ToolName: "write", Known: false, AfterExists: true, AfterMode: "-rw-r--r--"},
+	} {
+		ct.RecordChange(rec)
+	}
+	report := ct.DetectAndResetReport()
+	if report == nil || len(report.Entries) != 1 || report.Entries[0].Kind != ConflictKindUnverifiedShared {
+		t.Fatalf("report = %+v, want one unverified change", report)
+	}
+	got := report.Render()
+	if !strings.Contains(got, "UNVERIFIED CHANGES") || strings.Contains(got, "CONFLICT:") {
+		t.Errorf("render = %q, want unverified wording", got)
+	}
+}
+
 func TestConflictTracker_UnknownShellMutationIsReported(t *testing.T) {
 	ct := &ConflictTracker{}
 	ct.RecordUnknown(ConflictDispatch{ID: "a", Label: "worker a", Lane: ConflictLaneShared}, "bash", "may mutate: echo hi > out.txt")

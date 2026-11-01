@@ -8,7 +8,9 @@ import (
 	"io/fs"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"unicode/utf8"
 )
 
 type contextKey string
@@ -133,8 +135,15 @@ func (rt *RecordingTool) Execute(ctx context.Context, args string) (string, erro
 	toolName := rt.inner.Name()
 	if toolName == "bash" || toolName == "powershell" {
 		result, err := rt.inner.Execute(ctx, args)
-		if err == nil && shellMayMutate(args) {
-			rt.tracker.RecordUnknown(dispatch, toolName, shellDetail(args))
+		// A non-zero exit still means the command ran and may have written
+		// before failing. Record the unknown either way rather than turning a
+		// partially-mutating failure into a false all-clear.
+		if shellMayMutate(args) {
+			detail := shellDetail(args)
+			if err != nil {
+				detail += " (command reported an error)"
+			}
+			rt.tracker.RecordUnknown(dispatch, toolName, detail)
 		}
 		return result, err
 	}
@@ -153,6 +162,12 @@ func (rt *RecordingTool) Execute(ctx context.Context, args string) (string, erro
 	if err != nil {
 		return rt.inner.Execute(ctx, args)
 	}
+
+	// Serialize evidence collection and the write for one path. Without this,
+	// a concurrent writer's after-image can be attributed to this dispatch and
+	// two divergent writes can look identical.
+	unlock := lockConflictPath(abs)
+	defer unlock()
 
 	before := captureConflictSnapshot(ctx, ws, abs)
 	result, err := rt.inner.Execute(ctx, args)
@@ -180,11 +195,32 @@ func (rt *RecordingTool) Execute(ctx context.Context, args string) (string, erro
 	return result, nil
 }
 
+var (
+	conflictPathLocksMu sync.Mutex
+	conflictPathLocks   = make(map[string]*sync.Mutex)
+)
+
+// lockConflictPath serializes snapshot/write/snapshot for one path. The key is
+// case-folded on case-insensitive hosts, matching the conflict comparison.
+func lockConflictPath(abs string) func() {
+	key := pathKey(normalizeTrackedPath(abs))
+	conflictPathLocksMu.Lock()
+	lock := conflictPathLocks[key]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		conflictPathLocks[key] = lock
+	}
+	conflictPathLocksMu.Unlock()
+	lock.Lock()
+	return lock.Unlock
+}
+
 type conflictSnapshot struct {
 	Exists bool
 	Known  bool
 	Digest string
 	Mode   string
+	Size   int64
 }
 
 func captureConflictSnapshot(ctx context.Context, ws Workspace, abs string) conflictSnapshot {
@@ -197,13 +233,13 @@ func captureConflictSnapshot(ctx context.Context, ws Workspace, abs string) conf
 	}
 	mode := info.Mode().String()
 	if !info.Mode().IsRegular() || info.Size() > conflictTrackerMaxHashBytes {
-		return conflictSnapshot{Exists: true, Mode: mode}
+		return conflictSnapshot{Exists: true, Mode: mode, Size: info.Size()}
 	}
 	data, err := ws.ReadFile(ctx, abs)
 	if err != nil {
-		return conflictSnapshot{Exists: true, Mode: mode}
+		return conflictSnapshot{Exists: true, Mode: mode, Size: info.Size()}
 	}
-	return conflictSnapshot{Exists: true, Known: true, Digest: proposalContentDigest(data), Mode: mode}
+	return conflictSnapshot{Exists: true, Known: true, Digest: proposalContentDigest(data), Mode: mode, Size: info.Size()}
 }
 
 func conflictSnapshotsEqual(a, b conflictSnapshot) bool {
@@ -242,21 +278,110 @@ func shellMayMutate(args string) bool {
 		return false
 	}
 	cmd := strings.ToLower(params.Command)
-	if cmd == "" {
+	if strings.TrimSpace(cmd) == "" {
 		return false
 	}
-	for _, marker := range []string{
-		">", ">>", "tee ", "rm ", "rm\t", "mv ", "cp ", "install ", "touch ",
-		"mkdir ", "rmdir ", "sed -i", "perl -pi", "git apply", "patch ", "dd ",
-		"truncate ", "chmod ", "chown ", "ln ", "tar -x", "unzip ", "python ",
-		"python3 ", "node ", "ruby ", "out-file", "set-content", "add-content",
-		"new-item", "remove-item", "move-item", "copy-item",
-	} {
-		if strings.Contains(cmd, marker) {
+	if shellHasRedirect(cmd) {
+		return true
+	}
+	words := shellWords(cmd)
+	mutators := map[string]bool{
+		"rm": true, "mv": true, "cp": true, "install": true, "touch": true,
+		"mkdir": true, "rmdir": true, "tee": true, "dd": true, "truncate": true,
+		"chmod": true, "chown": true, "ln": true, "patch": true, "unzip": true,
+		"make": true, "cargo": true, "npm": true, "pnpm": true, "yarn": true,
+		"pip": true, "pip3": true, "python": true, "python3": true, "node": true,
+		"ruby": true,
+	}
+	for _, word := range words {
+		if mutators[word] {
+			return true
+		}
+	}
+	for i, word := range words {
+		next := ""
+		if i+1 < len(words) {
+			next = words[i+1]
+		}
+		switch {
+		case (word == "sed" || word == "perl") && (next == "-i" || strings.HasPrefix(next, "-i")):
+			return true
+		case word == "git" && (next == "apply" || next == "checkout" || next == "commit" || next == "clean" || next == "reset" || next == "stash"):
+			return true
+		case word == "go" && (next == "generate" || next == "build" || next == "mod"):
+			return true
+		case word == "tar" && (next == "-x" || next == "--extract" || strings.HasPrefix(next, "-x")):
 			return true
 		}
 	}
 	return false
+}
+
+// shellHasRedirect reports an output redirect outside quotes. Redirections to a
+// file descriptor (2>&1, >&2) are not file writes.
+func shellHasRedirect(cmd string) bool {
+	runes := []rune(cmd)
+	var quote rune
+	escaped := false
+	for i, r := range runes {
+		switch {
+		case escaped:
+			escaped = false
+		case r == '\\' && quote != 0:
+			escaped = true
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			}
+		case r == '\'' || r == '"':
+			quote = r
+		case r == '>':
+			if i+1 < len(runes) && runes[i+1] == '&' {
+				continue
+			}
+			return true
+		}
+	}
+	return false
+}
+
+// shellWords is a minimal shell lexer: it separates words outside quotes so a
+// quoted > is not mistaken for a redirect and `make` is not hidden in a larger
+// token.
+func shellWords(cmd string) []string {
+	var words []string
+	var word strings.Builder
+	var quote rune
+	escaped := false
+	flush := func() {
+		if word.Len() > 0 {
+			words = append(words, word.String())
+			word.Reset()
+		}
+	}
+	for _, r := range cmd {
+		switch {
+		case escaped:
+			word.WriteRune(r)
+			escaped = false
+		case r == '\\' && quote != '\'':
+			escaped = true
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				word.WriteRune(r)
+			}
+		case r == '\'' || r == '"':
+			quote = r
+		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
+			flush()
+		default:
+			word.WriteRune(r)
+		}
+	}
+	flush()
+	return words
 }
 
 func shellDetail(args string) string {
@@ -267,11 +392,15 @@ func shellDetail(args string) string {
 		return "effects unknown"
 	}
 	cmd := strings.TrimSpace(params.Command)
-	if len(cmd) > 120 {
-		cmd = cmd[:117] + "..."
-	}
 	if cmd == "" {
 		return "effects unknown"
+	}
+	runes := []rune(cmd)
+	if len(runes) > 120 {
+		cmd = string(runes[:117]) + "..."
+	}
+	if !utf8.ValidString(cmd) {
+		cmd = strings.ToValidUTF8(cmd, "?")
 	}
 	return "may mutate: " + cmd
 }

@@ -18,8 +18,10 @@ const (
 	// authoritative for settlement.
 	ConflictLaneRetained = "retained"
 
-	ConflictKindShared   = "shared_write_conflict"
-	ConflictKindRetained = "retained_speculative_overlap"
+	ConflictKindShared             = "shared_write_conflict"
+	ConflictKindRetained           = "retained_speculative_overlap"
+	ConflictKindUnverifiedShared   = "shared_unverified_change"
+	ConflictKindUnverifiedRetained = "retained_unverified_change"
 
 	// conflictTrackerMaxHashBytes bounds the file read used to prove a write
 	// changed content. A larger file is recorded as unknown rather than read
@@ -97,6 +99,11 @@ func (ct *ConflictTracker) Record(label, filePath, toolName string) {
 		Lane:          ConflictLaneShared,
 		FilePath:      filePath,
 		ToolName:      toolName,
+		BeforeExists:  true,
+		AfterExists:   true,
+		AfterDigest:   label + "\x00" + toolName,
+		AfterMode:     "legacy",
+		Known:         true,
 	})
 }
 
@@ -220,9 +227,22 @@ func (ct *ConflictTracker) DetectAndResetReport() *ConflictReport {
 			continue
 		}
 
+		allKnown := true
+		for _, id := range ids {
+			if known, _, _, _ := conflictGroupState(dispatches[id]); !known {
+				allKnown = false
+				break
+			}
+		}
 		kind := ConflictKindShared
+		if !allKnown {
+			kind = ConflictKindUnverifiedShared
+		}
 		if group.lane == ConflictLaneRetained {
 			kind = ConflictKindRetained
+			if !allKnown {
+				kind = ConflictKindUnverifiedRetained
+			}
 		}
 		entry := ConflictEntry{
 			Path:    recs[0].FilePath,
@@ -294,16 +314,20 @@ func (r *ConflictReport) Render() string {
 		return ""
 	}
 	var b strings.Builder
+	hasShared := false
 
-	renderLane := func(lane, header string) {
+	renderLane := func(lane, kind, header string) {
 		var entries []ConflictEntry
 		for _, entry := range r.Entries {
-			if entry.Lane == lane {
+			if entry.Lane == lane && entry.Kind == kind {
 				entries = append(entries, entry)
 			}
 		}
 		if len(entries) == 0 {
 			return
+		}
+		if lane == ConflictLaneShared {
+			hasShared = true
 		}
 		b.WriteString(header)
 		b.WriteString("\n\n")
@@ -316,21 +340,55 @@ func (r *ConflictReport) Render() string {
 		}
 	}
 
-	renderLane(ConflictLaneShared, "CONFLICT: Parallel workers modified the same file(s).")
-	renderLane(ConflictLaneRetained, "SPECULATIVE OVERLAP: Parallel workers in isolated worlds changed the same file(s). Nothing has landed; proposal list is authoritative.")
-	if len(r.Unknown) > 0 {
-		b.WriteString("UNKNOWN MUTATIONS: Shell commands ran and may have changed files not tracked by structured write tools.\n\n")
+	renderUnknown := func(lane, header string) {
+		counts := make(map[string]int)
+		details := make(map[string]string)
 		for _, rec := range r.Unknown {
-			fmt.Fprintf(&b, "  - %s: %s", rec.SubAgentLabel, rec.ToolName)
-			if rec.Detail != "" {
-				fmt.Fprintf(&b, " (%s)", rec.Detail)
+			laneOf := rec.Lane
+			if laneOf == "" {
+				laneOf = ConflictLaneShared
+			}
+			if laneOf != lane {
+				continue
+			}
+			key := rec.SubAgentLabel + "\x00" + rec.ToolName
+			counts[key]++
+			if details[key] == "" {
+				details[key] = rec.Detail
+			}
+		}
+		if len(counts) == 0 {
+			return
+		}
+		keys := make([]string, 0, len(counts))
+		for key := range counts {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		b.WriteString(header)
+		b.WriteString("\n\n")
+		for _, key := range keys {
+			label, tool, _ := strings.Cut(key, "\x00")
+			fmt.Fprintf(&b, "  - %s: %s", label, tool)
+			if n := counts[key]; n > 1 {
+				fmt.Fprintf(&b, " (%d calls)", n)
+			}
+			if details[key] != "" {
+				fmt.Fprintf(&b, " (%s)", details[key])
 			}
 			b.WriteString("\n")
 		}
 		b.WriteString("\n")
 	}
 
-	if len(r.Entries) > 0 {
+	renderLane(ConflictLaneShared, ConflictKindShared, "CONFLICT: Parallel workers modified the same file(s).")
+	renderLane(ConflictLaneShared, ConflictKindUnverifiedShared, "UNVERIFIED CHANGES: Parallel workers changed the same path but the content could not be inspected.")
+	renderLane(ConflictLaneRetained, ConflictKindRetained, "SPECULATIVE OVERLAP: Parallel workers in isolated worlds changed the same file(s). Nothing has landed; proposal list is authoritative.")
+	renderLane(ConflictLaneRetained, ConflictKindUnverifiedRetained, "SPECULATIVE UNVERIFIED CHANGES: Isolated workers changed the same path but the content could not be inspected; proposal list is authoritative.")
+	renderUnknown(ConflictLaneShared, "UNKNOWN MUTATIONS: Shell commands ran and may have changed files not tracked by structured write tools.")
+	renderUnknown(ConflictLaneRetained, "SPECULATIVE UNKNOWN MUTATIONS: Shell commands ran in isolated worlds and may have changed files there.")
+
+	if hasShared {
 		b.WriteString("Inspect each file with the read tool, decide on the correct version,")
 		b.WriteString(" and resolve with targeted edits or by re-dispatching a single worker.")
 	}
