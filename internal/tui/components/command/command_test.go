@@ -272,3 +272,12 @@ func TestName_PrefersCanonicalSpelling(t *testing.T) {
 		t.Errorf(`Name(CmdHelp) = %q, want "help"`, got)
 	}
 }
+
+func TestParse_Modes(t *testing.T) {
+	if got := Parse("plan"); got != CmdPlan {
+		t.Errorf("Parse(plan) = %v, want CmdPlan", got)
+	}
+	if got := Parse("build"); got != CmdBuild {
+		t.Errorf("Parse(build) = %v, want CmdBuild", got)
+	}
+}

@@ -18,6 +18,7 @@ import (
 type State struct {
 	Provider         string
 	Model            string
+	SessionMode      string
 	Version          string
 	ContextTokens    int
 	ContextWindow    int

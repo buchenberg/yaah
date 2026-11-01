@@ -117,6 +117,17 @@ func startREPL() error {
 		case repl.CmdLogout:
 			replLogout(sess)
 			continue
+		case repl.CmdPlan, repl.CmdBuild:
+			mode := "plan"
+			if repl.ParseSlashCommand(input) == repl.CmdBuild {
+				mode = "build"
+			}
+			if err := sess.SetMode(mode); err != nil {
+				fmt.Fprintf(os.Stderr, "%s\n", replYellow("error: "+err.Error()))
+				continue
+			}
+			fmt.Printf("%s\n", repl.Dim("session mode: "+mode))
+			continue
 		}
 
 		if err := repl.AppendHistory(input); err != nil {
@@ -198,6 +209,8 @@ func printHelp() {
 	fmt.Printf("  %s  %s\n", repl.Bold("/compact"), repl.Dim("summarize old messages to free context"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/login"), repl.Dim("authenticate with an OAuth provider"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/logout"), repl.Dim("remove stored OAuth credentials"))
+	fmt.Printf("  %s  %s\n", repl.Bold("/plan"), repl.Dim("read-only planning mode"))
+	fmt.Printf("  %s  %s\n", repl.Bold("/build"), repl.Dim("full coding mode"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/?"), repl.Dim("show this help"))
 	fmt.Println()
 }

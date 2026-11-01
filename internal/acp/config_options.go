@@ -103,6 +103,39 @@ func buildModelConfigOptions(catalog []ModelOption, provider, model string) []Se
 	}}
 }
 
+// buildModeConfigOptions renders the Plan/Build selector. Modes supersede the
+// older session-modes field, but yaah advertises both while clients transition.
+func buildModeConfigOptions(mode string) SessionConfigOption {
+	if !validSessionMode(mode) {
+		mode = SessionModeBuild
+	}
+	options := make([]SessionConfigSelectOption, 0, len(availableSessionModes()))
+	for _, m := range availableSessionModes() {
+		options = append(options, SessionConfigSelectOption{
+			Value:       m.ID,
+			Name:        m.Name,
+			Description: m.Description,
+		})
+	}
+	return SessionConfigOption{
+		ID:           ConfigOptionModeID,
+		Name:         "Session Mode",
+		Description:  "Plan with inspection tools, or build with the full tool set",
+		Category:     ConfigOptionCategoryMode,
+		Type:         ConfigOptionTypeSelect,
+		CurrentValue: mode,
+		Options:      options,
+	}
+}
+
+// buildSessionConfigOptions returns the full selector set in priority order:
+// mode first, then the model picker when a catalog is wired.
+func buildSessionConfigOptions(catalog []ModelOption, provider, model, mode string) []SessionConfigOption {
+	out := []SessionConfigOption{buildModeConfigOptions(mode)}
+	out = append(out, buildModelConfigOptions(catalog, provider, model)...)
+	return out
+}
+
 // configOptionHasValue reports whether the config option named id
 // offers value in one of its options. An absent option, or one with no
 // options at all, has no values.

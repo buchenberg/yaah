@@ -67,7 +67,7 @@ Implemented:
   session/update              Streaming updates: message/thought chunks,
                               tool calls, plans, usage, compaction
   session/request_permission  Tool approvals delegated to the client
-  session/set_config_option   Change a config option (model picker) mid-session
+  session/set_config_option   Change a config option (mode/model picker) mid-session
   notifications/initialized   Client readiness announcement (accepted; no-op)
 
 Several conversations may coexist in one process; the persisted session

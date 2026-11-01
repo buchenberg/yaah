@@ -608,10 +608,10 @@ func (s *Server) dispatch(
 			s.handleSessionDelete(msg, respOK, respErr)
 
 		case "session/set_mode":
-			s.handleSetMode(msg, sendUpdate, respOK, respErr)
+			s.handleSetMode(dispatchCtx, msg, sendUpdate, respOK, respErr)
 
 		case "session/set_config_option":
-			s.handleSetConfigOption(dispatchCtx, msg, respOK, respErr)
+			s.handleSetConfigOption(dispatchCtx, msg, sendUpdate, respOK, respErr)
 
 		default:
 			respErr(msg.ID, codeMethodNotFound, "method not found: "+msg.Method)

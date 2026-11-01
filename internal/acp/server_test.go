@@ -513,17 +513,23 @@ func pickerCatalog() fakeModelCatalog {
 	}}
 }
 
-// assertModelPicker checks one decoded configOptions set: the single
-// model-category select with both catalog values and the given current
-// selection.
+// assertModelPicker checks one decoded configOptions set: the model-category
+// select with both catalog values and the given current selection. A mode
+// option may precede it.
 func assertModelPicker(t *testing.T, opts []SessionConfigOption, current string) {
 	t.Helper()
-	if len(opts) != 1 {
-		t.Fatalf("configOptions = %+v, want exactly the model picker", opts)
+	var picker *SessionConfigOption
+	for i := range opts {
+		if opts[i].ID == ConfigOptionModelID {
+			picker = &opts[i]
+			break
+		}
 	}
-	picker := opts[0]
-	if picker.ID != ConfigOptionModelID || picker.Category != ConfigOptionCategoryModel || picker.Type != ConfigOptionTypeSelect {
-		t.Fatalf("model picker = %+v, want id=%s category=%s type=%s", picker, ConfigOptionModelID, ConfigOptionCategoryModel, ConfigOptionTypeSelect)
+	if picker == nil {
+		t.Fatalf("configOptions = %+v, want the model picker", opts)
+	}
+	if picker.Category != ConfigOptionCategoryModel || picker.Type != ConfigOptionTypeSelect {
+		t.Fatalf("model picker = %+v, want category=%s type=%s", picker, ConfigOptionCategoryModel, ConfigOptionTypeSelect)
 	}
 	if picker.CurrentValue != current {
 		t.Errorf("currentValue = %q, want %q", picker.CurrentValue, current)
@@ -583,7 +589,7 @@ func TestServer_modelPickerAdvertisedOnSessionNewAndLoad(t *testing.T) {
 		assertSessionModes(t, result.Modes, SessionModeBuild)
 	})
 
-	t.Run("no catalog omits configOptions", func(t *testing.T) {
+	t.Run("no catalog still advertises mode only", func(t *testing.T) {
 		h := newACPHarness(t, nil)
 		initialize(t, h)
 		cwd, _ := json.Marshal(h.cwd)
@@ -594,8 +600,12 @@ func TestServer_modelPickerAdvertisedOnSessionNewAndLoad(t *testing.T) {
 		if msg.Error != nil {
 			t.Fatalf("session/new error: %+v", msg.Error)
 		}
-		if strings.Contains(string(msg.Result), "configOptions") {
-			t.Errorf("session/new result = %s, want no configOptions without a wired catalog", msg.Result)
+		var result SessionNewResult
+		if err := json.Unmarshal(msg.Result, &result); err != nil {
+			t.Fatal(err)
+		}
+		if len(result.ConfigOptions) != 1 || result.ConfigOptions[0].ID != ConfigOptionModeID {
+			t.Errorf("configOptions = %+v, want mode only", result.ConfigOptions)
 		}
 	})
 }
@@ -969,6 +979,9 @@ func TestServer_sessionModes(t *testing.T) {
 	if params.SessionID != created.SessionID || params.Update.SessionUpdate != "current_mode_update" || params.Update.CurrentModeID != SessionModePlan {
 		t.Fatalf("mode update = %+v", params)
 	}
+	if option := h.recv(t); option.Method != "session/update" || !strings.Contains(string(option.Params), "config_option_update") {
+		t.Fatalf("set_mode config option update = %+v", option)
+	}
 	if ack := h.recv(t); ack.Error != nil || !strings.Contains(string(ack.ID), "4") {
 		t.Fatalf("set_mode ack = %+v", ack)
 	}
@@ -1183,6 +1196,10 @@ func TestServer_promptRelatedSetModeResponsive(t *testing.T) {
 	update := h.recv(t)
 	if update.Method != "session/update" {
 		t.Fatalf("expected current_mode_update while prompt in flight, got %+v", update)
+	}
+	option := h.recv(t)
+	if option.Method != "session/update" {
+		t.Fatalf("expected config_option_update while prompt in flight, got %+v", option)
 	}
 	ack := h.recv(t)
 	if !(ack.Error == nil && len(ack.ID) > 0 && strings.Contains(string(ack.ID), "4")) {
@@ -2290,5 +2307,43 @@ func TestServer_batchRequestRejectedAsArray(t *testing.T) {
 	}
 	if len(responses) != 1 || string(responses[0].ID) != "1" || responses[0].Error == nil || responses[0].Error.Code != codeInvalidRequest {
 		t.Fatalf("batch response = %+v", responses)
+	}
+}
+
+func TestServer_setConfigOptionSwitchesMode(t *testing.T) {
+	sess := &fakeSession{id: "sess-mode-cfg"}
+	h := newACPHarness(t, sess)
+	initialize(t, h)
+	if id := newSession(t, h); id != "sess-mode-cfg" {
+		t.Fatalf("session/new returned %q", id)
+	}
+	if err := h.send("session/set_config_option", 2, `{"sessionId":"sess-mode-cfg","configId":"mode","value":"plan"}`); err != nil {
+		t.Fatal(err)
+	}
+	if update := h.recv(t); !strings.Contains(string(update.Params), "current_mode_update") {
+		t.Fatalf("mode update = %+v", update)
+	}
+	if update := h.recv(t); !strings.Contains(string(update.Params), "config_option_update") {
+		t.Fatalf("config update = %+v", update)
+	}
+	msg := h.recv(t)
+	if msg.Error != nil {
+		t.Fatalf("mode config error: %+v", msg.Error)
+	}
+	var result SetConfigOptionResult
+	if err := json.Unmarshal(msg.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	var mode *SessionConfigOption
+	for i := range result.ConfigOptions {
+		if result.ConfigOptions[i].ID == ConfigOptionModeID {
+			mode = &result.ConfigOptions[i]
+		}
+	}
+	if mode == nil || mode.CurrentValue != SessionModePlan || mode.Category != ConfigOptionCategoryMode {
+		t.Fatalf("mode option = %+v", mode)
+	}
+	if sess.Mode() != SessionModePlan {
+		t.Fatalf("session mode = %q, want plan", sess.Mode())
 	}
 }

@@ -286,3 +286,12 @@ func TestSSEHeaderCarriesReportLaneWhenItDiffers(t *testing.T) {
 		t.Fatalf("header missing the report lane: %s", buf.String())
 	}
 }
+
+func TestSSEViewSetSessionMode(t *testing.T) {
+	buf := newSyncBuffer()
+	v := &sseView{w: buf, provider: "prov", model: "model"}
+	v.SetSessionMode("plan")
+	if !strings.Contains(buf.String(), `"sessionMode":"plan"`) {
+		t.Fatalf("header missing session mode: %s", buf.String())
+	}
+}

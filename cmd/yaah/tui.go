@@ -69,6 +69,7 @@ func runTUI() error {
 
 	app.SetProvider(sess.ProviderName())
 	app.SetModel(sess.ModelName())
+	app.SetMode(sess.Mode())
 
 	infos := sess.MCPInfos()
 	mcpServers := make([]mcpinfo.Server, 0, len(infos))
@@ -140,6 +141,14 @@ func runTUI() error {
 		sess.SetModel(providerName, modelName)
 		app.SetProvider(providerName)
 		app.SetModel(modelName)
+	}
+	app.OnModeSelect = func(mode string) {
+		if err := sess.SetMode(mode); err != nil {
+			app.SetEphemeral(err.Error())
+			return
+		}
+		app.SetMode(mode)
+		app.SetEphemeral("session mode: " + mode)
 	}
 
 	var cancelAgent context.CancelFunc

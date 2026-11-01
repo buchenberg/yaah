@@ -36,6 +36,8 @@ const (
 	CmdSession
 	CmdMCP
 	CmdModel
+	CmdPlan
+	CmdBuild
 )
 
 // Parse maps a colon command string (without the leading ":") to a Cmd.
@@ -71,6 +73,8 @@ var commandNames = []struct {
 	{"session", CmdSession},
 	{"mcp", CmdMCP},
 	{"model", CmdModel},
+	{"plan", CmdPlan},
+	{"build", CmdBuild},
 }
 
 // splitName splits input at the first run of whitespace, so every separator
@@ -166,6 +170,8 @@ func DefaultEntries() []Entry {
 		{"steer", "Inject steering text (requires arg)", CmdSteer},
 		{"followup", "Queue text as a follow-up message (requires arg)", CmdFollowUp},
 		{"model", "Switch model", CmdModel},
+		{"plan", "Switch to plan mode (read-only tools)", CmdPlan},
+		{"build", "Switch to build mode (full tools)", CmdBuild},
 		{"search", "Search messages (requires arg)", CmdSearch},
 		{"verbose", "Toggle verbose mode", CmdVerbose},
 		{"banner", "Toggle banner", CmdBanner},

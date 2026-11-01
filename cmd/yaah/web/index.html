@@ -204,6 +204,7 @@ dialog article{max-width:480px;min-width:min(320px,100%)}
     <h1 class="sr-only">yaah agent console</h1>
     <span class="brand" aria-hidden="true">yaah</span>
     <span class="meta" x-text="head.provider ? head.provider + ' / ' + head.model : ''"></span>
+    <span class="meta" x-show="head.sessionMode" x-text="'mode: ' + head.sessionMode"></span>
     <button type="button" class="pal-btn" @click="searchShow()" title="Search messages (/)" aria-label="Search messages">/</button>
     <div class="pal-wrap" @keydown.window="palKey($event)">
       <button class="pal-btn" @click="palToggle()" :title="'Command palette (' + palKeyLabel + ')'" x-text="palKeyLabel"></button>
@@ -687,6 +688,8 @@ document.addEventListener('alpine:init', () => {
       palCommands() {
         const cur = this.head.provider && this.head.model ? this.head.provider + '/' + this.head.model : ''
         const cmds = [
+          {id:'mode:plan', group:'session', icon:'▤', label:'Plan mode', hint:'read-only tools', current: this.head.sessionMode === 'plan', run: () => this.post({type:'mode', mode:'plan'})},
+          {id:'mode:build', group:'session', icon:'⚒', label:'Build mode', hint:'full tools', current: this.head.sessionMode === 'build', run: () => this.post({type:'mode', mode:'build'})},
           {id:'compact', group:'session', icon:'⧗', label:'Compact context', hint:'free tokens', run: () => this.post({type:'compact'})},
           {id:'stop', group:'session', icon:'■', label:'Stop agent', hint:'abort run', disabled: !this.live, run: () => this.stop()},
           {id:'reconnect', group:'session', icon:'↻', label:'Reconnect stream', hint:'SSE', run: () => this.connect()},
@@ -834,6 +837,8 @@ document.addEventListener('alpine:init', () => {
       cmdList: [
         {id:'compact', label:':compact', desc:'Compact context'},
         {id:'model', label:':model', desc:'Switch provider/model'},
+        {id:'plan', label:':plan', desc:'Switch to plan mode'},
+        {id:'build', label:':build', desc:'Switch to build mode'},
         {id:'steer', label:':steer <text>', desc:'Inject steering message'},
         {id:'clear', label:':clear', desc:'Clear conversation view'},
         {id:'help', label:':help', desc:'Show command list'},
@@ -886,6 +891,7 @@ document.addEventListener('alpine:init', () => {
         }
         this.cmdDismiss()
         if (c.id === 'model') { this.palShow(); return }
+        if (c.id === 'plan' || c.id === 'build') { this.post({type:'mode', mode:c.id}); return }
         if (c.id === 'clear') { this.msgs = []; this._tools = {}; return }
         if (c.id === 'help') { this.helpShow(); return }
         if (c.id === 'compact') { this.post({type:'compact'}); return }

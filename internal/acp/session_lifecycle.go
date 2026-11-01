@@ -192,7 +192,7 @@ func (s *Server) handleSessionNew(ctx context.Context, msg Message, sendUpdate u
 	}
 	respOK(msg.ID, SessionNewResult{
 		SessionID:     st.id,
-		ConfigOptions: buildModelConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName()),
+		ConfigOptions: buildSessionConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName(), st.sess.Mode()),
 		Modes:         sessionModeState(st.sess.Mode()),
 		Meta:          worldMetaOf(st.sess.WorldStatus()),
 	})
@@ -384,7 +384,7 @@ func (s *Server) handleSessionLoad(
 // the session's current selection. An unwired catalog yields nil, which
 // omits the field entirely.
 func (s *Server) loadConfigOptions(ctx context.Context, st *sessionState) []SessionConfigOption {
-	return buildModelConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName())
+	return buildSessionConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName(), st.sess.Mode())
 }
 
 // worldMetaOf renders the ACP `_meta` block for a derived posture. The zero

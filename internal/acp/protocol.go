@@ -261,10 +261,9 @@ type EnvVariable struct {
 	Value string `json:"value"`
 }
 
-// SessionNewResult is the result of session/new. configOptions carries
-// the session's configuration selectors (the model picker) and is
-// omitted when the session has none to advertise — no model catalog is
-// wired, or discovery returned nothing.
+// SessionNewResult is the result of session/new. configOptions carries the
+// session's configuration selectors: the mode selector is always present; the
+// model selector is added when a model catalog is wired.
 type SessionNewResult struct {
 	SessionID     string                `json:"sessionId"`
 	ConfigOptions []SessionConfigOption `json:"configOptions,omitempty"`
@@ -462,6 +461,7 @@ const (
 	UpdateUsageUpdate       = "usage_update"
 	UpdateSessionInfo       = "session_info_update"
 	UpdateAvailableCommands = "available_commands_update"
+	UpdateConfigOption      = "config_option_update"
 
 	UpdateCompaction             = "compaction_update"
 	UpdateCompactionSummaryChunk = "compaction_summary_chunk"
@@ -707,6 +707,13 @@ type CurrentModeUpdate struct {
 	CurrentModeID string `json:"currentModeId"`
 }
 
+// ConfigOptionUpdate pushes the complete configuration state after an
+// agent-side change (for example a mode switch).
+type ConfigOptionUpdate struct {
+	SessionUpdate string                `json:"sessionUpdate"`
+	ConfigOptions []SessionConfigOption `json:"configOptions"`
+}
+
 // ACP session mode ids. Build is the default; plan narrows the tool surface.
 const (
 	SessionModeBuild = "build"
@@ -829,8 +836,12 @@ const (
 	// ConfigOptionCategoryModel is the spec's reserved category for a
 	// model selector; clients use it for placement and shortcuts.
 	ConfigOptionCategoryModel = "model"
+	// ConfigOptionCategoryMode is the spec's reserved category for a
+	// session-mode selector.
+	ConfigOptionCategoryMode = "mode"
 
-	// ConfigOptionModelID is the id of the model picker: the only
-	// configId session/set_config_option accepts.
+	// ConfigOptionModelID is the id of the model picker.
 	ConfigOptionModelID = "model"
+	// ConfigOptionModeID is the id of the Plan/Build selector.
+	ConfigOptionModeID = "mode"
 )

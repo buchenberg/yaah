@@ -12,6 +12,8 @@ func TestParseSlashCommand_recognizesBuiltinCommands(t *testing.T) {
 		{"/clear", CmdClear},
 		{"/?", CmdHelp},
 		{"/help", CmdHelp},
+		{"/plan", CmdPlan},
+		{"/build", CmdBuild},
 	}
 
 	for _, tt := range tests {
