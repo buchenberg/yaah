@@ -273,15 +273,15 @@ func TestServer_sessionListPagingAndFilterValidation(t *testing.T) {
 		}
 	})
 
-	t.Run("unwired list is an internal availability error", func(t *testing.T) {
+	t.Run("unwired list is method-not-found with an availability message", func(t *testing.T) {
 		h := newACPHarness(t, nil)
 		initialize(t, h)
 		if err := h.send("session/list", 3, `{}`); err != nil {
 			t.Fatal(err)
 		}
 		msg := h.recv(t)
-		if msg.Error == nil || msg.Error.Code != codeInternal {
-			t.Fatalf("expected internal availability error without wiring, got %+v", msg)
+		if msg.Error == nil || msg.Error.Code != codeMethodNotFound || !strings.Contains(msg.Error.Message, "not available") {
+			t.Fatalf("expected method-not-found availability error without wiring, got %+v", msg)
 		}
 	})
 }
@@ -465,8 +465,8 @@ func TestServer_sessionInfoUpdate(t *testing.T) {
 
 // TestServer_sessionDeleteUnwiredHasNoSideEffects pins the worst-case
 // ordering: when delete is not wired, an unadvertised-but-asked
-// session/delete must be an availability error WITHOUT having first torn
-// down the live session.
+// session/delete must be method-not-found with an availability message
+// WITHOUT having first torn down the live session.
 func TestServer_sessionDeleteUnwiredHasNoSideEffects(t *testing.T) {
 	sess := &fakeSession{id: "sess-live"}
 	h := newACPHarness(t, sess)
@@ -477,8 +477,8 @@ func TestServer_sessionDeleteUnwiredHasNoSideEffects(t *testing.T) {
 		t.Fatal(err)
 	}
 	msg := h.recv(t)
-	if msg.Error == nil || msg.Error.Code != codeInternal {
-		t.Fatalf("expected internal availability error, got %+v", msg)
+	if msg.Error == nil || msg.Error.Code != codeMethodNotFound || !strings.Contains(msg.Error.Message, "not available") {
+		t.Fatalf("expected method-not-found availability error, got %+v", msg)
 	}
 	if n := sess.closedCount(); n != 0 {
 		t.Fatalf("unwired delete closed the live session %d time(s)", n)
