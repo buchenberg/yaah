@@ -111,10 +111,6 @@ func TestNewDispatch_OnlySpawnSubAgentTakesASubAgentSlot(t *testing.T) {
 	}
 }
 
-// The speculation guidance promises that `max_concurrency` bounds a fan-out of
-// parallel delegate calls. That bound is the sub-agent semaphore: each
-// dispatch takes a slot and holds it until the dispatch ends, so N concurrent
-// calls cannot exceed the cap.
 func TestDispatch_PlanModeRefusesUnadvertisedToolAtExecution(t *testing.T) {
 	reg := tools.NewEmptyRegistry()
 	tool := &countingTool{name: "write"}
@@ -128,8 +124,8 @@ func TestDispatch_PlanModeRefusesUnadvertisedToolAtExecution(t *testing.T) {
 	if tool.calls != 0 {
 		t.Fatalf("plan mode executed write %d times", tool.calls)
 	}
-	if result.err == nil || !strings.Contains(result.err.Error(), "not available in plan mode") {
-		t.Fatalf("result err = %v, want plan-mode refusal", result.err)
+	if result.err == nil || !strings.Contains(result.err.Error(), "not available at the current tool level") {
+		t.Fatalf("result err = %v, want tool-level refusal", result.err)
 	}
 }
 
@@ -143,6 +139,10 @@ func (c *countingTool) Description() string                             { return
 func (c *countingTool) Schema() json.RawMessage                         { return json.RawMessage(`{"type":"object"}`) }
 func (c *countingTool) Execute(context.Context, string) (string, error) { c.calls++; return "ran", nil }
 
+// The speculation guidance promises that `max_concurrency` bounds a fan-out of
+// parallel delegate calls. That bound is the sub-agent semaphore: each
+// dispatch takes a slot and holds it until the dispatch ends, so N concurrent
+// calls cannot exceed the cap.
 func TestDispatch_SubAgentSemaphoreBoundsFanOut(t *testing.T) {
 	l := &Loop{subAgentSem: make(chan struct{}, 1)}
 	spawn := func() types.ToolCall {

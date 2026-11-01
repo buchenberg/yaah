@@ -127,7 +127,7 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 	if allowed {
 		res, err = l.Registry.Execute(runCtx, d.call.Function.Name, d.call.Function.Arguments)
 	} else {
-		err = fmt.Errorf("tool %q is not available in plan mode", d.call.Function.Name)
+		err = fmt.Errorf("tool %q is not available at the current tool level", d.call.Function.Name)
 	}
 
 	if allowed && d.isDelegate && !d.isBackground {

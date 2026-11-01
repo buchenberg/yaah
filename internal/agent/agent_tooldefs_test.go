@@ -107,4 +107,11 @@ func TestReadOnlyTools_WithholdsMutatingTools(t *testing.T) {
 	if !loop.allowsTool("read") {
 		t.Error("read-only execution gate refused read")
 	}
+	loop.Config.ToolsLevel = SubAgentsOnly
+	if loop.allowsTool("write") {
+		t.Error("sub-agents-only execution gate allowed write")
+	}
+	if !loop.allowsTool("delegate") {
+		t.Error("sub-agents-only execution gate refused delegate")
+	}
 }

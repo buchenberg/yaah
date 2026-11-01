@@ -40,7 +40,14 @@ var readOnlyToolNames = map[string]bool{
 // tool definition is not enough: dialect recovery can synthesize calls the
 // model never saw in the tool array.
 func (l *Loop) allowsTool(name string) bool {
-	return l.Config.ToolsLevel != ReadOnlyTools || readOnlyToolNames[name]
+	switch l.Config.ToolsLevel {
+	case ReadOnlyTools:
+		return readOnlyToolNames[name]
+	case SubAgentsOnly:
+		return subAgentToolNames[name]
+	default:
+		return true
+	}
 }
 
 func (l *Loop) readOnlyTools() []types.ToolDef {
@@ -68,12 +75,13 @@ func (l *Loop) readOnlyTools() []types.ToolDef {
 	return defs
 }
 
+var subAgentToolNames = map[string]bool{"delegate": true, "list_subagents": true}
+
 // agentTools returns only the sub-agent related tools.
 func (l *Loop) agentTools() []types.ToolDef {
-	agentToolNames := map[string]bool{"delegate": true, "list_subagents": true}
 	var defs []types.ToolDef
 	for _, name := range l.Registry.List() {
-		if agentToolNames[name] {
+		if subAgentToolNames[name] {
 			t := l.Registry.Get(name)
 			if t == nil {
 				continue
