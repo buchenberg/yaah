@@ -174,15 +174,14 @@ func TestRecordingTool_ShellMutationIsUnknown(t *testing.T) {
 	}
 }
 
-func TestConflictSnapshotsEqual_UnknownShape(t *testing.T) {
-	a := conflictSnapshot{Exists: true, Size: 100, Mode: "-rw-r--r--"}
-	b := conflictSnapshot{Exists: true, Size: 100, Mode: "-rw-r--r--"}
-	if !conflictSnapshotsEqual(a, b) {
-		t.Error("same unknown shape should suppress an idempotent rewrite")
-	}
-	b.Size = 101
+func TestConflictSnapshotsEqual_UnknownIsEvidence(t *testing.T) {
+	a := conflictSnapshot{Exists: true, Mode: "-rw-r--r--"}
+	b := conflictSnapshot{Exists: true, Mode: "-rw-r--r--"}
 	if conflictSnapshotsEqual(a, b) {
-		t.Error("different unknown size should remain evidence of a change")
+		t.Error("content-unknown snapshots must remain unverified evidence, not a no-op")
+	}
+	if conflictSnapshotsEqual(conflictSnapshot{}, conflictSnapshot{}) {
+		t.Error("unobservable existence must not compare equal to a no-op")
 	}
 }
 

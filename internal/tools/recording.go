@@ -237,7 +237,6 @@ type conflictSnapshot struct {
 	Known  bool
 	Digest string
 	Mode   string
-	Size   int64
 }
 
 func captureConflictSnapshot(ctx context.Context, ws Workspace, abs string) conflictSnapshot {
@@ -250,33 +249,26 @@ func captureConflictSnapshot(ctx context.Context, ws Workspace, abs string) conf
 	}
 	mode := info.Mode().String()
 	if !info.Mode().IsRegular() || info.Size() > conflictTrackerMaxHashBytes {
-		return conflictSnapshot{Exists: true, Mode: mode, Size: info.Size()}
+		return conflictSnapshot{Exists: true, Mode: mode}
 	}
 	data, err := ws.ReadFile(ctx, abs)
 	if err != nil {
-		return conflictSnapshot{Exists: true, Mode: mode, Size: info.Size()}
+		return conflictSnapshot{Exists: true, Mode: mode}
 	}
-	return conflictSnapshot{Exists: true, Known: true, Digest: proposalContentDigest(data), Mode: mode, Size: info.Size()}
+	return conflictSnapshot{Exists: true, Known: true, Digest: proposalContentDigest(data), Mode: mode}
 }
 
 func conflictSnapshotsEqual(a, b conflictSnapshot) bool {
-	if a.Exists != b.Exists {
+	// Unknown evidence is never a no-op: a large/special/unreadable path must
+	// surface as an unverified change rather than disappearing. The tracker
+	// renders that separately from a content-confirmed conflict.
+	if !a.Known || !b.Known || a.Exists != b.Exists {
 		return false
 	}
 	if !a.Exists {
 		return true
 	}
-	if a.Known && b.Known {
-		return a.Digest == b.Digest && a.Mode == b.Mode
-	}
-	if a.Known != b.Known {
-		return false
-	}
-	// Both snapshots are content-unknown (large or special file). Compare the
-	// observable shape so an idempotent rewrite is not reported as a change;
-	// this is evidence of no observed shape change, not proof of identical
-	// bytes.
-	return a.Size == b.Size && a.Mode == b.Mode
+	return a.Digest == b.Digest && a.Mode == b.Mode
 }
 
 // conflictWorkspaceRel maps an absolute workspace path to a display path. A
