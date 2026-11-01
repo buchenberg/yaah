@@ -54,7 +54,9 @@ import (
 // on this interface, not on *agentSession directly.
 type Session interface {
 	RunPrompt(ctx context.Context, prompt string) (string, bool, error)
-	Compact()
+	// Compact reports whether compaction started; false means a prompt
+	// run holds the session's run gate.
+	Compact() bool
 	Steer(string)
 	FollowUp(string)
 	SetView(agent.View)
@@ -106,9 +108,15 @@ type agentSession struct {
 	// cannot implement tools.DangerClassifier).
 	mcpToolNames map[string]bool
 	procMgr      *processpkg.Manager
-	messages     []types.Message
-	sessionID    string
-	msgIdx       int
+	// runMu serializes prompt runs. buildLoop snapshots s.messages/msgIdx
+	// at run start and the post-run swap writes them back, so two
+	// overlapping runs would each branch from a stale transcript and
+	// persist onto the same message indices (losing the in-flight turn
+	// and wedging the store). One prompt at a time per session.
+	runMu     sync.Mutex
+	messages  []types.Message
+	sessionID string
+	msgIdx    int
 	// turnBudgetExhausted mirrors the last Run's soft tool-turn cap
 	// outcome (tool-stripped final answer or hard iteration limit) so
 	// the ACP server can report max_turn_requests instead of end_turn.
@@ -377,8 +385,34 @@ func (s *agentSession) close() {
 	}
 }
 
-func (s *agentSession) Close()   { s.close() }
-func (s *agentSession) Compact() { s.compactContext() }
+func (s *agentSession) Close() { s.close() }
+
+// Compact attempts :compact under the session's run gate. It refuses rather
+// than blocking when a prompt run holds the gate, so synchronous frontends
+// (web, MCP serve) never hang behind an in-flight turn. It reports whether
+// compaction actually started.
+func (s *agentSession) Compact() bool {
+	if !s.runMu.TryLock() {
+		s.sendCtrl(&control.Status{Text: "cannot compact while a turn is running"})
+		return false
+	}
+	defer s.runMu.Unlock()
+	s.compactContext()
+	return true
+}
+
+// serialize runs fn while holding the session's run gate. Every operation
+// that reads a snapshot of the transcript and writes it back — prompt runs
+// (including headless serve prompts) — must go through here: the loop
+// builders snapshot s.messages/s.msgIdx at start and swap them back at the
+// end, so interleaved work would each branch from a stale transcript and
+// persist onto the same message indices. Compaction shares the same gate
+// through Compact's TryLock.
+func (s *agentSession) serialize(fn func()) {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+	fn()
+}
 
 // flushUsage persists the session's running usage counters to state.db
 // without ending the session. Caller must hold s.mu.
@@ -519,17 +553,30 @@ func (s *agentSession) systemPromptForMode(mode string) string {
 // HaltCurrentRun can invoke — that is what supervisor halt on the root
 // scope bridges to (adoption plan A3, gated by supervisor.halt_root).
 func (s *agentSession) RunPrompt(ctx context.Context, prompt string) (string, bool, error) {
-	runCtx, cancel := context.WithCancel(ctx)
-	s.mu.Lock()
-	s.runCancel = cancel
-	s.mu.Unlock()
-	defer func() {
+	var (
+		response string
+		streamed bool
+		err      error
+	)
+	// Serialize prompts on this session. A second run that starts while one
+	// is in flight would snapshot s.messages/msgIdx before the first run
+	// commits its turn: the model would not see what the running turn did,
+	// and both runs would write the same message indices. Queuing here makes
+	// any stray concurrent submit start from the committed transcript.
+	s.serialize(func() {
+		runCtx, cancel := context.WithCancel(ctx)
 		s.mu.Lock()
-		s.runCancel = nil
+		s.runCancel = cancel
 		s.mu.Unlock()
-		cancel()
-	}()
-	return s.runPrompt(runCtx, prompt)
+		defer func() {
+			s.mu.Lock()
+			s.runCancel = nil
+			s.mu.Unlock()
+			cancel()
+		}()
+		response, streamed, err = s.runPrompt(runCtx, prompt)
+	})
+	return response, streamed, err
 }
 
 // HaltCurrentRun cancels the currently running prompt, if one is

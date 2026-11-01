@@ -568,7 +568,10 @@ func (ws *webServer) handleAction(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 
 	case "compact":
-		ws.sess.Compact()
+		if !ws.sess.Compact() {
+			http.Error(w, "a turn is running", http.StatusConflict)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 
 	case "model":

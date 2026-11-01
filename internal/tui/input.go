@@ -45,7 +45,13 @@ func (t *App) globalInputCapture(ev *tcell.EventKey) *tcell.EventKey {
 		if t.App.GetFocus() != t.Input {
 			return ev
 		}
-		if t.isStreaming.Load() {
+		// Gate on the run, not on the token stream. isStreaming is only true
+		// between the first content token and the next flush, so it is false
+		// while the model is thinking, while tools run, and between
+		// iterations. Treating those windows as idle started a second
+		// concurrent RunPrompt on the same session, whose stale message
+		// snapshot lost the turn in flight and wedged message persistence.
+		if t.agentActive {
 			t.submitFollowUp()
 		} else {
 			t.submitInput()

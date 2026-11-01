@@ -64,6 +64,43 @@ func (p *SessionPersister) Persist(msg types.Message) {
 	if p.db == nil {
 		return
 	}
+	m := p.newMessage(msg, p.msgIdx)
+	// Title transition, mirroring the store's one-shot rule (user-role
+	// messages only, while the title column is empty). Fires here — during
+	// the prompt Run, while the loop's broker exists — even though the
+	// store row lands on the debouncer's flush.
+	if msg.Role == "user" && p.KnownTitle == "" {
+		if title := memory.DeriveSessionTitle(m.Content); title != "" {
+			p.KnownTitle = title
+			if p.OnTitle != nil {
+				p.OnTitle(title, m.Timestamp)
+			}
+		}
+	}
+	if err := p.writeMsg(m); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: db persist: %v\n", err)
+		// Fail-safe for a cursor left behind the store (an interrupted or
+		// overlapping run). Retrying the same occupied index would fail for
+		// every later message too, silently freezing the transcript, so
+		// resync to the persisted tail and retry once.
+		next, rerr := p.db.MaxMessageIdx(p.sessionID)
+		if rerr != nil || next < p.msgIdx {
+			return
+		}
+		p.msgIdx = next + 1
+		m = p.newMessage(msg, p.msgIdx)
+		if err := p.writeMsg(m); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: db persist after resync: %v\n", err)
+			return
+		}
+	}
+	p.msgIdx++
+}
+
+// newMessage projects a conversation message onto a store row at idx. Kept
+// separate from Persist so the stale-cursor recovery can rebuild the row
+// (the deterministic ID and position both depend on the index).
+func (p *SessionPersister) newMessage(msg types.Message, idx int) memory.Message {
 	content := msg.Content
 	if content == "" {
 		var parts []string
@@ -81,10 +118,10 @@ func (p *SessionPersister) Persist(msg types.Message) {
 	if msg.Role == "tool" {
 		toolName = msg.Name
 	}
-	m := memory.Message{
-		ID:                 messageID(p.sessionID, p.msgIdx, msg.Role, content, msg.ReasoningContent, toolName, msg.ToolCallID, toolCallsJSON),
+	return memory.Message{
+		ID:                 messageID(p.sessionID, idx, msg.Role, content, msg.ReasoningContent, toolName, msg.ToolCallID, toolCallsJSON),
 		SessionID:          p.sessionID,
-		Idx:                p.msgIdx,
+		Idx:                idx,
 		Role:               msg.Role,
 		Content:            content,
 		ReasoningContent:   msg.ReasoningContent,
@@ -96,23 +133,6 @@ func (p *SessionPersister) Persist(msg types.Message) {
 		TraceID:            p.traceID,
 		TurnID:             p.turnID,
 	}
-	// Title transition, mirroring the store's one-shot rule (user-role
-	// messages only, while the title column is empty). Fires here — during
-	// the prompt Run, while the loop's broker exists — even though the
-	// store row lands on the debouncer's flush.
-	if msg.Role == "user" && p.KnownTitle == "" {
-		if title := memory.DeriveSessionTitle(content); title != "" {
-			p.KnownTitle = title
-			if p.OnTitle != nil {
-				p.OnTitle(title, m.Timestamp)
-			}
-		}
-	}
-	if err := p.writeMsg(m); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: db persist: %v\n", err)
-		return
-	}
-	p.msgIdx++
 }
 
 // Flush drains any debounced writes.
@@ -132,8 +152,16 @@ func (p *SessionPersister) MsgIdx() int {
 	return p.msgIdx
 }
 
-// SetMsgIdx sets the message index (used when resuming a session).
+// SetMsgIdx sets the message index (used when resuming a session or
+// starting a run). A snapshot can be left behind the store by an
+// interrupted or overlapping run; reconcile upward against the persisted
+// tail so this run appends after it instead of colliding on every write.
 func (p *SessionPersister) SetMsgIdx(idx int) {
+	if p.db != nil {
+		if next, err := p.db.MaxMessageIdx(p.sessionID); err == nil && next >= idx {
+			idx = next + 1
+		}
+	}
 	p.msgIdx = idx
 }
 
