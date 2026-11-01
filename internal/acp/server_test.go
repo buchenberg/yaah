@@ -2194,9 +2194,13 @@ func TestServer_availableCommandsAndSkillPrompt(t *testing.T) {
 	if err := h.send("session/new", 2, fmt.Sprintf(`{"cwd":%s,"mcpServers":[]}`, cwd)); err != nil {
 		t.Fatal(err)
 	}
+	var created SessionNewResult
+	if err := json.Unmarshal(h.recv(t).Result, &created); err != nil {
+		t.Fatal(err)
+	}
 	update := h.recv(t)
 	if update.Method != "session/update" {
-		t.Fatalf("first session/new message = %+v, want available_commands_update", update)
+		t.Fatalf("post-session/new message = %+v, want available_commands_update", update)
 	}
 	var params struct {
 		Update AvailableCommandsUpdate `json:"update"`
@@ -2206,10 +2210,6 @@ func TestServer_availableCommandsAndSkillPrompt(t *testing.T) {
 	}
 	if params.Update.SessionUpdate != UpdateAvailableCommands || len(params.Update.AvailableCommands) != 1 || params.Update.AvailableCommands[0].Name != "tdd" {
 		t.Fatalf("commands update = %+v", params.Update)
-	}
-	var created SessionNewResult
-	if err := json.Unmarshal(h.recv(t).Result, &created); err != nil {
-		t.Fatal(err)
 	}
 	if err := h.send("session/prompt", 3, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"/tdd build a parser"}]}`, created.SessionID)); err != nil {
 		t.Fatal(err)

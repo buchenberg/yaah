@@ -166,7 +166,11 @@ func translateCommandPrompt(st *sessionState, prompt string) string {
 	if st == nil || !strings.HasPrefix(prompt, "/") {
 		return prompt
 	}
-	name, args, _ := strings.Cut(strings.TrimPrefix(prompt, "/"), " ")
+	trimmed := strings.TrimPrefix(prompt, "/")
+	name, args := trimmed, ""
+	if i := strings.IndexAny(trimmed, " \t\r\n"); i >= 0 {
+		name, args = trimmed[:i], trimmed[i:]
+	}
 	for _, command := range st.commands {
 		if command.Name != name {
 			continue
@@ -237,6 +241,9 @@ func (s *Server) handlePrompt(
 	// fresh view is built per turn; the id namespace must not reset).
 	caps := s.clientCaps
 	view := NewViewWithWrite(sendUpdate, p.SessionID)
+	view.EnableEscalations(func() string {
+		return "escalation-" + strconv.FormatInt(st.escalationSeq.Add(1), 10)
+	})
 	if capsSupportsCompaction(caps) {
 		view.EnableCompaction(func() string {
 			return "cmp-" + strconv.FormatInt(st.compactionSeq.Add(1), 10)

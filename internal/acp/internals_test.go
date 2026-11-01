@@ -267,3 +267,28 @@ type capturedUpdate struct {
 	sessionID string
 	update    any
 }
+
+func TestBatchHasRequest(t *testing.T) {
+	if batchHasRequest([]byte(`[{"jsonrpc":"2.0","method":"notifications/initialized"}]`)) {
+		t.Error("notification-only batch reported as request-bearing")
+	}
+	if !batchHasRequest([]byte(`[{"jsonrpc":"2.0","id":1,"method":"initialize"}]`)) {
+		t.Error("request batch not detected")
+	}
+	if !batchHasRequest([]byte(`not json`)) {
+		t.Error("malformed batch should be request-bearing for the error reply")
+	}
+}
+
+func TestTranslateCommandPromptDelimiters(t *testing.T) {
+	st := &sessionState{commands: []AvailableCommand{{Name: "demo"}}}
+	for _, prompt := range []string{"/demo\tbuild it", "/demo\nbuild it", "/demo build it"} {
+		got := translateCommandPrompt(st, prompt)
+		if !strings.Contains(got, "skill tool") || !strings.Contains(got, "build it") {
+			t.Errorf("translate(%q) = %q", prompt, got)
+		}
+	}
+	if got := translateCommandPrompt(st, "/unknown x"); got != "/unknown x" {
+		t.Errorf("unknown command changed to %q", got)
+	}
+}

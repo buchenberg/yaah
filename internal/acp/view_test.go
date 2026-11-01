@@ -497,3 +497,29 @@ func TestView_subAgentWorldSuffix(t *testing.T) {
 		t.Fatalf("end body = %q", end)
 	}
 }
+
+func TestView_escalationIDsUseSessionAllocatorAndSeverityStatus(t *testing.T) {
+	var seq int64
+	next := func() string {
+		seq++
+		return "escalation-" + strconv.FormatInt(seq, 10)
+	}
+	first := NewView()
+	first.EnableEscalations(next)
+	second := NewView()
+	second.EnableEscalations(next)
+	var got []any
+	first.SendTo("s", captureUpdate(&got), &agent.EscalationEvent{Severity: "info", SubAgentRole: "dev", Summary: "note"})
+	second.SendTo("s", captureUpdate(&got), &agent.EscalationEvent{Severity: "critical", SubAgentRole: "dev", Summary: "stop"})
+	a := decodeUpdate(t, got[0])
+	b := decodeUpdate(t, got[1])
+	if a["toolCallId"] == b["toolCallId"] {
+		t.Fatalf("escalation ids collided across turns: %v", a["toolCallId"])
+	}
+	if a["status"] != StatusCompleted {
+		t.Errorf("info status = %v, want completed", a["status"])
+	}
+	if b["status"] != StatusFailed {
+		t.Errorf("critical status = %v, want failed", b["status"])
+	}
+}

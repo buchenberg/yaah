@@ -190,13 +190,13 @@ func (s *Server) handleSessionNew(ctx context.Context, msg Message, sendUpdate u
 		respErr(msg.ID, codeInvalidParams, "create session: "+err.Error())
 		return
 	}
-	s.refreshAvailableCommands(st, sendUpdate)
 	respOK(msg.ID, SessionNewResult{
 		SessionID:     st.id,
 		ConfigOptions: buildModelConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName()),
 		Modes:         sessionModeState(st.sess.Mode()),
 		Meta:          worldMetaOf(st.sess.WorldStatus()),
 	})
+	s.refreshAvailableCommands(st, sendUpdate)
 }
 
 // syntheticAssistantText is the content the loop persister stores for
@@ -352,12 +352,12 @@ func (s *Server) handleSessionLoad(
 			return
 		}
 		s.replayConversation(st, sendUpdate)
-		s.refreshAvailableCommands(st, sendUpdate)
 		respOK(msg.ID, SessionLoadResult{
 			ConfigOptions: s.loadConfigOptions(ctx, st),
 			Modes:         sessionModeState(st.sess.Mode()),
 			Meta:          worldMetaOf(st.sess.WorldStatus()),
 		})
+		s.refreshAvailableCommands(st, sendUpdate)
 		return
 	}
 
@@ -371,12 +371,12 @@ func (s *Server) handleSessionLoad(
 		return
 	}
 	s.replayConversation(st, sendUpdate)
-	s.refreshAvailableCommands(st, sendUpdate)
 	respOK(msg.ID, SessionLoadResult{
 		ConfigOptions: s.loadConfigOptions(ctx, st),
 		Modes:         sessionModeState(st.sess.Mode()),
 		Meta:          worldMetaOf(st.sess.WorldStatus()),
 	})
+	s.refreshAvailableCommands(st, sendUpdate)
 }
 
 // loadConfigOptions renders the config options a session/load response
@@ -556,8 +556,8 @@ func (s *Server) handleSessionResume(
 				fmt.Sprintf("session %q was created with cwd %q, requested %q", st.id, st.cwd, cwd))
 			return
 		}
-		s.refreshAvailableCommands(st, sendUpdate)
 		respOK(msg.ID, SessionResumeResult{Modes: sessionModeState(st.sess.Mode())})
+		s.refreshAvailableCommands(st, sendUpdate)
 		return
 	}
 
@@ -570,8 +570,8 @@ func (s *Server) handleSessionResume(
 		respErr(msg.ID, codeInvalidParams, err.Error())
 		return
 	}
-	s.refreshAvailableCommands(st, sendUpdate)
 	respOK(msg.ID, SessionResumeResult{Modes: sessionModeState(st.sess.Mode())})
+	s.refreshAvailableCommands(st, sendUpdate)
 }
 
 // retireSession is the shared teardown of session/close and session/

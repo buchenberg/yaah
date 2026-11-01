@@ -35,8 +35,11 @@ type View struct {
 	// compaction, if any, so the done event patches the card the start
 	// event created.
 	compactionOpen map[string]string
-	// escalationSeq allocates client-visible ids for escalation rows.
+	// escalationSeq allocates client-visible ids for escalation rows when
+	// no session-lifetime allocator is wired (tests/direct use).
 	escalationSeq atomic.Int64
+	// escalationNext, when set, allocates session-scoped escalation ids.
+	escalationNext func() string
 }
 
 // NewView creates a View ready to translate agent events.
@@ -55,6 +58,23 @@ func (v *View) EnableCompaction(next func() string) {
 	v.compaction = true
 	v.compactionNext = next
 	v.mu.Unlock()
+}
+
+// EnableEscalations wires a session-lifetime escalation id allocator.
+func (v *View) EnableEscalations(next func() string) {
+	v.mu.Lock()
+	v.escalationNext = next
+	v.mu.Unlock()
+}
+
+func (v *View) escalationID() string {
+	v.mu.Lock()
+	next := v.escalationNext
+	v.mu.Unlock()
+	if next != nil {
+		return next()
+	}
+	return "escalation-" + strconv.FormatInt(v.escalationSeq.Add(1), 10)
 }
 
 func (v *View) compactionEnabled() bool {
@@ -205,7 +225,7 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 		title := text("Sub-agent %s: %s", label, truncate(e.Prompt, 80))
 		send(sessionID, ToolCallUpdate{
 			SessionUpdate: UpdateToolCall,
-			ToolCallID:    "subagent:" + e.SubAgentID,
+			ToolCallID:    subAgentCallID(e.SubAgentID, e.Role, e.Prompt),
 			Title:         title,
 			Name:          "sub-agent",
 			Kind:          KindOther,
@@ -228,7 +248,7 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 		body += worldChunkSuffix(e.World, e.WorldDegraded, e.WorldReason)
 		send(sessionID, ToolCallUpdate{
 			SessionUpdate: UpdateToolCallUpdate,
-			ToolCallID:    "subagent:" + e.SubAgentID,
+			ToolCallID:    subAgentCallID(e.SubAgentID, e.Role, e.Prompt),
 			Title:         text("Sub-agent %s: %s", label, truncate(e.Prompt, 80)),
 			Name:          "sub-agent",
 			Kind:          KindOther,
@@ -236,7 +256,11 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 			Content:       []UpdateContent{{Type: "content", Content: &ContentBlock{Type: "text", Text: body}}},
 		})
 	case *agent.EscalationEvent:
-		id := "escalation-" + strconv.FormatInt(v.escalationSeq.Add(1), 10)
+		id := v.escalationID()
+		status := StatusCompleted
+		if e.Severity == "blocker" || e.Severity == "critical" {
+			status = StatusFailed
+		}
 		body := text("severity: %s\nrole: %s\nsummary: %s", e.Severity, e.SubAgentRole, e.Summary)
 		if e.Detail != "" {
 			body += "\ndetail:\n" + e.Detail
@@ -250,7 +274,7 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 			Title:         text("ESCALATION [%s] %s: %s", e.Severity, e.SubAgentRole, truncate(e.Summary, 80)),
 			Name:          "escalation",
 			Kind:          KindThink,
-			Status:        StatusFailed,
+			Status:        status,
 			Content:       []UpdateContent{{Type: "content", Content: &ContentBlock{Type: "text", Text: body}}},
 		})
 	case *agent.CompactionStartedEvent:
@@ -351,6 +375,14 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 	}
 }
 
+// subAgentCallID keeps start/end correlated even when an event lacks an id.
+func subAgentCallID(id, role, prompt string) string {
+	if id == "" {
+		id = role + ":" + truncate(prompt, 40)
+	}
+	return "subagent:" + id
+}
+
 // ViewWithWrite wraps View and sends session/update notifications
 // for each event, tagging them with the active session ID.
 type ViewWithWrite struct {
@@ -379,6 +411,11 @@ func (v *ViewWithWrite) HandleEvent(evt agent.Event) {
 // per prompt turn when the connection advertised session.compaction.
 func (v *ViewWithWrite) EnableCompaction(next func() string) {
 	v.av.EnableCompaction(next)
+}
+
+// EnableEscalations wires the session-scoped escalation id allocator.
+func (v *ViewWithWrite) EnableEscalations(next func() string) {
+	v.av.EnableEscalations(next)
 }
 
 // Announce marks a tool call as created by a permission request.

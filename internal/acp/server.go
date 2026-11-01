@@ -219,6 +219,9 @@ type sessionState struct {
 	// is built for every prompt turn and the id namespace must not
 	// reset (a repeated compactionId patches the earlier card).
 	compactionSeq atomic.Int64
+	// escalationSeq is session-scoped for the same reason: a fresh View per
+	// turn must not reuse escalation-1 across turns.
+	escalationSeq atomic.Int64
 }
 
 // runningPrompt tracks the single in-flight turn. cancel aborts it;
@@ -405,6 +408,28 @@ func (s *Server) stopRun() {
 	}
 }
 
+// batchHasRequest reports whether a JSON-RPC batch contains any request
+// (an entry with a non-empty id). Malformed batches are treated as
+// request-bearing so the client sees an error.
+func batchHasRequest(raw []byte) bool {
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return true
+	}
+	for _, item := range items {
+		var entry struct {
+			ID json.RawMessage `json:"id"`
+		}
+		if err := json.Unmarshal(item, &entry); err != nil {
+			return true
+		}
+		if len(entry.ID) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // dispatch reads and executes protocol messages until EOF.
 func (s *Server) dispatch(
 	dispatchCtx context.Context,
@@ -430,7 +455,12 @@ func (s *Server) dispatch(
 		}
 
 		if strings.HasPrefix(strings.TrimSpace(line), "[") {
-			respErr(json.RawMessage("null"), codeInvalidRequest, "JSON-RPC batches are not supported by this ACP server")
+			// Batches are not supported. A request-bearing batch gets an
+			// error; a notification-only batch gets no response per
+			// JSON-RPC 2.0.
+			if batchHasRequest([]byte(line)) {
+				respErr(json.RawMessage("null"), codeInvalidRequest, "JSON-RPC batches are not supported by this ACP server")
+			}
 			continue
 		}
 
