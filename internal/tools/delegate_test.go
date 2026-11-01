@@ -167,6 +167,43 @@ func TestParseSubAgentOutput_WithError(t *testing.T) {
 	}
 }
 
+// TestExecute_BackgroundCarriesConflictDispatch pins the cross-turn handoff:
+// the job context is rooted at the session, so the conflict dispatch must be
+// re-seeded explicitly or late writes lose their identity.
+func TestExecute_BackgroundCarriesConflictDispatch(t *testing.T) {
+	mgr := jobs.NewBackgroundJobs()
+	defer mgr.Close()
+
+	type seen struct {
+		ok  bool
+		lbl string
+	}
+	got := make(chan seen, 1)
+	tt := &DelegateTool{
+		RoleNames:      []string{"analyst"},
+		BackgroundJobs: mgr,
+		Runner: func(ctx context.Context, _ string, _ SubAgentParams) (string, error) {
+			d, ok := conflictDispatchFrom(ctx)
+			got <- seen{ok: ok, lbl: d.Label}
+			return "ok", nil
+		},
+	}
+	if _, err := tt.Execute(context.Background(), `{"description":"bg","prompt":"p","role":"analyst","background":true}`); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	select {
+	case s := <-got:
+		if !s.ok {
+			t.Fatal("background runner lost the conflict dispatch context")
+		}
+		if !strings.Contains(s.lbl, "analyst") || !strings.Contains(s.lbl, "bg") {
+			t.Errorf("dispatch label = %q, want role/description", s.lbl)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("background runner did not start")
+	}
+}
+
 // TestExecute_BackgroundViaManager verifies the background:true path
 // dispatches through BackgroundJobs, returns immediately with a job id,
 // and the runner is invoked.

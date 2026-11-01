@@ -94,3 +94,70 @@ func TestConflictTracker_MixedRoleLabels(t *testing.T) {
 		t.Errorf("report should contain the first role label, got: %s", report)
 	}
 }
+
+func TestConflictTracker_IdenticalEvidenceIsNotConflict(t *testing.T) {
+	ct := &ConflictTracker{}
+	ct.RecordChange(FileRecord{
+		DispatchID: "a", SubAgentLabel: "worker a", Lane: ConflictLaneShared,
+		FilePath: "src/a.go", ToolName: "write", Known: true,
+		BeforeExists: true, AfterExists: true, BeforeDigest: "before", AfterDigest: "same", AfterMode: "-rw-r--r--",
+	})
+	ct.RecordChange(FileRecord{
+		DispatchID: "b", SubAgentLabel: "worker b", Lane: ConflictLaneShared,
+		FilePath: "src/a.go", ToolName: "write", Known: true,
+		BeforeExists: true, AfterExists: true, BeforeDigest: "before", AfterDigest: "same", AfterMode: "-rw-r--r--",
+	})
+	if got := ct.DetectAndReset(); got != "" {
+		t.Fatalf("identical writes must not conflict, got:\n%s", got)
+	}
+}
+
+func TestConflictTracker_DivergentEvidenceConflict(t *testing.T) {
+	ct := &ConflictTracker{}
+	for _, rec := range []FileRecord{
+		{DispatchID: "a", SubAgentLabel: "worker a", FilePath: "src/./a.go", ToolName: "write", Known: true, AfterExists: true, AfterDigest: "one", AfterMode: "-rw-r--r--"},
+		{DispatchID: "b", SubAgentLabel: "worker b", FilePath: "src/a.go", ToolName: "edit", Known: true, AfterExists: true, AfterDigest: "two", AfterMode: "-rw-r--r--"},
+	} {
+		ct.RecordChange(rec)
+	}
+	report := ct.DetectAndResetReport()
+	if report == nil || len(report.Entries) != 1 {
+		t.Fatalf("report = %+v, want one entry", report)
+	}
+	entry := report.Entries[0]
+	if entry.Kind != ConflictKindShared || entry.Path != "src/a.go" {
+		t.Errorf("entry = %+v, want shared src/a.go", entry)
+	}
+	if got := report.Render(); !strings.Contains(got, "CONFLICT:") || !strings.Contains(got, "src/a.go") {
+		t.Errorf("render = %q, want shared conflict for src/a.go", got)
+	}
+}
+
+func TestConflictTracker_RetainedOverlapIsSpeculative(t *testing.T) {
+	ct := &ConflictTracker{}
+	for _, rec := range []FileRecord{
+		{DispatchID: "a", SubAgentLabel: "worker a", Lane: ConflictLaneRetained, FilePath: "out.txt", ToolName: "write", Known: true, AfterExists: true, AfterDigest: "one", AfterMode: "-rw-r--r--"},
+		{DispatchID: "b", SubAgentLabel: "worker b", Lane: ConflictLaneRetained, FilePath: "out.txt", ToolName: "write", Known: true, AfterExists: true, AfterDigest: "two", AfterMode: "-rw-r--r--"},
+	} {
+		ct.RecordChange(rec)
+	}
+	report := ct.DetectAndResetReport()
+	if report == nil || len(report.Entries) != 1 || report.Entries[0].Kind != ConflictKindRetained {
+		t.Fatalf("report = %+v, want retained speculative overlap", report)
+	}
+	if got := report.Render(); !strings.Contains(got, "SPECULATIVE OVERLAP") || strings.Contains(got, "CONFLICT:") {
+		t.Errorf("render = %q, want only a speculative warning", got)
+	}
+}
+
+func TestConflictTracker_UnknownShellMutationIsReported(t *testing.T) {
+	ct := &ConflictTracker{}
+	ct.RecordUnknown(ConflictDispatch{ID: "a", Label: "worker a", Lane: ConflictLaneShared}, "bash", "may mutate: echo hi > out.txt")
+	report := ct.DetectAndResetReport()
+	if report == nil || len(report.Unknown) != 1 {
+		t.Fatalf("report = %+v, want one unknown mutation", report)
+	}
+	if got := report.Render(); !strings.Contains(got, "UNKNOWN MUTATIONS") || !strings.Contains(got, "worker a") {
+		t.Errorf("render = %q, want unknown mutation warning", got)
+	}
+}

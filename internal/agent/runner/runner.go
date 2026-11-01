@@ -1307,9 +1307,11 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, ro
 	}
 
 	destructiveTools := map[string]bool{
-		"write":  true,
-		"edit":   true,
-		"delete": true,
+		"write":      true,
+		"edit":       true,
+		"delete":     true,
+		"bash":       true,
+		"powershell": true,
 	}
 
 	registerLeaf := func(reg *tools.Registry, name string) bool {

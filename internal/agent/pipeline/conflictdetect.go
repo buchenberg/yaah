@@ -2,7 +2,6 @@ package pipeline
 
 import (
 	"context"
-	"strings"
 
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
@@ -54,11 +53,12 @@ func (m *ConflictDetectMiddleware) PostTool(ctx context.Context, results []ToolR
 	if m.onCheck != nil {
 		m.onCheck(ctx, step.Model, step.Iteration)
 	}
-	report := m.tracker.DetectAndReset()
-	if report == "" {
+	typed := m.tracker.DetectAndResetReport()
+	if typed == nil {
 		return step, nil
 	}
-	fileCount := strings.Count(report, "File: ")
+	report := typed.Render()
+	fileCount := typed.FileCount()
 	if m.onFound != nil {
 		m.onFound(ctx, step.Model, step.Iteration, report, fileCount)
 	}

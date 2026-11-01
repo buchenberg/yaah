@@ -149,7 +149,7 @@ Each tool executed produces a tool result message:
 
 ### 5c. Conflict detection (`pipeline/conflictdetect.go`)
 
-When more than one sub-agent touches the same file, a user message is injected:
+When more than one sub-agent is shown to have produced divergent content on the same path (or a shell call leaves an unknown mutation), a user message is injected. The report is rendered from the typed `ConflictReport`; identical writes are not conflicts, and retained-world overlaps are labeled speculative:
 
 ```go
 conflictMsg := types.UserMsg(report)
