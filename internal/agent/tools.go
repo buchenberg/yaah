@@ -20,9 +20,10 @@ func (l *Loop) buildToolsForLevel() []types.ToolDef {
 	}
 }
 
-// readOnlyToolNames is the plan-mode surface: inspection and planning only.
-// Shell, edit, write, patch, delete, replace, and delegation are absent so a
-// plan-mode turn cannot mutate the workspace or widen its own authority.
+// readOnlyToolNames is the plan-mode surface: inspection only. Shell, edit,
+// write, patch, delete, replace, plan (which writes .agents/plans), and
+// delegation are absent so a plan-mode turn cannot mutate the workspace or
+// widen its own authority.
 var readOnlyToolNames = map[string]bool{
 	"read":       true,
 	"grep":       true,
@@ -33,7 +34,13 @@ var readOnlyToolNames = map[string]bool{
 	"calculate":  true,
 	"diff":       true,
 	"question":   true,
-	"plan":       true,
+}
+
+// allowsTool enforces the advertised tool level at execution time. Hiding a
+// tool definition is not enough: dialect recovery can synthesize calls the
+// model never saw in the tool array.
+func (l *Loop) allowsTool(name string) bool {
+	return l.Config.ToolsLevel != ReadOnlyTools || readOnlyToolNames[name]
 }
 
 func (l *Loop) readOnlyTools() []types.ToolDef {

@@ -92,13 +92,14 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 	})
 
 	start := time.Now()
+	allowed := l.allowsTool(d.call.Function.Name)
 
 	runCtx := ctx
 	var toolSpan trace.Span
 	if l.Config.OtelEnabled {
-		if d.isDelegate && !d.isBackground {
+		if allowed && d.isDelegate && !d.isBackground {
 			runCtx, toolSpan = observability.StartSubAgent(ctx, d.taskRole, d.taskPrompt)
-		} else if d.isDelegate && d.isBackground {
+		} else if allowed && d.isDelegate && d.isBackground {
 			// A short span for the dispatch only; the background job
 			// owns its own long-lived sub-agent span (created by the
 			// BackgroundJobs manager as a child of this).
@@ -108,7 +109,7 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 		}
 	}
 
-	if d.isDelegate && !d.isBackground {
+	if allowed && d.isDelegate && !d.isBackground {
 		runCtx = d.setupSubAgent(runCtx)
 		// The child accumulates usage on runCtx; fold it into the loop's
 		// totals and the session's sub-agent share once the call returns.
@@ -121,9 +122,15 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 
 	var supervisionMeta map[string]any
 	runCtx = tools.WithSupervisionMeta(runCtx, &supervisionMeta)
-	res, err := l.Registry.Execute(runCtx, d.call.Function.Name, d.call.Function.Arguments)
+	var res string
+	var err error
+	if allowed {
+		res, err = l.Registry.Execute(runCtx, d.call.Function.Name, d.call.Function.Arguments)
+	} else {
+		err = fmt.Errorf("tool %q is not available in plan mode", d.call.Function.Name)
+	}
 
-	if d.isDelegate && !d.isBackground {
+	if allowed && d.isDelegate && !d.isBackground {
 		// Fallback for runners that never fired the start notifier: emit
 		// the start event with the final model so views still see the
 		// role/model pairing (arrives late but complete). Background
@@ -141,7 +148,7 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 	// result is truncated for display. Background dispatch returns a
 	// {"status":"running"} placeholder with no payload to parse.
 	var escalation *tools.Escalation
-	if d.isDelegate && !d.isBackground && l.broker != nil {
+	if allowed && d.isDelegate && !d.isBackground && l.broker != nil {
 		if output := tools.ParseSubAgentOutput(res, err); output.Escalation != nil {
 			escalation = output.Escalation
 		}
@@ -152,12 +159,12 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 	// payload so the child's partial output survives and surface the
 	// stuck classification alongside it (yaah-1ep).
 	stuckPartial := ""
-	if d.isDelegate && !d.isBackground && d.watchdogActive && ctx.Err() == nil && runCtx.Err() == context.Canceled {
+	if allowed && d.isDelegate && !d.isBackground && d.watchdogActive && ctx.Err() == nil && runCtx.Err() == context.Canceled {
 		err = tools.ErrStuckChild
 		stuckPartial = l.truncateToolResult(res)
 	}
 	if l.Config.OtelEnabled && toolSpan != nil {
-		if d.isDelegate && !d.isBackground {
+		if allowed && d.isDelegate && !d.isBackground {
 			observability.FinishSubAgent(toolSpan, err)
 		} else {
 			observability.FinishTool(toolSpan, res, err)
@@ -195,7 +202,7 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 		l.broker.PublishMustDeliver(evt)
 	}
 
-	if d.isDelegate && !d.isBackground && l.broker != nil {
+	if allowed && d.isDelegate && !d.isBackground && l.broker != nil {
 		d.emitSubAgentEnd(res, errStr, duration)
 		if escalation != nil {
 			l.broker.PublishMustDeliver(&EscalationEvent{

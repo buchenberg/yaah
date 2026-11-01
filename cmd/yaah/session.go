@@ -495,15 +495,15 @@ func (s *agentSession) SetMode(mode string) error {
 	return nil
 }
 
-func (s *agentSession) toolsLevelForMode() agent.ToolsLevel {
-	if s.Mode() == acpModePlan {
+func (s *agentSession) toolsLevelForMode(mode string) agent.ToolsLevel {
+	if mode == acpModePlan {
 		return agent.ReadOnlyTools
 	}
 	return agent.FullTools
 }
 
-func (s *agentSession) systemPromptForMode() string {
-	if s.Mode() != acpModePlan {
+func (s *agentSession) systemPromptForMode(mode string) string {
+	if mode != acpModePlan {
 		return s.mainPrompt
 	}
 	return prompts.InjectAfterIdentity(s.mainPrompt, []string{

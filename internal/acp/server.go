@@ -1576,7 +1576,11 @@ func renderPrompt(blocks []ContentBlock) (string, error) {
 		case "image", "audio":
 			return "", fmt.Errorf("%s content blocks are not supported by this agent", b.Type)
 		default:
-			return "", fmt.Errorf("unsupported content block type %q", b.Type)
+			// Unknown block types are preserved as text for forward
+			// compatibility: a newer ACP client may add a type this server
+			// does not model, and dropping or rejecting it would be worse
+			// than showing the reference.
+			parts = append(parts, fmt.Sprintf("[unsupported content block: %s]", b.Type))
 		}
 	}
 	var out strings.Builder

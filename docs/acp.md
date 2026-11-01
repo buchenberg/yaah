@@ -92,7 +92,7 @@ relative cwd is rejected with invalid params (`-32602`); a second prompt on
 a session whose turn is still in flight is rejected busy (`-32002`),
 as is a `session/load` for a live id while its prompt runs — both retry
 after the turn ends. New sessions start in **build** mode and advertise
-`modes: {currentModeId: "build", availableModes: [build, plan]}`;
+`modes: {currentModeId: "build", availableModes: [{id: "build", ...}, {id: "plan", ...}]}`;
 `session/set_mode` switches the live attachment, rejects unknown ids with
 invalid params, and emits `current_mode_update`. Plan mode withholds the
 mutating tool set and injects a planning directive; an in-flight turn keeps
@@ -355,8 +355,9 @@ Or the generic stdio client loop (any language; one JSON object per line):
 - **Context/content blocks** — text, embedded resources, and resource links
   are accepted on prompts; image and audio blocks are rejected with
   invalid params because yaah's provider message model has no multimodal
-  content parts. Outbound tool-call content is text plus `diff` blocks for
-  `write`/`edit` tool calls.
+  content parts. Unrecognized block types are preserved as inline
+  `[unsupported content block: …]` text for forward compatibility. Outbound
+  tool-call content is text plus `diff` blocks for `write`/`edit` tool calls.
 - **`fs/` and `terminal/` client capabilities** — a read-only terminal and
   file system access that ACP allows agents to request from clients are
   not used; yaah's tools act in the session cwd only.

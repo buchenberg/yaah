@@ -1161,13 +1161,21 @@ func TestServer_promptRelatedSetModeResponsive(t *testing.T) {
 	}
 	<-started
 
-	// This set_mode must be answered while the prompt is still held open.
-	if err := h.send("session/set_mode", 4, fmt.Sprintf(`{"sessionId":%q,"modeId":"build"}`, sid)); err != nil {
+	// This real mode switch must be answered while the prompt is still held
+	// open; the update notification precedes the response.
+	if err := h.send("session/set_mode", 4, fmt.Sprintf(`{"sessionId":%q,"modeId":"plan"}`, sid)); err != nil {
 		t.Fatal(err)
 	}
-	msg := h.recv(t)
-	if !(msg.Error == nil && len(msg.ID) > 0 && strings.Contains(string(msg.ID), "4")) {
-		t.Fatalf("expected set_mode ack id=4 while prompt in flight, got %+v", msg)
+	update := h.recv(t)
+	if update.Method != "session/update" {
+		t.Fatalf("expected current_mode_update while prompt in flight, got %+v", update)
+	}
+	ack := h.recv(t)
+	if !(ack.Error == nil && len(ack.ID) > 0 && strings.Contains(string(ack.ID), "4")) {
+		t.Fatalf("expected set_mode ack id=4 while prompt in flight, got %+v", ack)
+	}
+	if sess.Mode() != SessionModePlan {
+		t.Fatalf("mode = %q, want plan", sess.Mode())
 	}
 	close(release)
 	h.recv(t) // the prompt response, eventually
@@ -1534,6 +1542,28 @@ func TestServer_multimodalPromptBlocksRejected(t *testing.T) {
 				t.Errorf("error %q does not name %s", msg.Error.Message, blockType)
 			}
 		})
+	}
+}
+
+func TestServer_unknownPromptBlockPreserved(t *testing.T) {
+	var got string
+	sess := &fakeSession{id: "sess-test"}
+	sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
+		got = prompt
+		return "ok", false, nil
+	}
+	h := newACPHarness(t, sess)
+	initialize(t, h)
+	sid := newSession(t, h)
+	params := fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"future_block","text":"x"},{"type":"text","text":"explain"}]}`, sid)
+	if err := h.send("session/prompt", 6, params); err != nil {
+		t.Fatal(err)
+	}
+	if msg := h.recv(t); msg.Error != nil {
+		t.Fatalf("unknown block rejected: %+v", msg.Error)
+	}
+	if !strings.Contains(got, "unsupported content block: future_block") || !strings.Contains(got, "explain") {
+		t.Fatalf("prompt = %q, want forward-compatible label and text", got)
 	}
 }
 
