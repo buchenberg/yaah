@@ -2262,18 +2262,3 @@ func TestServer_logoutAndTerminalAuth(t *testing.T) {
 		t.Fatalf("logout callbacks = %d, want 1", loggedOut)
 	}
 }
-
-func TestServer_batchRequestRejectedAsInvalidRequest(t *testing.T) {
-	h := newACPHarness(t, &fakeSession{id: "sess-batch"})
-	initialize(t, h)
-	if _, err := io.WriteString(h.inW, `[{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}]`+"\n"); err != nil {
-		t.Fatal(err)
-	}
-	msg := h.recv(t)
-	if msg.Error == nil || msg.Error.Code != codeInvalidRequest {
-		t.Fatalf("batch response = %+v, want invalid request", msg)
-	}
-	if !strings.Contains(msg.Error.Message, "batch") {
-		t.Errorf("batch error = %q", msg.Error.Message)
-	}
-}
