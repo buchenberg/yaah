@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.128.0](https://github.com/buchenberg/yaah/compare/v0.127.1...v0.128.0) (2026-11-01)
+
+
+### Features
+
+* symmetric mode directive + in-band mode switch notices ([b54d763](https://github.com/buchenberg/yaah/commit/b54d7635003e7a46f467ccaa8881f767633c780f))
+
+
+### Bug Fixes
+
+* **acp:** use platform shell in late-terminal-create test ([e46953d](https://github.com/buchenberg/yaah/commit/e46953d986049a6f2022b67f13f31e0ed1f8df7a))
+
 ## [0.127.1](https://github.com/buchenberg/yaah/compare/v0.127.0...v0.127.1) (2026-11-01)
 
 
