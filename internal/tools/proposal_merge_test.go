@@ -63,6 +63,41 @@ func TestProposalTool_ThreeWayApplyMergesNonOverlappingHunks(t *testing.T) {
 	}
 }
 
+func TestGitMergeFile_MultipleConflictHunks(t *testing.T) {
+	base := []byte("a\nb\nc\nd\ne\n")
+	current := []byte("a1\nb\nc\nd\ne1\n")
+	proposed := []byte("a2\nb\nc\nd\ne2\n")
+	merged, ok, err := gitMergeFile(context.Background(), base, current, proposed)
+	if err != nil {
+		t.Fatalf("gitMergeFile: %v", err)
+	}
+	if ok || merged != nil {
+		t.Fatal("two conflict hunks must fail closed")
+	}
+}
+
+func TestProposalModeFromString(t *testing.T) {
+	if got := proposalModeFromString("-rwxr-xr-x"); got != 0o755 {
+		t.Errorf("mode = %04o, want 0755", got)
+	}
+	if got := proposalModeFromString("-rw-------"); got != 0o600 {
+		t.Errorf("mode = %04o, want 0600", got)
+	}
+}
+
+func TestGitTreePathSizeDistinguishesMissingAndInvalid(t *testing.T) {
+	_, repo, _ := newSessionFixtures(t)
+	if _, ok, err := gitTreePathSize(context.Background(), repo, "HEAD", "README.md"); err != nil || !ok {
+		t.Fatalf("existing path: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := gitTreePathSize(context.Background(), repo, "HEAD", "does-not-exist"); err != nil || ok {
+		t.Fatalf("missing path: ok=%v err=%v", ok, err)
+	}
+	if _, _, err := gitTreePathSize(context.Background(), repo, "not-a-tree", "README.md"); err == nil {
+		t.Fatal("invalid tree must be an error, not a missing path")
+	}
+}
+
 func TestProposalTool_ThreeWayApplyFailsClosedOnConflict(t *testing.T) {
 	fx, repo, rootID := newSessionFixtures(t)
 	writeTestFile(t, repo, "README.md", "line1\nline2\nline3\n")

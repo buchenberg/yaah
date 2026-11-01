@@ -111,6 +111,11 @@ type proposalConflictDetail struct {
 	Note       string `json:"note,omitempty"`
 }
 
+type proposalBaseView struct {
+	text string
+	note string
+}
+
 // proposalApplyConflict is the settlement refusal that carries enough data for
 // ProposalTool to return a structured conflict envelope. It is an error because
 // a direct registry caller must not mistake a refused apply for success.
@@ -288,6 +293,7 @@ func attachProposalConflictDetails(ctx context.Context, conflicts []proposalConf
 	for _, analysis := range analyses {
 		byID[analysis.proposal.id] = analysis.proposal
 	}
+	baseCache := make(map[string]proposalBaseView)
 	for i := range conflicts {
 		if conflicts[i].Kind == proposalConflictSamePathIdentical {
 			continue
@@ -299,7 +305,7 @@ func attachProposalConflictDetails(ctx context.Context, conflicts []proposalConf
 				continue
 			}
 			for _, path := range conflicts[i].Paths {
-				base, baseNote := p.baseContentView(ctx, path)
+				base, baseNote := p.baseContentViewCached(ctx, path, baseCache)
 				current, currentNote := p.parentCurrentContentView(ctx, path)
 				proposed, proposedNote := p.proposalContentView(ctx, path)
 				note := strings.Join(nonEmpty([]string{baseNote, currentNote, proposedNote}), "; ")
@@ -328,7 +334,7 @@ func nonEmpty(values []string) []string {
 	return out
 }
 
-func (p *retainedProposal) baseContentView(ctx context.Context, rel string) (string, string) {
+func (p *retainedProposal) baseContentViewCached(ctx context.Context, rel string, cache map[string]proposalBaseView) (string, string) {
 	if p.repoPath == "" {
 		return "", "base unavailable: no repository path"
 	}
@@ -349,23 +355,34 @@ func (p *retainedProposal) baseContentView(ctx context.Context, rel string) (str
 	if tree == "" {
 		return "", "base unavailable: no tree revision"
 	}
-	object := tree + ":" + rel
-	size, ok, err := gitObjectSize(ctx, p.repoPath, object)
-	if err != nil {
-		return "", "base unavailable"
+	key := p.repoPath + "\x00" + tree + "\x00" + rel
+	if cache != nil {
+		if cached, ok := cache[key]; ok {
+			return cached.text, cached.note
+		}
 	}
-	if !ok {
-		return "", "base missing"
+	view := proposalBaseView{}
+	size, ok, err := gitTreePathSize(ctx, p.repoPath, tree, rel)
+	switch {
+	case err != nil:
+		view.note = "base unavailable"
+	case !ok:
+		view.note = "base missing"
+	case size > proposalConflictViewMaxBytes:
+		view.note = "base too large to excerpt"
+	default:
+		cmd := exec.CommandContext(ctx, "git", "-C", p.repoPath, "show", tree+":"+rel)
+		data, err := cmd.Output()
+		if err != nil {
+			view.note = "base unavailable"
+		} else {
+			view.text, view.note = proposalViewExcerpt(data)
+		}
 	}
-	if size > proposalConflictViewMaxBytes {
-		return "", "base too large to excerpt"
+	if cache != nil {
+		cache[key] = view
 	}
-	cmd := exec.CommandContext(ctx, "git", "-C", p.repoPath, "show", object)
-	data, err := cmd.Output()
-	if err != nil {
-		return "", "base unavailable"
-	}
-	return proposalViewExcerpt(data)
+	return view.text, view.note
 }
 
 func (p *retainedProposal) parentCurrentContentView(ctx context.Context, rel string) (string, string) {
@@ -400,6 +417,12 @@ func (p *retainedProposal) proposalContentView(ctx context.Context, rel string) 
 	}
 	if p.output == nil || p.workdir == "" {
 		return "", "proposed unavailable"
+	}
+	for _, change := range p.output.Changes() {
+		if pathKey(normalizeProposalPath(change.Path)) == pathKey(rel) &&
+			normalizeProposalKind(change.Kind) == "delete" {
+			return "", "proposed: deleted"
+		}
 	}
 	pv := NewPathValidator(p.workdir, false, nil)
 	pv.WorkDir = pv.WorkspaceRoot
@@ -437,7 +460,11 @@ func readWorkspaceExcerpt(ctx context.Context, ws Workspace, rel string) ([]byte
 
 func proposalViewFrom(data []byte, exists bool, note string) (string, string) {
 	if !exists {
-		return "", strings.TrimSpace(note + "; current missing")
+		note = strings.TrimSpace(note)
+		if note == "" {
+			return "", "current missing"
+		}
+		return "", note + "; current missing"
 	}
 	if note != "" {
 		return "", note

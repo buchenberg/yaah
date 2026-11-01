@@ -26,6 +26,7 @@ type proposalMergeWrite struct {
 	path string
 	data []byte
 	del  bool
+	mode fs.FileMode
 }
 
 func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retainedProposal) (string, error) {
@@ -62,7 +63,11 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 
 		if !driftSet[pathKey(normalizeProposalPath(change.Path))] {
 			if proposedExists {
-				writes = append(writes, proposalMergeWrite{path: change.Path, data: proposed})
+				writes = append(writes, proposalMergeWrite{
+					path: change.Path,
+					data: proposed,
+					mode: proposalModeFromString(change.Mode),
+				})
 			} else {
 				writes = append(writes, proposalMergeWrite{path: change.Path, del: true})
 			}
@@ -127,7 +132,10 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 			}
 			continue
 		}
-		mode := fs.FileMode(0o644)
+		mode := write.mode
+		if mode == 0 {
+			mode = 0o644
+		}
 		if info, err := ws.Stat(ctx, abs); err == nil {
 			mode = info.Mode().Perm()
 		}
@@ -137,6 +145,7 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 	}
 
 	files := p.changedFiles()
+	notes := ""
 	if p.mgr != nil && p.parentID != "" {
 		if scope, ok := p.mgr.Get(p.parentID); ok {
 			if _, err := scope.AppendFact(ctx, SchemaProposalSettled, "proposal", map[string]any{
@@ -146,17 +155,34 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 				"world":       "worktree",
 				"files":       files,
 			}); err != nil {
-				// The settlement is already on disk; a trace gap is a caveat.
-				_ = err
+				notes = appendSettleNote(notes, "trace: settle fact: "+err.Error())
 			}
 		}
 	}
-	reviewNote := ""
 	if err := p.recordReviewDecision(ctx, goatherd.SettleApply, nil); err != nil {
-		reviewNote = "review decision: " + err.Error()
+		notes = appendSettleNote(notes, "review decision: "+err.Error())
 	}
-	if err := p.output.Settle(ctx, goatherd.SettleDiscard); err != nil {
-		return "", fmt.Errorf("proposal %s: three_way: merge landed but could not consume sealed output: %w", p.id, err)
+
+	settleErr := p.output.Settle(ctx, goatherd.SettleDiscard)
+	if settleErr != nil && !errors.Is(settleErr, goatherd.ErrOutputConsumed) {
+		// The parent already carries the merge. Do not leave the proposal
+		// registered for a retry that would re-apply it; report the landed
+		// effect and try to tear the stranded child down.
+		if cleanupErr := teardownReleasedProposal(p); cleanupErr != nil {
+			notes = appendSettleNote(notes, fmt.Sprintf("worktree teardown failed: %v; worktree stranded at %s", cleanupErr, p.workdir))
+		}
+		r.remove(p.id)
+		env := proposalEnvelope{
+			Status:     "settled",
+			ProposalID: p.id,
+			Action:     "apply",
+			Strategy:   proposalApplyThreeWay,
+			Files:      files,
+			Error:      "merge landed but sealed output could not be consumed: " + settleErr.Error(),
+			Notes:      notes,
+		}
+		env.Outcome = settleOutcome(goatherd.SettleApply, p, env).String()
+		return marshalProposalEnvelope(env), nil
 	}
 	r.remove(p.id)
 
@@ -166,10 +192,26 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 		Action:     "apply",
 		Strategy:   proposalApplyThreeWay,
 		Files:      files,
-		Notes:      reviewNote,
+		Notes:      notes,
 	}
 	env.Outcome = settleOutcome(goatherd.SettleApply, p, env).String()
 	return marshalProposalEnvelope(env), nil
+}
+
+// proposalModeFromString parses the nine permission characters in a
+// FileMode.String() value. A malformed value falls back to 0644.
+func proposalModeFromString(mode string) fs.FileMode {
+	if len(mode) != 10 {
+		return 0o644
+	}
+	bits := []fs.FileMode{0o400, 0o200, 0o100, 0o040, 0o020, 0o010, 0o004, 0o002, 0o001}
+	var out fs.FileMode
+	for i, bit := range bits {
+		if mode[i+1] != '-' {
+			out |= bit
+		}
+	}
+	return out
 }
 
 func mustRepoValidator(repoPath string) *PathValidator {
@@ -196,8 +238,7 @@ func (p *retainedProposal) baseContentFull(ctx context.Context, rel string) ([]b
 	if tree == "" {
 		return nil, false, fmt.Errorf("basis has no tree revision")
 	}
-	object := tree + ":" + filepath.ToSlash(rel)
-	size, ok, err := gitObjectSize(ctx, p.repoPath, object)
+	size, ok, err := gitTreePathSize(ctx, p.repoPath, tree, rel)
 	if err != nil {
 		return nil, false, err
 	}
@@ -207,7 +248,7 @@ func (p *retainedProposal) baseContentFull(ctx context.Context, rel string) ([]b
 	if size > proposalMergeMaxBytes {
 		return nil, true, fmt.Errorf("file exceeds the %d-byte merge cap", proposalMergeMaxBytes)
 	}
-	cmd := exec.CommandContext(ctx, "git", "-C", p.repoPath, "show", object)
+	cmd := exec.CommandContext(ctx, "git", "-C", p.repoPath, "show", tree+":"+filepath.ToSlash(rel))
 	data, err := cmd.Output()
 	if err != nil {
 		return nil, false, err
@@ -215,14 +256,23 @@ func (p *retainedProposal) baseContentFull(ctx context.Context, rel string) ([]b
 	return data, true, nil
 }
 
-func gitObjectSize(ctx context.Context, repoPath, object string) (int64, bool, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "cat-file", "-s", object)
-	out, err := cmd.Output()
+// gitTreePathSize distinguishes a missing path (not present in the tree) from
+// an invalid/unreadable tree or object, so a broken base never becomes an empty
+// merge input.
+func gitTreePathSize(ctx context.Context, repoPath, tree, rel string) (int64, bool, error) {
+	verify := exec.CommandContext(ctx, "git", "-C", repoPath, "rev-parse", "--verify", tree+"^{tree}")
+	if _, err := verify.Output(); err != nil {
+		return 0, false, err
+	}
+	listed, err := exec.CommandContext(ctx, "git", "-C", repoPath, "ls-tree", "-z", tree, "--", filepath.ToSlash(rel)).Output()
 	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 128 {
-			return 0, false, nil
-		}
+		return 0, false, err
+	}
+	if len(bytes.TrimSpace(listed)) == 0 {
+		return 0, false, nil
+	}
+	out, err := exec.CommandContext(ctx, "git", "-C", repoPath, "cat-file", "-s", tree+":"+filepath.ToSlash(rel)).Output()
+	if err != nil {
 		return 0, false, err
 	}
 	size, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
@@ -297,7 +347,7 @@ func gitMergeFile(ctx context.Context, base, current, proposed []byte) ([]byte, 
 		return merged, true, nil
 	}
 	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+	if errors.As(err, &exitErr) && exitErr.ExitCode() > 0 && exitErr.ExitCode() <= 127 {
 		return nil, false, nil
 	}
 	return nil, false, err

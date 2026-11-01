@@ -139,19 +139,25 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 				if paths == nil {
 					paths = []string{}
 				}
+				strategy := conflict.Strategy
+				if strategy == "" {
+					strategy = proposalApplyPathDisjoint
+				}
+				conflictView := proposalConflict{
+					Kind:      proposalConflictApply,
+					Paths:     paths,
+					Proposals: []string{conflict.ProposalID},
+					Changes:   conflict.Changes,
+				}
+				conflictView = attachProposalConflictDetails(ctx, []proposalConflict{conflictView}, t.Proposals.analyzeProposals(ctx))[0]
 				env := proposalEnvelope{
 					Status:     "conflict",
 					ProposalID: conflict.ProposalID,
 					Action:     raw.Action,
-					Strategy:   conflict.Strategy,
+					Strategy:   strategy,
 					Error:      conflict.Error(),
-					Conflicts: []proposalConflict{{
-						Kind:      proposalConflictApply,
-						Paths:     paths,
-						Proposals: []string{conflict.ProposalID},
-						Changes:   conflict.Changes,
-					}},
-					Next: proposalVerbs(),
+					Conflicts:  []proposalConflict{conflictView},
+					Next:       proposalVerbs(),
 				}
 				return marshalProposalEnvelope(env), nil
 			}

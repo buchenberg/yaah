@@ -644,6 +644,9 @@ func TestProposalTool_ApplyConflictIsStructured(t *testing.T) {
 	if len(conflict.Changes) != 1 || conflict.Changes[0].Digest == "" {
 		t.Errorf("conflict changes = %+v, want the proposal's change metadata", conflict.Changes)
 	}
+	if len(conflict.Details) != 1 || conflict.Details[0].Current == "" {
+		t.Errorf("conflict details = %+v, want the apply refusal's base/current/proposed view", conflict.Details)
+	}
 
 	// Refusal must not consume the proposal: the orchestrator can still
 	// discard or retry after resolving the parent overlap.
