@@ -28,16 +28,23 @@ it with the `proposal` tool:
 verbs: `proposals` is a list of summaries (id, files), and it is an
 explicit empty `[]` when nothing is open — not prose, not an error. Each summary
 also carries `parent_drift` (paths the parent changed since that proposal's
-dispatch basis; `parent_drift_error` if the basis cannot be inspected) and its
-own `conflicts`. The envelope's global `conflicts` array names every pair of open
-proposals that changes the same path, with the shared `paths`. Treat that as an
-early warning: `apply` is path-disjoint, so an overlapping pair cannot both land
-unless one is discarded or resolved. `action: "show"` re-reads one, with its diff.
-If `apply` is refused, the response has `status: "conflict"`, names the overlap
-in `conflicts` when it can be re-derived, and leaves the proposal open. Proposals belong to the session
-that sealed them, so another session's proposals are never listed, shown, or
-settleable here. A proposal settles exactly once. Dispatch in parallel freely —
-each has its own dispatch world — and settle each once its report is in.
+dispatch basis; `parent_drift_error` if the basis cannot be inspected), its
+content-aware `changes` (`path`, `kind`, `base_digest`, `digest`, `mode`), a
+`changes_error` if a worktree post-image cannot be inspected, and its own
+`conflicts` and `duplicates`. The envelope's global arrays classify overlapping
+post-images: identical writes are `duplicates`, not conflicts; `same_path_divergent`
+means different content or mode; `delete_modify` means one side deletes what the
+other changes; `parent_overlap` means the parent moved a path the proposal also
+changes. `path_overlap` is the fallback when a post-image could not be inspected.
+Treat these as early warnings: `apply` is path-disjoint, so neither a conflicting
+pair nor a duplicate pair can both land unless one is discarded or resolved.
+`action: "show"` re-reads one, with its diff, changes, and conflict view. If
+`apply` is refused, the response has `status: "conflict"`, names the overlap in
+`conflicts` when it can be re-derived, and leaves the proposal open. Proposals
+belong to the session that sealed them, so another session's proposals are never
+listed, shown, or settleable here. A proposal settles exactly once. Dispatch in
+parallel freely — each has its own dispatch world — and settle each once its
+report is in.
 
 A dispatch envelope carries `world` (`worktree` or `container`); a container
 proposal also carries `target` (`host` or `session`), and its settlement

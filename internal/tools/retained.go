@@ -160,11 +160,18 @@ type proposalEnvelope struct {
 	// world that was asked for. The envelope shape and the settlement verbs do
 	// not change; only this line does.
 	Warning string `json:"warning,omitempty"`
-	// Conflicts carries a structured refusal when an apply would overwrite a
-	// path the parent changed since the dispatch basis. The proposal remains
-	// open; this is an outcome, not a consumed settlement.
+	// Conflicts carries the typed conflict view for an apply refusal or for a
+	// show response. The proposal remains open after a refusal.
 	Conflicts []proposalConflict `json:"conflicts,omitempty"`
-	Next      []string           `json:"next,omitempty"`
+	// Duplicates carries identical-post-image pairs. They are not conflicts,
+	// but apply is path-disjoint, so only one can land.
+	Duplicates []proposalConflict `json:"duplicates,omitempty"`
+	// Changes is the content-aware change metadata for a show response.
+	Changes []proposalChange `json:"changes,omitempty"`
+	// ChangesError is set when a worktree proposal's post-images could not be
+	// inspected; it is not the same fact as no changes.
+	ChangesError string   `json:"changes_error,omitempty"`
+	Next         []string `json:"next,omitempty"`
 }
 
 // proposalVerbs is the settlement vocabulary advertised to the orchestrator,
@@ -259,13 +266,17 @@ var proposalSeq atomic.Uint64
 // one session's tool must not list, show (which prints the diff), or settle
 // another session's work (yaah-yox).
 type ProposalRegistry struct {
-	mu   sync.Mutex
-	byID map[string]*retainedProposal
+	mu            sync.Mutex
+	byID          map[string]*retainedProposal
+	conflictFacts map[string]bool
 }
 
 // NewProposalRegistry returns an empty registry for one session.
 func NewProposalRegistry() *ProposalRegistry {
-	return &ProposalRegistry{byID: make(map[string]*retainedProposal)}
+	return &ProposalRegistry{
+		byID:          make(map[string]*retainedProposal),
+		conflictFacts: make(map[string]bool),
+	}
 }
 
 // add records a sealed proposal as open.
@@ -322,8 +333,15 @@ type proposalSummary struct {
 	// ParentDriftError is set when the basis could not be inspected; it is not
 	// the same fact as an empty ParentDrift.
 	ParentDriftError string `json:"parent_drift_error,omitempty"`
-	// Conflicts carries the pairwise overlaps that involve this proposal.
+	// Conflicts carries the typed conflicts that involve this proposal.
 	Conflicts []proposalConflict `json:"conflicts,omitempty"`
+	// Duplicates carries identical-post-image pairs involving this proposal.
+	Duplicates []proposalConflict `json:"duplicates,omitempty"`
+	// Changes carries the per-path content, mode, and basis metadata used for
+	// conflict classification.
+	Changes []proposalChange `json:"changes,omitempty"`
+	// ChangesError is set when the post-images could not be inspected.
+	ChangesError string `json:"changes_error,omitempty"`
 }
 
 // proposalListEnvelope is the JSON a `list` action answers with: the same
@@ -333,9 +351,12 @@ type proposalListEnvelope struct {
 	Status    string            `json:"status"`
 	Proposals []proposalSummary `json:"proposals"`
 	// Conflicts is always present (an explicit empty list when nothing
-	// overlaps), so a caller can tell "no conflict" from a missing field.
+	// conflicts), so a caller can tell "no conflict" from a missing field.
 	Conflicts []proposalConflict `json:"conflicts"`
-	Next      []string           `json:"next,omitempty"`
+	// Duplicates is always present; identical post-images are not conflicts,
+	// but apply is path-disjoint, so only one side can land.
+	Duplicates []proposalConflict `json:"duplicates"`
+	Next       []string           `json:"next,omitempty"`
 }
 
 // summaries renders the open proposals as prose, for a human reader.
@@ -366,13 +387,13 @@ func (r *ProposalRegistry) summaries() string {
 // still carries "proposals": [], because "nothing is open" must be a parsed
 // fact rather than prose a caller cannot tell from a failed parse (yaah-yox).
 func (r *ProposalRegistry) listEnvelope(ctx context.Context) string {
-	ps := r.all()
-	conflicts := proposalOverlaps(ps)
-	// Cache successful drift per basis. Errors are not cached: they embed the
-	// producing proposal's id and must not be replayed under another summary.
-	driftCache := make(map[string][]string)
-	list := make([]proposalSummary, 0, len(ps))
-	for _, p := range ps {
+	analyses := r.analyzeProposals(ctx)
+	conflicts, duplicates := proposalConflicts(analyses)
+	r.recordConflictFacts(ctx, analyses, conflicts)
+
+	list := make([]proposalSummary, 0, len(analyses))
+	for _, analysis := range analyses {
+		p := analysis.proposal
 		files := p.changedFiles()
 		if files == nil {
 			files = []string{}
@@ -386,27 +407,29 @@ func (r *ProposalRegistry) listEnvelope(ctx context.Context) string {
 			Files:      files,
 			Target:     target,
 			Conflicts:  conflictsWith(conflicts, p.id),
+			Duplicates: conflictsWith(duplicates, p.id),
+			Changes:    analysis.changes,
 		}
-		key := p.basisKey()
-		if cached, ok := driftCache[key]; ok && key != "" {
-			summary.ParentDrift = cached
-		} else if drift, err := p.parentDrift(ctx); err != nil {
-			summary.ParentDriftError = err.Error()
+		if analysis.driftErr != nil {
+			summary.ParentDriftError = analysis.driftErr.Error()
 		} else {
-			summary.ParentDrift = drift
-			if key != "" {
-				driftCache[key] = drift
-			}
+			summary.ParentDrift = analysis.drift
+		}
+		if analysis.changesErr != nil {
+			summary.ChangesError = analysis.changesErr.Error()
 		}
 		list = append(list, summary)
 	}
 	if conflicts == nil {
 		conflicts = []proposalConflict{}
 	}
-	env := proposalListEnvelope{Status: "open", Proposals: list, Conflicts: conflicts, Next: proposalVerbs()}
+	if duplicates == nil {
+		duplicates = []proposalConflict{}
+	}
+	env := proposalListEnvelope{Status: "open", Proposals: list, Conflicts: conflicts, Duplicates: duplicates, Next: proposalVerbs()}
 	data, err := json.Marshal(env)
 	if err != nil {
-		return `{"status":"open","proposals":[],"conflicts":[]}`
+		return `{"status":"open","proposals":[],"conflicts":[],"duplicates":[]}`
 	}
 	return string(data)
 }
@@ -1019,7 +1042,12 @@ func (r *ProposalRegistry) settleRetainedProposal(ctx context.Context, id, actio
 			if drift, derr := p.parentDrift(ctx); derr == nil {
 				overlap = overlappingPaths(p.changedFiles(), drift)
 			}
-			return "", &proposalApplyConflict{ProposalID: id, Paths: overlap, Cause: settleErr}
+			return "", &proposalApplyConflict{
+				ProposalID: id,
+				Paths:      overlap,
+				Changes:    proposalChangesForPaths(ctx, p, overlap),
+				Cause:      settleErr,
+			}
 		case errors.Is(settleErr, goatherd.ErrSettleEffectLanded):
 			// The work is on the parent; only the causal merge failed to finish.
 			// End the proposal with the failure noted — a retry would re-apply
