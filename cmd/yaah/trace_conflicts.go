@@ -97,7 +97,44 @@ func aggregateConflicts(slice shepherdtrace.Slice, session string) conflictAggre
 	sessionDispatches := make(map[string]int)
 	sessionConflicts := make(map[string]bool)
 	sessionsSeen := make(map[string]bool)
+	parentByOwner := make(map[string]string)
 
+	// Pass 1: usage facts are the only place that connects a per-dispatch
+	// owner (`sub-*`) to the session root. Build that mapping before resolving
+	// worktree merge-proposal facts, which live on the child owner path.
+	for owner, factIDs := range slice.OwnerPaths {
+		for _, factID := range factIDs {
+			fact := slice.FactsByID[factID]
+			rec, ok := fact.(shepherdtrace.Record)
+			if !ok || rec.Envelope.SchemaRef != "yaah.subagent.usage.v1" {
+				continue
+			}
+			parent, _ := rec.Body.Payload["parent_session"].(string)
+			if parent == "" {
+				parent = owner
+			}
+			parentByOwner[owner] = parent
+			if session != "" && parent != session {
+				continue
+			}
+			sessionsSeen[parent] = true
+			lane, _ := rec.Body.Payload["lane"].(string)
+			if lane == "" {
+				lane = "unknown"
+			}
+			report.Dispatches[lane]++
+			sessionDispatches[parent]++
+		}
+	}
+	sessionFor := func(owner string) string {
+		if parent := parentByOwner[owner]; parent != "" {
+			return parent
+		}
+		return owner
+	}
+
+	// Pass 2: sealed and conflict facts live on either a session root or a
+	// child owner, depending on the lane. Resolve them through the usage map.
 	for owner, factIDs := range slice.OwnerPaths {
 		for _, factID := range factIDs {
 			fact := slice.FactsByID[factID]
@@ -105,35 +142,18 @@ func aggregateConflicts(slice shepherdtrace.Slice, session string) conflictAggre
 			if !ok {
 				continue
 			}
+			resolved := sessionFor(owner)
+			if session != "" && resolved != session {
+				continue
+			}
 			switch rec.Envelope.SchemaRef {
-			case "yaah.subagent.usage.v1":
-				parent, _ := rec.Body.Payload["parent_session"].(string)
-				if parent == "" {
-					parent = owner
-				}
-				if session != "" && parent != session {
-					continue
-				}
-				sessionsSeen[parent] = true
-				lane, _ := rec.Body.Payload["lane"].(string)
-				if lane == "" {
-					lane = "unknown"
-				}
-				report.Dispatches[lane]++
-				sessionDispatches[parent]++
 			case tools.SchemaProposalSealed, "goatherd.merge.proposed.v1":
-				if session != "" && owner != session {
-					continue
-				}
-				sessionsSeen[owner] = true
+				sessionsSeen[resolved] = true
 				report.SealedProposals++
 			case tools.SchemaProposalConflict:
-				if session != "" && owner != session {
-					continue
-				}
-				sessionsSeen[owner] = true
+				sessionsSeen[resolved] = true
 				report.Conflicts++
-				sessionConflicts[owner] = true
+				sessionConflicts[resolved] = true
 				kind, _ := rec.Body.Payload["kind"].(string)
 				if kind == "" {
 					kind = "unknown"

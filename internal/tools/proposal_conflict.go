@@ -766,14 +766,34 @@ func (r *ProposalRegistry) recordSealConflictFacts(ctx context.Context, added *r
 		}
 	}
 	overlap := false
-	for _, other := range r.all() {
-		if other.id == added.id {
-			continue
+	for _, proposal := range r.all() {
+		proposalPaths := make(map[string]bool)
+		for _, path := range proposal.changedFiles() {
+			if norm := normalizeProposalPath(path); norm != "" {
+				proposalPaths[pathKey(norm)] = true
+			}
 		}
-		for _, path := range other.changedFiles() {
-			if addedPaths[pathKey(normalizeProposalPath(path))] {
-				overlap = true
-				break
+		if proposal.id != added.id {
+			for key := range proposalPaths {
+				if addedPaths[key] {
+					overlap = true
+					break
+				}
+			}
+		}
+		if overlap {
+			break
+		}
+		// Parent overlap does not require a second proposal. Check each open
+		// proposal's drift before deciding the seal is conflict-free; this is
+		// one diff per open proposal, and the expensive content analysis only
+		// runs when an overlap is actually found.
+		if drift, err := proposal.parentDrift(ctx); err == nil {
+			for _, path := range drift {
+				if proposalPaths[pathKey(normalizeProposalPath(path))] {
+					overlap = true
+					break
+				}
 			}
 		}
 		if overlap {

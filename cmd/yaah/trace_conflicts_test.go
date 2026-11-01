@@ -48,6 +48,7 @@ func TestTraceConflictsAggregate(t *testing.T) {
 	appendFact("sub-a1", "yaah.subagent.usage.v1", "subagent:usage", shepherdtrace.Capture, map[string]any{"lane": "retained", "parent_session": "sess-a"})
 	appendFact("sub-a2", "yaah.subagent.usage.v1", "subagent:usage:2", shepherdtrace.Capture, map[string]any{"lane": "shared", "parent_session": "sess-a"})
 	appendFact("sess-a", tools.SchemaProposalSealed, "proposal", shepherdtrace.Declaration, map[string]any{"proposal_id": "p1"})
+	appendFact("sub-a1", "goatherd.merge.proposed.v1", "merge:proposed", shepherdtrace.Declaration, map[string]any{"proposal_id": "p1"})
 	appendFact("sess-a", tools.SchemaProposalConflict, "conflict", shepherdtrace.Declaration, map[string]any{
 		"kind": "same_path_divergent", "paths": []string{"a.txt", "b.txt"}, "proposals": []string{"p1", "p2"},
 	})
@@ -76,8 +77,8 @@ func TestTraceConflictsAggregate(t *testing.T) {
 	if got.Dispatches["retained"] != 1 || got.Dispatches["shared"] != 2 {
 		t.Errorf("dispatches = %+v, want retained=1 shared=2", got.Dispatches)
 	}
-	if got.SealedProposals != 1 || got.ConflictProposals != 4 {
-		t.Errorf("sealed/proposals = %d/%d, want 1/4", got.SealedProposals, got.ConflictProposals)
+	if got.SealedProposals != 2 || got.ConflictProposals != 4 {
+		t.Errorf("sealed/proposals = %d/%d, want 2/4", got.SealedProposals, got.ConflictProposals)
 	}
 	if got.FanoutSessions != 1 || got.FanoutSessionsWithConflicts != 1 {
 		t.Errorf("fanout = %d/%d, want 1/1", got.FanoutSessions, got.FanoutSessionsWithConflicts)
