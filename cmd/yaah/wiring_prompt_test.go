@@ -140,10 +140,11 @@ func TestBuildSubAgentBasePrompt_MemoryFactsWithoutToolGuidelines(t *testing.T) 
 }
 
 // TestBuildSystemPrompt_MemoryGuidelinesGatedOnTools pins the invariant
-// the wiring relies on: the Memory Guidelines block is advertised exactly
-// when the session registered the memory tools. A one-shot session gets
-// neither, so the prompt cannot tell the model to call memory_add in a
-// run that has no memory tools — and pays no tokens for the block.
+// the wiring relies on: the Memory Guidelines block advertises exactly the
+// memory tools the session registered. A one-shot session against an empty
+// store gets neither half, so the prompt cannot tell the model to call
+// memory_add in a run that has no memory tools — and pays no tokens for
+// the block.
 func TestBuildSystemPrompt_MemoryGuidelinesGatedOnTools(t *testing.T) {
 	t.Setenv("YAAH_HOME", t.TempDir())
 
@@ -155,12 +156,22 @@ func TestBuildSystemPrompt_MemoryGuidelinesGatedOnTools(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	withTools := buildSystemPrompt(cfg, dir, nil, "", true)
+	full := prompts.MemoryGuidance{Recall: true, Writers: true}
+	withTools := buildSystemPrompt(cfg, dir, nil, "", full)
 	if !strings.Contains(withTools, "## Memory Guidelines") {
 		t.Error("a session with memory tools must carry the Memory Guidelines block")
 	}
+	for _, want := range []string{"memory_search", "memory_add", "memory_promote"} {
+		if !strings.Contains(withTools, want) {
+			t.Errorf("full guidance must name %q", want)
+		}
+	}
+	if strings.Contains(withTools, "cannot save") {
+		t.Error("a session with the writers must not be told it cannot save")
+	}
 
-	withoutTools := buildSystemPrompt(cfg, dir, nil, "", false)
+	none := prompts.MemoryGuidance{}
+	withoutTools := buildSystemPrompt(cfg, dir, nil, "", none)
 	for _, banned := range []string{"## Memory Guidelines", "memory_add", "memory_search", "memory_promote"} {
 		if strings.Contains(withoutTools, banned) {
 			t.Errorf("a session without memory tools must not advertise %q", banned)
@@ -169,8 +180,86 @@ func TestBuildSystemPrompt_MemoryGuidelinesGatedOnTools(t *testing.T) {
 
 	// A resumed session never gets the guidelines even with the tools
 	// registered — the pre-existing rule, unchanged by the gate.
-	resumed := buildSystemPrompt(cfg, dir, nil, "sess-123", true)
+	resumed := buildSystemPrompt(cfg, dir, nil, "sess-123", full)
 	if strings.Contains(resumed, "## Memory Guidelines") {
 		t.Error("a resumed session must not re-append the Memory Guidelines block")
+	}
+}
+
+// TestBuildSystemPrompt_MemoryGuidelinesRecallOnly pins the yaah-zx18 split:
+// a one-shot run against a populated store keeps the readers, so the prompt
+// carries the recall bullets and the "cannot save" boundary — and names no
+// writer tool, because none is in the request.
+func TestBuildSystemPrompt_MemoryGuidelinesRecallOnly(t *testing.T) {
+	t.Setenv("YAAH_HOME", t.TempDir())
+
+	cfg := &config.Config{
+		Providers: map[string]config.Provider{"zai": {}},
+		Agent: config.AgentConfig{
+			Default: config.Defaults{Provider: "zai", Model: "GLM-5.3"},
+		},
+	}
+
+	got := buildSystemPrompt(cfg, t.TempDir(), nil, "", prompts.MemoryGuidance{Recall: true})
+
+	if !strings.Contains(got, "## Memory Guidelines") {
+		t.Fatal("a recall-only session still needs the guidelines heading")
+	}
+	for _, want := range []string{"memory_search", "memory_search_sessions"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("recall-only guidance must name %q", want)
+		}
+	}
+	for _, banned := range []string{"memory_add", "memory_update", "memory_delete", "memory_promote"} {
+		if strings.Contains(got, banned) {
+			t.Errorf("recall-only guidance must not advertise %q", banned)
+		}
+	}
+	// The model is told the boundary rather than left to discover it by
+	// calling a writer that is not there.
+	if !strings.Contains(got, "cannot save") {
+		t.Error("a recall-only session must be told it cannot persist")
+	}
+}
+
+// TestStoreHasRecall pins the probe that decides whether a one-shot session
+// keeps the read-only memory tools. An empty store has nothing to recall, so
+// the readers are dead weight there — and that is what preserves the measured
+// benchmark floor, since a bench container starts with a fresh YAAH_HOME.
+func TestStoreHasRecall(t *testing.T) {
+	t.Setenv("YAAH_HOME", t.TempDir())
+
+	if storeHasRecall(nil) {
+		t.Error("a nil database has nothing to recall")
+	}
+
+	db, err := memory.Open(filepath.Join(t.TempDir(), "empty.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storeHasRecall(db) {
+		t.Error("a fresh store has nothing to recall; this is the case the bench floor depends on")
+	}
+	if err := db.AddMemory(memory.Entry{Text: "the widget config lives in configs/widget.yaml", Tags: `["project:probe"]`}); err != nil {
+		t.Fatal(err)
+	}
+	if !storeHasRecall(db) {
+		t.Error("a store holding a memory entry has something to recall")
+	}
+	db.Close()
+
+	// memory_search_sessions searches the messages table, not the memory
+	// one, so a store whose only history is past sessions still counts as
+	// recallable — otherwise transcripts would be unreachable in one shot.
+	sess, err := memory.Open(filepath.Join(t.TempDir(), "sessions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+	if err := sess.CreateSession(memory.Session{ID: "sess-1", StartedAt: 1, CWD: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	if !storeHasRecall(sess) {
+		t.Error("a store holding a past session has transcripts to recall")
 	}
 }

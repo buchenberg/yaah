@@ -409,47 +409,65 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		embedderAttached = attachEmbedder(db, cfg)
 	}
 
-	// The six memory tools, as one list: it feeds the belt, the
-	// omitted-tools record, and the prompt gate below, so the three cannot
-	// disagree about what this session actually has.
-	memoryToolNames := []string{"memory_search", "memory_add", "memory_delete", "memory_update", "memory_promote", "memory_search_sessions"}
+	// Memory tools (yaah-zx18). The readers and the writers gate separately,
+	// because the argument against each is different.
+	//
+	// Writers need a session that can act on what it records. A one-shot run
+	// is a single non-interactive turn whose store is typically discarded
+	// with its container, so "saving a finding" spends output tokens on a
+	// note nobody will read — a bench run was measured doing exactly that.
+	//
+	// Readers are not covered by that argument. Recall is useful in one shot
+	// whenever there is something to recall, and the prompt preloads only 50
+	// entries (memoryLayer) with no query, so anything past that cap — or
+	// needing semantic rather than recency matching — is reachable only
+	// through memory_search. So the readers are gated on the store actually
+	// holding something: a fresh YAAH_HOME (CI, benchmarks, a throwaway
+	// container) still drops all six and keeps the measured floor, while a
+	// real one-shot run against a populated store keeps recall.
+	memoryReaderNames := []string{"memory_search", "memory_search_sessions"}
+	memoryWriterNames := []string{"memory_add", "memory_update", "memory_delete", "memory_promote"}
 
-	// Register memory tools (needs DB, not prompt logic). A one-shot run
-	// gets none: it is a single non-interactive turn with no later
-	// conversation to recall into, and the store a CI or bench one-shot
-	// writes is typically discarded with its container — so the schemas are
-	// per-call cost, and an agent that "saves a finding" spends output
-	// tokens on a note nobody will read. Same precedent as `question` above.
-	if db != nil && !opts.OneShot {
+	memoryWriters := db != nil && !opts.OneShot
+	// Short-circuits, so the store probe only runs on the path that needs it.
+	memoryReaders := db != nil && (memoryWriters || storeHasRecall(db))
+
+	if memoryReaders {
 		toolReg.Register(&tools.MemorySearchTool{DB: db})
-		toolReg.Register(&tools.MemoryAddTool{DB: db})
-		toolReg.Register(&tools.MemoryPromoteTool{DB: db})
-		toolReg.Register(&tools.MemoryDeleteTool{DB: db})
-		toolReg.Register(&tools.MemoryUpdateTool{DB: db})
 		toolReg.Register(&tools.MemorySessionSearchTool{DB: db})
-	} else {
-		// The tools exist but this session has nowhere to put them (no
-		// database) or no use for them (one-shot): the belt must know the
-		// names, or an allowlist that names them reads as a typo.
-		belt.Know(memoryToolNames...)
-		omittedTools = append(omittedTools, memoryToolNames...)
+	}
+	if memoryWriters {
+		toolReg.Register(&tools.MemoryAddTool{DB: db})
+		toolReg.Register(&tools.MemoryUpdateTool{DB: db})
+		toolReg.Register(&tools.MemoryDeleteTool{DB: db})
+		toolReg.Register(&tools.MemoryPromoteTool{DB: db})
+	}
+	// Name what THIS gate dropped, so an allowlist mentioning one is not
+	// reported as a typo and the session record can say "couldn't" rather
+	// than "didn't". Only the gate's own omissions: a tool the belt refused
+	// is already in belt.Refused(), and recording it here as well would put
+	// the name in workspace_omitted_tools twice.
+	if !memoryReaders {
+		belt.Know(memoryReaderNames...)
+		omittedTools = append(omittedTools, memoryReaderNames...)
+	}
+	if !memoryWriters {
+		belt.Know(memoryWriterNames...)
+		omittedTools = append(omittedTools, memoryWriterNames...)
 	}
 
 	// --- Prompt assembly -------------------------------------------------
-	// The Memory Guidelines block is gated on what the registry actually
-	// holds, NOT on the intent above. An `agents.default.tools` allowlist
-	// that omits the memory tools makes Register refuse them through the
+	// Derived from the registry, NOT from the intent above: an
+	// `agents.default.tools` allowlist can refuse a registration through the
 	// belt, and gating on intent alone would leave the prompt advertising
-	// six tools that are not in the request. All-or-nothing, because the
-	// block names all six.
-	memoryTools := true
-	for _, name := range memoryToolNames {
-		if toolReg.Get(name) == nil {
-			memoryTools = false
-			break
-		}
+	// tools that are not in the request. Each half is checked against every
+	// tool its bullets name, so a partial allowlist cannot over-advertise.
+	mem := prompts.MemoryGuidance{
+		Recall: toolReg.Get("memory_search") != nil && toolReg.Get("memory_search_sessions") != nil,
+		Writers: toolReg.Get("memory_add") != nil && toolReg.Get("memory_update") != nil &&
+			toolReg.Get("memory_delete") != nil && toolReg.Get("memory_promote") != nil,
 	}
-	systemPrompt := buildSystemPrompt(cfg, cwd, db, opts.ResumeSessionID, memoryTools)
+	systemPrompt := buildSystemPrompt(cfg, cwd, db, opts.ResumeSessionID, mem)
 
 	// --- MCP servers ------------------------------------------------------
 	// Isolated mode omits MCP tools by policy: they execute on the host

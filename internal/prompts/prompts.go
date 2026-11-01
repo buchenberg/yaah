@@ -545,6 +545,20 @@ func InjectNoToolsIdentity(prompt string) string {
 	return block + "\n\n" + prompt
 }
 
+// MemoryGuidance says which halves of the memory-tool guidance the system
+// prompt may carry. The halves are independent because a session can hold
+// the readers without the writers: a one-shot run against a populated store
+// can recall but has nothing to persist into that outlives it (yaah-zx18).
+//
+// Each flag must be derived from what the session actually registered, never
+// from what it intended to register — an `agents.default.tools` allowlist can
+// refuse a tool at registration, and a prompt that names a tool absent from
+// the request teaches the model to call something that will fail.
+type MemoryGuidance struct {
+	Recall  bool // memory_search and memory_search_sessions are registered
+	Writers bool // memory_add, memory_update, memory_delete, memory_promote are registered
+}
+
 // Layers holds the composable pieces of the system prompt assembled
 // from multiple sources.
 type Layers struct {

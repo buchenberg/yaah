@@ -579,11 +579,21 @@ call later:
   registries; the main session now honours it too. `GoToolchainLeafTools()`
   and `IsGoToolchainTool` read one list, so the two paths cannot gate
   different tools.
-- **Memory** — the six `memory_*` tools are dropped in a one-shot session
-  (`yaah "prompt"`), which is a single non-interactive turn with no later
-  conversation to recall into. The `## Memory Guidelines` prompt block is
-  gated on the same value, so the prompt never advertises a tool that is
-  not registered.
+- **Memory** — the four writers (`memory_add`, `memory_update`,
+  `memory_delete`, `memory_promote`) are dropped in a one-shot session
+  (`yaah "prompt"`): a single non-interactive turn whose store is typically
+  discarded with its container, so a "saved finding" is output tokens spent
+  on a note nobody will read. The two readers (`memory_search`,
+  `memory_search_sessions`) are dropped only when the store holds nothing to
+  recall — no live memory entry and no past session messages. Recall stays
+  useful in one shot against a populated store, and the prompt preloads only
+  50 entries with no query, so anything past that cap is reachable only
+  through `memory_search`. A fresh `YAAH_HOME` (CI, benchmarks, a throwaway
+  container) is empty, so all six drop there and the measured floor holds.
+  The `## Memory Guidelines` prompt block is split the same way and rendered
+  from what the registry actually holds, so the prompt never advertises a
+  tool that is not registered — and a recall-only session is told it cannot
+  save rather than being left to discover it by calling a writer.
 
 Both gates resolve **once**, at wiring time. The tools array is part of
 the cached prompt prefix, so a set that changed mid-session would
