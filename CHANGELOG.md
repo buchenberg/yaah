@@ -5,12 +5,15 @@
 
 ### Features
 
+* **memory:** keep one-shot recall when the store has something to recall ([c8a453a](https://github.com/buchenberg/yaah/commit/c8a453a26c0cc37e05b8b91bd116c3e389c4fd27))
+* **memory:** keep one-shot recall when the store has something to recall ([101d889](https://github.com/buchenberg/yaah/commit/101d8898bfc75b90ef46f2947d8e9bf47ac28214))
 * **proposal:** add typed content-aware conflicts ([ac29b32](https://github.com/buchenberg/yaah/commit/ac29b32535a59016ce588c5041ad5e0ceb4448e8))
 * **proposal:** add typed content-aware conflicts ([142b03b](https://github.com/buchenberg/yaah/commit/142b03b91800d01a6c6041f44ee9a06b8359f620))
 
 
 ### Bug Fixes
 
+* **memory:** count messages, not session rows, and stop asserting a reason ([26f8a72](https://github.com/buchenberg/yaah/commit/26f8a72de24322b88219d965bfdb999f62aa674f))
 * **proposal:** bound and preserve conflict inspection ([3973c47](https://github.com/buchenberg/yaah/commit/3973c4757997f0a402156b0e9ae038bbc134478b))
 
 
