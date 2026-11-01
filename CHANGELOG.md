@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.126.0](https://github.com/buchenberg/yaah/compare/v0.125.0...v0.126.0) (2026-11-01)
+
+
+### Features
+
+* **acp:** expose mode as a config option and add UI switches ([0f786bf](https://github.com/buchenberg/yaah/commit/0f786bfacc13e5617c933c8ed36d0427aaf767c8))
+* **acp:** expose mode as a config option and add UI switches ([1f5304b](https://github.com/buchenberg/yaah/commit/1f5304b163552cceadd28c3a84275dd086c17174))
+
+
+### Bug Fixes
+
+* **ui:** render session mode and correct config-option docs ([4304f7d](https://github.com/buchenberg/yaah/commit/4304f7d74c998e479b9a56310dc5497ac08eff7e))
+
+
+### Code Refactoring
+
+* **acp:** drop the legacy modes field ([c5e0554](https://github.com/buchenberg/yaah/commit/c5e0554b3ccef903d2b57982d2a44a4443d921dd))
+
+
+### Documentation
+
+* **acp:** remove stale modes references ([34c3a3b](https://github.com/buchenberg/yaah/commit/34c3a3ba903257311a5d74dcb4b1d40eb81b06eb))
+
 ## [0.125.0](https://github.com/buchenberg/yaah/compare/v0.124.1...v0.125.0) (2026-11-01)
 
 
