@@ -134,6 +134,7 @@ func (t *App) renderInfoPane() {
 	setPaneText(t.InfoPane, infopane.Format(infopane.State{
 		Provider:      t.lastProvider,
 		Model:         t.lastModel,
+		SessionMode:   t.lastMode,
 		Version:       t.version,
 		ContextTokens: t.contextTokens,
 		ContextWindow: t.contextWindow,

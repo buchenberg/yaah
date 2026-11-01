@@ -12,6 +12,8 @@ const (
 	CmdReloadRoles
 	CmdLogin
 	CmdLogout
+	CmdPlan
+	CmdBuild
 )
 
 // ParseSlashCommand checks if input is a recognized slash command.
@@ -32,6 +34,10 @@ func ParseSlashCommand(input string) SlashCommand {
 		return CmdLogin
 	case "/logout":
 		return CmdLogout
+	case "/plan":
+		return CmdPlan
+	case "/build":
+		return CmdBuild
 	default:
 		return CmdNone
 	}

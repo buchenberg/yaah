@@ -192,8 +192,7 @@ func (s *Server) handleSessionNew(ctx context.Context, msg Message, sendUpdate u
 	}
 	respOK(msg.ID, SessionNewResult{
 		SessionID:     st.id,
-		ConfigOptions: buildModelConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName()),
-		Modes:         sessionModeState(st.sess.Mode()),
+		ConfigOptions: buildSessionConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName(), st.sess.Mode()),
 		Meta:          worldMetaOf(st.sess.WorldStatus()),
 	})
 	s.refreshAvailableCommands(st, sendUpdate)
@@ -354,7 +353,6 @@ func (s *Server) handleSessionLoad(
 		s.replayConversation(st, sendUpdate)
 		respOK(msg.ID, SessionLoadResult{
 			ConfigOptions: s.loadConfigOptions(ctx, st),
-			Modes:         sessionModeState(st.sess.Mode()),
 			Meta:          worldMetaOf(st.sess.WorldStatus()),
 		})
 		s.refreshAvailableCommands(st, sendUpdate)
@@ -373,18 +371,16 @@ func (s *Server) handleSessionLoad(
 	s.replayConversation(st, sendUpdate)
 	respOK(msg.ID, SessionLoadResult{
 		ConfigOptions: s.loadConfigOptions(ctx, st),
-		Modes:         sessionModeState(st.sess.Mode()),
 		Meta:          worldMetaOf(st.sess.WorldStatus()),
 	})
 	s.refreshAvailableCommands(st, sendUpdate)
 }
 
 // loadConfigOptions renders the config options a session/load response
-// re-advertises: the same model picker session/new reports, built from
-// the session's current selection. An unwired catalog yields nil, which
-// omits the field entirely.
+// re-advertises: the always-present mode selector and, when a catalog is
+// wired, the model picker.
 func (s *Server) loadConfigOptions(ctx context.Context, st *sessionState) []SessionConfigOption {
-	return buildModelConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName())
+	return buildSessionConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName(), st.sess.Mode())
 }
 
 // worldMetaOf renders the ACP `_meta` block for a derived posture. The zero
@@ -512,6 +508,7 @@ func (s *Server) handleSessionList(
 // factory session/load uses, so foreign ids are rejected with invalid
 // params.
 func (s *Server) handleSessionResume(
+	ctx context.Context,
 	msg Message,
 	sendUpdate updateSender,
 	respOK func(id json.RawMessage, result any),
@@ -556,7 +553,7 @@ func (s *Server) handleSessionResume(
 				fmt.Sprintf("session %q was created with cwd %q, requested %q", st.id, st.cwd, cwd))
 			return
 		}
-		respOK(msg.ID, SessionResumeResult{Modes: sessionModeState(st.sess.Mode())})
+		respOK(msg.ID, SessionResumeResult{ConfigOptions: s.loadConfigOptions(ctx, st)})
 		s.refreshAvailableCommands(st, sendUpdate)
 		return
 	}
@@ -570,7 +567,7 @@ func (s *Server) handleSessionResume(
 		respErr(msg.ID, codeInvalidParams, err.Error())
 		return
 	}
-	respOK(msg.ID, SessionResumeResult{Modes: sessionModeState(st.sess.Mode())})
+	respOK(msg.ID, SessionResumeResult{ConfigOptions: s.loadConfigOptions(ctx, st)})
 	s.refreshAvailableCommands(st, sendUpdate)
 }
 

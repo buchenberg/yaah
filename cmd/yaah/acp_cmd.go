@@ -63,11 +63,11 @@ Implemented:
   session/prompt              Run a turn; responds with a stopReason
   session/cancel              Cancel the in-flight turn (notification)
   session/set_mode            Switch Plan/Build mode; plan withholds mutating
-                              tools and emits current_mode_update
+                              tools and emits config_option_update
   session/update              Streaming updates: message/thought chunks,
                               tool calls, plans, usage, compaction
   session/request_permission  Tool approvals delegated to the client
-  session/set_config_option   Change a config option (model picker) mid-session
+  session/set_config_option   Change a config option (mode/model picker) mid-session
   notifications/initialized   Client readiness announcement (accepted; no-op)
 
 Several conversations may coexist in one process; the persisted session

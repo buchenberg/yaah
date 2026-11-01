@@ -11,9 +11,9 @@
 // session/prompt, session/cancel, session/set_mode,
 // session/set_config_option, session/update notifications with
 // the agent_message_chunk, agent_thought_chunk, user_message_chunk
-// (replay), tool_call, tool_call_update, plan, current_mode_update, and
-// usage_update variants. Session modes are build/plan; file-modifying tool
-// calls carry diff content blocks and locations.
+// (replay), tool_call, tool_call_update, plan, config_option_update, and
+// usage_update variants. Session mode is a category=mode config option;
+// file-modifying tool calls carry diff content blocks and locations.
 package acp
 
 import (
@@ -261,14 +261,12 @@ type EnvVariable struct {
 	Value string `json:"value"`
 }
 
-// SessionNewResult is the result of session/new. configOptions carries
-// the session's configuration selectors (the model picker) and is
-// omitted when the session has none to advertise — no model catalog is
-// wired, or discovery returned nothing.
+// SessionNewResult is the result of session/new. configOptions carries the
+// session's configuration selectors: the mode selector is always present; the
+// model selector is added when a model catalog is wired.
 type SessionNewResult struct {
 	SessionID     string                `json:"sessionId"`
 	ConfigOptions []SessionConfigOption `json:"configOptions,omitempty"`
-	Modes         *SessionModeState     `json:"modes,omitempty"`
 	// Meta carries yaah's `_meta` extensions, including the session's
 	// workspace/dispatch-world posture. Spec clients ignore it.
 	Meta *SessionMeta `json:"_meta,omitempty"`
@@ -279,14 +277,6 @@ type SessionMode struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
-}
-
-// SessionModeState is the mode picker state returned by session/new,
-// session/load, and session/resume. ACP clients render it as the Plan/Build
-// selector and change it with session/set_mode.
-type SessionModeState struct {
-	CurrentModeID  string        `json:"currentModeId"`
-	AvailableModes []SessionMode `json:"availableModes"`
 }
 
 // === session/load ===
@@ -311,7 +301,6 @@ type SessionLoadParams struct {
 // the same model picker without a separate request.
 type SessionLoadResult struct {
 	ConfigOptions []SessionConfigOption `json:"configOptions,omitempty"`
-	Modes         *SessionModeState     `json:"modes,omitempty"`
 	// Meta mirrors SessionNewResult.Meta: the restored session's posture.
 	Meta *SessionMeta `json:"_meta,omitempty"`
 }
@@ -384,11 +373,10 @@ type SessionResumeParams struct {
 	McpServers []McpServerRef `json:"mcpServers,omitempty"`
 }
 
-// SessionResumeResult re-advertises the mode picker without replaying
-// history. Config options are intentionally not repeated here: ACP clients
-// receive them on session/load/new and keep the last known set.
+// SessionResumeResult re-advertises the session's config options without
+// replaying history.
 type SessionResumeResult struct {
-	Modes *SessionModeState `json:"modes,omitempty"`
+	ConfigOptions []SessionConfigOption `json:"configOptions,omitempty"`
 }
 
 // SessionTargetParams are the params of session/close and session/delete:
@@ -462,6 +450,7 @@ const (
 	UpdateUsageUpdate       = "usage_update"
 	UpdateSessionInfo       = "session_info_update"
 	UpdateAvailableCommands = "available_commands_update"
+	UpdateConfigOption      = "config_option_update"
 
 	UpdateCompaction             = "compaction_update"
 	UpdateCompactionSummaryChunk = "compaction_summary_chunk"
@@ -700,11 +689,11 @@ type SetModeParams struct {
 	ModeID    string `json:"modeId"`
 }
 
-// CurrentModeUpdate is the session/update notification emitted after a mode
-// switch so the client's picker and any mode-dependent UI follow the agent.
-type CurrentModeUpdate struct {
-	SessionUpdate string `json:"sessionUpdate"`
-	CurrentModeID string `json:"currentModeId"`
+// ConfigOptionUpdate pushes the complete configuration state after an
+// agent-side change (for example a mode switch).
+type ConfigOptionUpdate struct {
+	SessionUpdate string                `json:"sessionUpdate"`
+	ConfigOptions []SessionConfigOption `json:"configOptions"`
 }
 
 // ACP session mode ids. Build is the default; plan narrows the tool surface.
@@ -718,13 +707,6 @@ func availableSessionModes() []SessionMode {
 		{ID: SessionModeBuild, Name: "Build", Description: "Normal coding mode with the full tool set."},
 		{ID: SessionModePlan, Name: "Plan", Description: "Inspect and propose a plan; mutating tools are withheld."},
 	}
-}
-
-func sessionModeState(current string) *SessionModeState {
-	if !validSessionMode(current) {
-		current = SessionModeBuild
-	}
-	return &SessionModeState{CurrentModeID: current, AvailableModes: availableSessionModes()}
 }
 
 func validSessionMode(mode string) bool {
@@ -772,8 +754,8 @@ const (
 
 // SetConfigOptionParams are the params of session/set_config_option:
 // configId names one of the session's configOptions, and value is one
-// of that option's values. The model picker is yaah's only config
-// option, and its values are "<provider>/<model>".
+// of that option's values. yaah advertises the mode selector and, when a
+// catalog is wired, the model picker ("<provider>/<model>").
 //
 // value is a string, not the spec's string|boolean union: yaah
 // advertises select options only, so a boolean value is a client error
@@ -786,16 +768,14 @@ type SetConfigOptionParams struct {
 
 // SetConfigOptionResult is the result of session/set_config_option: the
 // session's whole configOptions set with currentValue updated, so the
-// client re-renders every picker from one response. The field is not
-// omitempty — the spec requires it — but it is nil when no catalog is
-// wired (the same shape session/new reports).
+// client re-renders every picker from one response.
 type SetConfigOptionResult struct {
 	ConfigOptions []SessionConfigOption `json:"configOptions"`
 }
 
 // SessionConfigOption is one session configuration option: a `select`
-// of a single current value, keyed by id. yaah advertises exactly one
-// (the model picker) and only when a model catalog is wired.
+// of a single current value, keyed by id. yaah advertises the mode
+// selector always and the model picker when a model catalog is wired.
 //
 // The wire shape flattens the kind into the option, per the spec: id,
 // name, description and category alongside type="select",
@@ -829,8 +809,12 @@ const (
 	// ConfigOptionCategoryModel is the spec's reserved category for a
 	// model selector; clients use it for placement and shortcuts.
 	ConfigOptionCategoryModel = "model"
+	// ConfigOptionCategoryMode is the spec's reserved category for a
+	// session-mode selector.
+	ConfigOptionCategoryMode = "mode"
 
-	// ConfigOptionModelID is the id of the model picker: the only
-	// configId session/set_config_option accepts.
+	// ConfigOptionModelID is the id of the model picker.
 	ConfigOptionModelID = "model"
+	// ConfigOptionModeID is the id of the Plan/Build selector.
+	ConfigOptionModeID = "mode"
 )

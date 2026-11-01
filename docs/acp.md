@@ -43,7 +43,7 @@ sub-agents, and prompts all resolve against it.
 | `initialize` | supported | advertises `agentCapabilities.loadSession: true` plus `sessionCapabilities` for `resume`, `list`, `close`, `delete`, and a static catalog of agent-typed `authMethods` (see [Authentication and credentials](#authentication-and-credentials)) |
 | `authenticate` | supported | validates the named auth method and answers `{}`; no credential check, no network call |
 | `logout` | supported | removes all stored OAuth provider tokens; advertised only when wired (`agentCapabilities.auth.logout`) |
-| `session/new` | supported | requires the client's absolute cwd; every call creates a distinct session; advertises `configOptions` (the model picker) when a model catalog is wired |
+| `session/new` | supported | requires the client's absolute cwd; every call creates a distinct session; advertises `configOptions` (mode always, model when a catalog is wired) |
 | `session/load` | supported | resume + replay; re-advertises `configOptions` like `session/new`; see below |
 | `session/resume` | supported | re-attach to a persisted session without replaying history |
 | `session/list` | supported | persisted sessions as `SessionInfo` pages (cwd filter, opaque cursor) |
@@ -51,8 +51,8 @@ sub-agents, and prompts all resolve against it.
 | `session/delete` | supported | removes the conversation from the store; unknown/deleted ids succeed silently |
 | `session/prompt` | supported | streams updates, then answers with a `stopReason` |
 | `session/cancel` | supported | notification; cancels the in-flight turn |
-| `session/set_mode` | supported | switches between `build` (full tools) and `plan` (read-only tool set + planning directive); unknown ids are invalid params and every change emits `current_mode_update` |
-| `session/set_config_option` | supported | the model picker (`configId: "model"`); validates the value against the advertised options, switches the model for subsequent turns, and echoes the recomputed `configOptions` set |
+| `session/set_mode` | supported alias | switches between `build` (full tools) and `plan` (read-only tool set + planning directive); unknown ids are invalid params and the change is pushed as `config_option_update` |
+| `session/set_config_option` | supported | the mode picker (`configId: "mode"` with `category: "mode"`) and model picker (`configId: "model"`); validates the value, applies it to subsequent turns, emits `config_option_update` for mode changes, and echoes the recomputed `configOptions` set |
 | `session/update` | supported | variants below |
 | `session/request_permission` | supported | tool approvals delegated to the client; all four option kinds (`allow_once`/`allow_always`/`reject_once`/`reject_always`) are offered, and an always-decision is remembered for the rest of the session |
 
@@ -113,10 +113,11 @@ ids, and prompts on different sessions may run concurrently. A missing or
 relative cwd is rejected with invalid params (`-32602`); a second prompt on
 a session whose turn is still in flight is rejected busy (`-32002`),
 as is a `session/load` for a live id while its prompt runs — both retry
-after the turn ends. New sessions start in **build** mode and advertise
-`modes: {currentModeId: "build", availableModes: [{id: "build", ...}, {id: "plan", ...}]}`;
-`session/set_mode` switches the live attachment, rejects unknown ids with
-invalid params, and emits `current_mode_update`. Plan mode withholds the
+after the turn ends. New sessions start in **build** mode and advertise the
+mode selector as `configOptions` (`id: "mode"`, `category: "mode"`, values
+`build`/`plan`). This server is greenfield and does not emit the legacy
+`modes` field; clients must support config options. `session/set_mode` remains
+an accepted alias and pushes `config_option_update`. Plan mode withholds the
 mutating tool set and injects a planning directive; an in-flight turn keeps
 the mode it started with. Mode is not persisted, so a fresh process defaults
 to build on `load`/`resume`; a live load/re-resume keeps the attachment's
@@ -156,9 +157,9 @@ Load flow (`internal/acp/server.go` `handleSessionLoad`):
    input (`[STEER] ` steering/loop-detection nudges, `SUPERVISOR: `
    checkpoint-recovery guidance, `CONFLICT: ` sub-agent conflict reports,
    `[BACKGROUND <role>]` background-job result deliveries).
-4. The request then answers with the session result: `configOptions` when a
-   model catalog is wired, `modes` (build/plan), and `_meta` when the
-   session has a derived world posture.
+4. The request then answers with the session result: `configOptions` (mode
+   always, model when a catalog is wired) and `_meta` when the session has a
+   derived world posture.
 
 Reloading the **already-established id** replays the live conversation
 again and returns the same result shape (load always replays). Loading a
@@ -175,8 +176,8 @@ describes the store problem; it does not name the id).
 
 `session/resume` (`sessionCapabilities.resume`) re-attaches to a persisted
 conversation **without replaying history**: no `session/update`
-notifications precede the response, which carries the `modes` picker (no
-config options are repeated). It shares `session/load`'s attachment
+notifications precede the response, which carries the same `configOptions`
+set as session/new. It shares `session/load`'s attachment
 machinery — same required absolute cwd, same live-id checks (idempotent
 mode result when already attached, busy error while a prompt runs), same
 store-backed rebuild for ids that are

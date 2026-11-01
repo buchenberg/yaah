@@ -40,10 +40,11 @@ func (s *Server) handleCancel(msg Message) {
 
 // handleSetMode switches the Plan/Build session mode. The id must be one of
 // the modes advertised on session/new; unknown ids fail closed instead of
-// being silently accepted. The change is emitted as current_mode_update and
-// applies to the next prompt (an in-flight turn keeps the mode it started
-// with).
+// being silently accepted. The canonical notification is
+// config_option_update; the change applies to the next prompt (an in-flight
+// turn keeps the mode it started with).
 func (s *Server) handleSetMode(
+	ctx context.Context,
 	msg Message,
 	sendUpdate updateSender,
 	respOK func(id json.RawMessage, result any),
@@ -80,9 +81,9 @@ func (s *Server) handleSetMode(
 		respErr(msg.ID, codeInvalidParams, err.Error())
 		return
 	}
-	sendUpdate(st.id, CurrentModeUpdate{
-		SessionUpdate: "current_mode_update",
-		CurrentModeID: p.ModeID,
+	sendUpdate(st.id, ConfigOptionUpdate{
+		SessionUpdate: UpdateConfigOption,
+		ConfigOptions: buildSessionConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName(), p.ModeID),
 	})
 	respOK(msg.ID, nil)
 }
@@ -109,6 +110,7 @@ func (s *Server) modelCatalog(ctx context.Context) []ModelOption {
 func (s *Server) handleSetConfigOption(
 	ctx context.Context,
 	msg Message,
+	sendUpdate updateSender,
 	respOK func(id json.RawMessage, result any),
 	respErr func(id json.RawMessage, code int, message string),
 ) {
@@ -130,33 +132,48 @@ func (s *Server) handleSetConfigOption(
 		respErr(msg.ID, codeInvalidParams, "unknown session id (call session/new first)")
 		return
 	}
-	if p.ConfigID != ConfigOptionModelID {
-		respErr(msg.ID, codeInvalidParams, fmt.Sprintf("unsupported configId %q (supported: %s)", p.ConfigID, ConfigOptionModelID))
-		return
-	}
 	catalog := s.modelCatalog(ctx)
-	// Validate against the options the session advertises right now,
-	// not against the raw catalog: the picker also lists a current model
-	// discovery no longer reports, and re-selecting it must stay valid.
-	advertised := buildModelConfigOptions(catalog, st.sess.ProviderName(), st.sess.ModelName())
-	if advertised == nil {
-		respErr(msg.ID, codeInvalidParams, "the model picker is not available: no models are configured")
-		return
+	switch p.ConfigID {
+	case ConfigOptionModeID:
+		if !validSessionMode(p.Value) {
+			respErr(msg.ID, codeInvalidParams, fmt.Sprintf("unknown mode %q (available: %s, %s)", p.Value, SessionModeBuild, SessionModePlan))
+			return
+		}
+		if st.sess.Mode() != p.Value {
+			if err := st.sess.SetMode(p.Value); err != nil {
+				respErr(msg.ID, codeInvalidParams, err.Error())
+				return
+			}
+			sendUpdate(st.id, ConfigOptionUpdate{
+				SessionUpdate: UpdateConfigOption,
+				ConfigOptions: buildSessionConfigOptions(catalog, st.sess.ProviderName(), st.sess.ModelName(), p.Value),
+			})
+		}
+		respOK(msg.ID, SetConfigOptionResult{
+			ConfigOptions: buildSessionConfigOptions(catalog, st.sess.ProviderName(), st.sess.ModelName(), p.Value),
+		})
+	case ConfigOptionModelID:
+		// Validate against the options the session advertises right now,
+		// not against the raw catalog: the picker also lists a current model
+		// discovery no longer reports, and re-selecting it must stay valid.
+		advertised := buildSessionConfigOptions(catalog, st.sess.ProviderName(), st.sess.ModelName(), st.sess.Mode())
+		if !configOptionHasValue(advertised, ConfigOptionModelID, p.Value) {
+			respErr(msg.ID, codeInvalidParams, fmt.Sprintf("unknown value %q for configId %q", p.Value, p.ConfigID))
+			return
+		}
+		provider, model, split := splitModelValue(p.Value)
+		if !split {
+			respErr(msg.ID, codeInvalidParams, fmt.Sprintf("invalid value %q: want \"<provider>/<model>\"", p.Value))
+			return
+		}
+		st.sess.SetModel(provider, model)
+		s.logf("session %s: model set to %s/%s", st.id, provider, model)
+		respOK(msg.ID, SetConfigOptionResult{
+			ConfigOptions: buildSessionConfigOptions(catalog, provider, model, st.sess.Mode()),
+		})
+	default:
+		respErr(msg.ID, codeInvalidParams, fmt.Sprintf("unsupported configId %q (supported: %s, %s)", p.ConfigID, ConfigOptionModeID, ConfigOptionModelID))
 	}
-	if !configOptionHasValue(advertised, ConfigOptionModelID, p.Value) {
-		respErr(msg.ID, codeInvalidParams, fmt.Sprintf("unknown value %q for configId %q", p.Value, p.ConfigID))
-		return
-	}
-	provider, model, split := splitModelValue(p.Value)
-	if !split {
-		respErr(msg.ID, codeInvalidParams, fmt.Sprintf("invalid value %q: want \"<provider>/<model>\"", p.Value))
-		return
-	}
-	st.sess.SetModel(provider, model)
-	s.logf("session %s: model set to %s/%s", st.id, provider, model)
-	respOK(msg.ID, SetConfigOptionResult{
-		ConfigOptions: buildModelConfigOptions(catalog, provider, model),
-	})
 }
 
 // translateCommandPrompt turns a palette selection into a normal prompt. The

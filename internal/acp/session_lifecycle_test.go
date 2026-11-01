@@ -127,7 +127,7 @@ func TestServer_sessionResumeAttachesWithoutReplay(t *testing.T) {
 		if err := json.Unmarshal(msg.Result, &resumed); err != nil {
 			t.Fatalf("session/resume result: %v", err)
 		}
-		assertSessionModes(t, resumed.Modes, SessionModeBuild)
+		assertModeConfigOption(t, resumed.ConfigOptions, SessionModeBuild)
 	})
 
 	t.Run("foreign id rejected with invalid params", func(t *testing.T) {

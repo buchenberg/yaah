@@ -596,7 +596,7 @@ func (s *Server) dispatch(
 			s.handleSessionLoad(dispatchCtx, msg, sendUpdate, respOK, respErr)
 
 		case "session/resume":
-			s.handleSessionResume(msg, sendUpdate, respOK, respErr)
+			s.handleSessionResume(dispatchCtx, msg, sendUpdate, respOK, respErr)
 
 		case "session/list":
 			s.handleSessionList(msg, respOK, respErr)
@@ -608,10 +608,10 @@ func (s *Server) dispatch(
 			s.handleSessionDelete(msg, respOK, respErr)
 
 		case "session/set_mode":
-			s.handleSetMode(msg, sendUpdate, respOK, respErr)
+			s.handleSetMode(dispatchCtx, msg, sendUpdate, respOK, respErr)
 
 		case "session/set_config_option":
-			s.handleSetConfigOption(dispatchCtx, msg, respOK, respErr)
+			s.handleSetConfigOption(dispatchCtx, msg, sendUpdate, respOK, respErr)
 
 		default:
 			respErr(msg.ID, codeMethodNotFound, "method not found: "+msg.Method)

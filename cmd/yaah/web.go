@@ -246,6 +246,7 @@ type actionRequest struct {
 	Value    string `json:"value"`
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
+	Mode     string `json:"mode"`
 }
 
 func runWeb(cmd *cobra.Command, args []string) error {
@@ -413,6 +414,7 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 	v := &sseView{w: w}
 	v.provider = ws.sess.ProviderName()
 	v.model = ws.sess.ModelName()
+	v.sessionMode = ws.sess.Mode()
 	v.world = worldHeaderOf(ws.sess.WorldStatus())
 	infos := ws.sess.MCPInfos()
 	v.mcpServers = make([]wireMCPServer, len(infos))
@@ -576,6 +578,19 @@ func (ws *webServer) handleAction(w http.ResponseWriter, r *http.Request) {
 		ws.mu.Unlock()
 		if v != nil {
 			v.SetHeader(req.Provider, req.Model)
+		}
+		w.WriteHeader(http.StatusOK)
+
+	case "mode":
+		if err := ws.sess.SetMode(req.Mode); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		ws.mu.Lock()
+		v := ws.view
+		ws.mu.Unlock()
+		if v != nil {
+			v.SetSessionMode(req.Mode)
 		}
 		w.WriteHeader(http.StatusOK)
 

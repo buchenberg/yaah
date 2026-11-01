@@ -513,17 +513,23 @@ func pickerCatalog() fakeModelCatalog {
 	}}
 }
 
-// assertModelPicker checks one decoded configOptions set: the single
-// model-category select with both catalog values and the given current
-// selection.
+// assertModelPicker checks one decoded configOptions set: the model-category
+// select with both catalog values and the given current selection. A mode
+// option may precede it.
 func assertModelPicker(t *testing.T, opts []SessionConfigOption, current string) {
 	t.Helper()
-	if len(opts) != 1 {
-		t.Fatalf("configOptions = %+v, want exactly the model picker", opts)
+	var picker *SessionConfigOption
+	for i := range opts {
+		if opts[i].ID == ConfigOptionModelID {
+			picker = &opts[i]
+			break
+		}
 	}
-	picker := opts[0]
-	if picker.ID != ConfigOptionModelID || picker.Category != ConfigOptionCategoryModel || picker.Type != ConfigOptionTypeSelect {
-		t.Fatalf("model picker = %+v, want id=%s category=%s type=%s", picker, ConfigOptionModelID, ConfigOptionCategoryModel, ConfigOptionTypeSelect)
+	if picker == nil {
+		t.Fatalf("configOptions = %+v, want the model picker", opts)
+	}
+	if picker.Category != ConfigOptionCategoryModel || picker.Type != ConfigOptionTypeSelect {
+		t.Fatalf("model picker = %+v, want category=%s type=%s", picker, ConfigOptionCategoryModel, ConfigOptionTypeSelect)
 	}
 	if picker.CurrentValue != current {
 		t.Errorf("currentValue = %q, want %q", picker.CurrentValue, current)
@@ -561,7 +567,7 @@ func TestServer_modelPickerAdvertisedOnSessionNewAndLoad(t *testing.T) {
 			t.Fatalf("session/new result: %v", err)
 		}
 		assertModelPicker(t, result.ConfigOptions, "openai/gpt-5")
-		assertSessionModes(t, result.Modes, SessionModeBuild)
+		assertModeConfigOption(t, result.ConfigOptions, SessionModeBuild)
 	})
 
 	t.Run("session/load re-advertises the picker", func(t *testing.T) {
@@ -580,10 +586,10 @@ func TestServer_modelPickerAdvertisedOnSessionNewAndLoad(t *testing.T) {
 			t.Fatalf("session/load result: %v", err)
 		}
 		assertModelPicker(t, result.ConfigOptions, "deepseek/deepseek-flash")
-		assertSessionModes(t, result.Modes, SessionModeBuild)
+		assertModeConfigOption(t, result.ConfigOptions, SessionModeBuild)
 	})
 
-	t.Run("no catalog omits configOptions", func(t *testing.T) {
+	t.Run("no catalog still advertises mode only", func(t *testing.T) {
 		h := newACPHarness(t, nil)
 		initialize(t, h)
 		cwd, _ := json.Marshal(h.cwd)
@@ -594,8 +600,12 @@ func TestServer_modelPickerAdvertisedOnSessionNewAndLoad(t *testing.T) {
 		if msg.Error != nil {
 			t.Fatalf("session/new error: %+v", msg.Error)
 		}
-		if strings.Contains(string(msg.Result), "configOptions") {
-			t.Errorf("session/new result = %s, want no configOptions without a wired catalog", msg.Result)
+		var result SessionNewResult
+		if err := json.Unmarshal(msg.Result, &result); err != nil {
+			t.Fatal(err)
+		}
+		if len(result.ConfigOptions) != 1 || result.ConfigOptions[0].ID != ConfigOptionModeID {
+			t.Errorf("configOptions = %+v, want mode only", result.ConfigOptions)
 		}
 	})
 }
@@ -692,7 +702,7 @@ func TestServer_sessionLoadReplaysHistory(t *testing.T) {
 	if resp.Error != nil {
 		t.Fatalf("session/load returned error: %+v", resp.Error)
 	}
-	assertLoadResultModes(t, resp.Result, SessionModeBuild)
+	assertLoadResultMode(t, resp.Result, SessionModeBuild)
 	want := []string{
 		UpdateUserMessageChunk + ":fix the flake",
 		UpdateAgentMessageChunk + ":on it",
@@ -813,7 +823,7 @@ func TestServer_sessionLoadSecondSessionAllowed(t *testing.T) {
 	if msg.Error != nil {
 		t.Fatalf("second load returned error: %+v", msg.Error)
 	}
-	assertLoadResultModes(t, msg.Result, SessionModeBuild)
+	assertLoadResultMode(t, msg.Result, SessionModeBuild)
 	if res := h.resumes(); len(res) != 2 || res[0] != "" || res[1] != "sess-other" {
 		t.Errorf("factory calls = %v, want [\"\", \"sess-other\"]", res)
 	}
@@ -854,7 +864,7 @@ func TestServer_sessionLoadSameIdReplaysAgain(t *testing.T) {
 	if resp.Error != nil {
 		t.Fatalf("reload returned error: %+v", resp.Error)
 	}
-	assertLoadResultModes(t, resp.Result, SessionModeBuild)
+	assertLoadResultMode(t, resp.Result, SessionModeBuild)
 	want := []string{
 		UpdateUserMessageChunk + ":earlier question",
 		UpdateAgentMessageChunk + ":earlier answer",
@@ -902,39 +912,43 @@ func TestServer_sessionPromptUnknownSession(t *testing.T) {
 	}
 }
 
-func assertLoadResultModes(t *testing.T, raw json.RawMessage, current string) {
+func assertLoadResultMode(t *testing.T, raw json.RawMessage, current string) {
 	t.Helper()
 	var result SessionLoadResult
 	if err := json.Unmarshal(raw, &result); err != nil {
 		t.Fatalf("load result: %v", err)
 	}
-	assertSessionModes(t, result.Modes, current)
+	assertModeConfigOption(t, result.ConfigOptions, current)
 }
 
-func assertSessionModes(t *testing.T, state *SessionModeState, current string) {
+func assertModeConfigOption(t *testing.T, opts []SessionConfigOption, current string) {
 	t.Helper()
-	if state == nil {
-		t.Fatal("session modes missing")
-	}
-	if state.CurrentModeID != current {
-		t.Errorf("currentModeId = %q, want %q", state.CurrentModeID, current)
-	}
-	ids := make(map[string]bool)
-	for _, mode := range state.AvailableModes {
-		if mode.ID == "" || mode.Name == "" {
-			t.Errorf("mode = %+v, want id and name", mode)
+	for _, opt := range opts {
+		if opt.ID != ConfigOptionModeID {
+			continue
 		}
-		ids[mode.ID] = true
+		if opt.Category != ConfigOptionCategoryMode || opt.CurrentValue != current {
+			t.Errorf("mode option = %+v, want category=mode current=%s", opt, current)
+		}
+		ids := make(map[string]bool)
+		for _, value := range opt.Options {
+			if value.Value == "" || value.Name == "" {
+				t.Errorf("mode value = %+v, want id/name", value)
+			}
+			ids[value.Value] = true
+		}
+		if !ids[SessionModeBuild] || !ids[SessionModePlan] {
+			t.Errorf("mode values = %+v, want build and plan", opt.Options)
+		}
+		return
 	}
-	if !ids[SessionModeBuild] || !ids[SessionModePlan] {
-		t.Errorf("available modes = %+v, want build and plan", state.AvailableModes)
-	}
+	t.Fatalf("configOptions = %+v, want mode selector", opts)
 }
 
-// TestServer_sessionModes pins the Plan/Build picker: session/new advertises
-// both modes, set_mode switches the session, emits current_mode_update, and
-// rejects unknown ids.
-func TestServer_sessionModes(t *testing.T) {
+// TestServer_modeConfigAndSetMode pins the Plan/Build selector: session/new
+// advertises it as configOptions, set_mode switches the session and pushes a
+// config_option_update, and unknown ids are rejected.
+func TestServer_modeConfigAndSetMode(t *testing.T) {
 	sess := &fakeSession{id: "sess-modes"}
 	h := newACPHarness(t, sess)
 	initialize(t, h)
@@ -947,7 +961,7 @@ func TestServer_sessionModes(t *testing.T) {
 	if err := json.Unmarshal(msg.Result, &created); err != nil {
 		t.Fatalf("session/new result: %v", err)
 	}
-	assertSessionModes(t, created.Modes, SessionModeBuild)
+	assertModeConfigOption(t, created.ConfigOptions, SessionModeBuild)
 	if sess.Mode() != SessionModeBuild {
 		t.Fatalf("fresh session mode = %q, want build", sess.Mode())
 	}
@@ -955,19 +969,9 @@ func TestServer_sessionModes(t *testing.T) {
 	if err := h.send("session/set_mode", 4, fmt.Sprintf(`{"sessionId":%q,"modeId":"plan"}`, created.SessionID)); err != nil {
 		t.Fatal(err)
 	}
-	update := h.recv(t)
-	if update.Method != "session/update" {
-		t.Fatalf("first set_mode message = %+v, want current_mode_update notification", update)
-	}
-	var params struct {
-		SessionID string            `json:"sessionId"`
-		Update    CurrentModeUpdate `json:"update"`
-	}
-	if err := json.Unmarshal(update.Params, &params); err != nil {
-		t.Fatalf("mode update params: %v", err)
-	}
-	if params.SessionID != created.SessionID || params.Update.SessionUpdate != "current_mode_update" || params.Update.CurrentModeID != SessionModePlan {
-		t.Fatalf("mode update = %+v", params)
+	option := h.recv(t)
+	if option.Method != "session/update" || !strings.Contains(string(option.Params), "config_option_update") {
+		t.Fatalf("set_mode config option update = %+v", option)
 	}
 	if ack := h.recv(t); ack.Error != nil || !strings.Contains(string(ack.ID), "4") {
 		t.Fatalf("set_mode ack = %+v", ack)
@@ -1180,9 +1184,9 @@ func TestServer_promptRelatedSetModeResponsive(t *testing.T) {
 	if err := h.send("session/set_mode", 4, fmt.Sprintf(`{"sessionId":%q,"modeId":"plan"}`, sid)); err != nil {
 		t.Fatal(err)
 	}
-	update := h.recv(t)
-	if update.Method != "session/update" {
-		t.Fatalf("expected current_mode_update while prompt in flight, got %+v", update)
+	option := h.recv(t)
+	if option.Method != "session/update" || !strings.Contains(string(option.Params), "config_option_update") {
+		t.Fatalf("expected config_option_update while prompt in flight, got %+v", option)
 	}
 	ack := h.recv(t)
 	if !(ack.Error == nil && len(ack.ID) > 0 && strings.Contains(string(ack.ID), "4")) {
@@ -2290,5 +2294,40 @@ func TestServer_batchRequestRejectedAsArray(t *testing.T) {
 	}
 	if len(responses) != 1 || string(responses[0].ID) != "1" || responses[0].Error == nil || responses[0].Error.Code != codeInvalidRequest {
 		t.Fatalf("batch response = %+v", responses)
+	}
+}
+
+func TestServer_setConfigOptionSwitchesMode(t *testing.T) {
+	sess := &fakeSession{id: "sess-mode-cfg"}
+	h := newACPHarness(t, sess)
+	initialize(t, h)
+	if id := newSession(t, h); id != "sess-mode-cfg" {
+		t.Fatalf("session/new returned %q", id)
+	}
+	if err := h.send("session/set_config_option", 2, `{"sessionId":"sess-mode-cfg","configId":"mode","value":"plan"}`); err != nil {
+		t.Fatal(err)
+	}
+	if update := h.recv(t); !strings.Contains(string(update.Params), "config_option_update") {
+		t.Fatalf("config update = %+v", update)
+	}
+	msg := h.recv(t)
+	if msg.Error != nil {
+		t.Fatalf("mode config error: %+v", msg.Error)
+	}
+	var result SetConfigOptionResult
+	if err := json.Unmarshal(msg.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	var mode *SessionConfigOption
+	for i := range result.ConfigOptions {
+		if result.ConfigOptions[i].ID == ConfigOptionModeID {
+			mode = &result.ConfigOptions[i]
+		}
+	}
+	if mode == nil || mode.CurrentValue != SessionModePlan || mode.Category != ConfigOptionCategoryMode {
+		t.Fatalf("mode option = %+v", mode)
+	}
+	if sess.Mode() != SessionModePlan {
+		t.Fatalf("session mode = %q, want plan", sess.Mode())
 	}
 }

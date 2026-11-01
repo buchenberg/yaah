@@ -30,9 +30,10 @@ type wireMCPServer struct {
 }
 
 type wireHeaderMeta struct {
-	Provider   string          `json:"provider"`
-	Model      string          `json:"model"`
-	MCPServers []wireMCPServer `json:"mcpServers"`
+	Provider    string          `json:"provider"`
+	Model       string          `json:"model"`
+	SessionMode string          `json:"sessionMode,omitempty"`
+	MCPServers  []wireMCPServer `json:"mcpServers"`
 
 	// World posture, flat on the header frame so the Alpine client can read
 	// it without a nested shape. Every field is omitted when the session
@@ -167,14 +168,23 @@ func (v *sseView) SetHeader(provider, model string) {
 	v.writeLocked(marshalWire(sseWireEvent{Type: "ctrl.header", Meta: v.headerLocked()}))
 }
 
+// SetSessionMode updates the header's plan/build badge.
+func (v *sseView) SetSessionMode(mode string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.sessionMode = mode
+	v.writeLocked(marshalWire(sseWireEvent{Type: "ctrl.header", Meta: v.headerLocked()}))
+}
+
 type sseView struct {
 	w  http.ResponseWriter
 	mu sync.Mutex
 
 	// header info set from the session on SSE connect
-	provider   string
-	model      string
-	mcpServers []wireMCPServer
+	provider    string
+	model       string
+	sessionMode string
+	mcpServers  []wireMCPServer
 	// world is the session posture, populated once when the view is built and
 	// re-sent unchanged by SetHeader.
 	world wireWorldMeta
@@ -191,9 +201,10 @@ func (v *sseView) AcceptsEventsBetweenRuns() bool { return true }
 // held. Keeping one builder is what makes SetHeader preserve the world.
 func (v *sseView) headerLocked() *wireHeaderMeta {
 	h := &wireHeaderMeta{
-		Provider:   v.provider,
-		Model:      v.model,
-		MCPServers: v.mcpServers,
+		Provider:    v.provider,
+		Model:       v.model,
+		SessionMode: v.sessionMode,
+		MCPServers:  v.mcpServers,
 	}
 	h.Workspace = v.world.Workspace
 	h.Isolated = v.world.Isolated

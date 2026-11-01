@@ -63,6 +63,8 @@ type Session interface {
 	SetModel(providerName, modelName string)
 	ProviderName() string
 	ModelName() string
+	Mode() string
+	SetMode(mode string) error
 	MCPInfos() []mcp.ServerInfo
 	// WorldStatus reports the session's workspace and dispatch-world
 	// posture for display. The zero value means it was never derived;

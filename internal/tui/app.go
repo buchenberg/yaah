@@ -105,6 +105,7 @@ type App struct {
 	contextWindow int
 	lastProvider  string
 	lastModel     string
+	lastMode      string
 	todoItems     []todo.Item
 	verbose       bool
 	showBanner    bool
@@ -157,6 +158,7 @@ type App struct {
 	version string
 
 	OnModelSelect func(model string)
+	OnModeSelect  func(mode string)
 }
 
 type convItem struct {
@@ -193,6 +195,12 @@ func (t *App) SetProvider(name string) {
 
 func (t *App) SetModel(name string) {
 	t.lastModel = name
+	t.renderInfoPane()
+}
+
+// SetMode updates the info pane's session-mode line.
+func (t *App) SetMode(mode string) {
+	t.lastMode = mode
 	t.renderInfoPane()
 }
 

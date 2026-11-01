@@ -13,7 +13,8 @@ sub-agent team, see [sub-agents.md](./sub-agents.md); for configuration, see
   collapsible tool cards (`ctrl+t`)
 - Sub-agent dispatch cards with role, duration, and status
 - A command palette (`ctrl+p`) with `:help`, `:clear`, `:compact`,
-  `:banner`, `:model`, `:search`, `:steer`, `:followup`, `:verbose`, `:quit`, and `:stop`
+  `:banner`, `:model`, `:plan`, `:build`, `:search`, `:steer`, `:followup`,
+  `:verbose`, `:quit`, and `:stop`
 - A paned layout: conversation, info pane (session, context, MCP, config),
   todo sidebar, and background sub-agent jobs
 - Mouse and keyboard navigation, input history, and multi-line input
@@ -32,13 +33,15 @@ Running `yaah` with no arguments starts a readline REPL:
 | `/help`, `/?` | Show commands |
 | `/roles`, `/reload-roles` | Reload role files |
 | `/login`, `/logout` | Manage provider OAuth login |
+| `/plan`, `/build` | Switch the session mode |
 
 History persists at `~/.yaah/history` (or `$YAAH_HOME/history` when `YAAH_HOME` is set).
 
 ## Web UI
 
 `yaah web` serves a browser interface with SSE streaming, tool cards,
-reasoning display, and approval/question modals. It is token-gated: startup
+reasoning display, approval/question modals, and a command palette with
+`Plan mode` / `Build mode` entries. It is token-gated: startup
 prints a URL containing the access token. See [web-ui.md](./web-ui.md) for
 the wire protocol and current feature differences from the TUI.
 
