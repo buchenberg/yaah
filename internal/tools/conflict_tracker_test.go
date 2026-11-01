@@ -5,10 +5,18 @@ import (
 	"testing"
 )
 
+func recordTestChange(ct *ConflictTracker, label, path, tool, digest string) {
+	ct.RecordChange(FileRecord{
+		DispatchID: label, SubAgentLabel: label, Lane: ConflictLaneShared,
+		FilePath: path, ToolName: tool, Known: true,
+		BeforeExists: true, AfterExists: true, AfterDigest: digest, AfterMode: "-rw-r--r--",
+	})
+}
+
 func TestConflictTracker_NoConflicts(t *testing.T) {
 	ct := &ConflictTracker{}
-	ct.Record("worker — Add login", "/foo/bar.go", "write")
-	ct.Record("worker — Add login", "/foo/bar.go", "edit")
+	recordTestChange(ct, "worker — Add login", "/foo/bar.go", "write", "same")
+	recordTestChange(ct, "worker — Add login", "/foo/bar.go", "edit", "same")
 
 	report := ct.DetectAndReset()
 	if report != "" {
@@ -18,8 +26,8 @@ func TestConflictTracker_NoConflicts(t *testing.T) {
 
 func TestConflictTracker_Conflict(t *testing.T) {
 	ct := &ConflictTracker{}
-	ct.Record("worker — Add login", "/foo/bar.go", "write")
-	ct.Record("worker — Refactor auth", "/foo/bar.go", "edit")
+	recordTestChange(ct, "worker — Add login", "/foo/bar.go", "write", "one")
+	recordTestChange(ct, "worker — Refactor auth", "/foo/bar.go", "edit", "two")
 
 	report := ct.DetectAndReset()
 	if report == "" {
@@ -39,10 +47,10 @@ func TestConflictTracker_Conflict(t *testing.T) {
 
 func TestConflictTracker_MultipleFiles(t *testing.T) {
 	ct := &ConflictTracker{}
-	ct.Record("w1", "/a.go", "write")
-	ct.Record("w2", "/a.go", "edit")
-	ct.Record("w1", "/b.go", "write")
-	ct.Record("w2", "/b.go", "write")
+	recordTestChange(ct, "w1", "/a.go", "write", "a1")
+	recordTestChange(ct, "w2", "/a.go", "edit", "a2")
+	recordTestChange(ct, "w1", "/b.go", "write", "b1")
+	recordTestChange(ct, "w2", "/b.go", "write", "b2")
 
 	report := ct.DetectAndReset()
 	if report == "" {
@@ -59,8 +67,8 @@ func TestConflictTracker_MultipleFiles(t *testing.T) {
 
 func TestConflictTracker_ResetsAfterDetect(t *testing.T) {
 	ct := &ConflictTracker{}
-	ct.Record("w1", "/a.go", "write")
-	ct.Record("w2", "/a.go", "edit")
+	recordTestChange(ct, "w1", "/a.go", "write", "one")
+	recordTestChange(ct, "w2", "/a.go", "edit", "two")
 
 	_ = ct.DetectAndReset()
 
@@ -72,8 +80,8 @@ func TestConflictTracker_ResetsAfterDetect(t *testing.T) {
 
 func TestConflictTracker_DeduplicatesTools(t *testing.T) {
 	ct := &ConflictTracker{}
-	ct.Record("w1", "/a.go", "edit")
-	ct.Record("w1", "/a.go", "edit")
+	recordTestChange(ct, "w1", "/a.go", "edit", "same")
+	recordTestChange(ct, "w1", "/a.go", "edit", "same")
 
 	report := ct.DetectAndReset()
 	if report != "" {
@@ -83,8 +91,8 @@ func TestConflictTracker_DeduplicatesTools(t *testing.T) {
 
 func TestConflictTracker_MixedRoleLabels(t *testing.T) {
 	ct := &ConflictTracker{}
-	ct.Record("analyst — list files", "/a.go", "write")
-	ct.Record("worker — implement", "/a.go", "edit")
+	recordTestChange(ct, "analyst — list files", "/a.go", "write", "one")
+	recordTestChange(ct, "worker — implement", "/a.go", "edit", "two")
 
 	report := ct.DetectAndReset()
 	if report == "" {

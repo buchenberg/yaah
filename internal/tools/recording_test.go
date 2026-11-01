@@ -141,7 +141,10 @@ func TestRecordingTool_ShellMutationIsUnknown(t *testing.T) {
 	}{
 		{"redirect", "echo hi > out.txt", true},
 		{"common mutator", "make test", true},
+		{"separator mutator", "make&&echo ok", true},
+		{"nested interpreter", `bash -lc "sed -i s/a/b/ file"`, true},
 		{"quoted redirect", "git log --format='%h > %s'", false},
+		{"escaped redirect", `echo \> out.txt`, false},
 		{"read only", "git status", false},
 	}
 	for _, tc := range tests {
@@ -168,6 +171,18 @@ func TestRecordingTool_ShellMutationIsUnknown(t *testing.T) {
 				t.Fatalf("read-only command produced a report: %+v", report)
 			}
 		})
+	}
+}
+
+func TestConflictSnapshotsEqual_UnknownShape(t *testing.T) {
+	a := conflictSnapshot{Exists: true, Size: 100, Mode: "-rw-r--r--"}
+	b := conflictSnapshot{Exists: true, Size: 100, Mode: "-rw-r--r--"}
+	if !conflictSnapshotsEqual(a, b) {
+		t.Error("same unknown shape should suppress an idempotent rewrite")
+	}
+	b.Size = 101
+	if conflictSnapshotsEqual(a, b) {
+		t.Error("different unknown size should remain evidence of a change")
 	}
 }
 

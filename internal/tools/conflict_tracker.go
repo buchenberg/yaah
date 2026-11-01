@@ -90,23 +90,6 @@ type ConflictTracker struct {
 	records []FileRecord
 }
 
-// Record is the legacy label-only entry point. It has no before/after evidence,
-// so detection treats it as an unknown mutation on a shared path.
-func (ct *ConflictTracker) Record(label, filePath, toolName string) {
-	ct.RecordChange(FileRecord{
-		DispatchID:    label,
-		SubAgentLabel: label,
-		Lane:          ConflictLaneShared,
-		FilePath:      filePath,
-		ToolName:      toolName,
-		BeforeExists:  true,
-		AfterExists:   true,
-		AfterDigest:   label + "\x00" + toolName,
-		AfterMode:     "legacy",
-		Known:         true,
-	})
-}
-
 // RecordChange adds one evidence-backed change. It is called after a tool
 // succeeds; no-op writes are filtered by the caller.
 func (ct *ConflictTracker) RecordChange(rec FileRecord) {

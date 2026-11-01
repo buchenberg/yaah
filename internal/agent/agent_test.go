@@ -1672,8 +1672,8 @@ func TestLoop_autoCompactCapped(t *testing.T) {
 
 func TestConflictDetection_ReportsConflictInConversation(t *testing.T) {
 	tracker := &tools.ConflictTracker{}
-	tracker.Record("worker — Add login handler", "/tmp/test.go", "write")
-	tracker.Record("worker — Refactor auth", "/tmp/test.go", "edit")
+	tracker.RecordChange(tools.FileRecord{DispatchID: "a", SubAgentLabel: "worker — Add login handler", FilePath: "/tmp/test.go", ToolName: "write", Known: true, AfterExists: true, AfterDigest: "one", AfterMode: "-rw-r--r--"})
+	tracker.RecordChange(tools.FileRecord{DispatchID: "b", SubAgentLabel: "worker — Refactor auth", FilePath: "/tmp/test.go", ToolName: "edit", Known: true, AfterExists: true, AfterDigest: "two", AfterMode: "-rw-r--r--"})
 
 	fp := &fakeProvider{
 		responses: []*types.ChatResponse{
@@ -1797,8 +1797,8 @@ func TestConflictDetection_NoConflictWhenTrackerEmpty(t *testing.T) {
 
 func TestConflictDetection_TrackerClearedAfterIteration(t *testing.T) {
 	tracker := &tools.ConflictTracker{}
-	tracker.Record("w1", "/a.go", "write")
-	tracker.Record("w2", "/a.go", "edit")
+	tracker.RecordChange(tools.FileRecord{DispatchID: "w1", SubAgentLabel: "w1", FilePath: "/a.go", ToolName: "write", Known: true, AfterExists: true, AfterDigest: "one", AfterMode: "-rw-r--r--"})
+	tracker.RecordChange(tools.FileRecord{DispatchID: "w2", SubAgentLabel: "w2", FilePath: "/a.go", ToolName: "edit", Known: true, AfterExists: true, AfterDigest: "two", AfterMode: "-rw-r--r--"})
 
 	fp := &fakeProvider{
 		responses: []*types.ChatResponse{

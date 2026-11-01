@@ -195,24 +195,41 @@ func (rt *RecordingTool) Execute(ctx context.Context, args string) (string, erro
 	return result, nil
 }
 
+type conflictPathLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
 var (
 	conflictPathLocksMu sync.Mutex
-	conflictPathLocks   = make(map[string]*sync.Mutex)
+	conflictPathLocks   = make(map[string]*conflictPathLock)
 )
 
 // lockConflictPath serializes snapshot/write/snapshot for one path. The key is
 // case-folded on case-insensitive hosts, matching the conflict comparison.
+// Entries are refcounted and removed after the last holder releases, so a
+// long-lived session does not retain one mutex per path it ever touched.
 func lockConflictPath(abs string) func() {
 	key := pathKey(normalizeTrackedPath(abs))
 	conflictPathLocksMu.Lock()
 	lock := conflictPathLocks[key]
 	if lock == nil {
-		lock = &sync.Mutex{}
+		lock = &conflictPathLock{}
 		conflictPathLocks[key] = lock
 	}
+	lock.refs++
 	conflictPathLocksMu.Unlock()
-	lock.Lock()
-	return lock.Unlock
+
+	lock.mu.Lock()
+	return func() {
+		lock.mu.Unlock()
+		conflictPathLocksMu.Lock()
+		lock.refs--
+		if lock.refs == 0 {
+			delete(conflictPathLocks, key)
+		}
+		conflictPathLocksMu.Unlock()
+	}
 }
 
 type conflictSnapshot struct {
@@ -243,13 +260,23 @@ func captureConflictSnapshot(ctx context.Context, ws Workspace, abs string) conf
 }
 
 func conflictSnapshotsEqual(a, b conflictSnapshot) bool {
-	if !a.Known || !b.Known || a.Exists != b.Exists {
+	if a.Exists != b.Exists {
 		return false
 	}
 	if !a.Exists {
 		return true
 	}
-	return a.Digest == b.Digest && a.Mode == b.Mode
+	if a.Known && b.Known {
+		return a.Digest == b.Digest && a.Mode == b.Mode
+	}
+	if a.Known != b.Known {
+		return false
+	}
+	// Both snapshots are content-unknown (large or special file). Compare the
+	// observable shape so an idempotent rewrite is not reported as a change;
+	// this is evidence of no observed shape change, not proof of identical
+	// bytes.
+	return a.Size == b.Size && a.Mode == b.Mode
 }
 
 // conflictWorkspaceRel maps an absolute workspace path to a display path. A
@@ -277,7 +304,11 @@ func shellMayMutate(args string) bool {
 	if json.Unmarshal([]byte(args), &params) != nil {
 		return false
 	}
-	cmd := strings.ToLower(params.Command)
+	return shellCommandMayMutate(params.Command)
+}
+
+func shellCommandMayMutate(cmd string) bool {
+	cmd = strings.ToLower(cmd)
 	if strings.TrimSpace(cmd) == "" {
 		return false
 	}
@@ -314,6 +345,22 @@ func shellMayMutate(args string) bool {
 			return true
 		}
 	}
+	// A nested interpreter is still a shell command. Inspect the string after
+	// -c/-lc so `bash -lc "sed -i ..."` is not a false all-clear.
+	for i, word := range words {
+		if word != "bash" && word != "sh" && word != "zsh" && word != "powershell" && word != "pwsh" {
+			continue
+		}
+		for j := i + 1; j < len(words); j++ {
+			if !strings.HasPrefix(words[j], "-") || !strings.Contains(words[j], "c") {
+				continue
+			}
+			if inner := strings.Join(words[j+1:], " "); inner != "" && shellCommandMayMutate(inner) {
+				return true
+			}
+			break
+		}
+	}
 	return false
 }
 
@@ -327,7 +374,7 @@ func shellHasRedirect(cmd string) bool {
 		switch {
 		case escaped:
 			escaped = false
-		case r == '\\' && quote != 0:
+		case r == '\\' && quote != '\'':
 			escaped = true
 		case quote != 0:
 			if r == quote {
@@ -374,7 +421,8 @@ func shellWords(cmd string) []string {
 			}
 		case r == '\'' || r == '"':
 			quote = r
-		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
+		case r == ' ' || r == '\t' || r == '\n' || r == '\r' ||
+			r == ';' || r == '&' || r == '|':
 			flush()
 		default:
 			word.WriteRune(r)
