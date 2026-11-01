@@ -47,6 +47,11 @@ func (*ProposalTool) Schema() json.RawMessage {
 			"proposal_id": {
 				"type": "string",
 				"description": "The proposal id from a delegate result (required for show, select, apply, release, discard)"
+			},
+			"strategy": {
+				"type": "string",
+				"enum": ["path_disjoint", "three_way"],
+				"description": "apply only: path_disjoint (default; refuses any parent overlap) or three_way (worktree lane only; explicit Git merge, fails closed on a textual conflict)"
 			}
 		},
 		"required": ["action"]
@@ -57,6 +62,7 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 	var raw struct {
 		Action     string `json:"action"`
 		ProposalID string `json:"proposal_id"`
+		Strategy   string `json:"strategy"`
 	}
 	if err := json.Unmarshal([]byte(args), &raw); err != nil {
 		return "", fmt.Errorf("proposal: invalid arguments: %w", err)
@@ -100,6 +106,7 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 		// caller that inspects one proposal still leaves the evidence behind.
 		analyses := t.Proposals.analyzeProposals(ctx)
 		conflicts, duplicates := proposalConflicts(analyses)
+		conflicts = attachProposalConflictDetails(ctx, conflicts, analyses)
 		t.Proposals.recordConflictFacts(ctx, analyses, conflicts)
 		for _, analysis := range analyses {
 			if analysis.proposal.id != p.id {
@@ -118,7 +125,10 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 		if raw.ProposalID == "" {
 			return "", fmt.Errorf("proposal: proposal_id required for %s", raw.Action)
 		}
-		out, err := t.Proposals.settleRetainedProposal(ctx, raw.ProposalID, raw.Action)
+		if raw.Strategy != "" && raw.Action != "apply" {
+			return "", fmt.Errorf("proposal: strategy is only valid with apply")
+		}
+		out, err := t.Proposals.settleRetainedProposalWithStrategy(ctx, raw.ProposalID, raw.Action, raw.Strategy)
 		if err != nil {
 			var conflict *proposalApplyConflict
 			if raw.Action == "apply" && errors.As(err, &conflict) {
@@ -133,6 +143,7 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 					Status:     "conflict",
 					ProposalID: conflict.ProposalID,
 					Action:     raw.Action,
+					Strategy:   conflict.Strategy,
 					Error:      conflict.Error(),
 					Conflicts: []proposalConflict{{
 						Kind:      proposalConflictApply,

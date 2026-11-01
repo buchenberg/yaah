@@ -91,6 +91,9 @@ var fsExempt = map[string]string{
 	"proposal_rehydrate.go:RemoveAll": "rehydration consumes a settled artifact directory under .yaah/proposals after a crash between the marker and removal",
 	"proposal_rehydrate.go:ReadFile":  "rehydration reads the manifest, basis, and metadata it wrote under .yaah/proposals",
 
+	"proposal_merge.go:WriteFile": "the explicit three-way merge writes base/current/proposed scratch files under an os.MkdirTemp directory, not project paths",
+	"proposal_merge.go:RemoveAll": "the explicit three-way merge removes its harness-owned temporary merge directory",
+
 	"role.go": "the role tool edits yaah's own role definitions and then reloads the process-wide role registry; role files are harness metadata, and the reload has no workspace view",
 
 	"availability.go:Stat": "GoToolAvailable walks up from a registry-curation root looking for go.mod to decide which Go tools to ship; it runs before any dispatch, when no workspace is injected yet",

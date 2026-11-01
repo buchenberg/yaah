@@ -1042,6 +1042,9 @@ func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retain
 		World:      string(subagent.WorldContainer),
 		Target:     target,
 	}
+	if action == "apply" {
+		env.Strategy = proposalApplyPathDisjoint
+	}
 	if !sessionTarget {
 		// The proposal directory must be invisible to git before select
 		// captures the host state; a new session may not have run the
@@ -1104,6 +1107,7 @@ func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retain
 			return "", &proposalApplyConflict{
 				ProposalID: p.id,
 				Paths:      overlap,
+				Strategy:   proposalApplyPathDisjoint,
 				Changes:    proposalChangesForPaths(ctx, p, overlap),
 				Cause:      goatherd.ErrApplyConflict,
 			}

@@ -3,12 +3,16 @@ package tools
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	goatherd "github.com/buchenberg/goatherd-runtime"
 )
@@ -65,6 +69,10 @@ const (
 	// content cap, so one large proposed file cannot make list/show allocate
 	// without limit. A larger file falls back to path-only classification.
 	proposalWorktreeMaxHashBytes = 32 << 20
+
+	// proposalConflictViewMaxBytes bounds each base/current/proposed excerpt
+	// carried by show/list for a divergent path.
+	proposalConflictViewMaxBytes = 4 << 10
 )
 
 // proposalChange is one normalized path change with the metadata needed to
@@ -87,6 +95,20 @@ type proposalConflict struct {
 	Paths     []string         `json:"paths"`
 	Proposals []string         `json:"proposals"`
 	Changes   []proposalChange `json:"changes,omitempty"`
+	// Details gives the orchestrator the base/current/proposed view for each
+	// divergent path. Content is excerpted; Note says when it is unavailable,
+	// binary, or a delete.
+	Details []proposalConflictDetail `json:"details,omitempty"`
+}
+
+// proposalConflictDetail is one proposal's side of one conflicting path.
+type proposalConflictDetail struct {
+	ProposalID string `json:"proposal_id"`
+	Path       string `json:"path"`
+	Base       string `json:"base,omitempty"`
+	Current    string `json:"current,omitempty"`
+	Proposed   string `json:"proposed,omitempty"`
+	Note       string `json:"note,omitempty"`
 }
 
 // proposalApplyConflict is the settlement refusal that carries enough data for
@@ -95,10 +117,15 @@ type proposalConflict struct {
 type proposalApplyConflict struct {
 	ProposalID string
 	Paths      []string
+	// Strategy is the requested apply strategy. Empty means path_disjoint.
+	Strategy string
 	// Changes carries the proposal's metadata for the overlapping paths when
 	// it could be inspected; it is optional because the refusal must still be
 	// machine-readable when the worktree or manifest is already gone.
 	Changes []proposalChange
+	// Message overrides the default path-disjoint wording for a textual
+	// three-way conflict.
+	Message string
 	// Cause preserves the settlement sentinel for direct registry callers.
 	// ProposalTool renders the structured envelope; Unwrap keeps
 	// errors.Is(err, goatherd.ErrApplyConflict) working underneath it.
@@ -111,6 +138,9 @@ func (e *proposalApplyConflict) Error() string {
 	paths := strings.Join(e.Paths, ", ")
 	if paths == "" {
 		paths = "overlap paths unavailable"
+	}
+	if e.Message != "" {
+		return fmt.Sprintf("proposal %s: %s (%s)", e.ProposalID, e.Message, paths)
 	}
 	return fmt.Sprintf(
 		"proposal %s: the parent changed paths this proposal also changes (%s); apply is path-disjoint only — resolve the overlap, then apply or discard",
@@ -248,6 +278,189 @@ func proposalChangesForPaths(ctx context.Context, p *retainedProposal, paths []s
 		}
 	}
 	return out
+}
+
+// attachProposalConflictDetails adds a bounded base/current/proposed view to
+// every divergent conflict. It is a read-only enrichment: settlement remains
+// path-disjoint unless the caller explicitly asks for three-way.
+func attachProposalConflictDetails(ctx context.Context, conflicts []proposalConflict, analyses []proposalAnalysis) []proposalConflict {
+	byID := make(map[string]*retainedProposal, len(analyses))
+	for _, analysis := range analyses {
+		byID[analysis.proposal.id] = analysis.proposal
+	}
+	for i := range conflicts {
+		if conflicts[i].Kind == proposalConflictSamePathIdentical {
+			continue
+		}
+		var details []proposalConflictDetail
+		for _, id := range conflicts[i].Proposals {
+			p := byID[id]
+			if p == nil {
+				continue
+			}
+			for _, path := range conflicts[i].Paths {
+				base, baseNote := p.baseContentView(ctx, path)
+				current, currentNote := p.parentCurrentContentView(ctx, path)
+				proposed, proposedNote := p.proposalContentView(ctx, path)
+				note := strings.Join(nonEmpty([]string{baseNote, currentNote, proposedNote}), "; ")
+				details = append(details, proposalConflictDetail{
+					ProposalID: id,
+					Path:       path,
+					Base:       base,
+					Current:    current,
+					Proposed:   proposed,
+					Note:       note,
+				})
+			}
+		}
+		conflicts[i].Details = details
+	}
+	return conflicts
+}
+
+func nonEmpty(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func (p *retainedProposal) baseContentView(ctx context.Context, rel string) (string, string) {
+	if p.repoPath == "" {
+		return "", "base unavailable: no repository path"
+	}
+	if p.delta != nil && p.target == "session" {
+		return "", "base unavailable for a session-target proposal"
+	}
+	state := p.basisState
+	if p.output != nil {
+		state = p.output.Baseline()
+	}
+	if state.Backend != "git" {
+		return "", "base unavailable: non-git basis"
+	}
+	tree, _ := state.Data["tree_sha"].(string)
+	if tree == "" {
+		tree = state.Revision
+	}
+	if tree == "" {
+		return "", "base unavailable: no tree revision"
+	}
+	object := tree + ":" + rel
+	size, ok, err := gitObjectSize(ctx, p.repoPath, object)
+	if err != nil {
+		return "", "base unavailable"
+	}
+	if !ok {
+		return "", "base missing"
+	}
+	if size > proposalConflictViewMaxBytes {
+		return "", "base too large to excerpt"
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", p.repoPath, "show", object)
+	data, err := cmd.Output()
+	if err != nil {
+		return "", "base unavailable"
+	}
+	return proposalViewExcerpt(data)
+}
+
+func (p *retainedProposal) parentCurrentContentView(ctx context.Context, rel string) (string, string) {
+	if p.delta != nil && p.target == "session" {
+		if p.session == nil {
+			return "", "current unavailable: no session container"
+		}
+		data, exists, note := readWorkspaceExcerpt(ctx, p.session.Workspace(), rel)
+		return proposalViewFrom(data, exists, note)
+	}
+	if p.repoPath == "" {
+		return "", "current unavailable: no repository path"
+	}
+	pv := NewPathValidator(p.repoPath, false, nil)
+	pv.WorkDir = pv.WorkspaceRoot
+	data, exists, note := readWorkspaceExcerpt(ctx, newLocalWorkspace(pv), rel)
+	return proposalViewFrom(data, exists, note)
+}
+
+func (p *retainedProposal) proposalContentView(ctx context.Context, rel string) (string, string) {
+	if p.delta != nil {
+		for _, change := range p.delta.Changes {
+			if pathKey(normalizeProposalPath(change.Path)) != pathKey(rel) {
+				continue
+			}
+			if change.Kind == deltaKindDelete {
+				return "", "proposed: deleted"
+			}
+			return proposalViewExcerpt(change.Content)
+		}
+		return "", "proposed: not in manifest"
+	}
+	if p.output == nil || p.workdir == "" {
+		return "", "proposed unavailable"
+	}
+	pv := NewPathValidator(p.workdir, false, nil)
+	pv.WorkDir = pv.WorkspaceRoot
+	data, exists, note := readWorkspaceExcerpt(ctx, newLocalWorkspace(pv), rel)
+	if !exists {
+		return "", "proposed: missing"
+	}
+	return proposalViewFrom(data, exists, note)
+}
+
+func readWorkspaceExcerpt(ctx context.Context, ws Workspace, rel string) ([]byte, bool, string) {
+	abs, err := ws.ResolvePath(filepath.FromSlash(rel))
+	if err != nil {
+		return nil, false, "read unavailable"
+	}
+	info, err := ws.Lstat(ctx, abs)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, false, ""
+	}
+	if err != nil {
+		return nil, false, "read unavailable"
+	}
+	if !info.Mode().IsRegular() {
+		return nil, true, "non-regular file"
+	}
+	if info.Size() > proposalConflictViewMaxBytes {
+		return nil, true, "file too large to excerpt"
+	}
+	data, err := ws.ReadFile(ctx, abs)
+	if err != nil {
+		return nil, true, "read unavailable"
+	}
+	return data, true, ""
+}
+
+func proposalViewFrom(data []byte, exists bool, note string) (string, string) {
+	if !exists {
+		return "", strings.TrimSpace(note + "; current missing")
+	}
+	if note != "" {
+		return "", note
+	}
+	return proposalViewExcerpt(data)
+}
+
+func proposalViewExcerpt(data []byte) (string, string) {
+	if len(data) == 0 {
+		return "", "empty file"
+	}
+	if isBinaryContent(data) {
+		return "", fmt.Sprintf("binary file (%d bytes)", len(data))
+	}
+	note := ""
+	if len(data) > proposalConflictViewMaxBytes {
+		data = data[:proposalConflictViewMaxBytes]
+		note = "excerpt truncated"
+	}
+	for len(data) > 0 && !utf8.Valid(data) {
+		data = data[:len(data)-1]
+	}
+	return string(data), note
 }
 
 // normalizeProposalKind makes the worktree and container vocabularies
