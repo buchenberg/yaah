@@ -233,7 +233,7 @@ func (s *agentSession) loopBuilder(
 		Registry:                   s.toolReg,
 		ToolsLevel:                 s.toolsLevelForMode(mode),
 		Model:                      modelName,
-		SystemPrompt:               s.systemPromptForMode(mode),
+		SystemPrompt:               s.modeDirective(mode),
 		Messages:                   msgs,
 		SessionID:                  s.sessionID,
 		TraceStore:                 s.traceStore,
