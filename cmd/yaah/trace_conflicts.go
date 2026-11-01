@@ -143,10 +143,10 @@ func aggregateConflicts(slice shepherdtrace.Slice, session string, legacyParents
 			}
 			unresolved := parent == "" && strings.HasPrefix(owner, "sub-")
 			if unresolved {
-				report.UnresolvedDispatches++
 				if session != "" {
 					continue
 				}
+				report.UnresolvedDispatches++
 			} else {
 				if parent == "" {
 					parent = owner
@@ -181,7 +181,7 @@ func aggregateConflicts(slice shepherdtrace.Slice, session string, legacyParents
 		for _, factID := range factIDs {
 			fact := slice.FactsByID[factID]
 			rec, ok := fact.(shepherdtrace.Record)
-			if !ok {
+			if !ok || rec.Envelope.SchemaRef == "yaah.subagent.usage.v1" {
 				continue
 			}
 			resolved, ok := sessionFor(owner)

@@ -167,4 +167,5 @@ func TestTraceOwnerParentsReadOnly(t *testing.T) {
 	if _, ok := got["unknown"]; ok {
 		t.Errorf("unknown owner unexpectedly resolved: %+v", got)
 	}
+
 }

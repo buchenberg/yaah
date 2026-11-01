@@ -4,7 +4,10 @@ import (
 	"database/sql"
 	"errors"
 	"io/fs"
+	"net/url"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -45,7 +48,12 @@ func TraceOwnerParentsReadOnly(path string, ownerIDs []string) (map[string]strin
 	} else if err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(5000)")
+	sqlitePath := filepath.ToSlash(path)
+	if !strings.HasPrefix(sqlitePath, "/") {
+		sqlitePath = "/" + sqlitePath // Windows drive path -> file:///C:/...
+	}
+	dsn := (&url.URL{Scheme: "file", Path: sqlitePath}).String() + "?mode=ro&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
