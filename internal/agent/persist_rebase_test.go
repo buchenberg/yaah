@@ -206,3 +206,54 @@ func firstContent(msgs []memory.Message) string {
 	}
 	return msgs[0].Content
 }
+
+// TestSessionPersister_StaleCursorResyncs pins the recovery for a cursor
+// left behind the store — the overlapping-run failure mode where a second
+// run snapshotted msgIdx before the first run's turn landed. The conflicting
+// write must resync past the persisted tail and retry instead of failing
+// forever (which silently froze the rest of the session's transcript).
+func TestSessionPersister_StaleCursorResyncs(t *testing.T) {
+	db := newPersistTestDB(t, "sess-stale")
+
+	// The winning run commits two messages.
+	winner := NewSessionPersister(db, nil, "sess-stale")
+	winner.Persist(types.UserMsg("first run"))
+	winner.Persist(types.AssistantMsg("first answer", nil))
+
+	// A run that started earlier holds a stale cursor at 0 and a different
+	// message for that position.
+	stale := NewSessionPersister(db, nil, "sess-stale")
+	stale.Persist(types.UserMsg("second run"))
+
+	if got := stale.MsgIdx(); got != 3 {
+		t.Fatalf("MsgIdx after resync = %d; want 3", got)
+	}
+
+	msgs, err := db.GetMessages("sess-stale")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("rows = %d; want 3 (conflicting write must not wedge)", len(msgs))
+	}
+	if msgs[2].Idx != 2 || msgs[2].Content != "second run" {
+		t.Errorf("resynced row = idx=%d content=%q; want idx=2 %q",
+			msgs[2].Idx, msgs[2].Content, "second run")
+	}
+	if got, err := db.MaxMessageIdx("sess-stale"); err != nil || got != 2 {
+		t.Errorf("MaxMessageIdx() = %d, %v; want 2, nil", got, err)
+	}
+}
+
+// MaxMessageIdx reports -1 for a session with no rows so callers can anchor
+// a fresh cursor without a special case.
+func TestMaxMessageIdx_EmptySession(t *testing.T) {
+	db := newPersistTestDB(t, "sess-empty")
+	got, err := db.MaxMessageIdx("sess-empty")
+	if err != nil {
+		t.Fatalf("MaxMessageIdx() error: %v", err)
+	}
+	if got != -1 {
+		t.Errorf("MaxMessageIdx() = %d; want -1", got)
+	}
+}

@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 )
@@ -86,6 +87,22 @@ func (d *DB) embedMessageAsync(id, role, content string) <-chan struct{} {
 		}
 	}()
 	return done
+}
+
+// MaxMessageIdx returns the highest persisted message index for a session,
+// or -1 when the session has no rows. It is the recovery anchor for a
+// persister whose cursor fell behind the store (an interrupted or
+// overlapping run): appending at max+1 keeps the transcript contiguous
+// instead of retrying an occupied position forever.
+func (d *DB) MaxMessageIdx(sessionID string) (int, error) {
+	var idx sql.NullInt64
+	if err := d.sql.QueryRow(`SELECT MAX(idx) FROM messages WHERE session_id = ?`, sessionID).Scan(&idx); err != nil {
+		return -1, err
+	}
+	if !idx.Valid {
+		return -1, nil
+	}
+	return int(idx.Int64), nil
 }
 
 // DeleteMessagesFrom removes persisted message rows for a session at

@@ -106,9 +106,15 @@ type agentSession struct {
 	// cannot implement tools.DangerClassifier).
 	mcpToolNames map[string]bool
 	procMgr      *processpkg.Manager
-	messages     []types.Message
-	sessionID    string
-	msgIdx       int
+	// runMu serializes prompt runs. buildLoop snapshots s.messages/msgIdx
+	// at run start and the post-run swap writes them back, so two
+	// overlapping runs would each branch from a stale transcript and
+	// persist onto the same message indices (losing the in-flight turn
+	// and wedging the store). One prompt at a time per session.
+	runMu     sync.Mutex
+	messages  []types.Message
+	sessionID string
+	msgIdx    int
 	// turnBudgetExhausted mirrors the last Run's soft tool-turn cap
 	// outcome (tool-stripped final answer or hard iteration limit) so
 	// the ACP server can report max_turn_requests instead of end_turn.
@@ -519,6 +525,14 @@ func (s *agentSession) systemPromptForMode(mode string) string {
 // HaltCurrentRun can invoke — that is what supervisor halt on the root
 // scope bridges to (adoption plan A3, gated by supervisor.halt_root).
 func (s *agentSession) RunPrompt(ctx context.Context, prompt string) (string, bool, error) {
+	// Serialize prompts on this session. A second run that starts while one
+	// is in flight would snapshot s.messages/msgIdx before the first run
+	// commits its turn: the model would not see what the running turn did,
+	// and both runs would write the same message indices. Queuing here makes
+	// any stray concurrent submit start from the committed transcript.
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+
 	runCtx, cancel := context.WithCancel(ctx)
 	s.mu.Lock()
 	s.runCancel = cancel
