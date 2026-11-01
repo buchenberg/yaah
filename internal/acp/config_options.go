@@ -103,8 +103,8 @@ func buildModelConfigOptions(catalog []ModelOption, provider, model string) []Se
 	}}
 }
 
-// buildModeConfigOptions renders the Plan/Build selector. Modes supersede the
-// older session-modes field, but yaah advertises both while clients transition.
+// buildModeConfigOptions renders the Plan/Build selector. This is the only
+// mode advertisement: yaah does not emit the legacy session-modes field.
 func buildModeConfigOptions(mode string) SessionConfigOption {
 	if !validSessionMode(mode) {
 		mode = SessionModeBuild

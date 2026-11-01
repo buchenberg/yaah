@@ -52,7 +52,7 @@ sub-agents, and prompts all resolve against it.
 | `session/prompt` | supported | streams updates, then answers with a `stopReason` |
 | `session/cancel` | supported | notification; cancels the in-flight turn |
 | `session/set_mode` | supported alias | switches between `build` (full tools) and `plan` (read-only tool set + planning directive); unknown ids are invalid params and the change is pushed as `config_option_update` |
-| `session/set_config_option` | supported | the mode picker (`configId: "mode"` with `category: "mode"`) and model picker (`configId: "model"`); validates the value, applies it to subsequent turns, emits the matching mode/config updates, and echoes the recomputed `configOptions` set |
+| `session/set_config_option` | supported | the mode picker (`configId: "mode"` with `category: "mode"`) and model picker (`configId: "model"`); validates the value, applies it to subsequent turns, emits `config_option_update` for mode changes, and echoes the recomputed `configOptions` set |
 | `session/update` | supported | variants below |
 | `session/request_permission` | supported | tool approvals delegated to the client; all four option kinds (`allow_once`/`allow_always`/`reject_once`/`reject_always`) are offered, and an always-decision is remembered for the rest of the session |
 
