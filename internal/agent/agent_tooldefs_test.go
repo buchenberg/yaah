@@ -65,3 +65,30 @@ func TestBuildToolDefs_nilRegistry(t *testing.T) {
 		t.Errorf("buildToolDefs with nil registry = %#v, want nil", got)
 	}
 }
+
+func TestReadOnlyTools_WithholdsMutatingTools(t *testing.T) {
+	reg := tools.NewEmptyRegistry()
+	for _, name := range []string{"read", "grep", "write", "edit", "bash", "delegate"} {
+		if tool := tools.NewLeafTool(name); tool != nil {
+			reg.Register(tool)
+		}
+	}
+	reg.Register(&tools.PlanTool{})
+	loop := &Loop{Registry: reg}
+	loop.Config.ToolsLevel = ReadOnlyTools
+	defs := loop.buildToolsForLevel()
+	got := make(map[string]bool, len(defs))
+	for _, def := range defs {
+		got[def.Function.Name] = true
+	}
+	for _, want := range []string{"read", "grep", "plan"} {
+		if !got[want] {
+			t.Errorf("read-only tool set missing %q: %v", want, got)
+		}
+	}
+	for _, forbidden := range []string{"write", "edit", "bash", "delegate"} {
+		if got[forbidden] {
+			t.Errorf("read-only tool set exposes %q", forbidden)
+		}
+	}
+}

@@ -50,7 +50,7 @@ sub-agents, and prompts all resolve against it.
 | `session/delete` | supported | removes the conversation from the store; unknown/deleted ids succeed silently |
 | `session/prompt` | supported | streams updates, then answers with a `stopReason` |
 | `session/cancel` | supported | notification; cancels the in-flight turn |
-| `session/set_mode` | acknowledged | mode switching is not modeled; the response keeps mode-picker clients from hanging |
+| `session/set_mode` | supported | switches between `build` (full tools) and `plan` (read-only tool set + planning directive); unknown ids are invalid params and every change emits `current_mode_update` |
 | `session/set_config_option` | supported | the model picker (`configId: "model"`); validates the value against the advertised options, switches the model for subsequent turns, and echoes the recomputed `configOptions` set |
 | `session/update` | supported | variants below |
 | `session/request_permission` | supported | tool approvals delegated to the client; all four option kinds (`allow_once`/`allow_always`/`reject_once`/`reject_always`) are offered, and an always-decision is remembered for the rest of the session |
@@ -91,8 +91,14 @@ ids, and prompts on different sessions may run concurrently. A missing or
 relative cwd is rejected with invalid params (`-32602`); a second prompt on
 a session whose turn is still in flight is rejected busy (`-32002`),
 as is a `session/load` for a live id while its prompt runs — both retry
-after the turn ends. `session/set_mode` acknowledges modes for known
-session ids and rejects unknown ones with invalid params.
+after the turn ends. New sessions start in **build** mode and advertise
+`modes: {currentModeId: "build", availableModes: [build, plan]}`;
+`session/set_mode` switches the live attachment, rejects unknown ids with
+invalid params, and emits `current_mode_update`. Plan mode withholds the
+mutating tool set and injects a planning directive; an in-flight turn keeps
+the mode it started with. Mode is not persisted, so a fresh process defaults
+to build on `load`/`resume`; a live load/re-resume keeps the attachment's
+current mode.
 
 ### session/load and where the state lives
 
@@ -128,11 +134,14 @@ Load flow (`internal/acp/server.go` `handleSessionLoad`):
    input (`[STEER] ` steering/loop-detection nudges, `SUPERVISOR: `
    checkpoint-recovery guidance, `CONFLICT: ` sub-agent conflict reports,
    `[BACKGROUND <role>]` background-job result deliveries).
-4. The request then answers with `{}` (empty object), per spec.
+4. The request then answers with the session result: `configOptions` when a
+   model catalog is wired, `modes` (build/plan), and `_meta` when the
+   session has a derived world posture.
 
 Reloading the **already-established id** replays the live conversation
-again and answers `{}` (load always replays). Loading a **different id** is
-allowed: sessions are independent and may coexist in one process.
+again and returns the same result shape (load always replays). Loading a
+**different id** is allowed: sessions are independent and may coexist in
+one process.
 
 Clients that hold old ids must tolerate both outcomes: ids the store
 never issued (e.g. after `~/.yaah/state.db` was deleted) are rejected
@@ -144,10 +153,11 @@ describes the store problem; it does not name the id).
 
 `session/resume` (`sessionCapabilities.resume`) re-attaches to a persisted
 conversation **without replaying history**: no `session/update`
-notifications precede the response, which is the plain empty object. It
-shares `session/load`'s attachment machinery — same required absolute
-cwd, same live-id checks (idempotent `{}` when already attached, busy
-error while a prompt runs), same store-backed rebuild for ids that are
+notifications precede the response, which carries the `modes` picker (no
+config options are repeated). It shares `session/load`'s attachment
+machinery — same required absolute cwd, same live-id checks (idempotent
+mode result when already attached, busy error while a prompt runs), same
+store-backed rebuild for ids that are
 not live in this process, so foreign ids are rejected with invalid
 params. A client that wants to render history uses `session/load`; one
 that only continues a conversation uses `session/resume`.
@@ -342,20 +352,14 @@ Or the generic stdio client loop (any language; one JSON object per line):
   them). Client-declared **stdio** MCP servers are started and merged with
   the config-declared set for that session; their tools join the session's
   tool registry.
-- **Context/content blocks** — only text content is produced and replayed
-  (plus `diff` blocks for `write`/`edit` tool calls); image and audio
-  blocks are not produced, but inbound ones on prompts degrade to a
-  visible "unsupported content type" note rather than being dropped.
+- **Context/content blocks** — text, embedded resources, and resource links
+  are accepted on prompts; image and audio blocks are rejected with
+  invalid params because yaah's provider message model has no multimodal
+  content parts. Outbound tool-call content is text plus `diff` blocks for
+  `write`/`edit` tool calls.
 - **`fs/` and `terminal/` client capabilities** — a read-only terminal and
   file system access that ACP allows agents to request from clients are
   not used; yaah's tools act in the session cwd only.
-- **Mode switching** — `session/set_mode` is acknowledged but does nothing;
-  modes are not modeled and are not part of the session result, and the
-  mode picker is not advertised (`sessionCapabilities.modes` is absent from
-  the `initialize` response). This is only the mode picker: the model
-  picker **is** advertised as `configOptions` on the session results (when a
-  model catalog is wired) and is settable through
-  `session/set_config_option` (see [Protocol surface](#protocol-surface)).
 - **`additionalDirectories`** — not advertised; sessions act in the cwd
   the lifecycle request named.
 - **Compaction replay** — with the client advertising

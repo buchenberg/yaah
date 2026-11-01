@@ -71,6 +71,11 @@ type Session interface {
 	// SetModel switches the provider and model subsequent turns use.
 	// An in-flight turn finishes on the model it started with.
 	SetModel(provider, model string)
+	// Mode reports the ACP session mode ("build" or "plan").
+	Mode() string
+	// SetMode switches the ACP session mode. An in-flight turn finishes on
+	// the mode it started with; the next turn uses the new mode.
+	SetMode(mode string) error
 	// ProviderName and ModelName report the current selection, which the
 	// ACP server renders as the model picker's currentValue.
 	ProviderName() string
@@ -429,6 +434,7 @@ func (s *Server) handleSessionNew(ctx context.Context, msg Message, respOK func(
 	respOK(msg.ID, SessionNewResult{
 		SessionID:     st.id,
 		ConfigOptions: buildModelConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName()),
+		Modes:         sessionModeState(st.sess.Mode()),
 		Meta:          worldMetaOf(st.sess.WorldStatus()),
 	})
 }
@@ -588,6 +594,7 @@ func (s *Server) handleSessionLoad(
 		s.replayConversation(st, sendUpdate)
 		respOK(msg.ID, SessionLoadResult{
 			ConfigOptions: s.loadConfigOptions(ctx, st),
+			Modes:         sessionModeState(st.sess.Mode()),
 			Meta:          worldMetaOf(st.sess.WorldStatus()),
 		})
 		return
@@ -605,6 +612,7 @@ func (s *Server) handleSessionLoad(
 	s.replayConversation(st, sendUpdate)
 	respOK(msg.ID, SessionLoadResult{
 		ConfigOptions: s.loadConfigOptions(ctx, st),
+		Modes:         sessionModeState(st.sess.Mode()),
 		Meta:          worldMetaOf(st.sess.WorldStatus()),
 	})
 }
@@ -777,19 +785,20 @@ func (s *Server) handleSessionResume(
 				fmt.Sprintf("session %q was created with cwd %q, requested %q", st.id, st.cwd, cwd))
 			return
 		}
-		respOK(msg.ID, nil)
+		respOK(msg.ID, SessionResumeResult{Modes: sessionModeState(st.sess.Mode())})
 		return
 	}
 
-	if _, err := s.buildSession(BuildOptions{
+	st, err = s.buildSession(BuildOptions{
 		ResumeID:   p.SessionID,
 		Cwd:        cwd,
 		MCPServers: mcpRefs,
-	}, p.SessionID); err != nil {
+	}, p.SessionID)
+	if err != nil {
 		respErr(msg.ID, codeInvalidParams, err.Error())
 		return
 	}
-	respOK(msg.ID, nil)
+	respOK(msg.ID, SessionResumeResult{Modes: sessionModeState(st.sess.Mode())})
 }
 
 // retireSession is the shared teardown of session/close and session/
@@ -1222,7 +1231,7 @@ func (s *Server) dispatch(
 			s.handleSessionDelete(msg, respOK, respErr)
 
 		case "session/set_mode":
-			s.handleSetMode(msg, respOK, respErr)
+			s.handleSetMode(msg, sendUpdate, respOK, respErr)
 
 		case "session/set_config_option":
 			s.handleSetConfigOption(dispatchCtx, msg, respOK, respErr)
@@ -1276,12 +1285,14 @@ func (s *Server) handleCancel(msg Message) {
 	st.run.cancel()
 }
 
-// handleSetMode acknowledges mode switches. Modes are not modeled, so
-// none are advertised; the request is validated against the live
-// session set and then accepted so a client that surfaces a mode
-// picker does not hang.
+// handleSetMode switches the Plan/Build session mode. The id must be one of
+// the modes advertised on session/new; unknown ids fail closed instead of
+// being silently accepted. The change is emitted as current_mode_update and
+// applies to the next prompt (an in-flight turn keeps the mode it started
+// with).
 func (s *Server) handleSetMode(
 	msg Message,
+	sendUpdate updateSender,
 	respOK func(id json.RawMessage, result any),
 	respErr func(id json.RawMessage, code int, message string),
 ) {
@@ -1292,13 +1303,34 @@ func (s *Server) handleSetMode(
 			return
 		}
 	}
+	if p.SessionID == "" {
+		respErr(msg.ID, codeInvalidParams, "sessionId is required")
+		return
+	}
+	if !validSessionMode(p.ModeID) {
+		respErr(msg.ID, codeInvalidParams,
+			fmt.Sprintf("unknown modeId %q (available: %s, %s)", p.ModeID, SessionModeBuild, SessionModePlan))
+		return
+	}
 	s.mu.Lock()
-	_, ok := s.sessions[p.SessionID]
+	st, ok := s.sessions[p.SessionID]
 	s.mu.Unlock()
 	if !ok {
 		respErr(msg.ID, codeInvalidParams, "unknown session id")
 		return
 	}
+	if st.sess.Mode() == p.ModeID {
+		respOK(msg.ID, nil)
+		return
+	}
+	if err := st.sess.SetMode(p.ModeID); err != nil {
+		respErr(msg.ID, codeInvalidParams, err.Error())
+		return
+	}
+	sendUpdate(st.id, CurrentModeUpdate{
+		SessionUpdate: "current_mode_update",
+		CurrentModeID: p.ModeID,
+	})
 	respOK(msg.ID, nil)
 }
 
@@ -1514,9 +1546,11 @@ func (s *Server) handlePrompt(
 }
 
 // renderPrompt folds ACP content blocks into the flat text prompt the
-// underlying agent session speaks. resource and resource_link blocks
-// are preserved as inline text so nothing is silently dropped; image
-// and audio (which we do not advertise) degrade to a visible note.
+// underlying agent session speaks. Text, embedded resources, and resource
+// links are accepted; image and audio blocks are rejected with a clear error
+// because yaah's provider message model has no multimodal content parts.
+// Silently substituting a placeholder would tell the caller the image/audio
+// was seen when it was not.
 func renderPrompt(blocks []ContentBlock) (string, error) {
 	var parts []string
 	for _, b := range blocks {
@@ -1540,9 +1574,9 @@ func renderPrompt(blocks []ContentBlock) (string, error) {
 				parts = append(parts, "[embedded resource]")
 			}
 		case "image", "audio":
-			parts = append(parts, fmt.Sprintf("[%s content not supported by this agent]", b.Type))
+			return "", fmt.Errorf("%s content blocks are not supported by this agent", b.Type)
 		default:
-			parts = append(parts, fmt.Sprintf("[unsupported content block: %s]", b.Type))
+			return "", fmt.Errorf("unsupported content block type %q", b.Type)
 		}
 	}
 	var out strings.Builder

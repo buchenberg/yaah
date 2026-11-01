@@ -13,9 +13,52 @@ func (l *Loop) buildToolsForLevel() []types.ToolDef {
 	switch l.Config.ToolsLevel {
 	case SubAgentsOnly:
 		return l.agentTools()
+	case ReadOnlyTools:
+		return l.readOnlyTools()
 	default:
 		return l.buildToolDefs()
 	}
+}
+
+// readOnlyToolNames is the plan-mode surface: inspection and planning only.
+// Shell, edit, write, patch, delete, replace, and delegation are absent so a
+// plan-mode turn cannot mutate the workspace or widen its own authority.
+var readOnlyToolNames = map[string]bool{
+	"read":       true,
+	"grep":       true,
+	"glob":       true,
+	"ls":         true,
+	"file_info":  true,
+	"go_outline": true,
+	"calculate":  true,
+	"diff":       true,
+	"question":   true,
+	"plan":       true,
+}
+
+func (l *Loop) readOnlyTools() []types.ToolDef {
+	if l.Registry == nil {
+		return nil
+	}
+	var defs []types.ToolDef
+	for _, name := range l.Registry.List() {
+		if !readOnlyToolNames[name] {
+			continue
+		}
+		t := l.Registry.Get(name)
+		if t == nil {
+			continue
+		}
+		defs = append(defs, types.ToolDef{
+			Type: "function",
+			Function: types.ToolFn{
+				Name:        t.Name(),
+				Description: t.Description(),
+				Parameters:  json.RawMessage(t.Schema()),
+			},
+		})
+	}
+	return defs
 }
 
 // agentTools returns only the sub-agent related tools.

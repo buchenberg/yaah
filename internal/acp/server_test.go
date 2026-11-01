@@ -38,6 +38,8 @@ type fakeSession struct {
 	// assert the switch reached the session.
 	provider string
 	model    string
+	// mode tracks SetMode for session-mode tests.
+	mode string
 	// budgetExhausted is what TurnBudgetExhausted reports; stop-reason
 	// tests set it to simulate a soft tool-turn cap ending the turn.
 	budgetExhausted bool
@@ -122,6 +124,25 @@ func (f *fakeSession) ModelName() string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.model
+}
+
+func (f *fakeSession) Mode() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.mode == "" {
+		return SessionModeBuild
+	}
+	return f.mode
+}
+
+func (f *fakeSession) SetMode(mode string) error {
+	if !validSessionMode(mode) {
+		return fmt.Errorf("unknown mode %q", mode)
+	}
+	f.mu.Lock()
+	f.mode = mode
+	f.mu.Unlock()
+	return nil
 }
 
 // History returns a copy of the fake's history, mirroring
@@ -526,6 +547,7 @@ func TestServer_modelPickerAdvertisedOnSessionNewAndLoad(t *testing.T) {
 			t.Fatalf("session/new result: %v", err)
 		}
 		assertModelPicker(t, result.ConfigOptions, "openai/gpt-5")
+		assertSessionModes(t, result.Modes, SessionModeBuild)
 	})
 
 	t.Run("session/load re-advertises the picker", func(t *testing.T) {
@@ -544,6 +566,7 @@ func TestServer_modelPickerAdvertisedOnSessionNewAndLoad(t *testing.T) {
 			t.Fatalf("session/load result: %v", err)
 		}
 		assertModelPicker(t, result.ConfigOptions, "deepseek/deepseek-flash")
+		assertSessionModes(t, result.Modes, SessionModeBuild)
 	})
 
 	t.Run("no catalog omits configOptions", func(t *testing.T) {
@@ -655,9 +678,7 @@ func TestServer_sessionLoadReplaysHistory(t *testing.T) {
 	if resp.Error != nil {
 		t.Fatalf("session/load returned error: %+v", resp.Error)
 	}
-	if raw := string(resp.Result); raw != "{}" {
-		t.Errorf("session/load result = %s, want {}", raw)
-	}
+	assertLoadResultModes(t, resp.Result, SessionModeBuild)
 	want := []string{
 		UpdateUserMessageChunk + ":fix the flake",
 		UpdateAgentMessageChunk + ":on it",
@@ -778,9 +799,7 @@ func TestServer_sessionLoadSecondSessionAllowed(t *testing.T) {
 	if msg.Error != nil {
 		t.Fatalf("second load returned error: %+v", msg.Error)
 	}
-	if raw := string(msg.Result); raw != "{}" {
-		t.Errorf("second load result = %s, want {}", raw)
-	}
+	assertLoadResultModes(t, msg.Result, SessionModeBuild)
 	if res := h.resumes(); len(res) != 2 || res[0] != "" || res[1] != "sess-other" {
 		t.Errorf("factory calls = %v, want [\"\", \"sess-other\"]", res)
 	}
@@ -821,9 +840,7 @@ func TestServer_sessionLoadSameIdReplaysAgain(t *testing.T) {
 	if resp.Error != nil {
 		t.Fatalf("reload returned error: %+v", resp.Error)
 	}
-	if raw := string(resp.Result); raw != "{}" {
-		t.Errorf("reload result = %s, want {}", raw)
-	}
+	assertLoadResultModes(t, resp.Result, SessionModeBuild)
 	want := []string{
 		UpdateUserMessageChunk + ":earlier question",
 		UpdateAgentMessageChunk + ":earlier answer",
@@ -871,18 +888,104 @@ func TestServer_sessionPromptUnknownSession(t *testing.T) {
 	}
 }
 
-// TestServer_setModeAcknowledged keeps clients that surface a mode
-// picker from hanging.
-func TestServer_setModeAcknowledged(t *testing.T) {
-	h := newACPHarness(t, &fakeSession{id: "sess-test"})
+func assertLoadResultModes(t *testing.T, raw json.RawMessage, current string) {
+	t.Helper()
+	var result SessionLoadResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatalf("load result: %v", err)
+	}
+	assertSessionModes(t, result.Modes, current)
+}
+
+func assertSessionModes(t *testing.T, state *SessionModeState, current string) {
+	t.Helper()
+	if state == nil {
+		t.Fatal("session modes missing")
+	}
+	if state.CurrentModeID != current {
+		t.Errorf("currentModeId = %q, want %q", state.CurrentModeID, current)
+	}
+	ids := make(map[string]bool)
+	for _, mode := range state.AvailableModes {
+		if mode.ID == "" || mode.Name == "" {
+			t.Errorf("mode = %+v, want id and name", mode)
+		}
+		ids[mode.ID] = true
+	}
+	if !ids[SessionModeBuild] || !ids[SessionModePlan] {
+		t.Errorf("available modes = %+v, want build and plan", state.AvailableModes)
+	}
+}
+
+// TestServer_sessionModes pins the Plan/Build picker: session/new advertises
+// both modes, set_mode switches the session, emits current_mode_update, and
+// rejects unknown ids.
+func TestServer_sessionModes(t *testing.T) {
+	sess := &fakeSession{id: "sess-modes"}
+	h := newACPHarness(t, sess)
 	initialize(t, h)
-	sid := newSession(t, h)
-	if err := h.send("session/set_mode", 4, fmt.Sprintf(`{"sessionId":%q,"modeId":"x"}`, sid)); err != nil {
+	cwd, _ := json.Marshal(h.cwd)
+	if err := h.send("session/new", 2, fmt.Sprintf(`{"cwd":%s,"mcpServers":[]}`, cwd)); err != nil {
 		t.Fatal(err)
 	}
 	msg := h.recv(t)
-	if msg.Error != nil {
-		t.Fatalf("set_mode error: %+v", msg)
+	var created SessionNewResult
+	if err := json.Unmarshal(msg.Result, &created); err != nil {
+		t.Fatalf("session/new result: %v", err)
+	}
+	assertSessionModes(t, created.Modes, SessionModeBuild)
+	if sess.Mode() != SessionModeBuild {
+		t.Fatalf("fresh session mode = %q, want build", sess.Mode())
+	}
+
+	if err := h.send("session/set_mode", 4, fmt.Sprintf(`{"sessionId":%q,"modeId":"plan"}`, created.SessionID)); err != nil {
+		t.Fatal(err)
+	}
+	update := h.recv(t)
+	if update.Method != "session/update" {
+		t.Fatalf("first set_mode message = %+v, want current_mode_update notification", update)
+	}
+	var params struct {
+		SessionID string            `json:"sessionId"`
+		Update    CurrentModeUpdate `json:"update"`
+	}
+	if err := json.Unmarshal(update.Params, &params); err != nil {
+		t.Fatalf("mode update params: %v", err)
+	}
+	if params.SessionID != created.SessionID || params.Update.SessionUpdate != "current_mode_update" || params.Update.CurrentModeID != SessionModePlan {
+		t.Fatalf("mode update = %+v", params)
+	}
+	if ack := h.recv(t); ack.Error != nil || !strings.Contains(string(ack.ID), "4") {
+		t.Fatalf("set_mode ack = %+v", ack)
+	}
+	if sess.Mode() != SessionModePlan {
+		t.Fatalf("session mode = %q, want plan", sess.Mode())
+	}
+
+	if err := h.send("session/set_mode", 5, fmt.Sprintf(`{"sessionId":%q,"modeId":"bogus"}`, created.SessionID)); err != nil {
+		t.Fatal(err)
+	}
+	rejected := h.recv(t)
+	if rejected.Error == nil || rejected.Error.Code != codeInvalidParams {
+		t.Fatalf("unknown mode response = %+v, want invalid params", rejected)
+	}
+	if sess.Mode() != SessionModePlan {
+		t.Fatalf("rejected mode switched the session to %q", sess.Mode())
+	}
+}
+
+// TestServer_setModeSameModeIsSilent keeps the ack fast when the client
+// echoes the mode it already has.
+func TestServer_setModeSameModeIsSilent(t *testing.T) {
+	h := newACPHarness(t, &fakeSession{id: "sess-test"})
+	initialize(t, h)
+	sid := newSession(t, h)
+	if err := h.send("session/set_mode", 4, fmt.Sprintf(`{"sessionId":%q,"modeId":"build"}`, sid)); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recv(t)
+	if msg.Error != nil || msg.Method == "session/update" {
+		t.Fatalf("set_mode same mode = %+v, want plain ack", msg)
 	}
 }
 
@@ -1059,7 +1162,7 @@ func TestServer_promptRelatedSetModeResponsive(t *testing.T) {
 	<-started
 
 	// This set_mode must be answered while the prompt is still held open.
-	if err := h.send("session/set_mode", 4, fmt.Sprintf(`{"sessionId":%q,"modeId":"x"}`, sid)); err != nil {
+	if err := h.send("session/set_mode", 4, fmt.Sprintf(`{"sessionId":%q,"modeId":"build"}`, sid)); err != nil {
 		t.Fatal(err)
 	}
 	msg := h.recv(t)
@@ -1411,6 +1514,27 @@ func TestServer_sessionCloseOnEOF(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("session was never closed after stdin EOF")
+}
+
+func TestServer_multimodalPromptBlocksRejected(t *testing.T) {
+	for _, blockType := range []string{"image", "audio"} {
+		t.Run(blockType, func(t *testing.T) {
+			h := newACPHarness(t, &fakeSession{id: "sess-test"})
+			initialize(t, h)
+			sid := newSession(t, h)
+			params := fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":%q,"data":"AAAA","mimeType":"application/octet-stream"}]}`, sid, blockType)
+			if err := h.send("session/prompt", 6, params); err != nil {
+				t.Fatal(err)
+			}
+			msg := h.recv(t)
+			if msg.Error == nil || msg.Error.Code != codeInvalidParams {
+				t.Fatalf("%s prompt response = %+v, want invalid params", blockType, msg)
+			}
+			if !strings.Contains(msg.Error.Message, blockType) {
+				t.Errorf("error %q does not name %s", msg.Error.Message, blockType)
+			}
+		})
+	}
 }
 
 // TestServer_resourceLinkPromptPreserved verifies non-text prompt

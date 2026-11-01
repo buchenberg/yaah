@@ -42,6 +42,7 @@ import (
 	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/memory"
 	processpkg "github.com/buchenberg/yaah/internal/process"
+	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 	"github.com/buchenberg/yaah/internal/worldinfo"
@@ -110,6 +111,10 @@ type agentSession struct {
 	// outcome (tool-stripped final answer or hard iteration limit) so
 	// the ACP server can report max_turn_requests instead of end_turn.
 	turnBudgetExhausted bool
+	// mode is the ACP session mode ("build" or "plan"). Empty means build.
+	// It is per ACP attachment, not persisted: a fresh load/resume starts in
+	// build mode unless the live attachment already selected another mode.
+	mode string
 	// titlePublished tracks the persisted session title (empty until the
 	// first user message derives one). Cached across prompt runs so the
 	// store's one-shot title adoption is known without re-reading; built
@@ -462,6 +467,48 @@ func (s *agentSession) TurnBudgetExhausted() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.turnBudgetExhausted
+}
+
+// ACP session modes. Build is the normal coding mode; plan exposes only the
+// inspection/planning tool surface and a planning directive.
+const (
+	acpModeBuild = "build"
+	acpModePlan  = "plan"
+)
+
+func (s *agentSession) Mode() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.mode == "" {
+		return acpModeBuild
+	}
+	return s.mode
+}
+
+func (s *agentSession) SetMode(mode string) error {
+	if mode != acpModeBuild && mode != acpModePlan {
+		return fmt.Errorf("unknown session mode %q (available: %s, %s)", mode, acpModeBuild, acpModePlan)
+	}
+	s.mu.Lock()
+	s.mode = mode
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *agentSession) toolsLevelForMode() agent.ToolsLevel {
+	if s.Mode() == acpModePlan {
+		return agent.ReadOnlyTools
+	}
+	return agent.FullTools
+}
+
+func (s *agentSession) systemPromptForMode() string {
+	if s.Mode() != acpModePlan {
+		return s.mainPrompt
+	}
+	return prompts.InjectAfterIdentity(s.mainPrompt, []string{
+		"Plan mode is active. Inspect the workspace and propose an implementation plan; do not edit files, run mutating shell commands, or delegate work that could change the workspace. Ask for approval before leaving plan mode.",
+	})
 }
 
 // RunPrompt runs one prompt under a context the session owns: derived

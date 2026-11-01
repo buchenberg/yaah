@@ -98,8 +98,8 @@ func TestServer_capabilitiesReflectWiring(t *testing.T) {
 }
 
 // TestServer_sessionResumeAttachesWithoutReplay pins the resume
-// contract: no history replay precedes the response, the response is the
-// empty object, and a foreign (store-unknown) id is invalid params.
+// contract: no history replay precedes the response, the response carries
+// the mode picker, and a foreign (store-unknown) id is invalid params.
 func TestServer_sessionResumeAttachesWithoutReplay(t *testing.T) {
 	t.Run("live attach, no history replay", func(t *testing.T) {
 		sess := &fakeSession{
@@ -123,9 +123,11 @@ func TestServer_sessionResumeAttachesWithoutReplay(t *testing.T) {
 		if msg.Error != nil {
 			t.Fatalf("session/resume error: %+v", msg.Error)
 		}
-		if got := strings.TrimSpace(string(msg.Result)); got != "{}" {
-			t.Fatalf("session/resume result = %s, want empty object", got)
+		var resumed SessionResumeResult
+		if err := json.Unmarshal(msg.Result, &resumed); err != nil {
+			t.Fatalf("session/resume result: %v", err)
 		}
+		assertSessionModes(t, resumed.Modes, SessionModeBuild)
 	})
 
 	t.Run("foreign id rejected with invalid params", func(t *testing.T) {
