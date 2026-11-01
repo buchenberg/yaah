@@ -152,8 +152,16 @@ func (p *SessionPersister) MsgIdx() int {
 	return p.msgIdx
 }
 
-// SetMsgIdx sets the message index (used when resuming a session).
+// SetMsgIdx sets the message index (used when resuming a session or
+// starting a run). A snapshot can be left behind the store by an
+// interrupted or overlapping run; reconcile upward against the persisted
+// tail so this run appends after it instead of colliding on every write.
 func (p *SessionPersister) SetMsgIdx(idx int) {
+	if p.db != nil {
+		if next, err := p.db.MaxMessageIdx(p.sessionID); err == nil && next >= idx {
+			idx = next + 1
+		}
+	}
 	p.msgIdx = idx
 }
 

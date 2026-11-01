@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -61,6 +62,11 @@ func (w *DebouncedWriter) flushPendingLocked(ctx context.Context) error {
 	}
 	for _, m := range w.pending {
 		if err := w.flushOneLocked(ctx, m); err != nil {
+			// Keep the batch pending for the next flush, but never fail
+			// silently: a stuck write is otherwise invisible behind the TUI
+			// and freezes the session transcript.
+			slog.Warn("memory: debounced message flush failed; retrying next flush",
+				"session", m.SessionID, "idx", m.Idx, "err", err)
 			return err
 		}
 	}

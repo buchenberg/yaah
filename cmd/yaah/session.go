@@ -383,8 +383,23 @@ func (s *agentSession) close() {
 	}
 }
 
-func (s *agentSession) Close()   { s.close() }
-func (s *agentSession) Compact() { s.compactContext() }
+func (s *agentSession) Close() { s.close() }
+
+// Compact runs :compact under the session's run gate so it cannot replace
+// s.messages/s.msgIdx while a prompt run is mid-turn.
+func (s *agentSession) Compact() { s.serialize(s.compactContext) }
+
+// serialize runs fn while holding the session's run gate. Every operation
+// that reads a snapshot of the transcript and writes it back — prompt runs
+// and compaction — must go through here: the loop builders snapshot
+// s.messages/s.msgIdx at start and swap them back at the end, so
+// interleaved work would each branch from a stale transcript and persist
+// onto the same message indices.
+func (s *agentSession) serialize(fn func()) {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+	fn()
+}
 
 // flushUsage persists the session's running usage counters to state.db
 // without ending the session. Caller must hold s.mu.
@@ -525,25 +540,30 @@ func (s *agentSession) systemPromptForMode(mode string) string {
 // HaltCurrentRun can invoke — that is what supervisor halt on the root
 // scope bridges to (adoption plan A3, gated by supervisor.halt_root).
 func (s *agentSession) RunPrompt(ctx context.Context, prompt string) (string, bool, error) {
+	var (
+		response string
+		streamed bool
+		err      error
+	)
 	// Serialize prompts on this session. A second run that starts while one
 	// is in flight would snapshot s.messages/msgIdx before the first run
 	// commits its turn: the model would not see what the running turn did,
 	// and both runs would write the same message indices. Queuing here makes
 	// any stray concurrent submit start from the committed transcript.
-	s.runMu.Lock()
-	defer s.runMu.Unlock()
-
-	runCtx, cancel := context.WithCancel(ctx)
-	s.mu.Lock()
-	s.runCancel = cancel
-	s.mu.Unlock()
-	defer func() {
+	s.serialize(func() {
+		runCtx, cancel := context.WithCancel(ctx)
 		s.mu.Lock()
-		s.runCancel = nil
+		s.runCancel = cancel
 		s.mu.Unlock()
-		cancel()
-	}()
-	return s.runPrompt(runCtx, prompt)
+		defer func() {
+			s.mu.Lock()
+			s.runCancel = nil
+			s.mu.Unlock()
+			cancel()
+		}()
+		response, streamed, err = s.runPrompt(runCtx, prompt)
+	})
+	return response, streamed, err
 }
 
 // HaltCurrentRun cancels the currently running prompt, if one is

@@ -106,7 +106,7 @@ func startREPL() error {
 			printHelp()
 			continue
 		case repl.CmdCompact:
-			sess.compactContext()
+			sess.Compact()
 			continue
 		case repl.CmdReloadRoles:
 			sess.reloadRoles()

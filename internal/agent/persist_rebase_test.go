@@ -257,3 +257,43 @@ func TestMaxMessageIdx_EmptySession(t *testing.T) {
 		t.Errorf("MaxMessageIdx() = %d; want -1", got)
 	}
 }
+
+// TestSessionPersister_SetMsgIdxReconciles pins the proactive repair: a run
+// that starts from a stale snapshot must append at the store's tail. With the
+// production debouncer, assistant/tool rows are written asynchronously, so
+// recovery at the first (synchronous) write is what keeps them from being
+// dropped silently at flush.
+func TestSessionPersister_SetMsgIdxReconciles(t *testing.T) {
+	db := newPersistTestDB(t, "sess-reconcile")
+	winner := NewSessionPersister(db, nil, "sess-reconcile")
+	winner.Persist(types.UserMsg("first"))
+	winner.Persist(types.AssistantMsg("answer", nil))
+
+	deb := memory.NewDebouncedWriter(db)
+	stale := NewSessionPersister(db, deb, "sess-reconcile")
+	stale.SetMsgIdx(0) // snapshot taken before the winner's rows landed
+	if got := stale.MsgIdx(); got != 2 {
+		t.Fatalf("MsgIdx after reconcile = %d; want 2", got)
+	}
+
+	// These flush through the debouncer, not synchronously.
+	stale.Persist(types.AssistantMsg("queued answer", nil))
+	stale.Persist(types.Message{Role: "tool", Name: "bash", ToolCallID: "call-1", Content: "ok"})
+	if err := deb.Flush(); err != nil {
+		t.Fatalf("Flush() error: %v", err)
+	}
+
+	msgs, err := db.GetMessages("sess-reconcile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 4 {
+		t.Fatalf("rows = %d; want 4 (debounced rows must land after resync)", len(msgs))
+	}
+	for i, want := range []string{"first", "answer", "queued answer", "ok"} {
+		if msgs[i].Idx != i || msgs[i].Content != want {
+			t.Errorf("row %d = idx=%d content=%q; want idx=%d %q",
+				i, msgs[i].Idx, msgs[i].Content, i, want)
+		}
+	}
+}

@@ -51,7 +51,7 @@ func (t *App) globalInputCapture(ev *tcell.EventKey) *tcell.EventKey {
 		// iterations. Treating those windows as idle started a second
 		// concurrent RunPrompt on the same session, whose stale message
 		// snapshot lost the turn in flight and wedged message persistence.
-		if t.agentActive || t.activityBusy.Load() {
+		if t.agentActive {
 			t.submitFollowUp()
 		} else {
 			t.submitInput()
