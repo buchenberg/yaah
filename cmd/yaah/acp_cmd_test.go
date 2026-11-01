@@ -3,6 +3,7 @@ package yaah
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -276,4 +277,25 @@ func TestACPServeCmdHelpMentionsModes(t *testing.T) {
 			t.Errorf("help missing %q", want)
 		}
 	}
+}
+
+func TestACPAvailableCommandsDiscoversSkills(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, ".agents", "skills", "demo")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: demo\ndescription: demo skill\n---\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	commands := acpAvailableCommands(dir)
+	for _, command := range commands {
+		if command.Name == "demo" {
+			if command.Description != "demo skill" || command.Input == nil || command.Input.Hint == "" {
+				t.Fatalf("demo command = %+v", command)
+			}
+			return
+		}
+	}
+	t.Fatalf("demo skill not advertised: %+v", commands)
 }

@@ -2,7 +2,9 @@ package acp
 
 import (
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
@@ -34,6 +36,14 @@ type View struct {
 	// compaction, if any, so the done event patches the card the start
 	// event created.
 	compactionOpen map[string]string
+	// escalationSeq allocates client-visible ids for escalation rows when
+	// no session-lifetime allocator is wired (tests/direct use).
+	escalationSeq atomic.Int64
+	// escalationNext, when set, allocates session-scoped escalation ids.
+	escalationNext func() string
+	// fallbackAgents correlates sub-agent start/end events that lack an id.
+	fallbackAgents map[string][]string
+	fallbackSeq    atomic.Int64
 }
 
 // NewView creates a View ready to translate agent events.
@@ -41,6 +51,7 @@ func NewView() *View {
 	return &View{
 		announced:      make(map[string]bool),
 		compactionOpen: make(map[string]string),
+		fallbackAgents: make(map[string][]string),
 	}
 }
 
@@ -52,6 +63,23 @@ func (v *View) EnableCompaction(next func() string) {
 	v.compaction = true
 	v.compactionNext = next
 	v.mu.Unlock()
+}
+
+// EnableEscalations wires a session-lifetime escalation id allocator.
+func (v *View) EnableEscalations(next func() string) {
+	v.mu.Lock()
+	v.escalationNext = next
+	v.mu.Unlock()
+}
+
+func (v *View) escalationID() string {
+	v.mu.Lock()
+	next := v.escalationNext
+	v.mu.Unlock()
+	if next != nil {
+		return next()
+	}
+	return "escalation-" + strconv.FormatInt(v.escalationSeq.Add(1), 10)
 }
 
 func (v *View) compactionEnabled() bool {
@@ -199,29 +227,61 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 	case *agent.SubAgentStartEvent:
 		label := toolfmt.SubagentRoleLabel(e.Role)
 		world := worldChunkSuffix(e.World, e.WorldDegraded, e.WorldReason)
-		send(sessionID, ChunkUpdate{
-			SessionUpdate: UpdateAgentMessageChunk,
-			Content:       textContent(text("\n[sub-agent: %s] %s%s\n", label, e.Prompt, world)),
+		title := text("Sub-agent %s: %s", label, truncate(e.Prompt, 80))
+		send(sessionID, ToolCallUpdate{
+			SessionUpdate: UpdateToolCall,
+			ToolCallID:    v.subAgentCallID(e.SubAgentID, e.Role, e.Prompt, false),
+			Title:         title,
+			Name:          "sub-agent",
+			Kind:          KindOther,
+			Status:        StatusInProgress,
+			Content: []UpdateContent{{
+				Type:    "content",
+				Content: &ContentBlock{Type: "text", Text: text("role: %s\nmodel: %s\ntask: %s%s", label, e.Model, e.Prompt, world)},
+			}},
 		})
 	case *agent.SubAgentEndEvent:
 		label := toolfmt.SubagentRoleLabel(e.Role)
-		status := "completed"
+		status := StatusCompleted
+		body := text("role: %s\nmodel: %s\nduration: %s", label, e.Model, e.Duration.Round(time.Millisecond))
 		if e.Error != "" {
-			status = e.Error
+			status = StatusFailed
+			body += "\nerror: " + e.Error
+		} else if e.Result != "" {
+			body += "\nresult:\n" + e.Result
 		}
-		modelStr := ""
-		if e.Model != "" {
-			modelStr = " [" + e.Model + "]"
-		}
-		world := worldChunkSuffix(e.World, e.WorldDegraded, e.WorldReason)
-		send(sessionID, ChunkUpdate{
-			SessionUpdate: UpdateAgentMessageChunk,
-			Content:       textContent(text("[sub-agent: %s%s] %s%s\n", label, modelStr, status, world)),
+		body += worldChunkSuffix(e.World, e.WorldDegraded, e.WorldReason)
+		send(sessionID, ToolCallUpdate{
+			SessionUpdate: UpdateToolCallUpdate,
+			ToolCallID:    v.subAgentCallID(e.SubAgentID, e.Role, e.Prompt, true),
+			Title:         text("Sub-agent %s: %s", label, truncate(e.Prompt, 80)),
+			Name:          "sub-agent",
+			Kind:          KindOther,
+			Status:        status,
+			Content:       []UpdateContent{{Type: "content", Content: &ContentBlock{Type: "text", Text: body}}},
 		})
 	case *agent.EscalationEvent:
-		send(sessionID, ChunkUpdate{
-			SessionUpdate: UpdateAgentMessageChunk,
-			Content:       textContent(text("ESCALATION [%s] %s: %s", e.Severity, e.SubAgentRole, e.Summary)),
+		id := v.escalationID()
+		status := StatusCompleted
+		switch strings.ToLower(strings.TrimSpace(e.Severity)) {
+		case "blocker", "critical", "error", "fatal":
+			status = StatusFailed
+		}
+		body := text("severity: %s\nrole: %s\nsummary: %s", e.Severity, e.SubAgentRole, e.Summary)
+		if e.Detail != "" {
+			body += "\ndetail:\n" + e.Detail
+		}
+		if e.Suggestion != "" {
+			body += "\nsuggestion:\n" + e.Suggestion
+		}
+		send(sessionID, ToolCallUpdate{
+			SessionUpdate: UpdateToolCall,
+			ToolCallID:    id,
+			Title:         text("ESCALATION [%s] %s: %s", e.Severity, e.SubAgentRole, truncate(e.Summary, 80)),
+			Name:          "escalation",
+			Kind:          KindThink,
+			Status:        status,
+			Content:       []UpdateContent{{Type: "content", Content: &ContentBlock{Type: "text", Text: body}}},
 		})
 	case *agent.CompactionStartedEvent:
 		// The client negotiates session.compaction before ID-addressed
@@ -321,6 +381,34 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 	}
 }
 
+// subAgentCallID keeps start/end correlated even when an event lacks an id.
+// The counter prevents different fallback agents from sharing a row; the map
+// ties the matching end event back to the start.
+func (v *View) subAgentCallID(id, role, prompt string, end bool) string {
+	if id != "" {
+		return "subagent:" + id
+	}
+	key := role + "\x00" + prompt
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if end {
+		if pending := v.fallbackAgents[key]; len(pending) > 0 {
+			id := pending[0]
+			if len(pending) == 1 {
+				delete(v.fallbackAgents, key)
+			} else {
+				v.fallbackAgents[key] = pending[1:]
+			}
+			return id
+		}
+	}
+	generated := "subagent-fallback-" + strconv.FormatInt(v.fallbackSeq.Add(1), 10)
+	if !end {
+		v.fallbackAgents[key] = append(v.fallbackAgents[key], generated)
+	}
+	return generated
+}
+
 // ViewWithWrite wraps View and sends session/update notifications
 // for each event, tagging them with the active session ID.
 type ViewWithWrite struct {
@@ -349,6 +437,11 @@ func (v *ViewWithWrite) HandleEvent(evt agent.Event) {
 // per prompt turn when the connection advertised session.compaction.
 func (v *ViewWithWrite) EnableCompaction(next func() string) {
 	v.av.EnableCompaction(next)
+}
+
+// EnableEscalations wires the session-scoped escalation id allocator.
+func (v *ViewWithWrite) EnableEscalations(next func() string) {
+	v.av.EnableEscalations(next)
 }
 
 // Announce marks a tool call as created by a permission request.

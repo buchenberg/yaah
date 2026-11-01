@@ -152,9 +152,36 @@ type InitializeResult struct {
 // results and session/set_config_option, and are emitted only when a
 // model catalog is wired (see ModelCatalog / NewServer).
 type AgentCaps struct {
-	LoadSession bool         `json:"loadSession,omitempty"`
-	Session     *SessionCaps `json:"sessionCapabilities,omitempty"`
+	LoadSession        bool           `json:"loadSession,omitempty"`
+	PromptCapabilities *PromptCaps    `json:"promptCapabilities,omitempty"`
+	MCPCapabilities    *MCPCaps       `json:"mcpCapabilities,omitempty"`
+	Auth               *AgentAuthCaps `json:"auth,omitempty"`
+	Session            *SessionCaps   `json:"sessionCapabilities,omitempty"`
 }
+
+// PromptCaps advertise richer session/prompt content. text and resource_link
+// are baseline; embeddedContext covers resource blocks. Image/audio remain
+// false because yaah's provider messages are text-only.
+type PromptCaps struct {
+	Image           bool `json:"image,omitempty"`
+	Audio           bool `json:"audio,omitempty"`
+	EmbeddedContext bool `json:"embeddedContext,omitempty"`
+}
+
+// MCPCaps advertise optional MCP transports beyond stdio. yaah leaves both
+// false and omits the object: only stdio client servers are supported.
+type MCPCaps struct {
+	HTTP bool `json:"http,omitempty"`
+	SSE  bool `json:"sse,omitempty"`
+}
+
+// AgentAuthCaps advertise protocol-driven auth features.
+type AgentAuthCaps struct {
+	Logout *LogoutCaps `json:"logout,omitempty"`
+}
+
+// LogoutCaps is the empty capability object advertising logout.
+type LogoutCaps struct{}
 
 // SessionCaps are the optional session-method capabilities.
 // session/load itself is governed by LoadSession (legacy binding).
@@ -185,14 +212,16 @@ type SessionDeleteCaps struct{}
 // AuthMethod is one entry of the initialize response's authMethods
 // catalog. The schema's terminal variant requires `type: "terminal"`;
 // the agent variant has no `type` at all, and a method without one is
-// treated as agent-typed. yaah advertises agent-typed methods only (see
-// auth.go), so Type stays empty and omitempty drops it — never set it to
-// "terminal" unless the client enabled clientCapabilities.auth.terminal.
+// treated as agent-typed. The static catalog is agent-typed; a terminal
+// method is added only when the client enabled clientCapabilities.auth.terminal
+// (see auth.go).
 type AuthMethod struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Type        string `json:"type,omitempty"`
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	Type        string            `json:"type,omitempty"`
+	Args        []string          `json:"args,omitempty"`
+	Env         map[string]string `json:"env,omitempty"`
 }
 
 // AuthenticateParams are the params of the authenticate request.
@@ -432,6 +461,7 @@ const (
 	UpdatePlan              = "plan"
 	UpdateUsageUpdate       = "usage_update"
 	UpdateSessionInfo       = "session_info_update"
+	UpdateAvailableCommands = "available_commands_update"
 
 	UpdateCompaction             = "compaction_update"
 	UpdateCompactionSummaryChunk = "compaction_summary_chunk"
@@ -586,6 +616,26 @@ type UsageUpdate struct {
 type UsageCost struct {
 	Amount   float64 `json:"amount"`
 	Currency string  `json:"currency"`
+}
+
+// AvailableCommand is one entry in the client's command palette. Commands are
+// ordinary prompt text on the wire; Name has no leading slash.
+type AvailableCommand struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Input       *AvailableCommandInput `json:"input,omitempty"`
+}
+
+// AvailableCommandInput describes unstructured arguments a command accepts.
+type AvailableCommandInput struct {
+	Hint string `json:"hint"`
+}
+
+// AvailableCommandsUpdate is the session/update payload advertising the
+// current command palette.
+type AvailableCommandsUpdate struct {
+	SessionUpdate     string             `json:"sessionUpdate"`
+	AvailableCommands []AvailableCommand `json:"availableCommands"`
 }
 
 // SessionInfoUpdate is a partial session-metadata update (schema: all

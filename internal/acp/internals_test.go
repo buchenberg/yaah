@@ -62,7 +62,7 @@ func TestToolKind(t *testing.T) {
 		"delete": KindDelete,
 		"bash":   KindExecute, "powershell": KindExecute, "git": KindExecute, "process": KindExecute, "background": KindExecute,
 		"webfetch": KindFetch, "http": KindFetch, "web_search": KindFetch, "fetch": KindFetch,
-		"question": KindThink, "think": KindThink, "todo": KindThink, "todowrite": KindThink, "plan": KindThink,
+		"question": KindThink, "think": KindThink, "todo": KindEdit, "todowrite": KindEdit, "plan": KindEdit,
 		"unknown": KindOther,
 	}
 	for name, want := range tests {
@@ -266,4 +266,34 @@ func TestForwardCtrl_CancelStops(t *testing.T) {
 type capturedUpdate struct {
 	sessionID string
 	update    any
+}
+
+func TestBatchUnsupportedResponses(t *testing.T) {
+	if got := batchUnsupportedResponses([]byte(`[{"jsonrpc":"2.0","method":"notifications/initialized"}]`)); len(got) != 0 {
+		t.Errorf("notification-only batch responses = %+v, want none", got)
+	}
+	got := batchUnsupportedResponses([]byte(`[{"jsonrpc":"2.0","id":1,"method":"initialize"}]`))
+	if len(got) != 1 || string(got[0].ID) != "1" || got[0].Error == nil {
+		t.Errorf("request batch responses = %+v", got)
+	}
+	got = batchUnsupportedResponses([]byte(`not json`))
+	if len(got) != 1 || string(got[0].ID) != "null" || got[0].Error == nil {
+		t.Errorf("malformed batch responses = %+v", got)
+	}
+	if got := batchUnsupportedResponses([]byte(`[]`)); len(got) != 1 || string(got[0].ID) != "null" {
+		t.Errorf("empty batch responses = %+v", got)
+	}
+}
+
+func TestTranslateCommandPromptDelimiters(t *testing.T) {
+	st := &sessionState{commands: []AvailableCommand{{Name: "demo"}}}
+	for _, prompt := range []string{"/demo\tbuild it", "/demo\nbuild it", "/demo build it"} {
+		got := translateCommandPrompt(st, prompt)
+		if !strings.Contains(got, "skill tool") || !strings.Contains(got, "build it") {
+			t.Errorf("translate(%q) = %q", prompt, got)
+		}
+	}
+	if got := translateCommandPrompt(st, "/unknown x"); got != "/unknown x" {
+		t.Errorf("unknown command changed to %q", got)
+	}
 }

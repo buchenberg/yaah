@@ -54,3 +54,21 @@ func validAuthMethod(id string) bool {
 	}
 	return false
 }
+
+// authMethodsFor returns the static agent methods plus the terminal method
+// when the client can launch an interactive login. Terminal methods are
+// advertised only when clientCapabilities.auth.terminal is true; they are
+// never accepted by authenticate.
+func authMethodsFor(caps *ClientCaps) []AuthMethod {
+	methods := staticAuthMethods()
+	if caps != nil && caps.Auth != nil && caps.Auth.Terminal {
+		methods = append(methods, AuthMethod{
+			ID:          "terminal-login",
+			Name:        "Log in from the terminal",
+			Description: "Launch `yaah login` interactively, then reconnect.",
+			Type:        "terminal",
+			Args:        []string{"login"},
+		})
+	}
+	return methods
+}

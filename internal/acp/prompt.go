@@ -159,6 +159,31 @@ func (s *Server) handleSetConfigOption(
 	})
 }
 
+// translateCommandPrompt turns a palette selection into a normal prompt. The
+// advertised commands are skills; the skill tool is the executor, so the model
+// receives an explicit load instruction instead of an opaque slash token.
+func translateCommandPrompt(st *sessionState, prompt string) string {
+	if st == nil || !strings.HasPrefix(prompt, "/") {
+		return prompt
+	}
+	trimmed := strings.TrimPrefix(prompt, "/")
+	name, args := trimmed, ""
+	if i := strings.IndexAny(trimmed, " \t\r\n"); i >= 0 {
+		name, args = trimmed[:i], trimmed[i:]
+	}
+	for _, command := range st.commands {
+		if command.Name != name {
+			continue
+		}
+		args = strings.TrimSpace(args)
+		if args == "" {
+			return fmt.Sprintf("Use the skill tool with action \"load\" and name %q, then follow its instructions.", name)
+		}
+		return fmt.Sprintf("Use the skill tool with action \"load\" and name %q, then follow its instructions to handle this request: %s", name, args)
+	}
+	return prompt
+}
+
 // handlePrompt runs one prompt turn. Per ACP v1, the request stays
 // open until the turn ends and is then answered with a stopReason;
 // session/update notifications stream before the response. Prompts on
@@ -216,6 +241,9 @@ func (s *Server) handlePrompt(
 	// fresh view is built per turn; the id namespace must not reset).
 	caps := s.clientCaps
 	view := NewViewWithWrite(sendUpdate, p.SessionID)
+	view.EnableEscalations(func() string {
+		return "escalation-" + strconv.FormatInt(st.escalationSeq.Add(1), 10)
+	})
 	if capsSupportsCompaction(caps) {
 		view.EnableCompaction(func() string {
 			return "cmp-" + strconv.FormatInt(st.compactionSeq.Add(1), 10)
@@ -227,6 +255,7 @@ func (s *Server) handlePrompt(
 	st.prunCtx = promptCtx
 	sess := st.sess
 	s.mu.Unlock()
+	promptText = translateCommandPrompt(st, promptText)
 
 	sess.SetView(view)
 	sess.SetCtrlCh(ctrlCh)

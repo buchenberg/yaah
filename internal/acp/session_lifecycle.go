@@ -144,12 +144,30 @@ func (s *Server) buildSession(opts BuildOptions, expectedID string) (*sessionSta
 	return st, nil
 }
 
+// refreshAvailableCommands discovers the session's command palette and emits
+// it as available_commands_update. It is called after new/load/resume so a
+// client can build its picker without a separate request.
+func (s *Server) refreshAvailableCommands(st *sessionState, sendUpdate updateSender) {
+	if s.AvailableCommands == nil || st == nil || sendUpdate == nil {
+		return
+	}
+	commands := s.AvailableCommands(st.cwd)
+	st.commands = commands
+	if len(commands) == 0 {
+		return
+	}
+	sendUpdate(st.id, AvailableCommandsUpdate{
+		SessionUpdate:     UpdateAvailableCommands,
+		AvailableCommands: commands,
+	})
+}
+
 // handleSessionNew creates a fresh conversation for the requested cwd
 // and returns its ACP id. Every call builds a new session: session ids
 // are unique per created session, and independent sessions may coexist
 // in one process. ctx bounds the model-catalog wait so a slow provider
 // discovery is abandoned when the server shuts down.
-func (s *Server) handleSessionNew(ctx context.Context, msg Message, respOK func(id json.RawMessage, result any), respErr func(id json.RawMessage, code int, message string)) {
+func (s *Server) handleSessionNew(ctx context.Context, msg Message, sendUpdate updateSender, respOK func(id json.RawMessage, result any), respErr func(id json.RawMessage, code int, message string)) {
 	var p SessionNewParams
 	if len(msg.Params) > 0 {
 		if err := json.Unmarshal(msg.Params, &p); err != nil {
@@ -178,6 +196,7 @@ func (s *Server) handleSessionNew(ctx context.Context, msg Message, respOK func(
 		Modes:         sessionModeState(st.sess.Mode()),
 		Meta:          worldMetaOf(st.sess.WorldStatus()),
 	})
+	s.refreshAvailableCommands(st, sendUpdate)
 }
 
 // syntheticAssistantText is the content the loop persister stores for
@@ -338,6 +357,7 @@ func (s *Server) handleSessionLoad(
 			Modes:         sessionModeState(st.sess.Mode()),
 			Meta:          worldMetaOf(st.sess.WorldStatus()),
 		})
+		s.refreshAvailableCommands(st, sendUpdate)
 		return
 	}
 
@@ -356,6 +376,7 @@ func (s *Server) handleSessionLoad(
 		Modes:         sessionModeState(st.sess.Mode()),
 		Meta:          worldMetaOf(st.sess.WorldStatus()),
 	})
+	s.refreshAvailableCommands(st, sendUpdate)
 }
 
 // loadConfigOptions renders the config options a session/load response
@@ -413,7 +434,15 @@ func (s *Server) capabilities() AgentCaps {
 	if s.DeleteSession != nil {
 		sc.Delete = &SessionDeleteCaps{}
 	}
-	return AgentCaps{LoadSession: true, Session: sc}
+	caps := AgentCaps{
+		LoadSession:        true,
+		PromptCapabilities: &PromptCaps{EmbeddedContext: true},
+		Session:            sc,
+	}
+	if s.Logout != nil {
+		caps.Auth = &AgentAuthCaps{Logout: &LogoutCaps{}}
+	}
+	return caps
 }
 
 // CanonicalFilterCwd validates a session-list cwd filter: it must be
@@ -442,7 +471,7 @@ func (s *Server) handleSessionList(
 	respErr func(id json.RawMessage, code int, message string),
 ) {
 	if s.ListSessions == nil {
-		respErr(msg.ID, codeMethodNotFound, "session/list is not wired")
+		respErr(msg.ID, codeMethodNotFound, "session/list is not available in this server configuration")
 		return
 	}
 	var p ListSessionsParams
@@ -484,6 +513,7 @@ func (s *Server) handleSessionList(
 // params.
 func (s *Server) handleSessionResume(
 	msg Message,
+	sendUpdate updateSender,
 	respOK func(id json.RawMessage, result any),
 	respErr func(id json.RawMessage, code int, message string),
 ) {
@@ -527,6 +557,7 @@ func (s *Server) handleSessionResume(
 			return
 		}
 		respOK(msg.ID, SessionResumeResult{Modes: sessionModeState(st.sess.Mode())})
+		s.refreshAvailableCommands(st, sendUpdate)
 		return
 	}
 
@@ -540,6 +571,7 @@ func (s *Server) handleSessionResume(
 		return
 	}
 	respOK(msg.ID, SessionResumeResult{Modes: sessionModeState(st.sess.Mode())})
+	s.refreshAvailableCommands(st, sendUpdate)
 }
 
 // retireSession is the shared teardown of session/close and session/
@@ -626,10 +658,10 @@ func (s *Server) handleSessionDelete(
 		return
 	}
 	if s.DeleteSession == nil {
-		// Defensively typed before any side effect: capabilities never
-		// advertise delete without wiring, but a client may still ask —
-		// and that must not have already torn down a live session.
-		respErr(msg.ID, codeMethodNotFound, "session/delete is not wired")
+		// Checked before any side effect: capabilities never advertise
+		// delete without wiring, but a client may still ask — and that
+		// must not have already torn down a live session.
+		respErr(msg.ID, codeMethodNotFound, "session/delete is not available in this server configuration")
 		return
 	}
 	s.mu.Lock()

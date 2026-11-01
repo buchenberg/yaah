@@ -47,18 +47,18 @@ func toolKind(name string) string {
 	switch name {
 	case "read", "grep", "glob", "ls", "memory", "prompt":
 		return KindRead
-	case "write", "edit", "replace":
+	case "write", "edit", "patch", "replace", "go_refactor", "apply_out":
 		return KindEdit
 	case "delete":
 		return KindDelete
-	case "bash", "powershell", "git", "process", "background":
+	case "bash", "powershell", "git", "process", "background", "go_mod", "go_test", "staticcheck", "bisect":
 		return KindExecute
 	case "webfetch", "http", "web_search", "fetch":
 		return KindFetch
 	case "question", "think":
 		return KindThink
 	case "todo", "todowrite", "plan":
-		return KindThink
+		return KindEdit
 	default:
 		return KindOther
 	}

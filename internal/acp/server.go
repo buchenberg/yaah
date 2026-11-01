@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -133,6 +134,16 @@ type Server struct {
 	// internal errors and keep the session listed.
 	DeleteSession func(id string) error
 
+	// AvailableCommands, when non-nil, discovers the slash-command palette
+	// for a session cwd. The server sends an available_commands_update after
+	// session/new, session/load, and session/resume.
+	AvailableCommands func(cwd string) []AvailableCommand
+
+	// Logout, when non-nil, backs the ACP logout method and the
+	// agentCapabilities.auth.logout advertisement. It removes yaah-side
+	// stored OAuth credentials; nil leaves logout unadvertised.
+	Logout func() error
+
 	// AutoAnswerQuestions, when true, answers question-tool prompts
 	// with the first option. Used as the fallback when the client did
 	// not advertise elicitation.form or no connection is live (the
@@ -177,6 +188,10 @@ type sessionState struct {
 	sess Session
 	cwd  string
 	run  *runningPrompt
+	// commands is the slash-command palette advertised for this session.
+	// Prompts beginning with a known command name are translated before
+	// they reach the model.
+	commands []AvailableCommand
 	// ctrl is the control channel of the prompt currently running in
 	// this session. The question-tool handler installed on sess reads
 	// it so prompts never cross sessions.
@@ -204,6 +219,9 @@ type sessionState struct {
 	// is built for every prompt turn and the id namespace must not
 	// reset (a repeated compactionId patches the earlier card).
 	compactionSeq atomic.Int64
+	// escalationSeq is session-scoped for the same reason: a fresh View per
+	// turn must not reuse escalation-1 across turns.
+	escalationSeq atomic.Int64
 }
 
 // runningPrompt tracks the single in-flight turn. cancel aborts it;
@@ -390,6 +408,45 @@ func (s *Server) stopRun() {
 	}
 }
 
+// batchUnsupportedResponses builds per-request invalid-request errors for a
+// JSON-RPC batch. Notifications get no response; an empty or malformed batch
+// gets one id:null error.
+func batchUnsupportedResponses(raw []byte) []Message {
+	const message = "JSON-RPC batches are not supported by this ACP server"
+	invalid := func(id json.RawMessage) Message {
+		if len(id) == 0 {
+			id = json.RawMessage("null")
+		}
+		return Message{
+			JSONRPC: "2.0",
+			ID:      id,
+			Error:   &RPCError{Code: codeInvalidRequest, Message: message},
+		}
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return []Message{invalid(nil)}
+	}
+	if len(items) == 0 {
+		return []Message{invalid(nil)}
+	}
+	out := make([]Message, 0, len(items))
+	for _, item := range items {
+		var entry struct {
+			ID json.RawMessage `json:"id"`
+		}
+		if err := json.Unmarshal(item, &entry); err != nil {
+			out = append(out, invalid(nil))
+			continue
+		}
+		if len(entry.ID) == 0 {
+			continue
+		}
+		out = append(out, invalid(entry.ID))
+	}
+	return out
+}
+
 // dispatch reads and executes protocol messages until EOF.
 func (s *Server) dispatch(
 	dispatchCtx context.Context,
@@ -412,6 +469,16 @@ func (s *Server) dispatch(
 			s.stopRun()
 			s.close()
 			return
+		}
+
+		if strings.HasPrefix(strings.TrimSpace(line), "[") {
+			// Batches are not supported. Answer each request entry with
+			// its own invalid-request error (never a bare id:null), skip
+			// notification-only entries, and answer an empty batch once.
+			if responses := batchUnsupportedResponses([]byte(line)); len(responses) > 0 {
+				c.write(responses)
+			}
+			continue
 		}
 
 		var msg Message
@@ -486,7 +553,7 @@ func (s *Server) dispatch(
 					Name:    "yaah",
 					Version: s.version,
 				},
-				AuthMethods: staticAuthMethods(),
+				AuthMethods: authMethodsFor(params.ClientCapabilities),
 			})
 
 		case "authenticate":
@@ -508,8 +575,19 @@ func (s *Server) dispatch(
 			// AuthenticateResponse carries only an optional _meta.
 			respOK(msg.ID, struct{}{})
 
+		case "logout":
+			if s.Logout == nil {
+				respErr(msg.ID, codeMethodNotFound, "logout is not supported")
+				continue
+			}
+			if err := s.Logout(); err != nil {
+				respErr(msg.ID, codeInternal, "logout: "+err.Error())
+				continue
+			}
+			respOK(msg.ID, struct{}{})
+
 		case "session/new":
-			s.handleSessionNew(dispatchCtx, msg, respOK, respErr)
+			s.handleSessionNew(dispatchCtx, msg, sendUpdate, respOK, respErr)
 
 		case "session/prompt":
 			s.handlePrompt(msg, dispatchCtx, c, sendUpdate, respOK, respErr)
@@ -518,7 +596,7 @@ func (s *Server) dispatch(
 			s.handleSessionLoad(dispatchCtx, msg, sendUpdate, respOK, respErr)
 
 		case "session/resume":
-			s.handleSessionResume(msg, respOK, respErr)
+			s.handleSessionResume(msg, sendUpdate, respOK, respErr)
 
 		case "session/list":
 			s.handleSessionList(msg, respOK, respErr)
