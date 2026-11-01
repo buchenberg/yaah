@@ -48,8 +48,12 @@ func TraceOwnerParentsReadOnly(path string, ownerIDs []string) (map[string]strin
 	} else if err != nil {
 		return nil, err
 	}
-	sqlitePath := filepath.ToSlash(path)
-	if !strings.HasPrefix(sqlitePath, "/") {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	sqlitePath := filepath.ToSlash(abs)
+	if filepath.VolumeName(abs) != "" && !strings.HasPrefix(sqlitePath, "/") {
 		sqlitePath = "/" + sqlitePath // Windows drive path -> file:///C:/...
 	}
 	dsn := (&url.URL{Scheme: "file", Path: sqlitePath}).String() + "?mode=ro&_pragma=busy_timeout(5000)"
