@@ -17,7 +17,7 @@ import (
 // retained proposals (yaah-6xyl.1). It compares each proposal's changed paths
 // and post-images, not only the paths:
 //
-//   - identical post-images are benign duplicates and are not reported;
+//   - identical post-images are duplicates, reported separately from conflicts;
 //   - different post-images are same_path_divergent;
 //   - a delete against a non-delete is delete_modify;
 //   - a proposal path the parent changed since its basis is parent_overlap.
@@ -38,8 +38,8 @@ const (
 	// instead of inventing an identity it cannot prove.
 	proposalConflictPathOverlap = "path_overlap"
 	// proposalConflictSamePathIdentical is two proposals producing the same
-	// post-image. It is classified for tests and future callers but is not
-	// emitted as a conflict.
+	// post-image. It is emitted in the duplicates view, not the conflicts view,
+	// because apply is path-disjoint and only one side can land.
 	proposalConflictSamePathIdentical = "same_path_identical"
 	// proposalConflictSamePathDivergent is two proposals producing different
 	// post-images (content or mode) for one path.
