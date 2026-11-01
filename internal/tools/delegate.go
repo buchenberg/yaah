@@ -186,6 +186,7 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 	if t.Retained != nil && lane != LaneShared {
 		conflictLane = ConflictLaneRetained
 	}
+	subParams.Lane = conflictLane
 	runCtx := WithConflictDispatch(ctx, label, conflictLane)
 
 	// A dispatch that never reaches the retained resolver has no world of its

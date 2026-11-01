@@ -751,6 +751,15 @@ func conflictsWith(conflicts []proposalConflict, id string) []proposalConflict {
 	return out
 }
 
+// recordCurrentConflictFacts classifies the registry now and records any new
+// conflicts. Seal calls it so evidence exists even when no orchestrator later
+// asks for list/show; list/show call the same deduplicated path.
+func (r *ProposalRegistry) recordCurrentConflictFacts(ctx context.Context) {
+	analyses := r.analyzeProposals(ctx)
+	conflicts, _ := proposalConflicts(analyses)
+	r.recordConflictFacts(ctx, analyses, conflicts)
+}
+
 // recordConflictFacts appends one fact per newly observed conflict to the
 // parent's owner path. The registry deduplicates by conflict identity; a failed
 // append releases the reservation so a later list/show can retry.

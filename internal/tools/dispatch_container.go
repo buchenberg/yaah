@@ -431,6 +431,7 @@ func runDispatchContainerProposal(
 		target:      target,
 		session:     session,
 	})
+	rt.Proposals.recordCurrentConflictFacts(ctx)
 
 	env.Status = "proposal"
 	env.Result = trimResult(result)

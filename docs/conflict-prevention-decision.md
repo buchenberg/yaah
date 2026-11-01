@@ -70,7 +70,10 @@ real sessions. The trigger is at least one of:
 
 The first step is the measurement path in `yaah-6xyl.5`, not a scheduler. It
 must provide a fan-out/dispatch denominator and record conflicts when they are
-detected rather than only when a caller happens to inspect a proposal.
+detected rather than only when a caller happens to inspect a proposal. The
+resulting report is `yaah shepherd-trace conflicts [--session <id>] [--json]`;
+it groups conflicts by kind and repeated path and gives a session-level
+fan-out proxy because turn ids are not recorded in trace facts.
 
 ## If prevention is later adopted
 

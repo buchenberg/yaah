@@ -420,6 +420,31 @@ func TestProposalList_RecordsConflictFact(t *testing.T) {
 	}
 }
 
+// TestProposalSeal_RecordsConflictFact pins evidence-at-detection: sealing the
+// second divergent proposal records the conflict without requiring a later
+// list/show call.
+func TestProposalSeal_RecordsConflictFact(t *testing.T) {
+	runner := &sessionRunner{}
+	runner.sideEffect = func(call int, _ string) {
+		writeTestFile(t, runner.workdirFor(t, call), "README.md", fmt.Sprintf("# approach %d\n", call))
+	}
+	fx, repo, rootID := newSessionFixtures(t)
+	rt := RetainedRuntime{Runner: runner.run(), RepoPath: repo, ScopeManager: fx.mgr, RootScopeID: rootID, WorktreeRoot: t.TempDir(), Proposals: NewProposalRegistry()}
+	if _, err := startRetainedRun(context.Background(), rt, "first", SubAgentParams{Role: "worker"}, 0, false); err != nil {
+		t.Fatalf("first dispatch: %v", err)
+	}
+	if _, err := startRetainedRun(context.Background(), rt, "second", SubAgentParams{Role: "worker"}, 0, false); err != nil {
+		t.Fatalf("second dispatch: %v", err)
+	}
+	parent, ok := fx.mgr.Get(rootID)
+	if !ok {
+		t.Fatal("root scope missing")
+	}
+	if facts := findRetainedFacts(t, fx.store, parent.OwnerID(), SchemaProposalConflict); len(facts) != 1 {
+		t.Fatalf("sealed conflict facts = %d, want 1 without list/show", len(facts))
+	}
+}
+
 // TestProposalList_ContainerOverlapAndParentDrift covers the container lane's
 // typed conflict view.
 func TestProposalList_ContainerOverlapAndParentDrift(t *testing.T) {

@@ -791,6 +791,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		reviewProposal: reviewProposal,
 		reviewFactID:   reviewFactID,
 	})
+	rt.Proposals.recordCurrentConflictFacts(ctx)
 
 	env.Status = "proposal"
 	env.Result = trimResult(result)
