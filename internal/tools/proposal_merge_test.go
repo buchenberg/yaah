@@ -93,6 +93,12 @@ func TestProposalModeFromString(t *testing.T) {
 			t.Errorf("proposalModeFromString(%q) = %04o/%v, want %04o/true", in, got, ok, want)
 		}
 	}
+	if got, ok := proposalModeFromString(""); ok || got != 0 {
+		t.Errorf("malformed mode = %04o/%v, want 0/false", got, ok)
+	}
+	if got, ok := proposalModeFromString("----------"); !ok || got != 0 {
+		t.Errorf("recorded 0000 mode = %04o/%v, want 0/true", got, ok)
+	}
 }
 
 func TestGitTreePathSizeDistinguishesMissingAndInvalid(t *testing.T) {
