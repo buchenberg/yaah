@@ -331,3 +331,74 @@ func TestClientWorkspace_ConfinedWorkspaceNotWrapped(t *testing.T) {
 		t.Fatal("confined workspace was wrapped by the client workspace")
 	}
 }
+
+func TestClientWorkspace_MissingReadContentFallsBackLocal(t *testing.T) {
+	h, _, reg, cwd := clientWorkspaceHarness(t)
+	path := filepath.Join(cwd, "disk.go")
+	if err := os.WriteFile(path, []byte("on disk\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx := testContext(t)
+	done := make(chan struct {
+		out string
+		err error
+	}, 1)
+	go func() {
+		out, err := reg.Execute(ctx, "read", fmt.Sprintf(`{"filePath":%q}`, path))
+		done <- struct {
+			out string
+			err error
+		}{out, err}
+	}()
+	req := h.recvRequest(t, "fs/read_text_file")
+	if err := h.reply(req.ID, struct{}{}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-done:
+		if got.err != nil {
+			t.Fatalf("read: %v", got.err)
+		}
+		if got.out != "on disk\n" {
+			t.Fatalf("read output = %q, want local fallback", got.out)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("read did not finish")
+	}
+}
+
+func TestClientWorkspace_LateTerminalCreateIsReleased(t *testing.T) {
+	h, _, reg, _ := clientWorkspaceHarness(t)
+	ctx, cancel := context.WithTimeout(tools.WithToolName(context.Background(), "bash"), 200*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := reg.Execute(ctx, "bash", `{"command":"echo late"}`)
+		done <- err
+	}()
+
+	create := h.recvRequest(t, "terminal/create")
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("terminal create unexpectedly succeeded after the deadline")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed-out terminal create did not return")
+	}
+
+	if err := h.reply(create.ID, TerminalCreateResult{TerminalID: "late-term"}); err != nil {
+		t.Fatal(err)
+	}
+	release := h.recvRequest(t, "terminal/release")
+	var params TerminalIDParams
+	if err := json.Unmarshal(release.Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params.TerminalID != "late-term" {
+		t.Fatalf("released terminal = %q, want late-term", params.TerminalID)
+	}
+	if err := h.reply(release.ID, struct{}{}); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -46,11 +46,15 @@ func (w *clientWorkspace) ReadFile(ctx context.Context, path string) ([]byte, er
 		if raw == nil {
 			err = errors.New("empty response")
 		} else {
-			var result ReadTextFileResult
+			var result struct {
+				Content *string `json:"content"`
+			}
 			if uerr := json.Unmarshal(raw, &result); uerr != nil {
 				err = uerr
+			} else if result.Content == nil {
+				err = errors.New("response has no content")
 			} else {
-				return []byte(result.Content), nil
+				return []byte(*result.Content), nil
 			}
 		}
 	}
@@ -67,7 +71,7 @@ func (w *clientWorkspace) ReadFile(ctx context.Context, path string) ([]byte, er
 
 func (w *clientWorkspace) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
 	info, err := w.Workspace.Stat(ctx, path)
-	if err == nil || !w.fsRead || !readToolContext(ctx) {
+	if err == nil || !w.fsRead || !readToolContext(ctx) || !errors.Is(err, fs.ErrNotExist) {
 		return info, err
 	}
 	return w.unsavedFileInfo(path, err)
@@ -75,7 +79,7 @@ func (w *clientWorkspace) Stat(ctx context.Context, path string) (fs.FileInfo, e
 
 func (w *clientWorkspace) Lstat(ctx context.Context, path string) (fs.FileInfo, error) {
 	info, err := w.Workspace.Lstat(ctx, path)
-	if err == nil || !w.fsRead || !readToolContext(ctx) {
+	if err == nil || !w.fsRead || !readToolContext(ctx) || !errors.Is(err, fs.ErrNotExist) {
 		return info, err
 	}
 	return w.unsavedFileInfo(path, err)
@@ -127,8 +131,10 @@ func (w *clientWorkspace) WriteFile(ctx context.Context, path string, data []byt
 	// an existing host mode when possible; atomicity is the client's
 	// responsibility because the editor owns the buffer.
 	mode := fs.FileMode(0)
+	hadMode := false
 	if info, statErr := w.Workspace.Stat(ctx, abs); statErr == nil {
 		mode = info.Mode().Perm()
+		hadMode = true
 	}
 	raw, err := w.server.callClient(ctx, "fs/write_text_file", WriteTextFileParams{
 		SessionID: w.sessionID,
@@ -139,10 +145,10 @@ func (w *clientWorkspace) WriteFile(ctx context.Context, path string, data []byt
 		return fmt.Errorf("client write %s: %w", abs, err)
 	}
 	_ = raw
-	if mode != 0 {
-		if err := os.Chmod(abs, mode); err != nil {
-			return fmt.Errorf("client write %s: restore mode: %w", abs, err)
-		}
+	if hadMode {
+		// The client already accepted the write; a best-effort mode restore
+		// must not turn that success into a failure.
+		_ = os.Chmod(abs, mode)
 	}
 	return nil
 }
@@ -155,17 +161,26 @@ func (w *clientWorkspace) Exec(ctx context.Context, req tools.ExecRequest) (tool
 	if cwd == "" {
 		cwd = w.WorkDir()
 	}
-	raw, err := w.server.callClient(ctx, "terminal/create", TerminalCreateParams{
+	raw, err := w.server.callClientWithLate(ctx, "terminal/create", TerminalCreateParams{
 		SessionID:       w.sessionID,
 		Command:         req.Command,
 		Args:            req.Args,
 		Cwd:             cwd,
 		OutputByteLimit: terminalOutputByteLimit,
+	}, func(late json.RawMessage) {
+		// The create response arrived after this call gave up (timeout or
+		// cancellation). Release the terminal the client actually created.
+		var created TerminalCreateResult
+		if json.Unmarshal(late, &created) == nil && created.TerminalID != "" {
+			w.releaseTerminal(created.TerminalID)
+		}
 	})
 	if err != nil {
 		// Do not fall back to local execution after the client refused or
 		// failed a terminal create: that would run the command anyway,
-		// bypassing the client-side approval the capability implies.
+		// bypassing the client-side approval the capability implies. If the
+		// client never answers at all, the terminal id is unknowable here;
+		// the client owns cleanup for an unacknowledged create.
 		return tools.ExecResult{ExitCode: -1}, fmt.Errorf("terminal/create: %w", err)
 	}
 	var created TerminalCreateResult
@@ -276,9 +291,17 @@ func (w *clientWorkspace) releaseTerminal(terminalID string) {
 }
 
 // callClient sends one agent->client request and waits for its response. The
-// caller's context bounds the wait; an abandoned response is dropped by the
-// normal resolvePending path.
+// caller's context bounds the wait; an abandoned response is dropped.
 func (s *Server) callClient(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	return s.callClientWithLate(ctx, method, params, nil)
+}
+
+// callClientWithLate is callClient with a late-result hook. When ctx ends
+// first, the pending entry is kept briefly: if the client answers after the
+// deadline, late receives the result so a resource-bearing method such as
+// terminal/create can clean up. Without a late hook the entry is removed
+// immediately, as before.
+func (s *Server) callClientWithLate(ctx context.Context, method string, params any, late func(json.RawMessage)) (json.RawMessage, error) {
 	s.mu.Lock()
 	c := s.conn
 	if c == nil {
@@ -291,20 +314,39 @@ func (s *Server) callClient(ctx context.Context, method string, params any) (jso
 	key := permissionID(id)
 	s.pendingReq[key] = ch
 	s.mu.Unlock()
-	defer func() {
+	cleanup := func() {
 		s.mu.Lock()
 		delete(s.pendingReq, key)
 		s.mu.Unlock()
-	}()
+	}
 
 	c.sendRequest(id, method, params)
 	select {
 	case resp := <-ch:
+		cleanup()
 		if resp.err != nil {
 			return nil, resp.err
 		}
 		return resp.result, nil
 	case <-ctx.Done():
+		if late == nil {
+			cleanup()
+			return nil, ctx.Err()
+		}
+		// The request is already in flight and may have created a resource.
+		// Keep routing alive briefly so a late success can be released.
+		go func() {
+			timer := time.NewTimer(30 * time.Second)
+			defer timer.Stop()
+			select {
+			case resp := <-ch:
+				if resp.err == nil && resp.result != nil {
+					late(resp.result)
+				}
+			case <-timer.C:
+			}
+			cleanup()
+		}()
 		return nil, ctx.Err()
 	}
 }
