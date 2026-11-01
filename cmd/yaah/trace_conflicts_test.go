@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/tools"
 )
 
@@ -53,6 +54,17 @@ func TestTraceConflictsAggregate(t *testing.T) {
 		"kind": "same_path_divergent", "paths": []string{"a.txt", "b.txt"}, "proposals": []string{"p1", "p2"},
 	})
 	appendFact("sub-b1", "yaah.subagent.usage.v1", "subagent:usage", shepherdtrace.Capture, map[string]any{"lane": "shared", "parent_session": "sess-b"})
+	db, err := memory.OpenDefault()
+	if err != nil {
+		t.Fatalf("open state db: %v", err)
+	}
+	if err := db.RecordTraceOwner("sub-old", "sess-a", "worker"); err != nil {
+		t.Fatalf("record legacy owner: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close state db: %v", err)
+	}
+	appendFact("sub-old", "yaah.subagent.usage.v1", "subagent:usage:old", shepherdtrace.Capture, map[string]any{"lane": "shared"})
 	appendFact("sess-b", tools.SchemaProposalConflict, "conflict", shepherdtrace.Declaration, map[string]any{
 		"kind": "delete_modify", "paths": []string{"a.txt"}, "proposals": []string{"p3", "p4"},
 	})
@@ -74,8 +86,8 @@ func TestTraceConflictsAggregate(t *testing.T) {
 	if got.Sessions != 2 || got.Conflicts != 2 || got.ConflictSessions != 2 {
 		t.Errorf("sessions/conflicts = %d/%d/%d, want 2/2/2 (report %+v)", got.Sessions, got.Conflicts, got.ConflictSessions, got)
 	}
-	if got.Dispatches["retained"] != 1 || got.Dispatches["shared"] != 2 {
-		t.Errorf("dispatches = %+v, want retained=1 shared=2", got.Dispatches)
+	if got.Dispatches["retained"] != 1 || got.Dispatches["shared"] != 3 {
+		t.Errorf("dispatches = %+v, want retained=1 shared=3", got.Dispatches)
 	}
 	if got.SealedProposals != 2 || got.ConflictProposals != 4 {
 		t.Errorf("sealed/proposals = %d/%d, want 2/4", got.SealedProposals, got.ConflictProposals)

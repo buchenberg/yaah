@@ -751,10 +751,10 @@ func conflictsWith(conflicts []proposalConflict, id string) []proposalConflict {
 	return out
 }
 
-// recordSealConflictFacts records pair conflicts when a newly sealed proposal
-// shares a path with an open proposal. The cheap path check avoids running the
-// full post-image/drift analysis on every seal; list/show still record parent
-// overlaps and any later observations through the same deduplicated path.
+// recordSealConflictFacts records conflicts at seal time. It checks pairwise
+// path overlap and every open proposal's parent drift first; the full
+// post-image analysis runs only when one of those overlaps exists. List/show
+// use the same deduplicated recording path for later observations.
 func (r *ProposalRegistry) recordSealConflictFacts(ctx context.Context, added *retainedProposal) {
 	if added == nil {
 		return

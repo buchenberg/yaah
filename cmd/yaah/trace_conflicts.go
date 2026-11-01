@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"text/tabwriter"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/spf13/cobra"
 )
@@ -61,7 +63,8 @@ func newShepherdTraceConflictsCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("read conflict evidence: %w", err)
 			}
-			report := aggregateConflicts(slice, session)
+			legacyParents := loadLegacyParents(slice)
+			report := aggregateConflicts(slice, session, legacyParents)
 
 			if asJSON {
 				raw, err := json.MarshalIndent(report, "", "  ")
@@ -81,7 +84,34 @@ func newShepherdTraceConflictsCmd() *cobra.Command {
 	return cmd
 }
 
-func aggregateConflicts(slice shepherdtrace.Slice, session string) conflictAggregate {
+// loadLegacyParents resolves pre-parent_session trace owners through the
+// durable subTraceID -> parent session mapping in state.db. New usage facts
+// carry parent_session directly; this keeps existing stores usable.
+func loadLegacyParents(slice shepherdtrace.Slice) map[string]string {
+	owners := make(map[string]bool)
+	for owner := range slice.OwnerPaths {
+		if strings.HasPrefix(owner, "sub-") {
+			owners[owner] = true
+		}
+	}
+	if len(owners) == 0 {
+		return nil
+	}
+	db, err := memory.OpenDefault()
+	if err != nil {
+		return nil
+	}
+	defer db.Close()
+	out := make(map[string]string, len(owners))
+	for owner := range owners {
+		if parent, err := db.TraceOwnerParent(owner); err == nil && parent != "" {
+			out[owner] = parent
+		}
+	}
+	return out
+}
+
+func aggregateConflicts(slice shepherdtrace.Slice, session string, legacyParents map[string]string) conflictAggregate {
 	window := "all retained trace facts"
 	if session != "" {
 		window = "session " + session
@@ -97,7 +127,10 @@ func aggregateConflicts(slice shepherdtrace.Slice, session string) conflictAggre
 	sessionDispatches := make(map[string]int)
 	sessionConflicts := make(map[string]bool)
 	sessionsSeen := make(map[string]bool)
-	parentByOwner := make(map[string]string)
+	parentByOwner := make(map[string]string, len(legacyParents))
+	for owner, parent := range legacyParents {
+		parentByOwner[owner] = parent
+	}
 
 	// Pass 1: usage facts are the only place that connects a per-dispatch
 	// owner (`sub-*`) to the session root. Build that mapping before resolving
@@ -110,6 +143,9 @@ func aggregateConflicts(slice shepherdtrace.Slice, session string) conflictAggre
 				continue
 			}
 			parent, _ := rec.Body.Payload["parent_session"].(string)
+			if parent == "" {
+				parent = legacyParents[owner]
+			}
 			if parent == "" {
 				parent = owner
 			}
