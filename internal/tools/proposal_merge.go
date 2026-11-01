@@ -23,10 +23,11 @@ import (
 const proposalMergeMaxBytes = 4 << 20
 
 type proposalMergeWrite struct {
-	path string
-	data []byte
-	del  bool
-	mode fs.FileMode
+	path    string
+	data    []byte
+	del     bool
+	mode    fs.FileMode
+	modeSet bool
 }
 
 func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retainedProposal) (string, error) {
@@ -35,6 +36,9 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 	}
 	if p.repoPath == "" {
 		return "", fmt.Errorf("proposal %s: three_way has no repository path", p.id)
+	}
+	if state := p.output.State(); state != goatherd.OutputUnconsumed {
+		return "", fmt.Errorf("proposal %s: three_way: sealed output is %s, not unconsumed", p.id, state)
 	}
 	changes, err := p.proposalChanges(ctx)
 	if err != nil {
@@ -63,10 +67,12 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 
 		if !driftSet[pathKey(normalizeProposalPath(change.Path))] {
 			if proposedExists {
+				mode, modeSet := proposalModeFromString(change.Mode)
 				writes = append(writes, proposalMergeWrite{
-					path: change.Path,
-					data: proposed,
-					mode: proposalModeFromString(change.Mode),
+					path:    change.Path,
+					data:    proposed,
+					mode:    mode,
+					modeSet: modeSet,
 				})
 			} else {
 				writes = append(writes, proposalMergeWrite{path: change.Path, del: true})
@@ -132,9 +138,9 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 			}
 			continue
 		}
-		mode := write.mode
-		if mode == 0 {
-			mode = 0o644
+		mode := fs.FileMode(0o644)
+		if write.modeSet {
+			mode = write.mode
 		}
 		if info, err := ws.Stat(ctx, abs); err == nil {
 			mode = info.Mode().Perm()
@@ -164,7 +170,10 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 	}
 
 	settleErr := p.output.Settle(ctx, goatherd.SettleDiscard)
-	if settleErr != nil && !errors.Is(settleErr, goatherd.ErrOutputConsumed) {
+	if errors.Is(settleErr, goatherd.ErrOutputConsumed) {
+		return "", fmt.Errorf("proposal %s: three_way: merge landed but the sealed output was already consumed by %s; inspect the parent tree", p.id, p.output.Action())
+	}
+	if settleErr != nil {
 		// The parent already carries the merge. Do not leave the proposal
 		// registered for a retry that would re-apply it; report the landed
 		// effect and try to tear the stranded child down.
@@ -198,20 +207,33 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 	return marshalProposalEnvelope(env), nil
 }
 
-// proposalModeFromString parses the nine permission characters in a
-// FileMode.String() value. A malformed value falls back to 0644.
-func proposalModeFromString(mode string) fs.FileMode {
+// proposalModeFromString parses a FileMode.String value, including setuid,
+// setgid, and sticky bits. The bool distinguishes a recorded 0000 mode from a
+// missing mode so callers do not widen an intentionally closed file.
+func proposalModeFromString(mode string) (fs.FileMode, bool) {
 	if len(mode) != 10 {
-		return 0o644
+		return 0, false
 	}
 	bits := []fs.FileMode{0o400, 0o200, 0o100, 0o040, 0o020, 0o010, 0o004, 0o002, 0o001}
 	var out fs.FileMode
 	for i, bit := range bits {
-		if mode[i+1] != '-' {
+		switch mode[i+1] {
+		case '-', 'S', 'T':
+			// S/T carry a special bit without the execute bit.
+		default:
 			out |= bit
 		}
 	}
-	return out
+	if c := mode[3]; c == 's' || c == 'S' {
+		out |= fs.ModeSetuid
+	}
+	if c := mode[6]; c == 's' || c == 'S' {
+		out |= fs.ModeSetgid
+	}
+	if c := mode[9]; c == 't' || c == 'T' {
+		out |= fs.ModeSticky
+	}
+	return out, true
 }
 
 func mustRepoValidator(repoPath string) *PathValidator {
@@ -260,10 +282,6 @@ func (p *retainedProposal) baseContentFull(ctx context.Context, rel string) ([]b
 // an invalid/unreadable tree or object, so a broken base never becomes an empty
 // merge input.
 func gitTreePathSize(ctx context.Context, repoPath, tree, rel string) (int64, bool, error) {
-	verify := exec.CommandContext(ctx, "git", "-C", repoPath, "rev-parse", "--verify", tree+"^{tree}")
-	if _, err := verify.Output(); err != nil {
-		return 0, false, err
-	}
 	listed, err := exec.CommandContext(ctx, "git", "-C", repoPath, "ls-tree", "-z", tree, "--", filepath.ToSlash(rel)).Output()
 	if err != nil {
 		return 0, false, err

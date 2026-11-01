@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,11 +78,20 @@ func TestGitMergeFile_MultipleConflictHunks(t *testing.T) {
 }
 
 func TestProposalModeFromString(t *testing.T) {
-	if got := proposalModeFromString("-rwxr-xr-x"); got != 0o755 {
-		t.Errorf("mode = %04o, want 0755", got)
+	tests := []struct {
+		in   string
+		want fs.FileMode
+	}{
+		{"-rwxr-xr-x", 0o755},
+		{"-rw-------", 0o600},
+		{"----------", 0},
+		{"-rwsr-xr-x", 0o755 | fs.ModeSetuid},
 	}
-	if got := proposalModeFromString("-rw-------"); got != 0o600 {
-		t.Errorf("mode = %04o, want 0600", got)
+	for _, tc := range tests {
+		got, ok := proposalModeFromString(tc.in)
+		if !ok || got != tc.want {
+			t.Errorf("proposalModeFromString(%q) = %04o/%v, want %04o/true", tc.in, got, ok, tc.want)
+		}
 	}
 }
 
