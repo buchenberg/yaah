@@ -31,13 +31,13 @@ also carries `parent_drift` (paths the parent changed since that proposal's
 dispatch basis; `parent_drift_error` if the basis cannot be inspected), its
 content-aware `changes` (`path`, `kind`, `base_digest`, `digest`, `mode`), a
 `changes_error` if a worktree post-image cannot be inspected, and its own
-`conflicts`. The envelope's global `conflicts` array classifies overlapping
-post-images: identical writes are omitted as benign duplicates;
-`same_path_divergent` means different content or mode; `delete_modify` means one
-side deletes what the other changes; `parent_overlap` means the parent moved a
-path the proposal also changes. `path_overlap` is the fallback when a post-image
-could not be inspected. Treat these as early warnings: `apply` is path-disjoint,
-so a conflicting pair cannot both land unless one is discarded or resolved.
+`conflicts` and `duplicates`. The envelope's global arrays classify overlapping
+post-images: identical writes are `duplicates`, not conflicts; `same_path_divergent`
+means different content or mode; `delete_modify` means one side deletes what the
+other changes; `parent_overlap` means the parent moved a path the proposal also
+changes. `path_overlap` is the fallback when a post-image could not be inspected.
+Treat these as early warnings: `apply` is path-disjoint, so neither a conflicting
+pair nor a duplicate pair can both land unless one is discarded or resolved.
 `action: "show"` re-reads one, with its diff, changes, and conflict view. If
 `apply` is refused, the response has `status: "conflict"`, names the overlap in
 `conflicts` when it can be re-derived, and leaves the proposal open. Proposals

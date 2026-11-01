@@ -99,7 +99,7 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 		// proposal. It also records any newly observed conflict fact, so a
 		// caller that inspects one proposal still leaves the evidence behind.
 		analyses := t.Proposals.analyzeProposals(ctx)
-		conflicts := proposalConflicts(analyses)
+		conflicts, duplicates := proposalConflicts(analyses)
 		t.Proposals.recordConflictFacts(ctx, analyses, conflicts)
 		for _, analysis := range analyses {
 			if analysis.proposal.id != p.id {
@@ -112,6 +112,7 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 			break
 		}
 		env.Conflicts = conflictsWith(conflicts, p.id)
+		env.Duplicates = conflictsWith(duplicates, p.id)
 		return marshalProposalEnvelope(env), nil
 	case "select", "apply", "release", "discard":
 		if raw.ProposalID == "" {

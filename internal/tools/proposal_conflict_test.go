@@ -135,7 +135,10 @@ func TestProposalList_IdenticalDuplicateIsNotConflict(t *testing.T) {
 		t.Fatalf("list result is not JSON: %v\n%s", err, out)
 	}
 	if len(listed.Conflicts) != 0 {
-		t.Fatalf("conflicts = %+v, want identical duplicates to be silent", listed.Conflicts)
+		t.Fatalf("conflicts = %+v, want identical duplicates to be non-conflicts", listed.Conflicts)
+	}
+	if len(listed.Duplicates) != 1 || listed.Duplicates[0].Kind != proposalConflictSamePathIdentical {
+		t.Fatalf("duplicates = %+v, want one same_path_identical entry", listed.Duplicates)
 	}
 
 	var digests []string
@@ -145,6 +148,9 @@ func TestProposalList_IdenticalDuplicateIsNotConflict(t *testing.T) {
 		}
 		if len(summary.Conflicts) != 0 {
 			t.Errorf("summary %s conflicts = %+v, want none", summary.ProposalID, summary.Conflicts)
+		}
+		if len(summary.Duplicates) != 1 || summary.Duplicates[0].Kind != proposalConflictSamePathIdentical {
+			t.Errorf("summary %s duplicates = %+v, want one same_path_identical entry", summary.ProposalID, summary.Duplicates)
 		}
 		if len(summary.Changes) != 1 || summary.Changes[0].Digest == "" {
 			t.Fatalf("summary %s changes = %+v, want one digested change", summary.ProposalID, summary.Changes)
@@ -200,6 +206,92 @@ func TestProposalList_DeleteModify(t *testing.T) {
 	}
 	if !kinds["delete"] || !kinds["modify"] {
 		t.Errorf("conflict changes = %+v, want a delete and a modify", conflict.Changes)
+	}
+}
+
+// TestProposalList_PerPathInspectionFailure pins the per-path fallback: one
+// unreadable post-image must not discard the metadata for the proposal's other
+// changes.
+func TestProposalList_PerPathInspectionFailure(t *testing.T) {
+	runner := &sessionRunner{}
+	runner.sideEffect = func(call int, _ string) {
+		wd := runner.workdirFor(t, call)
+		writeTestFile(t, wd, "readable.txt", "readable\n")
+		writeTestFile(t, wd, "missing.txt", "will disappear\n")
+	}
+	rt := newRetainedTestEnv(t, runner)
+	if _, err := startRetainedRun(context.Background(), rt, "two files", SubAgentParams{Role: "worker"}, 0, false); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	proposals := rt.Proposals.all()
+	if len(proposals) != 1 {
+		t.Fatalf("proposals = %d, want 1", len(proposals))
+	}
+	if err := os.Remove(filepath.Join(proposals[0].workdir, "missing.txt")); err != nil {
+		t.Fatalf("remove worktree file: %v", err)
+	}
+
+	out, err := (&ProposalTool{Proposals: rt.Proposals}).Execute(context.Background(), `{"action":"list"}`)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var listed proposalListEnvelope
+	if err := json.Unmarshal([]byte(out), &listed); err != nil {
+		t.Fatalf("list result is not JSON: %v\n%s", err, out)
+	}
+	if len(listed.Proposals) != 1 {
+		t.Fatalf("proposals = %+v, want one", listed.Proposals)
+	}
+	summary := listed.Proposals[0]
+	if summary.ChangesError == "" {
+		t.Fatal("changes_error must report the unreadable path")
+	}
+	byPath := map[string]proposalChange{}
+	for _, change := range summary.Changes {
+		byPath[change.Path] = change
+	}
+	if got := byPath["readable.txt"]; got.Digest == "" || got.Mode == "" {
+		t.Errorf("readable.txt metadata = %+v, want digest and mode retained", got)
+	}
+	if got := byPath["missing.txt"]; got.Digest != "" || got.Mode != "" {
+		t.Errorf("missing.txt metadata = %+v, want path-only fallback", got)
+	}
+}
+
+// TestProposalList_WorktreeHashCap pins the bounded worktree read: an oversized
+// post-image is not loaded, and its metadata falls back to path-only.
+func TestProposalList_WorktreeHashCap(t *testing.T) {
+	runner := writingRunner(t, "big.txt")
+	rt := newRetainedTestEnv(t, runner)
+	if _, err := startRetainedRun(context.Background(), rt, "write a big file", SubAgentParams{Role: "worker"}, 0, false); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	proposals := rt.Proposals.all()
+	if len(proposals) != 1 {
+		t.Fatalf("proposals = %d, want 1", len(proposals))
+	}
+	if err := os.Truncate(filepath.Join(proposals[0].workdir, "big.txt"), proposalWorktreeMaxHashBytes+1); err != nil {
+		t.Fatalf("truncate worktree file: %v", err)
+	}
+
+	out, err := (&ProposalTool{Proposals: rt.Proposals}).Execute(context.Background(), `{"action":"list"}`)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var listed proposalListEnvelope
+	if err := json.Unmarshal([]byte(out), &listed); err != nil {
+		t.Fatalf("list result is not JSON: %v\n%s", err, out)
+	}
+	if len(listed.Proposals) != 1 {
+		t.Fatalf("proposals = %+v, want one", listed.Proposals)
+	}
+	summary := listed.Proposals[0]
+	if !strings.Contains(summary.ChangesError, "digest cap") {
+		t.Errorf("changes_error = %q, want the digest cap", summary.ChangesError)
+	}
+	if len(summary.Changes) != 1 || summary.Changes[0].Digest != "" {
+		t.Errorf("changes = %+v, want one path-only change for the oversized file", summary.Changes)
 	}
 }
 
@@ -375,7 +467,10 @@ func TestProposalList_ContainerIdenticalAndModeDivergence(t *testing.T) {
 			t.Fatalf("list result is not JSON: %v\n%s", err, out)
 		}
 		if len(listed.Conflicts) != 0 {
-			t.Fatalf("conflicts = %+v, want identical post-images to be silent", listed.Conflicts)
+			t.Fatalf("conflicts = %+v, want identical post-images to be duplicates, not conflicts", listed.Conflicts)
+		}
+		if len(listed.Duplicates) != 1 || listed.Duplicates[0].Kind != proposalConflictSamePathIdentical {
+			t.Fatalf("duplicates = %+v, want one same_path_identical entry", listed.Duplicates)
 		}
 	})
 
@@ -471,6 +566,9 @@ func TestProposalList_DisjointHasNoConflicts(t *testing.T) {
 	}
 	if got := strings.TrimSpace(string(fields["conflicts"])); got != "[]" {
 		t.Errorf("conflicts = %s, want explicit []", got)
+	}
+	if got := strings.TrimSpace(string(fields["duplicates"])); got != "[]" {
+		t.Errorf("duplicates = %s, want explicit []", got)
 	}
 	var listed proposalListEnvelope
 	if err := json.Unmarshal([]byte(out), &listed); err != nil {

@@ -163,6 +163,9 @@ type proposalEnvelope struct {
 	// Conflicts carries the typed conflict view for an apply refusal or for a
 	// show response. The proposal remains open after a refusal.
 	Conflicts []proposalConflict `json:"conflicts,omitempty"`
+	// Duplicates carries identical-post-image pairs. They are not conflicts,
+	// but apply is path-disjoint, so only one can land.
+	Duplicates []proposalConflict `json:"duplicates,omitempty"`
 	// Changes is the content-aware change metadata for a show response.
 	Changes []proposalChange `json:"changes,omitempty"`
 	// ChangesError is set when a worktree proposal's post-images could not be
@@ -332,6 +335,8 @@ type proposalSummary struct {
 	ParentDriftError string `json:"parent_drift_error,omitempty"`
 	// Conflicts carries the typed conflicts that involve this proposal.
 	Conflicts []proposalConflict `json:"conflicts,omitempty"`
+	// Duplicates carries identical-post-image pairs involving this proposal.
+	Duplicates []proposalConflict `json:"duplicates,omitempty"`
 	// Changes carries the per-path content, mode, and basis metadata used for
 	// conflict classification.
 	Changes []proposalChange `json:"changes,omitempty"`
@@ -346,9 +351,12 @@ type proposalListEnvelope struct {
 	Status    string            `json:"status"`
 	Proposals []proposalSummary `json:"proposals"`
 	// Conflicts is always present (an explicit empty list when nothing
-	// overlaps), so a caller can tell "no conflict" from a missing field.
+	// conflicts), so a caller can tell "no conflict" from a missing field.
 	Conflicts []proposalConflict `json:"conflicts"`
-	Next      []string           `json:"next,omitempty"`
+	// Duplicates is always present; identical post-images are not conflicts,
+	// but apply is path-disjoint, so only one side can land.
+	Duplicates []proposalConflict `json:"duplicates"`
+	Next       []string           `json:"next,omitempty"`
 }
 
 // summaries renders the open proposals as prose, for a human reader.
@@ -380,7 +388,7 @@ func (r *ProposalRegistry) summaries() string {
 // fact rather than prose a caller cannot tell from a failed parse (yaah-yox).
 func (r *ProposalRegistry) listEnvelope(ctx context.Context) string {
 	analyses := r.analyzeProposals(ctx)
-	conflicts := proposalConflicts(analyses)
+	conflicts, duplicates := proposalConflicts(analyses)
 	r.recordConflictFacts(ctx, analyses, conflicts)
 
 	list := make([]proposalSummary, 0, len(analyses))
@@ -399,6 +407,7 @@ func (r *ProposalRegistry) listEnvelope(ctx context.Context) string {
 			Files:      files,
 			Target:     target,
 			Conflicts:  conflictsWith(conflicts, p.id),
+			Duplicates: conflictsWith(duplicates, p.id),
 			Changes:    analysis.changes,
 		}
 		if analysis.driftErr != nil {
@@ -414,10 +423,13 @@ func (r *ProposalRegistry) listEnvelope(ctx context.Context) string {
 	if conflicts == nil {
 		conflicts = []proposalConflict{}
 	}
-	env := proposalListEnvelope{Status: "open", Proposals: list, Conflicts: conflicts, Next: proposalVerbs()}
+	if duplicates == nil {
+		duplicates = []proposalConflict{}
+	}
+	env := proposalListEnvelope{Status: "open", Proposals: list, Conflicts: conflicts, Duplicates: duplicates, Next: proposalVerbs()}
 	data, err := json.Marshal(env)
 	if err != nil {
-		return `{"status":"open","proposals":[],"conflicts":[]}`
+		return `{"status":"open","proposals":[],"conflicts":[],"duplicates":[]}`
 	}
 	return string(data)
 }

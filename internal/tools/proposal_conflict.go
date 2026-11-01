@@ -59,6 +59,12 @@ const (
 	// path. It is runtime-level proposal metadata, like the sealed/settled
 	// facts, not a kernel ABI.
 	SchemaProposalConflict = "yaah.proposal.conflict.v1"
+
+	// proposalWorktreeMaxHashBytes bounds the worktree post-image read used
+	// for conflict comparison. It matches the container manifest's total
+	// content cap, so one large proposed file cannot make list/show allocate
+	// without limit. A larger file falls back to path-only classification.
+	proposalWorktreeMaxHashBytes = 32 << 20
 )
 
 // proposalChange is one normalized path change with the metadata needed to
@@ -151,10 +157,12 @@ func (p *retainedProposal) proposalChanges(ctx context.Context) ([]proposalChang
 	switch {
 	case p.delta != nil:
 		changes := make([]proposalChange, 0, len(p.delta.Changes))
+		var inspectErrs []string
 		for _, c := range p.delta.Changes {
 			rel, err := safeDeltaPath(normalizeProposalPath(c.Path))
 			if err != nil {
-				return nil, fmt.Errorf("proposal %s: %w", p.id, err)
+				inspectErrs = append(inspectErrs, err.Error())
+				continue
 			}
 			change := proposalChange{
 				ProposalID: p.id,
@@ -169,6 +177,9 @@ func (p *retainedProposal) proposalChanges(ctx context.Context) ([]proposalChang
 			changes = append(changes, change)
 		}
 		sortProposalChanges(changes)
+		if len(inspectErrs) > 0 {
+			return changes, fmt.Errorf("proposal %s: inspect post-images: %s", p.id, strings.Join(inspectErrs, "; "))
+		}
 		return changes, nil
 
 	case p.output != nil:
@@ -183,10 +194,12 @@ func (p *retainedProposal) proposalChanges(ctx context.Context) ([]proposalChang
 		pv.WorkDir = pv.WorkspaceRoot
 		ws := newLocalWorkspace(pv)
 		changes := make([]proposalChange, 0, len(p.output.Changes()))
+		var inspectErrs []string
 		for _, c := range p.output.Changes() {
 			rel, err := safeDeltaPath(normalizeProposalPath(c.Path))
 			if err != nil {
-				return nil, fmt.Errorf("proposal %s: %w", p.id, err)
+				inspectErrs = append(inspectErrs, err.Error())
+				continue
 			}
 			change := proposalChange{
 				ProposalID: p.id,
@@ -197,14 +210,21 @@ func (p *retainedProposal) proposalChanges(ctx context.Context) ([]proposalChang
 			if change.Kind != "delete" {
 				mode, digest, err := worktreePostImage(ctx, ws, rel)
 				if err != nil {
-					return nil, fmt.Errorf("proposal %s: inspect %s: %w", p.id, rel, err)
+					// Keep the path and its known kind so this path falls
+					// back to path_overlap without discarding metadata for the
+					// proposal's other, readable paths.
+					inspectErrs = append(inspectErrs, fmt.Sprintf("%s: %v", rel, err))
+				} else {
+					change.Mode = mode
+					change.Digest = digest
 				}
-				change.Mode = mode
-				change.Digest = digest
 			}
 			changes = append(changes, change)
 		}
 		sortProposalChanges(changes)
+		if len(inspectErrs) > 0 {
+			return changes, fmt.Errorf("proposal %s: inspect post-images: %s", p.id, strings.Join(inspectErrs, "; "))
+		}
 		return changes, nil
 
 	default:
@@ -216,10 +236,7 @@ func (p *retainedProposal) proposalChanges(ctx context.Context) ([]proposalChang
 // paths named by an apply refusal. A failure to inspect is not allowed to hide
 // the refusal itself, so it yields no changes rather than an error.
 func proposalChangesForPaths(ctx context.Context, p *retainedProposal, paths []string) []proposalChange {
-	changes, err := p.proposalChanges(ctx)
-	if err != nil {
-		return nil
-	}
+	changes, _ := p.proposalChanges(ctx)
 	want := make(map[string]bool, len(paths))
 	for _, p := range paths {
 		want[pathKey(normalizeProposalPath(p))] = true
@@ -266,8 +283,9 @@ func proposalContentDigest(data []byte) string {
 // worktreePostImage reads one live worktree file through its workspace and
 // returns the post-image mode and content digest. ResolvePath rejects a symlink
 // that escapes the worktree; a link inside it is hashed by its target content.
-// A special file hashes its type so it can be compared without blocking on a
-// device or FIFO.
+// A special file gets no digest because FileMode does not identify its device
+// peer; classification falls back to path_overlap rather than claiming two
+// distinct devices are identical. Reads are capped so list/show stay bounded.
 func worktreePostImage(ctx context.Context, ws Workspace, rel string) (mode, digest string, err error) {
 	abs, err := ws.ResolvePath(filepath.FromSlash(rel))
 	if err != nil {
@@ -279,7 +297,13 @@ func worktreePostImage(ctx context.Context, ws Workspace, rel string) (mode, dig
 	}
 	mode = info.Mode().String()
 	if !info.Mode().IsRegular() {
-		return mode, proposalContentDigest([]byte("mode\x00" + mode)), nil
+		// FileMode does not identify a device's rdev or a FIFO's peer, so
+		// hashing the mode would make distinct special files look identical.
+		// An empty digest deliberately falls back to path_overlap.
+		return mode, "", nil
+	}
+	if info.Size() > proposalWorktreeMaxHashBytes {
+		return "", "", fmt.Errorf("post-image is %d bytes, exceeding the %d-byte digest cap", info.Size(), proposalWorktreeMaxHashBytes)
 	}
 	data, err := ws.ReadFile(ctx, abs)
 	if err != nil {
@@ -335,25 +359,29 @@ func (r *ProposalRegistry) analyzeProposals(ctx context.Context) []proposalAnaly
 	return out
 }
 
-// proposalConflicts classifies pairwise post-images and parent drift for all
-// open proposals. Identical post-images are omitted; every other collision is
-// grouped by kind so a pair with several divergent paths gets one entry.
-func proposalConflicts(analyses []proposalAnalysis) []proposalConflict {
-	type conflictBucket struct {
-		kind      string
-		proposals []string
-		paths     map[string]bool
-		changes   map[string]proposalChange
-	}
-	buckets := make(map[string]*conflictBucket)
+// proposalConflictBucket is one kind/pair group while conflicts are assembled.
+type proposalConflictBucket struct {
+	kind      string
+	proposals []string
+	paths     map[string]bool
+	changes   map[string]proposalChange
+}
 
-	add := func(kind string, proposals []string, changes []proposalChange) {
+// proposalConflicts classifies pairwise post-images and parent drift for all
+// open proposals. Every collision is grouped by kind so a pair with several
+// paths gets one entry. Identical post-images are not conflicts; they are
+// returned separately because apply is path-disjoint and only one can land.
+func proposalConflicts(analyses []proposalAnalysis) (conflicts, duplicates []proposalConflict) {
+	conflictBuckets := make(map[string]*proposalConflictBucket)
+	duplicateBuckets := make(map[string]*proposalConflictBucket)
+
+	add := func(buckets map[string]*proposalConflictBucket, kind string, proposals []string, changes []proposalChange) {
 		proposals = append([]string(nil), proposals...)
 		sort.Strings(proposals)
 		key := kind + "\x00" + strings.Join(proposals, "\x00")
 		bucket := buckets[key]
 		if bucket == nil {
-			bucket = &conflictBucket{
+			bucket = &proposalConflictBucket{
 				kind:      kind,
 				proposals: proposals,
 				paths:     make(map[string]bool),
@@ -398,9 +426,10 @@ func proposalConflicts(analyses []proposalAnalysis) []proposalConflict {
 				a, b := byProposal[ids[i]], byProposal[ids[j]]
 				kind := classifyProposalChanges(a, b)
 				if kind == proposalConflictSamePathIdentical {
+					add(duplicateBuckets, kind, []string{ids[i], ids[j]}, []proposalChange{a, b})
 					continue
 				}
-				add(kind, []string{ids[i], ids[j]}, []proposalChange{a, b})
+				add(conflictBuckets, kind, []string{ids[i], ids[j]}, []proposalChange{a, b})
 			}
 		}
 	}
@@ -420,10 +449,14 @@ func proposalConflicts(analyses []proposalAnalysis) []proposalConflict {
 			}
 		}
 		if len(changes) > 0 {
-			add(proposalConflictParentOverlap, []string{analysis.proposal.id}, changes)
+			add(conflictBuckets, proposalConflictParentOverlap, []string{analysis.proposal.id}, changes)
 		}
 	}
 
+	return proposalConflictList(conflictBuckets), proposalConflictList(duplicateBuckets)
+}
+
+func proposalConflictList(buckets map[string]*proposalConflictBucket) []proposalConflict {
 	out := make([]proposalConflict, 0, len(buckets))
 	for _, bucket := range buckets {
 		paths := make([]string, 0, len(bucket.paths))
