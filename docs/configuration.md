@@ -414,7 +414,7 @@ pipeline is
 | `loop_detection` | on | Halt identical tool+result loops |
 | `intent_loop` | on | Steer (4 turns) and halt (8 turns) when the assistant re-announces the same plan without changing files — catches the paraphrased, read-only loops `loop_detection` cannot see |
 | `evidence_guard` | on | Steer/halt when repeated calls or unchanged re-reads produce no new evidence |
-| `conflict_detect` | on | Flag files touched by multiple sub-agents |
+| `conflict_detect` | on | Flag evidence-backed divergent writes and unknown shell mutations across sub-agents |
 | `permission` | off | Path-pattern allow/deny rules (auto-added when parent rules exist for sub-agents) |
 | `tool_concurrency` | on | Cap concurrent tool goroutines |
 | `prompt_caching` | off | Anthropic cache-control breakpoints — include via `agents.default.prompt_caching: true`; naming it in `enabled` also works |

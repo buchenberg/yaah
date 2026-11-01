@@ -403,6 +403,7 @@ func (m *BackgroundJobs) Launch(callCtx context.Context, runner TaskRunner, role
 	m.jobs[id] = job
 	m.mu.Unlock()
 
+	jobCtx = seedBackgroundContext(callCtx, jobCtx)
 	go m.run(job, jobCtx, jobCancel, span, runner, prompt, params)
 
 	return id, nil

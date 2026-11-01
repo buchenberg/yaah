@@ -197,7 +197,7 @@ The pipeline is built in `buildPipeline()` with a config-driven order:
 9. `loop_detection` — detects identical-call loops
 10. `intent_loop` — detects repeated cross-turn plans and can steer or halt
 11. `evidence_guard` — nudges or halts exploration that stops producing new evidence
-12. `conflict_detect` — `PostTool` conflict reports driven by the injected tracker via `DetectAndReset()`
+12. `conflict_detect` — `PostTool` conflict reports driven by the injected tracker via `DetectAndResetReport()`
 
 The default set is defined in `defaultPipelineNames` in `config.go`. Users can override which middleware runs via `config.yaml`:
 
@@ -281,7 +281,7 @@ Filters tool calls in `PostModel` based on path-pattern rules. Rules are configu
 
 #### ConflictDetectMiddleware (`pipeline/conflictdetect.go`)
 
-Runs after each tool batch in `PostTool`. When a `ConflictTracker` is configured, the middleware emits the `conflict.check` hook, calls `DetectAndReset()`, and — when a report is produced — emits `conflict.detect`, decorates the turn span (`conflict.files`), appends the structured `CONFLICT:` user message to `step.Messages`, and persists it. Appending in `PostTool` is safe because nothing overwrites `step.Messages` after `RunPostTool`; the loop adopts it at the end of the iteration. Inert when no tracker is configured (and absent from sub-agent pipelines).
+Runs after each tool batch in `PostTool`. When a `ConflictTracker` is configured, the middleware emits the `conflict.check` hook, calls `DetectAndResetReport()`, and — when a report is produced — emits `conflict.detect`, decorates the turn span (`conflict.files`), appends the structured `CONFLICT:` user message to `step.Messages`, and persists it. Appending in `PostTool` is safe because nothing overwrites `step.Messages` after `RunPostTool`; the loop adopts it at the end of the iteration. Inert when no tracker is configured (and absent from sub-agent pipelines).
 
 #### ToolConcurrencyMiddleware (`pipeline/toolconcurrency.go`)
 
@@ -512,13 +512,13 @@ Files: `internal/tools/conflict_tracker.go`, `internal/tools/recording.go`, `int
 
 When an agent dispatches multiple parallel sub-agents in a single turn, those sub-agents may independently modify the same files. If sub-agent B's write clobbers sub-agent A's changes, the agent has no way of knowing without explicit conflict detection.
 
-**Tracker:** `ConflictTracker` is a thread-safe `[]FileRecord` store on `Loop`. Sub-agent write/edit/delete tools are wrapped with `RecordingTool` (via `buildSubAgentRegistry`), which extracts the `filePath` from JSON args and records `(subAgentLabel, filePath, toolName)` to the shared tracker.
+**Tracker:** `ConflictTracker` is a thread-safe evidence store on `Loop`. Sub-agent write/edit/delete tools and shell tools are wrapped with `RecordingTool` (via `buildSubAgentRegistry`). A file-tool call snapshots the target's before state through the workspace, runs the tool, then snapshots the after state; only a successful, non-no-op change is recorded. Records carry the normalized workspace-relative path, tool name, lane, unique dispatch id, and before/after content digest and mode where the workspace can provide them. A shell call that may mutate files is recorded as an unknown mutation because its paths are not observable.
 
-**Label propagation:** `DelegateTool.Execute` builds a label from the task's `role` and `description` (e.g. `"developer — Add login handler"`) and injects it into the request context via `WithConflictLabel()`. `RecordingTool.Execute` reads this label from the context, so each record is tagged with which sub-agent produced it.
+**Label and lane propagation:** `DelegateTool.Execute` builds a label from the task's `role` and `description`, resolves whether the dispatch is shared or retained, and injects a unique dispatch id plus the lane via `WithConflictDispatch()`. Background jobs carry the same context into their runner, so records are attributed to the dispatching call rather than the turn that observes them.
 
-**Detection:** After the tool batch completes, the `conflict_detect` middleware runs in `PostTool` and calls `ConflictTracker.DetectAndReset()`. Files touched by more than one distinct sub-agent label are flagged. If conflicts are found, a structured `CONFLICT:` user message is injected into the conversation before the next LLM call. The report lists each conflicting file, which sub-agents touched it, and which tools they used.
+**Detection:** After the tool batch completes, the `conflict_detect` middleware runs in `PostTool` and calls `ConflictTracker.DetectAndResetReport()`. Records on one normalized path are grouped by dispatch. Identical after-images are benign; divergent content/mode or delete-versus-write is a conflict; when content could not be inspected, the path is reported as `UNVERIFIED CHANGES` rather than a false `CONFLICT`. Writes to one path are serialized around the before/after snapshots so concurrent dispatches cannot borrow each other's after-image. Shared-lane records produce a real `CONFLICT:`/`UNVERIFIED CHANGES:` warning; retained-lane records produce separate `SPECULATIVE ...` warnings because the proposal registry is authoritative for settlement. Potentially-mutating shell calls — including ones that exit non-zero after writing — produce `UNKNOWN MUTATIONS:` sections rather than a false all-clear; shared and retained unknowns are grouped and labeled separately. The prose report is rendered from the typed report; the same records are available to callers that need structure.
 
-**Observability:** Two hook event types are emitted: `conflict.check` (every turn when a tracker is present) and `conflict.detect` (when conflicts are found, with `conflict_files` count). When OTel is enabled, `conflict.files` and a `conflict.detected` event are recorded on the current turn span.
+**Observability:** Two hook event types are emitted: `conflict.check` (every turn when a tracker is present) and `conflict.detect` (when a report is produced, with `conflict_files` count). When OTel is enabled, `conflict.files` and a `conflict.detected` event are recorded on the current turn span.
 
 ### Retained sub-agents and workspace isolation
 
@@ -1044,7 +1044,7 @@ yaah emits structured JSONL events to `<HookDir>/<session-id>.jsonl` for externa
 | `tool.end` | After each tool execution (with `tool_result`, `duration_ms`, `tool_error`) |
 | `context.prune` | After each tool batch — soft-prune outcome (with `prune_reason`, `prune_candidates`, `prune_marked`, `prune_reclaimed`, `prune_protected`, `prune_committed`, `prune_total_marked`) |
 | `conflict.check` | Every turn when a `ConflictTracker` is present |
-| `conflict.detect` | When parallel workers touched the same files (with `conflict_files` count) |
+| `conflict.detect` | When parallel workers diverged on a path or left unknown shell mutations (with `conflict_files` count) |
 
 ### HookEvent struct
 

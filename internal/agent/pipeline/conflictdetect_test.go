@@ -41,10 +41,22 @@ func TestConflictDetect_NoReportEmitsCheckOnly(t *testing.T) {
 
 func TestConflictDetect_ReportAppendsMessage(t *testing.T) {
 	tracker := &tools.ConflictTracker{}
-	tracker.Record("worker-a", "shared.go", "write")
-	tracker.Record("worker-b", "shared.go", "edit")
-	tracker.Record("worker-a", "other.go", "write")
-	tracker.Record("worker-b", "other.go", "edit")
+	tracker.RecordChange(tools.FileRecord{
+		DispatchID: "a", SubAgentLabel: "worker-a", FilePath: "shared.go", ToolName: "write",
+		Known: true, AfterExists: true, AfterDigest: "a1", AfterMode: "-rw-r--r--",
+	})
+	tracker.RecordChange(tools.FileRecord{
+		DispatchID: "b", SubAgentLabel: "worker-b", FilePath: "shared.go", ToolName: "edit",
+		Known: true, AfterExists: true, AfterDigest: "b1", AfterMode: "-rw-r--r--",
+	})
+	tracker.RecordChange(tools.FileRecord{
+		DispatchID: "a", SubAgentLabel: "worker-a", FilePath: "other.go", ToolName: "write",
+		Known: true, AfterExists: true, AfterDigest: "a2", AfterMode: "-rw-r--r--",
+	})
+	tracker.RecordChange(tools.FileRecord{
+		DispatchID: "b", SubAgentLabel: "worker-b", FilePath: "other.go", ToolName: "edit",
+		Known: true, AfterExists: true, AfterDigest: "b2", AfterMode: "-rw-r--r--",
+	})
 	var persisted types.Message
 	var gotReport string
 	var gotFiles int

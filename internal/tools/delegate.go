@@ -178,12 +178,15 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 		label = label + " — " + params.Description
 	}
 
-	runCtx := WithConflictLabel(ctx, label)
-
 	// Resolve the lane once: LaneForRole reads the live role registry, so a
 	// second call could disagree with the first if a role is created or
 	// edited mid-dispatch.
 	lane := t.laneFor(params.Role)
+	conflictLane := ConflictLaneShared
+	if t.Retained != nil && lane != LaneShared {
+		conflictLane = ConflictLaneRetained
+	}
+	runCtx := WithConflictDispatch(ctx, label, conflictLane)
 
 	// A dispatch that never reaches the retained resolver has no world of its
 	// own: it runs on the session's tree. Publish that resolution so the
@@ -219,6 +222,13 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 				return startRetainedRun(ctx, rt, prompt, sp, timeout, report)
 			}
 		}
+		// Background jobs cancel from the session root, not the dispatching
+		// call, so ordinary context values do not flow through. Re-attach the
+		// conflict dispatch (with a fresh id for the job) before the runner
+		// starts.
+		runCtx = jobs.WithBackgroundContextSeeder(runCtx, func(jobCtx context.Context) context.Context {
+			return WithConflictDispatch(jobCtx, label, conflictLane)
+		})
 		jobID, err := t.BackgroundJobs.Launch(runCtx, runner, params.Role, params.Description, params.Prompt, subParams, timeout)
 		if err != nil {
 			return "", err
