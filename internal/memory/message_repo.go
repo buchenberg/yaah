@@ -123,6 +123,20 @@ func (d *DB) GetMessages(sessionID string) ([]Message, error) {
 	return results, rows.Err()
 }
 
+// CountMessages reports how many messages the store holds across every
+// session. It exists so a caller can tell "there are past transcripts to
+// recall" from "there are session rows but nothing in them": a session is
+// created at wiring time before any turn runs, so a run that produced no
+// messages leaves a row that recalls nothing, and memory_search_sessions
+// skips message-less sessions rather than listing them.
+func (d *DB) CountMessages() (int, error) {
+	var n int
+	if err := d.sql.QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count messages: %w", err)
+	}
+	return n, nil
+}
+
 // SearchMessages searches past session messages using FTS5.
 func (d *DB) SearchMessages(query string, limit int) ([]Message, error) {
 	safeQuery := sanitizeFTSQuery(query)

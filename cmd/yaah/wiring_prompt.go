@@ -25,9 +25,11 @@ var (
 		`- Use memory_promote to move a session atom into the global tier once it proves to outlive the conversation it came from.`,
 		`- At the end of a conversation or when the user says goodbye, use memory_add to save a 2-3 line summary of key discussion points with tag ["session_summary"].`,
 	}
-	// Names no tool: a recall-only session is told the boundary without
-	// being handed names to call.
-	memoryRecallOnlyBullet = `- This session can recall memories but cannot save any: it is a single non-interactive run, so no memory write tools are registered. Do not attempt to persist findings.`
+	// Names no tool and claims no reason. Writers can be absent because the
+	// session is one-shot, or because an agents.default.tools allowlist
+	// refused one at registration — the bullet has to be true in both, so it
+	// states the boundary without asserting which caused it.
+	memoryRecallOnlyBullet = `- This session can recall memories but cannot save any: no memory write tools are registered. Do not attempt to persist findings.`
 )
 
 // memoryGuidanceBlock renders the Memory Guidelines section for what the
@@ -51,7 +53,7 @@ func memoryGuidanceBlock(g prompts.MemoryGuidance, resumeSessionID string) strin
 }
 
 // storeHasRecall reports whether db holds anything a read-only memory tool
-// could return: a live memory entry, or a past session's messages
+// could return: a live memory entry, or a past session message
 // (memory_search_sessions searches the messages table, not the memory one).
 //
 // An empty store makes the readers dead weight, and that is exactly the state
@@ -59,8 +61,12 @@ func memoryGuidanceBlock(g prompts.MemoryGuidance, resumeSessionID string) strin
 // it keeps the full schema saving there while preserving recall for a one-shot
 // run against a populated store (yaah-zx18).
 //
-// Safe to call before the session's own row exists: CreateSession runs later
-// in wiring, so a fresh store is not made non-empty by the session asking.
+// Messages are counted, not session rows. Wiring creates this session's own
+// row later on, with no one-shot guard, so counting rows would make the probe
+// permanently true for any YAAH_HOME that had ever been used — and a row
+// written by a run that produced no messages recalls nothing, because
+// memory_search_sessions skips message-less sessions. Counting messages also
+// keeps this safe to call before the session's own row exists.
 func storeHasRecall(db *memory.DB) bool {
 	if db == nil {
 		return false
@@ -68,8 +74,8 @@ func storeHasRecall(db *memory.DB) bool {
 	if n, err := db.CountMemories(memory.ScopeAll); err == nil && n > 0 {
 		return true
 	}
-	sessions, err := db.ListSessions(1)
-	return err == nil && len(sessions) > 0
+	n, err := db.CountMessages()
+	return err == nil && n > 0
 }
 
 // buildSystemPrompt assembles the main-session base system prompt from

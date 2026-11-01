@@ -249,8 +249,11 @@ func TestStoreHasRecall(t *testing.T) {
 	db.Close()
 
 	// memory_search_sessions searches the messages table, not the memory
-	// one, so a store whose only history is past sessions still counts as
-	// recallable — otherwise transcripts would be unreachable in one shot.
+	// one. A session ROW is not enough: wiring creates this session's own
+	// row before any turn runs, so counting rows would make the probe
+	// permanently true for any YAAH_HOME that had ever been used — and a row
+	// with no messages recalls nothing, since the tool skips message-less
+	// sessions. This is the case the empty-store gate depends on.
 	sess, err := memory.Open(filepath.Join(t.TempDir(), "sessions.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -259,7 +262,13 @@ func TestStoreHasRecall(t *testing.T) {
 	if err := sess.CreateSession(memory.Session{ID: "sess-1", StartedAt: 1, CWD: t.TempDir()}); err != nil {
 		t.Fatal(err)
 	}
+	if storeHasRecall(sess) {
+		t.Error("a session row with no messages recalls nothing; counting rows would leave the gate permanently open after any first run")
+	}
+	if err := sess.AddMessage(memory.Message{SessionID: "sess-1", Idx: 0, Role: "user", Content: "where does the widget config live?", Timestamp: 1}); err != nil {
+		t.Fatal(err)
+	}
 	if !storeHasRecall(sess) {
-		t.Error("a store holding a past session has transcripts to recall")
+		t.Error("a store holding a past transcript has something to recall")
 	}
 }
