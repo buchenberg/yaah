@@ -170,9 +170,6 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 	}
 
 	settleErr := p.output.Settle(ctx, goatherd.SettleDiscard)
-	if errors.Is(settleErr, goatherd.ErrOutputConsumed) {
-		return "", fmt.Errorf("proposal %s: three_way: merge landed but the sealed output was already consumed by %s; inspect the parent tree", p.id, p.output.Action())
-	}
 	if settleErr != nil {
 		// The parent already carries the merge. Do not leave the proposal
 		// registered for a retry that would re-apply it; report the landed
@@ -181,13 +178,17 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 			notes = appendSettleNote(notes, fmt.Sprintf("worktree teardown failed: %v; worktree stranded at %s", cleanupErr, p.workdir))
 		}
 		r.remove(p.id)
+		message := "merge landed but sealed output could not be consumed: " + settleErr.Error()
+		if errors.Is(settleErr, goatherd.ErrOutputConsumed) {
+			message = fmt.Sprintf("merge landed but sealed output was already consumed by %s; inspect the parent tree", p.output.Action())
+		}
 		env := proposalEnvelope{
 			Status:     "settled",
 			ProposalID: p.id,
 			Action:     "apply",
 			Strategy:   proposalApplyThreeWay,
 			Files:      files,
-			Error:      "merge landed but sealed output could not be consumed: " + settleErr.Error(),
+			Error:      message,
 			Notes:      notes,
 		}
 		env.Outcome = settleOutcome(goatherd.SettleApply, p, env).String()
@@ -207,30 +208,30 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 	return marshalProposalEnvelope(env), nil
 }
 
-// proposalModeFromString parses a FileMode.String value, including setuid,
-// setgid, and sticky bits. The bool distinguishes a recorded 0000 mode from a
-// missing mode so callers do not widen an intentionally closed file.
+// proposalModeFromString parses a FileMode.String value, including the
+// leading u/g/t special-bit letters. The bool distinguishes a recorded 0000
+// mode from a missing mode so callers do not widen an intentionally closed
+// file.
 func proposalModeFromString(mode string) (fs.FileMode, bool) {
-	if len(mode) != 10 {
+	if len(mode) < 10 {
 		return 0, false
 	}
+	perm := mode[len(mode)-9:]
+	prefix := mode[:len(mode)-9]
 	bits := []fs.FileMode{0o400, 0o200, 0o100, 0o040, 0o020, 0o010, 0o004, 0o002, 0o001}
 	var out fs.FileMode
 	for i, bit := range bits {
-		switch mode[i+1] {
-		case '-', 'S', 'T':
-			// S/T carry a special bit without the execute bit.
-		default:
+		if perm[i] != '-' {
 			out |= bit
 		}
 	}
-	if c := mode[3]; c == 's' || c == 'S' {
+	if strings.Contains(prefix, "u") {
 		out |= fs.ModeSetuid
 	}
-	if c := mode[6]; c == 's' || c == 'S' {
+	if strings.Contains(prefix, "g") {
 		out |= fs.ModeSetgid
 	}
-	if c := mode[9]; c == 't' || c == 'T' {
+	if strings.Contains(prefix, "t") {
 		out |= fs.ModeSticky
 	}
 	return out, true

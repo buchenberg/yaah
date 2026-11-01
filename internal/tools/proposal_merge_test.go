@@ -78,19 +78,19 @@ func TestGitMergeFile_MultipleConflictHunks(t *testing.T) {
 }
 
 func TestProposalModeFromString(t *testing.T) {
-	tests := []struct {
-		in   string
-		want fs.FileMode
-	}{
-		{"-rwxr-xr-x", 0o755},
-		{"-rw-------", 0o600},
-		{"----------", 0},
-		{"-rwsr-xr-x", 0o755 | fs.ModeSetuid},
+	tests := []fs.FileMode{
+		0o644,
+		0o600,
+		0,
+		0o755 | fs.ModeSetuid,
+		0o755 | fs.ModeSetgid | fs.ModeSetuid,
+		0o755 | fs.ModeSticky,
 	}
-	for _, tc := range tests {
-		got, ok := proposalModeFromString(tc.in)
-		if !ok || got != tc.want {
-			t.Errorf("proposalModeFromString(%q) = %04o/%v, want %04o/true", tc.in, got, ok, tc.want)
+	for _, want := range tests {
+		in := want.String()
+		got, ok := proposalModeFromString(in)
+		if !ok || got != want {
+			t.Errorf("proposalModeFromString(%q) = %04o/%v, want %04o/true", in, got, ok, want)
 		}
 	}
 }

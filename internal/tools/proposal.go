@@ -150,10 +150,7 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 					Changes:   conflict.Changes,
 				}
 				if p, perr := t.Proposals.get(conflict.ProposalID); perr == nil {
-					analysis := proposalAnalysis{proposal: p}
-					analysis.changes, analysis.changesErr = p.proposalChanges(ctx)
-					analysis.drift, analysis.driftErr = p.parentDrift(ctx)
-					conflictView = attachProposalConflictDetails(ctx, []proposalConflict{conflictView}, []proposalAnalysis{analysis})[0]
+					conflictView = attachProposalConflictDetails(ctx, []proposalConflict{conflictView}, []proposalAnalysis{{proposal: p}})[0]
 				}
 				env := proposalEnvelope{
 					Status:     "conflict",
