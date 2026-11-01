@@ -701,7 +701,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		})
 
 		result, runErr := subLoop.Run(ctx, prompt)
-		recordSubAgentUsage(context.WithoutCancel(ctx), opts.traceStore, subTraceID, string(role), subModel, subLoop.OwnUsage())
+		recordSubAgentUsage(context.WithoutCancel(ctx), opts.traceStore, subTraceID, opts.parentSession, string(role), subModel, params.Lane, subLoop.OwnUsage())
 
 		// The run is over: cut the bridge now, not at closure return —
 		// trace enrichment and output budgeting below must not sit inside
@@ -1620,13 +1620,15 @@ func formatBytes(n int) string {
 // The orchestrator's session totals fold child usage in, so state.db exposes
 // only the aggregate sub-agent share. This fact keeps the per-dispatch and
 // per-role split available to benchmark metrics and trace readers.
-func recordSubAgentUsage(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, sessionID, role, model string, usage types.Usage) {
+func recordSubAgentUsage(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, sessionID, parentSession, role, model, lane string, usage types.Usage) {
 	if store == nil || sessionID == "" {
 		return
 	}
 	payload := map[string]any{
 		"role":                 role,
 		"model":                model,
+		"lane":                 lane,
+		"parent_session":       parentSession,
 		"prompt_tokens":        usage.PromptTokens,
 		"completion_tokens":    usage.CompletionTokens,
 		"total_tokens":         usage.TotalTokens,

@@ -493,7 +493,7 @@ func TestRecordSubAgentUsage(t *testing.T) {
 	defer store.Close(context.Background())
 
 	owner := "sub-developer-sess-1"
-	recordSubAgentUsage(context.Background(), store, owner, "developer", "deepseek-flash", types.Usage{
+	recordSubAgentUsage(context.Background(), store, owner, "sess-parent", "developer", "deepseek-flash", "retained", types.Usage{
 		PromptTokens:       12000,
 		CompletionTokens:   800,
 		TotalTokens:        12800,
@@ -516,6 +516,12 @@ func TestRecordSubAgentUsage(t *testing.T) {
 		}
 		if got := rec.Body.Payload["model"]; got != "deepseek-flash" {
 			t.Errorf("model = %v, want deepseek-flash", got)
+		}
+		if got := rec.Body.Payload["lane"]; got != "retained" {
+			t.Errorf("lane = %v, want retained", got)
+		}
+		if got := rec.Body.Payload["parent_session"]; got != "sess-parent" {
+			t.Errorf("parent_session = %v, want sess-parent", got)
 		}
 		if got := fmt.Sprint(rec.Body.Payload["prompt_tokens"]); got != "12000" {
 			t.Errorf("prompt_tokens = %v, want 12000", rec.Body.Payload["prompt_tokens"])

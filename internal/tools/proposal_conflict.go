@@ -751,6 +751,63 @@ func conflictsWith(conflicts []proposalConflict, id string) []proposalConflict {
 	return out
 }
 
+// recordSealConflictFacts records conflicts at seal time. It checks pairwise
+// path overlap and every open proposal's parent drift first; the full
+// post-image analysis runs only when one of those overlaps exists. List/show
+// use the same deduplicated recording path for later observations.
+func (r *ProposalRegistry) recordSealConflictFacts(ctx context.Context, added *retainedProposal) {
+	if added == nil {
+		return
+	}
+	addedPaths := make(map[string]bool)
+	for _, path := range added.changedFiles() {
+		if norm := normalizeProposalPath(path); norm != "" {
+			addedPaths[pathKey(norm)] = true
+		}
+	}
+	overlap := false
+	for _, proposal := range r.all() {
+		proposalPaths := make(map[string]bool)
+		for _, path := range proposal.changedFiles() {
+			if norm := normalizeProposalPath(path); norm != "" {
+				proposalPaths[pathKey(norm)] = true
+			}
+		}
+		if proposal.id != added.id {
+			for key := range proposalPaths {
+				if addedPaths[key] {
+					overlap = true
+					break
+				}
+			}
+		}
+		if overlap {
+			break
+		}
+		// Parent overlap does not require a second proposal. Check each open
+		// proposal's drift before deciding the seal is conflict-free; this is
+		// one diff per open proposal, and the expensive content analysis only
+		// runs when an overlap is actually found.
+		if drift, err := proposal.parentDrift(ctx); err == nil {
+			for _, path := range drift {
+				if proposalPaths[pathKey(normalizeProposalPath(path))] {
+					overlap = true
+					break
+				}
+			}
+		}
+		if overlap {
+			break
+		}
+	}
+	if !overlap {
+		return
+	}
+	analyses := r.analyzeProposals(ctx)
+	conflicts, _ := proposalConflicts(analyses)
+	r.recordConflictFacts(ctx, analyses, conflicts)
+}
+
 // recordConflictFacts appends one fact per newly observed conflict to the
 // parent's owner path. The registry deduplicates by conflict identity; a failed
 // append releases the reservation so a later list/show can retry.

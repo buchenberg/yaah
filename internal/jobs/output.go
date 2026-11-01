@@ -38,6 +38,10 @@ type SubAgentParams struct {
 	// dispatch cannot see or mutate the parent's tree. Empty means the session
 	// workspace and process cwd (the default behaviour).
 	Workdir string
+
+	// Lane names the dispatch lane for trace aggregation: "shared" or
+	// "retained". Empty means unknown (older callers/tests).
+	Lane string
 }
 
 // EscalationSeverity classifies how serious a sub-agent escalation is.

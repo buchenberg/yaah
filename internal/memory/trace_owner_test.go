@@ -2,6 +2,7 @@ package memory
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -133,5 +134,51 @@ func TestAddMessage_PersistsTurnContext(t *testing.T) {
 	}
 	if traceID != "abc123" || turnID != "def456" {
 		t.Errorf("trace_id = %q turn_id = %q, want abc123/def456", traceID, turnID)
+	}
+}
+
+func TestTraceOwnerParentsReadOnly(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.db")
+	got, err := TraceOwnerParentsReadOnly(missing, []string{"sub-x"})
+	if err != nil || got != nil {
+		t.Fatalf("missing db = %+v, %v; want nil, nil", got, err)
+	}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Errorf("read-only lookup created %s", missing)
+	}
+
+	path := filepath.Join(t.TempDir(), "state.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.RecordTraceOwner("sub-x", "sess-x", "worker"); err != nil {
+		t.Fatal(err)
+	}
+	d.Close()
+
+	got, err = TraceOwnerParentsReadOnly(path, []string{"sub-x", "unknown"})
+	if err != nil {
+		t.Fatalf("read-only lookup: %v", err)
+	}
+	if got["sub-x"] != "sess-x" {
+		t.Errorf("parents = %+v, want sub-x -> sess-x", got)
+	}
+	if _, ok := got["unknown"]; ok {
+		t.Errorf("unknown owner unexpectedly resolved: %+v", got)
+	}
+
+	t.Chdir(t.TempDir())
+	d3, err := Open("state.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d3.RecordTraceOwner("sub-rel", "sess-rel", "worker"); err != nil {
+		t.Fatal(err)
+	}
+	d3.Close()
+	got, err = TraceOwnerParentsReadOnly("state.db", []string{"sub-rel"})
+	if err != nil || got["sub-rel"] != "sess-rel" {
+		t.Errorf("relative path lookup = %+v, %v; want sub-rel -> sess-rel", got, err)
 	}
 }

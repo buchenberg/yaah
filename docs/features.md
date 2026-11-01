@@ -102,6 +102,7 @@ yaah shepherd-trace show <session>
 yaah shepherd-trace show --latest
 yaah shepherd-trace profile <session>
 yaah shepherd-trace rebuild <session>              # JSON transcript
+yaah shepherd-trace conflicts [--session <id>] [--json]  # conflict + dispatch aggregate
 ```
 
 `rebuild` is the crash-safe mirror: it reconstructs the provider-shaped

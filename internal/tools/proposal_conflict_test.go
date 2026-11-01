@@ -420,7 +420,68 @@ func TestProposalList_RecordsConflictFact(t *testing.T) {
 	}
 }
 
-// TestProposalList_ContainerOverlapAndParentDrift covers the container lane's
+// TestProposalSeal_RecordsConflictFact pins evidence-at-detection: sealing the
+// second divergent proposal records the conflict without requiring a later
+// list/show call.
+func TestProposalSeal_RecordsConflictFact(t *testing.T) {
+	runner := &sessionRunner{}
+	runner.sideEffect = func(call int, _ string) {
+		writeTestFile(t, runner.workdirFor(t, call), "README.md", fmt.Sprintf("# approach %d\n", call))
+	}
+	fx, repo, rootID := newSessionFixtures(t)
+	rt := RetainedRuntime{Runner: runner.run(), RepoPath: repo, ScopeManager: fx.mgr, RootScopeID: rootID, WorktreeRoot: t.TempDir(), Proposals: NewProposalRegistry()}
+	if _, err := startRetainedRun(context.Background(), rt, "first", SubAgentParams{Role: "worker"}, 0, false); err != nil {
+		t.Fatalf("first dispatch: %v", err)
+	}
+	if _, err := startRetainedRun(context.Background(), rt, "second", SubAgentParams{Role: "worker"}, 0, false); err != nil {
+		t.Fatalf("second dispatch: %v", err)
+	}
+	parent, ok := fx.mgr.Get(rootID)
+	if !ok {
+		t.Fatal("root scope missing")
+	}
+	if facts := findRetainedFacts(t, fx.store, parent.OwnerID(), SchemaProposalConflict); len(facts) != 1 {
+		t.Fatalf("sealed conflict facts = %d, want 1 without list/show", len(facts))
+	}
+}
+
+// TestProposalSeal_RecordsParentOverlap keeps an existing proposal's parent
+// drift in the seal-time evidence even when the newly sealed proposal touches
+// a different path.
+func TestProposalSeal_RecordsParentOverlap(t *testing.T) {
+	runner := &sessionRunner{}
+	runner.sideEffect = func(call int, _ string) {
+		if call == 0 {
+			writeTestFile(t, runner.workdirFor(t, call), "README.md", "# proposal\n")
+			return
+		}
+		writeTestFile(t, runner.workdirFor(t, call), "OTHER.md", "other\n")
+	}
+	fx, repo, rootID := newSessionFixtures(t)
+	rt := RetainedRuntime{Runner: runner.run(), RepoPath: repo, ScopeManager: fx.mgr, RootScopeID: rootID, WorktreeRoot: t.TempDir(), Proposals: NewProposalRegistry()}
+	if _, err := startRetainedRun(context.Background(), rt, "first", SubAgentParams{Role: "worker"}, 0, false); err != nil {
+		t.Fatalf("first dispatch: %v", err)
+	}
+	writeTestFile(t, repo, "README.md", "# host moved\n")
+	if _, err := startRetainedRun(context.Background(), rt, "second", SubAgentParams{Role: "worker"}, 0, false); err != nil {
+		t.Fatalf("second dispatch: %v", err)
+	}
+	parent, ok := fx.mgr.Get(rootID)
+	if !ok {
+		t.Fatal("root scope missing")
+	}
+	facts := findRetainedFacts(t, fx.store, parent.OwnerID(), SchemaProposalConflict)
+	found := false
+	for _, fact := range facts {
+		if kind, _ := fact.Body.Payload["kind"].(string); kind == proposalConflictParentOverlap {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("seal-time facts = %+v, want parent_overlap without list/show", facts)
+	}
+}
+
 // typed conflict view.
 func TestProposalList_ContainerOverlapAndParentDrift(t *testing.T) {
 	f := newDeltaFixture(t)

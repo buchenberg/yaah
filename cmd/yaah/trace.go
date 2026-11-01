@@ -30,6 +30,7 @@ func newShepherdTraceCmd() *cobra.Command {
 	cmd.AddCommand(newShepherdTraceShowCmd())
 	cmd.AddCommand(newShepherdTraceProfileCmd())
 	cmd.AddCommand(newShepherdTraceRebuildCmd())
+	cmd.AddCommand(newShepherdTraceConflictsCmd())
 
 	return cmd
 }
