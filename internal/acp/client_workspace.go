@@ -3,8 +3,11 @@ package acp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"time"
 	"unicode/utf8"
 
@@ -39,15 +42,75 @@ func (w *clientWorkspace) ReadFile(ctx context.Context, path string) ([]byte, er
 		SessionID: w.sessionID,
 		Path:      abs,
 	})
-	if err != nil {
-		return nil, fmt.Errorf("client read %s: %w", abs, err)
+	if err == nil {
+		if raw == nil {
+			err = errors.New("empty response")
+		} else {
+			var result ReadTextFileResult
+			if uerr := json.Unmarshal(raw, &result); uerr != nil {
+				err = uerr
+			} else {
+				return []byte(result.Content), nil
+			}
+		}
 	}
-	var result ReadTextFileResult
-	if err := json.Unmarshal(raw, &result); err != nil {
-		return nil, fmt.Errorf("client read %s: %w", abs, err)
+	// ACP fs/read_text_file is text-only. If the client cannot represent the
+	// file (binary content, a path outside its root, or a broken response),
+	// fall back to the local read rather than turning a readable file into an
+	// error.
+	data, lerr := w.Workspace.ReadFile(ctx, abs)
+	if lerr != nil {
+		return nil, fmt.Errorf("client read %s: %w (local fallback: %v)", abs, err, lerr)
 	}
-	return []byte(result.Content), nil
+	return data, nil
 }
+
+func (w *clientWorkspace) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
+	info, err := w.Workspace.Stat(ctx, path)
+	if err == nil || !w.fsRead || !readToolContext(ctx) {
+		return info, err
+	}
+	return w.unsavedFileInfo(path, err)
+}
+
+func (w *clientWorkspace) Lstat(ctx context.Context, path string) (fs.FileInfo, error) {
+	info, err := w.Workspace.Lstat(ctx, path)
+	if err == nil || !w.fsRead || !readToolContext(ctx) {
+		return info, err
+	}
+	return w.unsavedFileInfo(path, err)
+}
+
+// readToolContext limits the synthetic-stat fallback to the read tool. Other
+// callers must keep the local filesystem's answer: a directory walk must not
+// invent paths from editor buffers, and write's existence check should not
+// claim a brand-new file already existed.
+func readToolContext(ctx context.Context) bool {
+	return tools.ToolNameFromContext(ctx) == "read"
+}
+
+// unsavedFileInfo reports a missing host path as a regular file when the
+// read tool is looking for it. The client may hold an unsaved buffer the host
+// does not have; the following ReadFile is what confirms and returns it.
+func (w *clientWorkspace) unsavedFileInfo(path string, statErr error) (fs.FileInfo, error) {
+	abs, err := w.Workspace.ResolvePath(path)
+	if err != nil {
+		return nil, statErr
+	}
+	return clientFileInfo{name: filepath.Base(abs)}, nil
+}
+
+type clientFileInfo struct {
+	name string
+	size int64
+}
+
+func (f clientFileInfo) Name() string       { return f.name }
+func (f clientFileInfo) Size() int64        { return f.size }
+func (f clientFileInfo) Mode() fs.FileMode  { return 0o444 }
+func (f clientFileInfo) ModTime() time.Time { return time.Time{} }
+func (f clientFileInfo) IsDir() bool        { return false }
+func (f clientFileInfo) Sys() any           { return nil }
 
 func (w *clientWorkspace) WriteFile(ctx context.Context, path string, data []byte, perm fs.FileMode) error {
 	if !w.fsWrite || !utf8.Valid(data) {
@@ -56,6 +119,16 @@ func (w *clientWorkspace) WriteFile(ctx context.Context, path string, data []byt
 	abs, err := w.Workspace.ResolvePath(path)
 	if err != nil {
 		return err
+	}
+	if err := w.Workspace.MkdirAll(ctx, filepath.Dir(abs), 0o755); err != nil {
+		return fmt.Errorf("client write %s: %w", abs, err)
+	}
+	// ACP fs/write_text_file has no mode parameter and no atomic rename. Keep
+	// an existing host mode when possible; atomicity is the client's
+	// responsibility because the editor owns the buffer.
+	mode := fs.FileMode(0)
+	if info, statErr := w.Workspace.Stat(ctx, abs); statErr == nil {
+		mode = info.Mode().Perm()
 	}
 	raw, err := w.server.callClient(ctx, "fs/write_text_file", WriteTextFileParams{
 		SessionID: w.sessionID,
@@ -66,6 +139,11 @@ func (w *clientWorkspace) WriteFile(ctx context.Context, path string, data []byt
 		return fmt.Errorf("client write %s: %w", abs, err)
 	}
 	_ = raw
+	if mode != 0 {
+		if err := os.Chmod(abs, mode); err != nil {
+			return fmt.Errorf("client write %s: restore mode: %w", abs, err)
+		}
+	}
 	return nil
 }
 
@@ -92,6 +170,11 @@ func (w *clientWorkspace) Exec(ctx context.Context, req tools.ExecRequest) (tool
 	}
 	var created TerminalCreateResult
 	if err := json.Unmarshal(raw, &created); err != nil || created.TerminalID == "" {
+		if created.TerminalID != "" {
+			// A malformed response still carried a handle; release it rather
+			// than leaking the client's terminal.
+			w.releaseTerminal(created.TerminalID)
+		}
 		return tools.ExecResult{ExitCode: -1}, fmt.Errorf("terminal/create: invalid response")
 	}
 	terminalID := created.TerminalID
@@ -129,15 +212,15 @@ func (w *clientWorkspace) Exec(ctx context.Context, req tools.ExecRequest) (tool
 	if err := json.Unmarshal(waitRaw, &wait); err != nil {
 		return tools.ExecResult{ExitCode: -1}, fmt.Errorf("terminal/wait_for_exit: %w", err)
 	}
-	output, outErr := w.terminalOutput(ctx, terminalID)
-	if outErr != nil {
-		return tools.ExecResult{ExitCode: -1}, outErr
-	}
 	exitCode := -1
 	if wait.ExitCode != nil {
 		exitCode = *wait.ExitCode
 	}
+	output, outErr := w.terminalOutput(ctx, terminalID)
 	res := tools.ExecResult{ExitCode: exitCode, Stdout: output}
+	if outErr != nil {
+		return res, outErr
+	}
 	if wait.Signal != nil && *wait.Signal != "" {
 		return res, fmt.Errorf("terminated by signal %s", *wait.Signal)
 	}
@@ -220,9 +303,6 @@ func (s *Server) callClient(ctx context.Context, method string, params any) (jso
 		if resp.err != nil {
 			return nil, resp.err
 		}
-		if resp.result == nil {
-			return json.RawMessage(`{}`), nil
-		}
 		return resp.result, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -245,7 +325,7 @@ func (s *Server) wrapClientWorkspace(st *sessionState) error {
 		return nil
 	}
 	reg := st.sess.ToolReg()
-	if reg == nil || reg.Workspace == nil || !reg.Workspace.Local() {
+	if reg == nil || reg.Workspace == nil || !reg.Workspace.Local() || tools.WorkspaceConfined(reg.Workspace) {
 		return nil
 	}
 	cw := &clientWorkspace{

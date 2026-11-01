@@ -6,12 +6,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 	"github.com/buchenberg/yaah/internal/tools"
 )
+
+func testContext(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+	return ctx
+}
 
 func clientWorkspaceHarness(t *testing.T) (*acpHarness, *fakeSession, *tools.Registry, string) {
 	t.Helper()
@@ -48,8 +58,9 @@ func TestClientWorkspace_ReadUsesUnsavedClientContent(t *testing.T) {
 		err error
 	}
 	done := make(chan result, 1)
+	ctx := testContext(t)
 	go func() {
-		out, err := reg.Execute(context.Background(), "read", fmt.Sprintf(`{"filePath":%q}`, path))
+		out, err := reg.Execute(ctx, "read", fmt.Sprintf(`{"filePath":%q}`, path))
 		done <- result{out, err}
 	}()
 
@@ -81,8 +92,9 @@ func TestClientWorkspace_WriteUsesClient(t *testing.T) {
 	h, _, reg, cwd := clientWorkspaceHarness(t)
 	path := filepath.Join(cwd, "new.txt")
 	done := make(chan error, 1)
+	ctx := testContext(t)
 	go func() {
-		_, err := reg.Execute(context.Background(), "write", fmt.Sprintf(`{"filePath":%q,"content":"editor buffer"}`, path))
+		_, err := reg.Execute(ctx, "write", fmt.Sprintf(`{"filePath":%q,"content":"editor buffer"}`, path))
 		done <- err
 	}()
 	req := h.recvRequest(t, "fs/write_text_file")
@@ -109,9 +121,13 @@ func TestClientWorkspace_TerminalExecAndRelease(t *testing.T) {
 		out string
 		err error
 	}, 1)
+	toolName, toolArgs := "bash", `{"command":"echo hi"}`
+	if runtime.GOOS == "windows" {
+		toolName, toolArgs = "powershell", `{"command":"Write-Output hi"}`
+	}
+	ctx := tools.WithToolCallID(testContext(t), "call-1")
 	go func() {
-		ctx := tools.WithToolCallID(context.Background(), "call-1")
-		out, err := reg.Execute(ctx, "bash", `{"command":"echo hi"}`)
+		out, err := reg.Execute(ctx, toolName, toolArgs)
 		done <- struct {
 			out string
 			err error
@@ -173,7 +189,7 @@ func TestClientWorkspace_NonzeroExitIsAnError(t *testing.T) {
 		err error
 	}, 1)
 	go func() {
-		res, err := reg.Workspace.Exec(tools.WithToolName(context.Background(), "bash"), tools.ExecRequest{Command: "sh", Args: []string{"-c", "exit 3"}})
+		res, err := reg.Workspace.Exec(tools.WithToolName(testContext(t), "bash"), tools.ExecRequest{Command: "sh", Args: []string{"-c", "exit 3"}})
 		done <- struct {
 			res tools.ExecResult
 			err error
@@ -236,7 +252,7 @@ func TestClientWorkspace_NoCapabilitiesStaysLocal(t *testing.T) {
 	if err := os.WriteFile(path, []byte("on disk\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := reg.Execute(context.Background(), "read", fmt.Sprintf(`{"filePath":%q}`, path))
+	out, err := reg.Execute(testContext(t), "read", fmt.Sprintf(`{"filePath":%q}`, path))
 	if err != nil {
 		t.Fatalf("local read: %v", err)
 	}
@@ -247,12 +263,71 @@ func TestClientWorkspace_NoCapabilitiesStaysLocal(t *testing.T) {
 
 func TestClientWorkspace_InternalCommandsStayLocal(t *testing.T) {
 	_, _, reg, _ := clientWorkspaceHarness(t)
-	ctx := tools.WithToolName(context.Background(), "grep")
+	ctx := tools.WithToolName(testContext(t), "grep")
 	res, err := reg.Workspace.Exec(ctx, tools.ExecRequest{Command: "go", Args: []string{"version"}})
 	if err != nil {
 		t.Fatalf("local internal command: %v", err)
 	}
 	if !strings.Contains(res.Stdout, "go version") {
 		t.Fatalf("local internal output = %q", res.Stdout)
+	}
+}
+
+func TestClientWorkspace_ReadUnsavedNewFile(t *testing.T) {
+	h, _, reg, cwd := clientWorkspaceHarness(t)
+	path := filepath.Join(cwd, "unsaved.go")
+	ctx := testContext(t)
+	done := make(chan struct {
+		out string
+		err error
+	}, 1)
+	go func() {
+		out, err := reg.Execute(ctx, "read", fmt.Sprintf(`{"filePath":%q}`, path))
+		done <- struct {
+			out string
+			err error
+		}{out, err}
+	}()
+
+	req := h.recvRequest(t, "fs/read_text_file")
+	var params ReadTextFileParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params.Path != path {
+		t.Fatalf("read params = %+v, want %s", params, path)
+	}
+	if err := h.reply(req.ID, ReadTextFileResult{Content: "package main\n"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-done:
+		if got.err != nil {
+			t.Fatalf("read: %v", got.err)
+		}
+		if got.out != "package main\n" {
+			t.Fatalf("read output = %q", got.out)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("read did not finish")
+	}
+}
+
+func TestClientWorkspace_ConfinedWorkspaceNotWrapped(t *testing.T) {
+	cwd := t.TempDir()
+	reg := tools.NewRegistry()
+	pv := tools.NewPathValidator(cwd, false, nil)
+	pv.WorkDir = pv.WorkspaceRoot
+	// A paddock placement with no backend fails closed locally; the client
+	// overlay must not bypass it by running the same commands client-side.
+	confined := tools.NewConfinedLocalWorkspace(pv, nil, containment.PlacementPaddock, confinement.NetworkPolicy{})
+	if err := reg.SetWorkspace(confined); err != nil {
+		t.Fatalf("set confined workspace: %v", err)
+	}
+	h := newACPHarness(t, &fakeSession{id: "sess-confined", reg: reg})
+	initialize(t, h)
+	newSession(t, h)
+	if _, ok := reg.Workspace.(*clientWorkspace); ok {
+		t.Fatal("confined workspace was wrapped by the client workspace")
 	}
 }

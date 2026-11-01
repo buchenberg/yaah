@@ -394,7 +394,9 @@ Or the generic stdio client loop (any language; one JSON object per line):
   (`rg`, `git`, `go test`, and similar plumbing) stay local, as do sessions on
   an isolated/container workspace where the client cannot see the files.
   Without those capabilities, yaah's local tools act in the session cwd
-  unchanged. Binary writes fall back to the local workspace.
+  unchanged. Client writes are text-only: yaah creates parent directories and
+  restores an existing mode when possible, but the editor owns atomicity and
+  the buffer itself. Binary writes fall back to the local workspace.
 - **`additionalDirectories`** — not advertised; sessions act in the cwd
   the lifecycle request named.
 - **Compaction replay** — with the client advertising
