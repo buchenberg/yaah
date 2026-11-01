@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -133,6 +134,16 @@ type Server struct {
 	// internal errors and keep the session listed.
 	DeleteSession func(id string) error
 
+	// AvailableCommands, when non-nil, discovers the slash-command palette
+	// for a session cwd. The server sends an available_commands_update after
+	// session/new, session/load, and session/resume.
+	AvailableCommands func(cwd string) []AvailableCommand
+
+	// Logout, when non-nil, backs the ACP logout method and the
+	// agentCapabilities.auth.logout advertisement. It removes yaah-side
+	// stored OAuth credentials; nil leaves logout unadvertised.
+	Logout func() error
+
 	// AutoAnswerQuestions, when true, answers question-tool prompts
 	// with the first option. Used as the fallback when the client did
 	// not advertise elicitation.form or no connection is live (the
@@ -177,6 +188,10 @@ type sessionState struct {
 	sess Session
 	cwd  string
 	run  *runningPrompt
+	// commands is the slash-command palette advertised for this session.
+	// Prompts beginning with a known command name are translated before
+	// they reach the model.
+	commands []AvailableCommand
 	// ctrl is the control channel of the prompt currently running in
 	// this session. The question-tool handler installed on sess reads
 	// it so prompts never cross sessions.
@@ -414,6 +429,11 @@ func (s *Server) dispatch(
 			return
 		}
 
+		if strings.HasPrefix(strings.TrimSpace(line), "[") {
+			respErr(json.RawMessage("null"), codeInvalidRequest, "JSON-RPC batches are not supported by this ACP server")
+			continue
+		}
+
 		var msg Message
 		if err := json.Unmarshal([]byte(line), &msg); err != nil {
 			s.logf("invalid JSON line: %v", err)
@@ -486,7 +506,7 @@ func (s *Server) dispatch(
 					Name:    "yaah",
 					Version: s.version,
 				},
-				AuthMethods: staticAuthMethods(),
+				AuthMethods: authMethodsFor(params.ClientCapabilities),
 			})
 
 		case "authenticate":
@@ -508,8 +528,19 @@ func (s *Server) dispatch(
 			// AuthenticateResponse carries only an optional _meta.
 			respOK(msg.ID, struct{}{})
 
+		case "logout":
+			if s.Logout == nil {
+				respErr(msg.ID, codeMethodNotFound, "logout is not supported")
+				continue
+			}
+			if err := s.Logout(); err != nil {
+				respErr(msg.ID, codeInternal, "logout: "+err.Error())
+				continue
+			}
+			respOK(msg.ID, struct{}{})
+
 		case "session/new":
-			s.handleSessionNew(dispatchCtx, msg, respOK, respErr)
+			s.handleSessionNew(dispatchCtx, msg, sendUpdate, respOK, respErr)
 
 		case "session/prompt":
 			s.handlePrompt(msg, dispatchCtx, c, sendUpdate, respOK, respErr)
@@ -518,7 +549,7 @@ func (s *Server) dispatch(
 			s.handleSessionLoad(dispatchCtx, msg, sendUpdate, respOK, respErr)
 
 		case "session/resume":
-			s.handleSessionResume(msg, respOK, respErr)
+			s.handleSessionResume(msg, sendUpdate, respOK, respErr)
 
 		case "session/list":
 			s.handleSessionList(msg, respOK, respErr)

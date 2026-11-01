@@ -159,6 +159,27 @@ func (s *Server) handleSetConfigOption(
 	})
 }
 
+// translateCommandPrompt turns a palette selection into a normal prompt. The
+// advertised commands are skills; the skill tool is the executor, so the model
+// receives an explicit load instruction instead of an opaque slash token.
+func translateCommandPrompt(st *sessionState, prompt string) string {
+	if st == nil || !strings.HasPrefix(prompt, "/") {
+		return prompt
+	}
+	name, args, _ := strings.Cut(strings.TrimPrefix(prompt, "/"), " ")
+	for _, command := range st.commands {
+		if command.Name != name {
+			continue
+		}
+		args = strings.TrimSpace(args)
+		if args == "" {
+			return fmt.Sprintf("Use the skill tool with action \"load\" and name %q, then follow its instructions.", name)
+		}
+		return fmt.Sprintf("Use the skill tool with action \"load\" and name %q, then follow its instructions to handle this request: %s", name, args)
+	}
+	return prompt
+}
+
 // handlePrompt runs one prompt turn. Per ACP v1, the request stays
 // open until the turn ends and is then answered with a stopReason;
 // session/update notifications stream before the response. Prompts on
@@ -227,6 +248,7 @@ func (s *Server) handlePrompt(
 	st.prunCtx = promptCtx
 	sess := st.sess
 	s.mu.Unlock()
+	promptText = translateCommandPrompt(st, promptText)
 
 	sess.SetView(view)
 	sess.SetCtrlCh(ctrlCh)

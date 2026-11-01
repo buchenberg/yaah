@@ -62,7 +62,7 @@ func TestToolKind(t *testing.T) {
 		"delete": KindDelete,
 		"bash":   KindExecute, "powershell": KindExecute, "git": KindExecute, "process": KindExecute, "background": KindExecute,
 		"webfetch": KindFetch, "http": KindFetch, "web_search": KindFetch, "fetch": KindFetch,
-		"question": KindThink, "think": KindThink, "todo": KindThink, "todowrite": KindThink, "plan": KindThink,
+		"question": KindThink, "think": KindThink, "todo": KindEdit, "todowrite": KindEdit, "plan": KindEdit,
 		"unknown": KindOther,
 	}
 	for name, want := range tests {

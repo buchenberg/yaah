@@ -137,10 +137,17 @@ func readStdin(cmd *cobra.Command) string {
 
 // skillSearchPaths returns the directories to scan for skills, in order.
 func skillSearchPaths() []string {
+	cwd, _ := os.Getwd()
+	return skillSearchPathsFor(cwd)
+}
+
+// skillSearchPathsFor is skillSearchPaths for one session cwd. ACP session
+// cwds can differ from the process cwd, so the project tier must walk up from
+// the session root.
+func skillSearchPathsFor(cwd string) []string {
 	home := config.HomeDir()
 
 	// 1. Project-level (walk up from cwd)
-	cwd, _ := os.Getwd()
 	var projectDirs []string
 	for dir := cwd; ; dir = filepath.Dir(dir) {
 		projectDirs = append(projectDirs, filepath.Join(dir, ".agents", "skills"))

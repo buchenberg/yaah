@@ -15,6 +15,7 @@ import (
 	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/sessions"
+	"github.com/buchenberg/yaah/internal/skills"
 	"github.com/spf13/cobra"
 )
 
@@ -48,6 +49,8 @@ Implemented:
   initialize                  Handshake (protocol version 1)
   authenticate                Validate a declared auth method (method id only;
                               no credential presence check, no network call)
+  logout                      Remove stored OAuth credentials (advertised via
+                              agentCapabilities.auth.logout)
   session/new                 Create a session (honors the client's cwd)
   session/load                Resume a session from ~/.yaah state.db in a
                               fresh process; replays the conversation as
@@ -203,6 +206,39 @@ func acpDeleteSession(reg *sessions.Registry) func(id string) error {
 		}
 		return nil
 	}
+}
+
+// acpLogout removes stored OAuth credentials for every configured OAuth
+// provider. ACP logout has no provider argument, so "log out" means all
+// yaah-managed OAuth tokens.
+func acpLogout() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	var errs []error
+	for _, name := range oauthProviderNames(cfg) {
+		if err := logoutOAuth(cfg, name, func(string) {}); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// acpAvailableCommands exposes discovered skills as ACP slash commands. A
+// selected command is sent back as ordinary prompt text; the server translates
+// it into a skill-tool load instruction (see translateCommandPrompt).
+func acpAvailableCommands(cwd string) []acp.AvailableCommand {
+	found := skills.Discover(skillSearchPathsFor(cwd))
+	out := make([]acp.AvailableCommand, 0, len(found))
+	for _, skill := range found {
+		out = append(out, acp.AvailableCommand{
+			Name:        skill.Name,
+			Description: skill.Description,
+			Input:       &acp.AvailableCommandInput{Hint: "arguments for " + skill.Name},
+		})
+	}
+	return out
 }
 
 // === ACP model catalog ===
@@ -457,5 +493,7 @@ func runACPServe(cmd *cobra.Command, args []string) error {
 	)
 	srv.ListSessions = acpListSessions(reg)
 	srv.DeleteSession = acpDeleteSession(reg)
+	srv.AvailableCommands = acpAvailableCommands
+	srv.Logout = acpLogout
 	return srv.Run(cmd.Context())
 }

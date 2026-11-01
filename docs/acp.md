@@ -42,6 +42,7 @@ sub-agents, and prompts all resolve against it.
 |---|---|---|
 | `initialize` | supported | advertises `agentCapabilities.loadSession: true` plus `sessionCapabilities` for `resume`, `list`, `close`, `delete`, and a static catalog of agent-typed `authMethods` (see [Authentication and credentials](#authentication-and-credentials)) |
 | `authenticate` | supported | validates the named auth method and answers `{}`; no credential check, no network call |
+| `logout` | supported | removes all stored OAuth provider tokens; advertised only when wired (`agentCapabilities.auth.logout`) |
 | `session/new` | supported | requires the client's absolute cwd; every call creates a distinct session; advertises `configOptions` (the model picker) when a model catalog is wired |
 | `session/load` | supported | resume + replay; re-advertises `configOptions` like `session/new`; see below |
 | `session/resume` | supported | re-attach to a persisted session without replaying history |
@@ -56,9 +57,9 @@ sub-agents, and prompts all resolve against it.
 | `session/request_permission` | supported | tool approvals delegated to the client; all four option kinds (`allow_once`/`allow_always`/`reject_once`/`reject_always`) are offered, and an always-decision is remembered for the rest of the session |
 
 `session/update` variants: `agent_message_chunk`, `agent_thought_chunk`,
-`tool_call`, `tool_call_update`, `plan`, `usage_update`, and
-`user_message_chunk` (replay only, on `session/load`; `session/resume`
-re-attaches without any history replay). `usage_update` streams the
+`tool_call`, `tool_call_update`, `plan`, `usage_update`,
+`available_commands_update`, and `user_message_chunk` (replay only, on
+`session/load`; `session/resume` re-attaches without any history replay). `usage_update` streams the
 context occupancy during the turn and once more at turn end with the
 engine's cumulative token tally, finish reason, and response model in
 its `_meta` (cumulative `cost` is omitted — no pricing source).
@@ -75,6 +76,27 @@ empty (the first user message that derives one). It carries `title` and
 `updatedAt` (RFC3339 UTC — the same values `session/list` reads back
 from the store); not capability-gated in v1 — clients that ignore it
 lose nothing.
+
+## Command palette
+
+After `session/new`, `session/load`, and `session/resume`, the agent sends an
+`available_commands_update` containing the skills discovered for the session
+cwd (project `.agents/skills`, `~/.yaah/skills`, and `~/.agents/skills`).
+Each command carries the skill name, its description, and an argument hint.
+ACP sends a selected command back as ordinary prompt text (`/name args`); the
+server translates a known skill command into an explicit `skill` tool load
+instruction before the model turn starts. Unknown slash text passes through
+unchanged.
+
+## Authentication
+
+`initialize` advertises the static agent-typed auth methods. When the client
+advertises `clientCapabilities.auth.terminal`, it also advertises a terminal
+method with args `["login"]`, so the client can launch `yaah login`
+interactively and reconnect. Terminal methods are never accepted by
+`authenticate`. When the server is wired with a logout callback, it advertises
+`agentCapabilities.auth.logout` and `logout` removes all stored OAuth provider
+tokens.
 
 ## Session lifecycle
 
@@ -220,8 +242,11 @@ machine — empty environment, fresh HOME, no API keys — still sees it.
 
 Each method carries only `id`, `name`, and a `description`; none carries a
 `type`. The schema's `terminal` variant applies only when the client
-enabled `clientCapabilities.auth.terminal`, which yaah never requires, so
-every method here is agent-typed (a missing `type` means exactly that).
+enabled `clientCapabilities.auth.terminal`. The static catalog below is
+agent-typed (a missing `type` means exactly that); when the client advertises
+terminal auth, yaah adds a `terminal-login` method (`type: "terminal"`,
+args `["login"]`) so the client can launch `yaah login` interactively. The
+`authenticate` method only accepts the agent-typed ids.
 
 | `methodId` | What it names |
 |---|---|
@@ -371,3 +396,12 @@ Or the generic stdio client loop (any language; one JSON object per line):
   still do not replay compaction cards — the persisted
   summary is a system prompt row that replay skips, so only live compaction
   is structured (a persisted compaction record would be needed to replay).
+
+## ACP v2 tracking
+
+This server targets ACP **v1**. The draft v2 spec removes or reshapes several
+surfaces used here: `fs/*`, `terminal/*`, `session/set_mode`,
+`session/load`, and `tool_call` (along with the v1 diff content blocks,
+locations, elicitation, and usage-cost fields). Keep the v1 implementation
+authoritative for current Zed/VS Code clients; a v2 adapter would need new
+surfaces rather than carrying these methods forward unchanged.

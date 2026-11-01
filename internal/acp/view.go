@@ -3,6 +3,7 @@ package acp
 import (
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
@@ -34,6 +35,8 @@ type View struct {
 	// compaction, if any, so the done event patches the card the start
 	// event created.
 	compactionOpen map[string]string
+	// escalationSeq allocates client-visible ids for escalation rows.
+	escalationSeq atomic.Int64
 }
 
 // NewView creates a View ready to translate agent events.
@@ -199,29 +202,56 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 	case *agent.SubAgentStartEvent:
 		label := toolfmt.SubagentRoleLabel(e.Role)
 		world := worldChunkSuffix(e.World, e.WorldDegraded, e.WorldReason)
-		send(sessionID, ChunkUpdate{
-			SessionUpdate: UpdateAgentMessageChunk,
-			Content:       textContent(text("\n[sub-agent: %s] %s%s\n", label, e.Prompt, world)),
+		title := text("Sub-agent %s: %s", label, truncate(e.Prompt, 80))
+		send(sessionID, ToolCallUpdate{
+			SessionUpdate: UpdateToolCall,
+			ToolCallID:    "subagent:" + e.SubAgentID,
+			Title:         title,
+			Name:          "sub-agent",
+			Kind:          KindOther,
+			Status:        StatusInProgress,
+			Content: []UpdateContent{{
+				Type:    "content",
+				Content: &ContentBlock{Type: "text", Text: text("role: %s\nmodel: %s\ntask: %s%s", label, e.Model, e.Prompt, world)},
+			}},
 		})
 	case *agent.SubAgentEndEvent:
 		label := toolfmt.SubagentRoleLabel(e.Role)
-		status := "completed"
+		status := StatusCompleted
+		body := text("role: %s\nmodel: %s\nduration: %s", label, e.Model, e.Duration.Round(time.Millisecond))
 		if e.Error != "" {
-			status = e.Error
+			status = StatusFailed
+			body += "\nerror: " + e.Error
+		} else if e.Result != "" {
+			body += "\nresult:\n" + e.Result
 		}
-		modelStr := ""
-		if e.Model != "" {
-			modelStr = " [" + e.Model + "]"
-		}
-		world := worldChunkSuffix(e.World, e.WorldDegraded, e.WorldReason)
-		send(sessionID, ChunkUpdate{
-			SessionUpdate: UpdateAgentMessageChunk,
-			Content:       textContent(text("[sub-agent: %s%s] %s%s\n", label, modelStr, status, world)),
+		body += worldChunkSuffix(e.World, e.WorldDegraded, e.WorldReason)
+		send(sessionID, ToolCallUpdate{
+			SessionUpdate: UpdateToolCallUpdate,
+			ToolCallID:    "subagent:" + e.SubAgentID,
+			Title:         text("Sub-agent %s: %s", label, truncate(e.Prompt, 80)),
+			Name:          "sub-agent",
+			Kind:          KindOther,
+			Status:        status,
+			Content:       []UpdateContent{{Type: "content", Content: &ContentBlock{Type: "text", Text: body}}},
 		})
 	case *agent.EscalationEvent:
-		send(sessionID, ChunkUpdate{
-			SessionUpdate: UpdateAgentMessageChunk,
-			Content:       textContent(text("ESCALATION [%s] %s: %s", e.Severity, e.SubAgentRole, e.Summary)),
+		id := "escalation-" + strconv.FormatInt(v.escalationSeq.Add(1), 10)
+		body := text("severity: %s\nrole: %s\nsummary: %s", e.Severity, e.SubAgentRole, e.Summary)
+		if e.Detail != "" {
+			body += "\ndetail:\n" + e.Detail
+		}
+		if e.Suggestion != "" {
+			body += "\nsuggestion:\n" + e.Suggestion
+		}
+		send(sessionID, ToolCallUpdate{
+			SessionUpdate: UpdateToolCall,
+			ToolCallID:    id,
+			Title:         text("ESCALATION [%s] %s: %s", e.Severity, e.SubAgentRole, truncate(e.Summary, 80)),
+			Name:          "escalation",
+			Kind:          KindThink,
+			Status:        StatusFailed,
+			Content:       []UpdateContent{{Type: "content", Content: &ContentBlock{Type: "text", Text: body}}},
 		})
 	case *agent.CompactionStartedEvent:
 		// The client negotiates session.compaction before ID-addressed

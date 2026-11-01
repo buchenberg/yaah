@@ -2174,3 +2174,106 @@ func TestServer_compactionCapabilityGated(t *testing.T) {
 		}
 	})
 }
+
+func TestServer_availableCommandsAndSkillPrompt(t *testing.T) {
+	var gotPrompt string
+	sess := &fakeSession{id: "sess-commands"}
+	sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
+		gotPrompt = prompt
+		return "ok", false, nil
+	}
+	h := newACPHarness(t, sess)
+	h.server.AvailableCommands = func(cwd string) []AvailableCommand {
+		return []AvailableCommand{{
+			Name: "tdd", Description: "test-driven development",
+			Input: &AvailableCommandInput{Hint: "what to build"},
+		}}
+	}
+	initialize(t, h)
+	cwd, _ := json.Marshal(h.cwd)
+	if err := h.send("session/new", 2, fmt.Sprintf(`{"cwd":%s,"mcpServers":[]}`, cwd)); err != nil {
+		t.Fatal(err)
+	}
+	update := h.recv(t)
+	if update.Method != "session/update" {
+		t.Fatalf("first session/new message = %+v, want available_commands_update", update)
+	}
+	var params struct {
+		Update AvailableCommandsUpdate `json:"update"`
+	}
+	if err := json.Unmarshal(update.Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params.Update.SessionUpdate != UpdateAvailableCommands || len(params.Update.AvailableCommands) != 1 || params.Update.AvailableCommands[0].Name != "tdd" {
+		t.Fatalf("commands update = %+v", params.Update)
+	}
+	var created SessionNewResult
+	if err := json.Unmarshal(h.recv(t).Result, &created); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.send("session/prompt", 3, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"/tdd build a parser"}]}`, created.SessionID)); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		msg := h.recv(t)
+		if msg.ID != nil && strings.Contains(string(msg.ID), "3") {
+			break
+		}
+	}
+	if !strings.Contains(gotPrompt, "skill tool") || !strings.Contains(gotPrompt, "tdd") || !strings.Contains(gotPrompt, "build a parser") {
+		t.Fatalf("translated prompt = %q", gotPrompt)
+	}
+}
+
+func TestServer_logoutAndTerminalAuth(t *testing.T) {
+	loggedOut := 0
+	h := newACPHarness(t, &fakeSession{id: "sess-auth"})
+	h.server.Logout = func() error { loggedOut++; return nil }
+	if err := h.send("initialize", 1, `{"protocolVersion":1,"clientCapabilities":{"auth":{"terminal":true}}}`); err != nil {
+		t.Fatal(err)
+	}
+	var init InitializeResult
+	if err := json.Unmarshal(h.recv(t).Result, &init); err != nil {
+		t.Fatal(err)
+	}
+	if init.AgentCapabilities.Auth == nil || init.AgentCapabilities.Auth.Logout == nil {
+		t.Fatalf("logout capability = %+v", init.AgentCapabilities.Auth)
+	}
+	var terminal *AuthMethod
+	for i := range init.AuthMethods {
+		if init.AuthMethods[i].Type == "terminal" {
+			terminal = &init.AuthMethods[i]
+		}
+	}
+	if terminal == nil || terminal.ID != "terminal-login" || len(terminal.Args) != 1 || terminal.Args[0] != "login" {
+		t.Fatalf("terminal auth method = %+v", terminal)
+	}
+	if init.AgentCapabilities.PromptCapabilities == nil || !init.AgentCapabilities.PromptCapabilities.EmbeddedContext {
+		t.Fatalf("embeddedContext not advertised: %+v", init.AgentCapabilities.PromptCapabilities)
+	}
+	if err := h.send("logout", 2, `{}`); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recv(t)
+	if msg.Error != nil || string(msg.Result) != "{}" {
+		t.Fatalf("logout response = %+v", msg)
+	}
+	if loggedOut != 1 {
+		t.Fatalf("logout callbacks = %d, want 1", loggedOut)
+	}
+}
+
+func TestServer_batchRequestRejectedAsInvalidRequest(t *testing.T) {
+	h := newACPHarness(t, &fakeSession{id: "sess-batch"})
+	initialize(t, h)
+	if _, err := io.WriteString(h.inW, `[{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}]`+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recv(t)
+	if msg.Error == nil || msg.Error.Code != codeInvalidRequest {
+		t.Fatalf("batch response = %+v, want invalid request", msg)
+	}
+	if !strings.Contains(msg.Error.Message, "batch") {
+		t.Errorf("batch error = %q", msg.Error.Message)
+	}
+}

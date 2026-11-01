@@ -144,12 +144,30 @@ func (s *Server) buildSession(opts BuildOptions, expectedID string) (*sessionSta
 	return st, nil
 }
 
+// refreshAvailableCommands discovers the session's command palette and emits
+// it as available_commands_update. It is called after new/load/resume so a
+// client can build its picker without a separate request.
+func (s *Server) refreshAvailableCommands(st *sessionState, sendUpdate updateSender) {
+	if s.AvailableCommands == nil || st == nil || sendUpdate == nil {
+		return
+	}
+	commands := s.AvailableCommands(st.cwd)
+	st.commands = commands
+	if len(commands) == 0 {
+		return
+	}
+	sendUpdate(st.id, AvailableCommandsUpdate{
+		SessionUpdate:     UpdateAvailableCommands,
+		AvailableCommands: commands,
+	})
+}
+
 // handleSessionNew creates a fresh conversation for the requested cwd
 // and returns its ACP id. Every call builds a new session: session ids
 // are unique per created session, and independent sessions may coexist
 // in one process. ctx bounds the model-catalog wait so a slow provider
 // discovery is abandoned when the server shuts down.
-func (s *Server) handleSessionNew(ctx context.Context, msg Message, respOK func(id json.RawMessage, result any), respErr func(id json.RawMessage, code int, message string)) {
+func (s *Server) handleSessionNew(ctx context.Context, msg Message, sendUpdate updateSender, respOK func(id json.RawMessage, result any), respErr func(id json.RawMessage, code int, message string)) {
 	var p SessionNewParams
 	if len(msg.Params) > 0 {
 		if err := json.Unmarshal(msg.Params, &p); err != nil {
@@ -172,6 +190,7 @@ func (s *Server) handleSessionNew(ctx context.Context, msg Message, respOK func(
 		respErr(msg.ID, codeInvalidParams, "create session: "+err.Error())
 		return
 	}
+	s.refreshAvailableCommands(st, sendUpdate)
 	respOK(msg.ID, SessionNewResult{
 		SessionID:     st.id,
 		ConfigOptions: buildModelConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName()),
@@ -333,6 +352,7 @@ func (s *Server) handleSessionLoad(
 			return
 		}
 		s.replayConversation(st, sendUpdate)
+		s.refreshAvailableCommands(st, sendUpdate)
 		respOK(msg.ID, SessionLoadResult{
 			ConfigOptions: s.loadConfigOptions(ctx, st),
 			Modes:         sessionModeState(st.sess.Mode()),
@@ -351,6 +371,7 @@ func (s *Server) handleSessionLoad(
 		return
 	}
 	s.replayConversation(st, sendUpdate)
+	s.refreshAvailableCommands(st, sendUpdate)
 	respOK(msg.ID, SessionLoadResult{
 		ConfigOptions: s.loadConfigOptions(ctx, st),
 		Modes:         sessionModeState(st.sess.Mode()),
@@ -413,7 +434,15 @@ func (s *Server) capabilities() AgentCaps {
 	if s.DeleteSession != nil {
 		sc.Delete = &SessionDeleteCaps{}
 	}
-	return AgentCaps{LoadSession: true, Session: sc}
+	caps := AgentCaps{
+		LoadSession:        true,
+		PromptCapabilities: &PromptCaps{EmbeddedContext: true},
+		Session:            sc,
+	}
+	if s.Logout != nil {
+		caps.Auth = &AgentAuthCaps{Logout: &LogoutCaps{}}
+	}
+	return caps
 }
 
 // CanonicalFilterCwd validates a session-list cwd filter: it must be
@@ -442,7 +471,7 @@ func (s *Server) handleSessionList(
 	respErr func(id json.RawMessage, code int, message string),
 ) {
 	if s.ListSessions == nil {
-		respErr(msg.ID, codeMethodNotFound, "session/list is not wired")
+		respErr(msg.ID, codeInternal, "session/list is not available in this server configuration")
 		return
 	}
 	var p ListSessionsParams
@@ -484,6 +513,7 @@ func (s *Server) handleSessionList(
 // params.
 func (s *Server) handleSessionResume(
 	msg Message,
+	sendUpdate updateSender,
 	respOK func(id json.RawMessage, result any),
 	respErr func(id json.RawMessage, code int, message string),
 ) {
@@ -526,6 +556,7 @@ func (s *Server) handleSessionResume(
 				fmt.Sprintf("session %q was created with cwd %q, requested %q", st.id, st.cwd, cwd))
 			return
 		}
+		s.refreshAvailableCommands(st, sendUpdate)
 		respOK(msg.ID, SessionResumeResult{Modes: sessionModeState(st.sess.Mode())})
 		return
 	}
@@ -539,6 +570,7 @@ func (s *Server) handleSessionResume(
 		respErr(msg.ID, codeInvalidParams, err.Error())
 		return
 	}
+	s.refreshAvailableCommands(st, sendUpdate)
 	respOK(msg.ID, SessionResumeResult{Modes: sessionModeState(st.sess.Mode())})
 }
 
@@ -629,7 +661,7 @@ func (s *Server) handleSessionDelete(
 		// Defensively typed before any side effect: capabilities never
 		// advertise delete without wiring, but a client may still ask —
 		// and that must not have already torn down a live session.
-		respErr(msg.ID, codeMethodNotFound, "session/delete is not wired")
+		respErr(msg.ID, codeInternal, "session/delete is not available in this server configuration")
 		return
 	}
 	s.mu.Lock()

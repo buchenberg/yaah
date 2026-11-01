@@ -298,26 +298,61 @@ func TestView_diffInvalidArgsTolerated(t *testing.T) {
 	}
 }
 
-// TestView_remainingEventsRender covers sub-agent, escalation, and
-// compaction surfaces as agent messages.
+// TestView_remainingEventsRender covers structured sub-agent/escalation rows
+// and the text fallback for compaction.
 func TestView_remainingEventsRender(t *testing.T) {
 	var got []any
 	v := NewView()
-	v.SendTo("s", captureUpdate(&got), &agent.SubAgentStartEvent{Role: "dev", Prompt: "p"})
-	v.SendTo("s", captureUpdate(&got), &agent.SubAgentEndEvent{Role: "dev"})
-	v.SendTo("s", captureUpdate(&got), &agent.EscalationEvent{Severity: "info", SubAgentRole: "dev", Summary: "s"})
+	v.SendTo("s", captureUpdate(&got), &agent.SubAgentStartEvent{SubAgentID: "sa-1", Role: "dev", Prompt: "p"})
+	v.SendTo("s", captureUpdate(&got), &agent.SubAgentEndEvent{SubAgentID: "sa-1", Role: "dev", Result: "done"})
+	v.SendTo("s", captureUpdate(&got), &agent.EscalationEvent{Severity: "info", SubAgentRole: "dev", Summary: "s", Detail: "detail", Suggestion: "suggest"})
 	v.SendTo("s", captureUpdate(&got), &agent.CompactionStartedEvent{BeforeTokens: 1, TargetTokens: 2})
 	v.SendTo("s", captureUpdate(&got), &agent.CompactionDoneEvent{BeforeTokens: 1, AfterTokens: 2, Method: "single", SavingsPct: 0.5})
 	v.SendTo("s", captureUpdate(&got), &agent.FlushEvent{Content: "x"})
 	if len(got) != 6 {
 		t.Fatalf("updates = %d, want 6", len(got))
 	}
+	wantVariants := []string{UpdateToolCall, UpdateToolCallUpdate, UpdateToolCall, UpdateAgentMessageChunk, UpdateAgentMessageChunk, UpdateAgentMessageChunk}
 	for i, u := range got {
 		m := decodeUpdate(t, u)
-		if m["sessionUpdate"] != UpdateAgentMessageChunk {
-			t.Errorf("update %d variant = %v, want agent_message_chunk", i, m["sessionUpdate"])
+		if m["sessionUpdate"] != wantVariants[i] {
+			t.Errorf("update %d variant = %v, want %s", i, m["sessionUpdate"], wantVariants[i])
 		}
 	}
+	start := decodeUpdate(t, got[0])
+	end := decodeUpdate(t, got[1])
+	if start["toolCallId"] != end["toolCallId"] || start["toolCallId"] != "subagent:sa-1" {
+		t.Fatalf("sub-agent ids = %v/%v", start["toolCallId"], end["toolCallId"])
+	}
+	if body := updateText(t, got[1]); !strings.Contains(body, "done") {
+		t.Fatalf("sub-agent result = %q", body)
+	}
+	if body := updateText(t, got[2]); !strings.Contains(body, "detail") || !strings.Contains(body, "suggest") {
+		t.Fatalf("escalation detail = %q", body)
+	}
+}
+
+func updateText(t *testing.T, u any) string {
+	t.Helper()
+	m := decodeUpdate(t, u)
+	blocks, _ := m["content"].([]any)
+	var out strings.Builder
+	for _, raw := range blocks {
+		block, _ := raw.(map[string]any)
+		if inner, ok := block["content"].(map[string]any); ok {
+			if text, ok := inner["text"].(string); ok {
+				out.WriteString(text)
+			}
+		}
+	}
+	if out.Len() == 0 {
+		if c, ok := m["content"].(map[string]any); ok {
+			if text, ok := c["text"].(string); ok {
+				return text
+			}
+		}
+	}
+	return out.String()
 }
 
 // TestView_compactionStructured checks the capability-gated path: with
@@ -454,17 +489,11 @@ func TestView_subAgentWorldSuffix(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("updates = %d, want 2", len(got))
 	}
-	textOf := func(u any) string {
-		m := decodeUpdate(t, u)
-		c, _ := m["content"].(map[string]any)
-		s, _ := c["text"].(string)
-		return s
-	}
-	start, end := textOf(got[0]), textOf(got[1])
+	start, end := updateText(t, got[0]), updateText(t, got[1])
 	if !strings.Contains(start, "worktree") {
-		t.Fatalf("start chunk = %q", start)
+		t.Fatalf("start body = %q", start)
 	}
 	if !strings.Contains(end, "worktree (degraded: no image)") {
-		t.Fatalf("end chunk = %q", end)
+		t.Fatalf("end body = %q", end)
 	}
 }
