@@ -136,11 +136,13 @@ func TestProtocolRoundTrips(t *testing.T) {
 	t.Run("session results", func(t *testing.T) {
 		in := SessionNewResult{
 			SessionID: "s",
-			Modes:     sessionModeState(SessionModePlan),
-			ConfigOptions: []SessionConfigOption{{
-				ID: "model", Name: "Model", Type: ConfigOptionTypeSelect, CurrentValue: "p/m",
-				Options: []SessionConfigSelectOption{{Value: "p/m", Name: "m"}},
-			}},
+			ConfigOptions: []SessionConfigOption{
+				buildModeConfigOptions(SessionModePlan),
+				{
+					ID: "model", Name: "Model", Type: ConfigOptionTypeSelect, CurrentValue: "p/m",
+					Options: []SessionConfigSelectOption{{Value: "p/m", Name: "m"}},
+				},
+			},
 		}
 		raw, err := json.Marshal(in)
 		if err != nil {
@@ -150,18 +152,18 @@ func TestProtocolRoundTrips(t *testing.T) {
 		if err := json.Unmarshal(raw, &out); err != nil {
 			t.Fatal(err)
 		}
-		if out.SessionID != "s" || out.Modes == nil || out.Modes.CurrentModeID != SessionModePlan {
+		if out.SessionID != "s" || len(out.ConfigOptions) != 2 {
 			t.Errorf("session result round trip = %+v", out)
 		}
-		if len(out.ConfigOptions) != 1 || out.ConfigOptions[0].CurrentValue != "p/m" {
+		if out.ConfigOptions[0].CurrentValue != SessionModePlan || out.ConfigOptions[1].CurrentValue != "p/m" {
 			t.Errorf("config options = %+v", out.ConfigOptions)
 		}
 	})
 	t.Run("prompt result and mode update", func(t *testing.T) {
 		for _, in := range []any{
 			PromptResult{StopReason: StopMaxTurnRequests},
-			CurrentModeUpdate{SessionUpdate: "current_mode_update", CurrentModeID: SessionModePlan},
-			SessionResumeResult{Modes: sessionModeState(SessionModeBuild)},
+			ConfigOptionUpdate{SessionUpdate: UpdateConfigOption, ConfigOptions: []SessionConfigOption{buildModeConfigOptions(SessionModePlan)}},
+			SessionResumeResult{ConfigOptions: []SessionConfigOption{buildModeConfigOptions(SessionModeBuild)}},
 		} {
 			raw, err := json.Marshal(in)
 			if err != nil {

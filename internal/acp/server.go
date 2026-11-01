@@ -596,7 +596,7 @@ func (s *Server) dispatch(
 			s.handleSessionLoad(dispatchCtx, msg, sendUpdate, respOK, respErr)
 
 		case "session/resume":
-			s.handleSessionResume(msg, sendUpdate, respOK, respErr)
+			s.handleSessionResume(dispatchCtx, msg, sendUpdate, respOK, respErr)
 
 		case "session/list":
 			s.handleSessionList(msg, respOK, respErr)

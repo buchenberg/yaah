@@ -40,9 +40,9 @@ func (s *Server) handleCancel(msg Message) {
 
 // handleSetMode switches the Plan/Build session mode. The id must be one of
 // the modes advertised on session/new; unknown ids fail closed instead of
-// being silently accepted. The change is emitted as current_mode_update and
-// applies to the next prompt (an in-flight turn keeps the mode it started
-// with).
+// being silently accepted. The canonical notification is
+// config_option_update; the change applies to the next prompt (an in-flight
+// turn keeps the mode it started with).
 func (s *Server) handleSetMode(
 	ctx context.Context,
 	msg Message,
@@ -81,10 +81,6 @@ func (s *Server) handleSetMode(
 		respErr(msg.ID, codeInvalidParams, err.Error())
 		return
 	}
-	sendUpdate(st.id, CurrentModeUpdate{
-		SessionUpdate: "current_mode_update",
-		CurrentModeID: p.ModeID,
-	})
 	sendUpdate(st.id, ConfigOptionUpdate{
 		SessionUpdate: UpdateConfigOption,
 		ConfigOptions: buildSessionConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName(), p.ModeID),
@@ -148,7 +144,6 @@ func (s *Server) handleSetConfigOption(
 				respErr(msg.ID, codeInvalidParams, err.Error())
 				return
 			}
-			sendUpdate(st.id, CurrentModeUpdate{SessionUpdate: "current_mode_update", CurrentModeID: p.Value})
 			sendUpdate(st.id, ConfigOptionUpdate{
 				SessionUpdate: UpdateConfigOption,
 				ConfigOptions: buildSessionConfigOptions(catalog, st.sess.ProviderName(), st.sess.ModelName(), p.Value),

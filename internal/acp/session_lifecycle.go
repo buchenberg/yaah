@@ -193,7 +193,6 @@ func (s *Server) handleSessionNew(ctx context.Context, msg Message, sendUpdate u
 	respOK(msg.ID, SessionNewResult{
 		SessionID:     st.id,
 		ConfigOptions: buildSessionConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName(), st.sess.Mode()),
-		Modes:         sessionModeState(st.sess.Mode()),
 		Meta:          worldMetaOf(st.sess.WorldStatus()),
 	})
 	s.refreshAvailableCommands(st, sendUpdate)
@@ -354,7 +353,6 @@ func (s *Server) handleSessionLoad(
 		s.replayConversation(st, sendUpdate)
 		respOK(msg.ID, SessionLoadResult{
 			ConfigOptions: s.loadConfigOptions(ctx, st),
-			Modes:         sessionModeState(st.sess.Mode()),
 			Meta:          worldMetaOf(st.sess.WorldStatus()),
 		})
 		s.refreshAvailableCommands(st, sendUpdate)
@@ -373,7 +371,6 @@ func (s *Server) handleSessionLoad(
 	s.replayConversation(st, sendUpdate)
 	respOK(msg.ID, SessionLoadResult{
 		ConfigOptions: s.loadConfigOptions(ctx, st),
-		Modes:         sessionModeState(st.sess.Mode()),
 		Meta:          worldMetaOf(st.sess.WorldStatus()),
 	})
 	s.refreshAvailableCommands(st, sendUpdate)
@@ -511,6 +508,7 @@ func (s *Server) handleSessionList(
 // factory session/load uses, so foreign ids are rejected with invalid
 // params.
 func (s *Server) handleSessionResume(
+	ctx context.Context,
 	msg Message,
 	sendUpdate updateSender,
 	respOK func(id json.RawMessage, result any),
@@ -555,7 +553,7 @@ func (s *Server) handleSessionResume(
 				fmt.Sprintf("session %q was created with cwd %q, requested %q", st.id, st.cwd, cwd))
 			return
 		}
-		respOK(msg.ID, SessionResumeResult{Modes: sessionModeState(st.sess.Mode())})
+		respOK(msg.ID, SessionResumeResult{ConfigOptions: s.loadConfigOptions(ctx, st)})
 		s.refreshAvailableCommands(st, sendUpdate)
 		return
 	}
@@ -569,7 +567,7 @@ func (s *Server) handleSessionResume(
 		respErr(msg.ID, codeInvalidParams, err.Error())
 		return
 	}
-	respOK(msg.ID, SessionResumeResult{Modes: sessionModeState(st.sess.Mode())})
+	respOK(msg.ID, SessionResumeResult{ConfigOptions: s.loadConfigOptions(ctx, st)})
 	s.refreshAvailableCommands(st, sendUpdate)
 }
 
