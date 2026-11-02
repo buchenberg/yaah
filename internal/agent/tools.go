@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"slices"
 
 	"github.com/buchenberg/yaah/internal/agent/llm"
 	"github.com/buchenberg/yaah/internal/types"
@@ -49,6 +50,19 @@ var readOnlyToolNames = map[string]bool{
 	"git":         true,
 	"staticcheck": true,
 	"plan":        true,
+}
+
+// InspectionSetNames returns the plan-mode inspection set in sorted order. It
+// is the source internal/parity/doc_inventory_test.go uses to pin
+// docs/features.md's Plan mode section to the code, so the prose inventory
+// cannot drift from readOnlyToolNames.
+func InspectionSetNames() []string {
+	names := make([]string, 0, len(readOnlyToolNames))
+	for name := range readOnlyToolNames {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
 }
 
 // allowsTool enforces the advertised tool level at execution time. Hiding a
