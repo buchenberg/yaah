@@ -138,11 +138,22 @@ func (l *Loop) planModeWithholds(name, args string) bool {
 }
 
 // admitTool is the always-on dispatch gate: the advertised tool level plus plan
-// mode's per-call danger check. The approval middleware asks the same questions
-// through classifyGate, but that middleware is optional
+// mode's per-call danger check. The approval middleware runs the danger
+// classification through classifyGate, but that middleware is optional
 // (middleware.disabled: [approval]) and a mode whose promise is "mutating
-// actions are withheld" must not be switchable off by configuration. Both
-// layers share planModeWithholds and dangerousCall so they cannot drift.
+// actions are withheld" must not be switchable off by configuration. The two
+// layers share the danger classification, while the gate adds the tool level
+// and plan-mode withholding on top, so nothing it withholds is ever admitted
+// while a gate-passed call can still be refused on the tool level.
+//
+// The verdict is shared; the wording is not. This gate runs the tool-level
+// check first, so in plan mode a name the level excludes is refused as "not
+// available at the current tool level" even when planModeWithholds would deny
+// the same call — alwaysDangerous makes `bash` that case. classifyGate never
+// runs allowsTool, so for that call it reports GateWithheld with the
+// withholding as the reason. Allow/deny agrees either way; only the message a
+// user sees differs, which is why reordering these checks to align them would
+// change what every excluded tool reports for no security gain.
 func (l *Loop) admitTool(name, args string) (bool, error) {
 	if !l.allowsTool(name) {
 		return false, fmt.Errorf("tool %q is not available at the current tool level", name)

@@ -256,6 +256,89 @@ func TestGoTestTool_TimeoutKeepsPartialCounts(t *testing.T) {
 	}
 }
 
+// TestGoTest_RefusesPackagesThatLookLikeOptions pins the second review finding:
+// Execute built argv as `test -json -timeout Ns` + packages + flags, so
+// packages sat where go test expects options. `{"packages":"-exec=/tmp/evil",
+// "flags":["."]}` therefore became
+// `go test -json -timeout 120s -exec=/tmp/evil .`, which runs a caller-named
+// binary as the test runner; -toolexec is the same capability under a second
+// name. The value is refused outright rather than rewritten, and it is refused
+// before any command is built.
+func TestGoTest_RefusesPackagesThatLookLikeOptions(t *testing.T) {
+	tests := []struct {
+		name string
+		args string
+	}{
+		{"exec as packages", `{"packages":"-exec=/tmp/evil","flags":["."]}`},
+		{"toolexec as packages", `{"packages":"-toolexec=/tmp/evil","flags":["."]}`},
+		// The trim runs before the dash test, so padding cannot get past it.
+		{"padded option as packages", `{"packages":"  -toolexec=/tmp/evil"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ws := &fakeExecWorkspace{respond: func(req ExecRequest) (ExecResult, error) {
+				t.Fatalf("no command should run: go %v", req.Args)
+				return ExecResult{}, nil
+			}}
+			out, err := (&GoTestTool{WS: ws}).Execute(context.Background(), tt.args)
+			if err == nil {
+				t.Fatalf("Execute(%s) was not refused, returned %q", tt.args, out)
+			}
+			// The refusal has to teach the caller what packages is for: a bare
+			// "forbidden" leaves them retrying the same shape.
+			if !strings.Contains(err.Error(), "is a package pattern, never an option") {
+				t.Errorf("error does not explain the refusal: %q", err)
+			}
+		})
+	}
+}
+
+// TestGoTest_LegitimateCallKeepsArgv is the guard against an over-broad or
+// order-changing fix: a real package pattern plus ordinary test flags is not
+// refused, and the argv is exactly what it was before the refusal existed —
+// `test -json -timeout Ns <packages> <flags...>`. Asserting the whole slice
+// keeps a later reordering (packages after the flags, say) from slipping in,
+// because in that order a pattern could no longer mask an option.
+func TestGoTest_LegitimateCallKeepsArgv(t *testing.T) {
+	var gotReq *ExecRequest
+	ws := &fakeExecWorkspace{respond: func(req ExecRequest) (ExecResult, error) {
+		r := req
+		gotReq = &r
+		return ExecResult{
+			ExitCode: 0,
+			Stdout:   `{"Action":"pass","Package":"example.com/x","Test":"TestX","Elapsed":0.01}` + "\n",
+		}, nil
+	}}
+
+	out, err := (&GoTestTool{WS: ws}).Execute(context.Background(), `{"packages":"./...","flags":["-run","TestX"]}`)
+	if err != nil {
+		t.Fatalf("a legitimate call must not be refused: %v", err)
+	}
+	if gotReq == nil {
+		t.Fatal("the tool ran no command")
+	}
+	if gotReq.Command != "go" {
+		t.Errorf("command = %q, want go", gotReq.Command)
+	}
+	want := []string{"test", "-json", "-timeout", "120s", "./...", "-run", "TestX"}
+	if len(gotReq.Args) != len(want) {
+		t.Fatalf("argv = %v, want %v", gotReq.Args, want)
+	}
+	for i := range want {
+		if gotReq.Args[i] != want[i] {
+			t.Fatalf("argv = %v, want %v", gotReq.Args, want)
+		}
+	}
+	// The refusal path must not have turned a real run into a stub result.
+	var r goTestResult
+	if err := json.Unmarshal([]byte(out), &r); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, out)
+	}
+	if r.Status != goTestOK || r.Passed != 1 {
+		t.Errorf("status = %q passed = %d, want %q/1", r.Status, r.Passed, goTestOK)
+	}
+}
+
 func TestGoTestParse_ScansLongLines(t *testing.T) {
 	// A panic trace can exceed bufio's 64 KiB default token limit; the parser
 	// must not stop at the first long line and drop the events after it.

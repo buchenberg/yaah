@@ -48,19 +48,20 @@ func (t *StaticcheckTool) Schema() json.RawMessage {
 }
 
 // vetExecFlags are the analyzer options that name an external program to run.
-// `go vet -vettool=<path>` executes <path> as an analysis driver, so a call
-// carrying one is a code-execution action rather than an inspection. The list
-// is short on purpose: every other option only tunes what an analyzer reports,
-// and the danger here is the process, not the option.
-var vetExecFlags = map[string]bool{"vettool": true}
+// `go vet -vettool=<path>` executes <path> as an analysis driver and
+// `-toolexec=<path>` runs <path> as a wrapper around every tool the build
+// invokes, so a call carrying either one is a code-execution action rather than
+// an inspection. The list is short on purpose: every other option only tunes
+// what an analyzer reports, and the danger here is the process, not the option.
+var vetExecFlags = map[string]bool{"vettool": true, "toolexec": true}
 
-// IsDangerous reports whether the flags would execute an external program.
+// IsDangerous reports whether the arguments would execute an external program.
 //
 // staticcheck is in plan mode's inspection set because analyzing writes
-// nothing, but passing `-vettool` turns `go vet` into a launcher for a
-// caller-supplied binary. Classifying that as dangerous keeps the path denied
-// in plan mode (the gate resolves danger to a mode-level withholding) and
-// approval-gated in build mode, exactly like the mutating git actions.
+// nothing, but passing `-vettool` or `-toolexec` turns `go vet` into a launcher
+// for a caller-supplied binary. Classifying that as dangerous keeps the path
+// denied in plan mode (the gate resolves danger to a mode-level withholding)
+// and approval-gated in build mode, exactly like the mutating git actions.
 func (t *StaticcheckTool) IsDangerous(argsJSON string) bool {
 	var params staticcheckParams
 	if err := json.Unmarshal([]byte(argsJSON), &params); err != nil {
@@ -69,12 +70,31 @@ func (t *StaticcheckTool) IsDangerous(argsJSON string) bool {
 		// and matches the git tool's classifier.
 		return false
 	}
+	// packages is forwarded at flag position (see packagesAsOption), so a
+	// leading dash smuggles an option past the flag scan below. Classifying it
+	// here as well keeps the gate and Execute in agreement: the gate withholds
+	// it in plan mode, and Execute refuses it outright.
+	if packagesAsOption(params.Packages) {
+		return true
+	}
 	for _, f := range params.Flags {
 		if vetExecFlag(f) {
 			return true
 		}
 	}
 	return false
+}
+
+// packagesAsOption reports whether the packages value is really an option.
+//
+// Execute hands packages to the analyzer as a single argv element ahead of the
+// flags, so the analyzer's flag parser sees it in option position: `{"packages":
+// "-vettool=/tmp/evil","flags":["."]}` becomes `go vet -vettool=/tmp/evil .`,
+// which runs a caller-named binary even though nothing in Flags looks like an
+// option. A package value is a pattern, never an option, so the leading dash is
+// the whole test and surrounding space is trimmed first.
+func packagesAsOption(packages string) bool {
+	return strings.HasPrefix(strings.TrimSpace(packages), "-")
 }
 
 // vetExecFlag reports whether one analyzer flag names a program to execute.
@@ -126,6 +146,15 @@ func (t *StaticcheckTool) Execute(ctx context.Context, args string) (string, err
 	var params staticcheckParams
 	if err := json.Unmarshal([]byte(args), &params); err != nil {
 		return "", fmt.Errorf("staticcheck: invalid arguments: %w", err)
+	}
+
+	// packages becomes the argv element that sits where the analyzer expects
+	// options, so a value opening with '-' is parsed as one — the exec-flag
+	// deny-list inspects only Flags, never this field, which is how `-vettool`
+	// reached the command line through a value that names a package pattern.
+	// Stripping the dash would guess at intent, so the call is refused instead.
+	if packagesAsOption(params.Packages) {
+		return "", fmt.Errorf("staticcheck: packages %q is a package pattern, never an option — the value is forwarded where the analyzer expects options, so a leading '-' would be parsed as one; analyzer options pass through and only the ones naming a program are deny-listed, so a packages value that opens with '-' is refused", params.Packages)
 	}
 
 	analyzers := params.Analyzers

@@ -159,9 +159,53 @@ func TestGitTool_branchDangerIsArgumentAware(t *testing.T) {
 		{"column flag with a name is still a creation", `{"action":"branch","flags":["--column"],"paths":["feature"]}`, true},
 		{"omit-empty with a name is still a creation", `{"action":"branch","flags":["--omit-empty"],"paths":["feature"]}`, true},
 		{"abbrev with a name is still a creation", `{"action":"branch","flags":["--abbrev=7"],"paths":["feature"]}`, true},
+		// -v looked harmless because the listing synopsis documents it as a
+		// display option, but git accepts it on the creation form too:
+		// `git branch -v <name>` creates the ref. -vv is parse-options'
+		// bundled short form of -v -v, so it behaves the same.
+		{"verbose with a name is still a creation", `{"action":"branch","flags":["-v"],"paths":["feat"]}`, true},
+		{"double verbose with a name is still a creation", `{"action":"branch","flags":["-vv"],"paths":["feat"]}`, true},
+		{"long verbose with a name is still a creation", `{"action":"branch","flags":["--verbose"],"paths":["feat"]}`, true},
+		// Without a positional argument they are plain verbose listings, so
+		// the formatting flags must not turn a listing into a prompt.
+		{"verbose listing", `{"action":"branch","flags":["-v"]}`, false},
+		{"double verbose listing", `{"action":"branch","flags":["-vv"]}`, false},
+		{"long verbose listing", `{"action":"branch","flags":["--verbose"]}`, false},
 		// An explicit listing selector is what makes positionals patterns.
 		{"quiet list stays a listing", `{"action":"branch","flags":["-q","--list"]}`, false},
 		{"quiet list with a pattern stays a listing", `{"action":"branch","flags":["-q","--list"],"paths":["feat*"]}`, false},
+		{"verbose list with a pattern stays a listing", `{"action":"branch","flags":["-v","--list"],"paths":["feat*"]}`, false},
+		// --sort, --format and --ignore-case are the same shape as -v: git
+		// uses them to order, label and case-fold a listing yet still
+		// accepts them on the creation form, where each one created the
+		// ref when checked against real git (`git branch --sort=refname
+		// probe`, `git branch --format='%(refname)' probe`,
+		// `git branch --ignore-case probe`). They must not stand in for an
+		// explicit listing selector, in either the attached or the separate
+		// value form.
+		{"ignore-case with a name is still a creation", `{"action":"branch","flags":["--ignore-case"],"paths":["feat"]}`, true},
+		{"sort attached value with a name is still a creation", `{"action":"branch","flags":["--sort=refname"],"paths":["feat"]}`, true},
+		{"format attached value with a name is still a creation", `{"action":"branch","flags":["--format=%(refname)"],"paths":["feat"]}`, true},
+		{"sort separate value with a name is still a creation", `{"action":"branch","flags":["--sort","refname"],"paths":["feat"]}`, true},
+		{"format separate value with a name is still a creation", `{"action":"branch","flags":["--format","%(refname)"],"paths":["feat"]}`, true},
+		// With no positional argument they are plain listings, so they must
+		// not turn a listing into an approval prompt.
+		{"ignore-case listing", `{"action":"branch","flags":["--ignore-case"]}`, false},
+		{"sort attached value listing", `{"action":"branch","flags":["--sort=refname"]}`, false},
+		{"format attached value listing", `{"action":"branch","flags":["--format=%(refname)"]}`, false},
+		{"sort separate value listing", `{"action":"branch","flags":["--sort","refname"]}`, false},
+		{"format separate value listing", `{"action":"branch","flags":["--format","%(refname)"]}`, false},
+		// An explicit listing selector still makes positionals patterns on
+		// top of the formatting flags.
+		{"sort list with a pattern stays a listing", `{"action":"branch","flags":["--sort=refname","--list"],"paths":["feat*"]}`, false},
+		{"format list with a pattern stays a listing", `{"action":"branch","flags":["--format=%(refname)","--list"],"paths":["feat*"]}`, false},
+		// The genuine selection/inspection options keep making a call a
+		// listing: unlike the formatting flags, git does not create through
+		// them, so a positional argument really is a ref pattern there.
+		{"contains with value and a positional stays a listing", `{"action":"branch","flags":["--contains","main"],"paths":["feat*"]}`, false},
+		{"merged with a positional stays a listing", `{"action":"branch","flags":["--merged"],"paths":["feat"]}`, false},
+		{"points-at with value and a positional stays a listing", `{"action":"branch","flags":["--points-at","main"],"paths":["feat"]}`, false},
+		{"show-current with a positional stays a listing", `{"action":"branch","flags":["--show-current"],"paths":["feat"]}`, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -191,6 +235,16 @@ func TestBranchFlagTables_AreDisjoint(t *testing.T) {
 			t.Errorf("read-only branch flag %q classifies as %v, want branchFlagReadOnly", flag, kind)
 		}
 	}
+	// The formatting table is documented as a subset of the read-only table:
+	// an entry missing from branchReadOnlyFlags would be refused outright
+	// instead of classified, and -v/-vv/--verbose reached one table without
+	// the other (they were read-only but not formatting, so a verbose
+	// creation passed as a listing).
+	for flag := range branchFormattingFlags {
+		if !branchReadOnlyFlags[flag] {
+			t.Errorf("formatting branch flag %q is missing from branchReadOnlyFlags", flag)
+		}
+	}
 	// The diff-oriented letters a branch call must never inherit silently.
 	for _, flag := range []string{"-D", "-d", "-M", "-m", "-C", "-c", "-u", "-f"} {
 		if branchReadOnlyFlags[flag] {
@@ -215,6 +269,8 @@ func TestValidateActionFlags_branch(t *testing.T) {
 	}{
 		{name: "no flags"},
 		{name: "listing", flags: []string{"--list", "-a"}, want: []string{"--list", "-a"}},
+		{name: "verbose listing flag forwarded", flags: []string{"-v"}, want: []string{"-v"}},
+		{name: "double verbose listing flag forwarded", flags: []string{"-vv"}, want: []string{"-vv"}},
 		{name: "contains with value", flags: []string{"--contains", "main"}, want: []string{"--contains", "main"}},
 		{name: "short -l refused (version-dependent meaning)", flags: []string{"-l"}, wantErr: true},
 		{name: "delete riding a value flag is classified, not swallowed", flags: []string{"--merged", "-D"}, want: []string{"--merged", "-D"}},

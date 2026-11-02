@@ -123,6 +123,17 @@ func (t *GoTestTool) Execute(ctx context.Context, args string) (string, error) {
 		return "", fmt.Errorf("go_test: invalid arguments: %w", err)
 	}
 
+	// packages becomes the argv element that sits where go test expects options
+	// (see packagesAsOption), so a value opening with '-' is parsed as one:
+	// `{"packages":"-exec=/tmp/evil","flags":["."]}` becomes
+	// `go test -json -timeout 120s -exec=/tmp/evil .`, which runs a
+	// caller-named binary as the test runner. -toolexec is the same capability
+	// under a second name. Stripping the dash would guess at intent, so the
+	// call is refused instead.
+	if packagesAsOption(params.Packages) {
+		return "", fmt.Errorf("go_test: packages %q is a package pattern, never an option — the value is forwarded where go test expects options, so a leading '-' would be parsed as one and -exec or -toolexec in that position run a caller-named binary; a packages value that opens with '-' is refused", params.Packages)
+	}
+
 	timeout := params.TimeoutSeconds
 	if timeout <= 0 {
 		timeout = 120

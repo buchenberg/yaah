@@ -51,18 +51,28 @@ workspace instead of changing it:
 (`status`, `diff`, `diff_cached`, `log`, `show`, `branch` listing, `fetch`)
 pass, while `add`, `commit`, `push`, `pull` and every mutating `branch` option
 — `-d`, `-D`, `--delete`, `-m`, `-M`, `--move`, `-c`, `-C`, `--copy`, `-f`,
-`--force`, `-u`, `--set-upstream-to`, `--unset-upstream`, `--edit-description`,
-`--create-reflog`, `--recurse-submodules` — are **denied** in plan mode rather
-than offered for approval, as are a branch name in `paths` that no explicit
-`--list` turns into a pattern and any option the tool does not recognize.
-Formatting flags (`-q`, `--color`, `--column`, `--abbrev`, `--omit-empty`) do
-not make a call a listing: git accepts them when creating a branch too, so
-`git branch -q <name>` is denied while `git branch -q --list` passes. The
-mode's promise is that the capability is absent, not that the user may grant
-it, and the denial is enforced at dispatch, so `middleware.disabled:
-[approval]` cannot switch it off. `staticcheck` reports diagnostics and writes
-nothing, though its `-vettool` flag is denied: that option makes `go vet`
-execute a caller-named binary.
+`--force`, `--force-with-lease`, `-u`, `--set-upstream-to`,
+`--unset-upstream`, `-t`, `--track`, `--no-track`, `--edit-description`,
+`--create-reflog`, `--no-create-reflog`, `--recurse-submodules` — are
+**denied** in plan mode rather than offered for approval, as is any option the
+tool does not recognize. A positional argument (`paths`) is read as a ref
+pattern, not a branch name to create, only when the call also carries a
+listing selector: `--list`, `-a`/`--all`, `-r`/`--remotes`,
+`--contains`/`--no-contains`, `--merged`/`--no-merged`, `--points-at`,
+`--show-current`. Formatting flags (`-q`/`--quiet`, `-v`/`-vv`/`--verbose`,
+`--color`/`--no-color`, `--column`/`--no-column`, `--abbrev`/`--no-abbrev`,
+`--omit-empty`, `--ignore-case`, `--sort`, `--format`) are the exception: they
+do not make a call a listing, because git accepts them when creating a branch
+too, so `git branch -q <name>`, `git branch -v <name>` and
+`git branch --sort=refname <name>` are denied while `git branch -q --list`,
+`git branch -v --list` and `git branch --sort=refname --list` pass. The mode's
+promise is that the capability is absent, not that the user may grant it, and
+the denial is enforced at dispatch, so `middleware.disabled: [approval]`
+cannot switch it off.
+`staticcheck` reports diagnostics and writes nothing, though its `-vettool`
+and `-toolexec` flags are denied — both make `go vet` execute a caller-named
+binary — and a `packages` value that opens with `-` is refused outright,
+because that field is forwarded where the analyzer expects options.
 
 The `plan` **tool** is not plan **mode**. The tool drafts and updates `PLAN.md`
 files under `.agents/plans/` (see [Plans and todos](#plans-and-todos)); the
