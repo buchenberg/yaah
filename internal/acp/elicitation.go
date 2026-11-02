@@ -81,6 +81,7 @@ func elicitationFormSchema(question string, multiple bool, opts []tools.Question
 // false and the caller must answer empty rather than auto-answer (a
 // user who declined must not be overridden by a default).
 func (s *Server) elicitAnswer(
+	ctx context.Context,
 	st *sessionState,
 	entry tools.QuestionEntry,
 ) (answer string, asked, accepted bool) {
@@ -89,6 +90,12 @@ func (s *Server) elicitAnswer(
 	caps := s.clientCaps
 	runCtx := st.prunCtx
 	s.mu.Unlock()
+	// Prefer the context of the call that asked: it carries the run's own
+	// cancellation, so an abandoned turn ends the elicitation instead of sitting
+	// out the full timeout.
+	if ctx != nil {
+		runCtx = ctx
+	}
 	if c == nil || !capsAdvertiseElicitation(caps) {
 		return "", false, false
 	}

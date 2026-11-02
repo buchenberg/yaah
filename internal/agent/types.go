@@ -147,8 +147,8 @@ type Loop struct {
 	// ApproveCallFn, when set, takes precedence over ApproveFn and also
 	// receives the provider tool_call id, so a client bridge can
 	// correlate its permission prompt with the call's later updates.
-	ApproveCallFn        func(callID, name, args string) bool `json:"-"`
-	ContinueAfterMaxIter func() bool                          `json:"-"`
+	ApproveCallFn        func(ctx context.Context, callID, name, args string) bool `json:"-"`
+	ContinueAfterMaxIter func() bool                                               `json:"-"`
 	ConflictTracker      *tools.ConflictTracker
 	CtxMgr               *ContextManager
 

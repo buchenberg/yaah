@@ -133,9 +133,9 @@ func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
 		},
 		ApprovalMode:     l.Config.ApprovalMode,
 		ApprovalClassify: l.classifyGate,
-		ApprovalApprove: func(callID, name, args string) bool {
+		ApprovalApprove: func(ctx context.Context, callID, name, args string) bool {
 			if l.ApproveCallFn != nil {
-				return l.ApproveCallFn(callID, name, abbreviateArgs(args, 120))
+				return l.ApproveCallFn(ctx, callID, name, abbreviateArgs(args, 120))
 			}
 			return l.approveTool(name, args)
 		},

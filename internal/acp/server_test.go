@@ -27,7 +27,7 @@ type fakeSession struct {
 	prompt  func(ctx context.Context, prompt string) (string, bool, error)
 	view    agent.View
 	ctrl    chan<- control.Msg
-	approve func(callID, name, args string) bool
+	approve func(ctx context.Context, callID, name, args string) bool
 	closed  int
 	// id is the persisted conversation id AgentSessionID reports; set
 	// at construction and never mutated.
@@ -65,7 +65,7 @@ func (f *fakeSession) RunPrompt(ctx context.Context, prompt string) (string, boo
 }
 func (f *fakeSession) SetView(v agent.View)           { f.mu.Lock(); f.view = v; f.mu.Unlock() }
 func (f *fakeSession) SetCtrlCh(c chan<- control.Msg) { f.mu.Lock(); f.ctrl = c; f.mu.Unlock() }
-func (f *fakeSession) SetApproveCallFn(fn func(callID, name, args string) bool) {
+func (f *fakeSession) SetApproveCallFn(fn func(ctx context.Context, callID, name, args string) bool) {
 	f.mu.Lock()
 	f.approve = fn
 	f.mu.Unlock()
@@ -79,7 +79,7 @@ func (f *fakeSession) approveCall(name, args string) bool {
 	if fn == nil {
 		return false
 	}
-	return fn("call-1", name, args)
+	return fn(context.Background(), "call-1", name, args)
 }
 
 func (f *fakeSession) Close() { f.mu.Lock(); f.closed++; f.mu.Unlock() }
@@ -1772,7 +1772,7 @@ func TestServer_questionElicitation(t *testing.T) {
 		if qt.Handler == nil {
 			t.Fatal("question tool handler not installed")
 		}
-		answers := qt.Handler([]tools.QuestionEntry{{
+		answers := qt.Handler(context.Background(), []tools.QuestionEntry{{
 			Question: "which way?", Header: "Direction",
 			Options: []tools.QuestionOption{{Label: "left", Description: "go left"}, {Label: "right", Description: "go right"}},
 		}})
@@ -1840,7 +1840,7 @@ func TestServer_questionAutoAnswerWithoutElicitation(t *testing.T) {
 	sess.mu.Lock()
 	sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
 		qt := sess.ToolReg().Get("question").(*tools.QuestionTool)
-		answer = qt.Handler([]tools.QuestionEntry{{
+		answer = qt.Handler(context.Background(), []tools.QuestionEntry{{
 			Question: "which way?", Header: "Direction",
 			Options: []tools.QuestionOption{{Label: "left"}, {Label: "right"}},
 		}})[0]
@@ -1893,7 +1893,7 @@ func TestServer_questionElicitationDeclineStaysEmpty(t *testing.T) {
 	sess.mu.Lock()
 	sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
 		qt := sess.ToolReg().Get("question").(*tools.QuestionTool)
-		answer = qt.Handler([]tools.QuestionEntry{{
+		answer = qt.Handler(context.Background(), []tools.QuestionEntry{{
 			Question: "proceed?", Header: "Go",
 			Options: []tools.QuestionOption{{Label: "yes"}, {Label: "no"}},
 		}})[0]
@@ -1940,7 +1940,7 @@ func TestServer_questionElicitationObjectCapability(t *testing.T) {
 	sess.mu.Lock()
 	sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
 		qt := sess.ToolReg().Get("question").(*tools.QuestionTool)
-		answer = qt.Handler([]tools.QuestionEntry{{
+		answer = qt.Handler(context.Background(), []tools.QuestionEntry{{
 			Question: "which way?", Header: "Direction",
 			Options: []tools.QuestionOption{{Label: "left"}, {Label: "right"}},
 		}})[0]
@@ -1988,7 +1988,7 @@ func TestServer_questionElicitationGarbageCapability(t *testing.T) {
 	sess.mu.Lock()
 	sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
 		qt := sess.ToolReg().Get("question").(*tools.QuestionTool)
-		answer = qt.Handler([]tools.QuestionEntry{{
+		answer = qt.Handler(context.Background(), []tools.QuestionEntry{{
 			Question: "which way?", Header: "Direction",
 			Options: []tools.QuestionOption{{Label: "left"}, {Label: "right"}},
 		}})[0]

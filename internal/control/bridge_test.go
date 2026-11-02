@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -43,7 +44,7 @@ func TestAskQuestionsAnswered(t *testing.T) {
 		{Header: "Notify", Question: "Who?", Options: []tools.QuestionOption{{Label: "team"}}},
 	}
 
-	answers := AskQuestions(surface, entries)
+	answers := AskQuestions(context.Background(), surface, entries)
 	want := []string{"Deploy: yes", "Notify: yes"}
 	if len(answers) != len(want) {
 		t.Fatalf("answers = %v, want %v", answers, want)
@@ -63,7 +64,7 @@ func TestAskQuestionsUndeliverable(t *testing.T) {
 		Header:  "Deploy",
 		Options: []tools.QuestionOption{{Label: "first"}, {Label: "second"}},
 	}}
-	if got := AskQuestions(surface, entries); len(got) != 1 || got[0] != "Deploy: first" {
+	if got := AskQuestions(context.Background(), surface, entries); len(got) != 1 || got[0] != "Deploy: first" {
 		t.Fatalf("answers = %v, want the first option", got)
 	}
 }
@@ -76,7 +77,7 @@ func TestAskQuestionsSurfaceGoneIsBounded(t *testing.T) {
 	close(done)
 
 	begin := time.Now()
-	got := AskQuestions(surface, []tools.QuestionEntry{{Header: "Solo"}})
+	got := AskQuestions(context.Background(), surface, []tools.QuestionEntry{{Header: "Solo"}})
 	if elapsed := time.Since(begin); elapsed > 2*time.Second {
 		t.Fatalf("AskQuestions waited %v on a surface that was gone", elapsed)
 	}
@@ -101,7 +102,7 @@ func TestApproveCarriesCallID(t *testing.T) {
 		return true
 	}}
 
-	if !Approve(surface, "call-42", "bash", `{"command":"ls"}`) {
+	if !Approve(context.Background(), surface, "call-42", "bash", `{"command":"ls"}`) {
 		t.Fatal("Approve = false, want the surface's approval")
 	}
 	if seen == nil {
@@ -121,7 +122,7 @@ func TestApproveWithinTimeout(t *testing.T) {
 	surface := fakeSurface{onSend: func(Msg) bool { return true }}
 
 	begin := time.Now()
-	if ApproveWithin(surface, 30*time.Millisecond, "call-1", "bash", "{}") {
+	if ApproveWithin(context.Background(), surface, 30*time.Millisecond, "call-1", "bash", "{}") {
 		t.Fatal("Approve = true with no answer, want a denial")
 	}
 	if elapsed := time.Since(begin); elapsed > 2*time.Second {
@@ -136,7 +137,7 @@ func TestApproveUndeliverableAndGone(t *testing.T) {
 	t.Run("cannot deliver", func(t *testing.T) {
 		surface := fakeSurface{onSend: func(Msg) bool { return false }}
 		begin := time.Now()
-		if Approve(surface, "c", "bash", "{}") {
+		if Approve(context.Background(), surface, "c", "bash", "{}") {
 			t.Fatal("Approve = true for a prompt that was never delivered")
 		}
 		if elapsed := time.Since(begin); elapsed > 2*time.Second {
@@ -149,7 +150,7 @@ func TestApproveUndeliverableAndGone(t *testing.T) {
 		surface := fakeSurface{gone: done, onSend: func(Msg) bool { return true }}
 		close(done)
 		begin := time.Now()
-		if Approve(surface, "c", "bash", "{}") {
+		if Approve(context.Background(), surface, "c", "bash", "{}") {
 			t.Fatal("Approve = true after the surface went away")
 		}
 		if elapsed := time.Since(begin); elapsed > 2*time.Second {
@@ -213,5 +214,62 @@ func TestAskEachFallbackKeepsOneAnswerPerEntry(t *testing.T) {
 		if answers[i] != want[i] {
 			t.Errorf("answer %d = %q, want %q", i, answers[i], want[i])
 		}
+	}
+}
+
+// TestApprovalReleasesOnRunCancel pins the chaining the run context adds. A run
+// abandoned while its prompt is out has to release the tool goroutine as soon as
+// the context ends; without it the caller sits out the whole AnswerTimeout on a
+// prompt nobody is going to answer.
+func TestApprovalReleasesOnRunCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	surface := fakeSurface{
+		onSend: func(Msg) bool { close(started); return true },
+		gone:   make(chan struct{}),
+	}
+
+	decided := make(chan bool, 1)
+	go func() { decided <- Approve(ctx, surface, "call-1", "bash", `{"command":"ls"}`) }()
+	<-started
+	cancel()
+
+	select {
+	case approved := <-decided:
+		if approved {
+			t.Error("Approve = true for a prompt whose run was cancelled, want deny")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Approve kept waiting after its run was cancelled")
+	}
+}
+
+// TestQuestionReleasesOnRunCancel is the question-tool half of the same rule.
+func TestQuestionReleasesOnRunCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	surface := fakeSurface{
+		onSend: func(Msg) bool { close(started); return true },
+		gone:   make(chan struct{}),
+	}
+
+	answers := make(chan []string, 1)
+	go func() {
+		answers <- AskQuestions(ctx, surface, []tools.QuestionEntry{{
+			Question: "which way?",
+			Header:   "Direction",
+			Options:  []tools.QuestionOption{{Label: "left"}, {Label: "right"}},
+		}})
+	}()
+	<-started
+	cancel()
+
+	select {
+	case got := <-answers:
+		if len(got) != 1 || got[0] != "Direction: left" {
+			t.Errorf("answers = %v, want the first-option fallback for an abandoned ask", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("AskQuestions kept waiting after its run was cancelled")
 	}
 }

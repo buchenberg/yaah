@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/buchenberg/yaah/internal/tools"
@@ -66,20 +67,20 @@ func AskEach(
 // AskQuestions is the shared question-tool handler for the control-plane
 // surfaces (TUI, web): each entry is sent to the surface and the answer is
 // waited for under the shared timeout policy. An entry the surface cannot
-// present, and one the user does not answer in time, fall back to the first
-// option instead of blocking the turn.
-func AskQuestions(s Surface, entries []tools.QuestionEntry) []string {
+// present, one the user does not answer in time, and one whose run is abandoned
+// mid-ask fall back to the first option instead of blocking the turn.
+func AskQuestions(ctx context.Context, s Surface, entries []tools.QuestionEntry) []string {
 	return AskEach(entries, func(e tools.QuestionEntry) (string, bool) {
-		return askSurface(s, e)
+		return askSurface(ctx, s, e)
 	}, FirstOptionAnswer)
 }
 
 // askSurface offers one entry to the surface and waits for its answer.
-func askSurface(s Surface, e tools.QuestionEntry) (string, bool) {
+func askSurface(ctx context.Context, s Surface, e tools.QuestionEntry) (string, bool) {
 	ch := make(chan string, 1)
 	gone, ok := s.Send(NewQuestion(e, ch))
 	if !ok {
 		return "", false
 	}
-	return awaitAnswer(ch, gone, AnswerTimeout)
+	return awaitAnswer(ctx, ch, gone, AnswerTimeout)
 }

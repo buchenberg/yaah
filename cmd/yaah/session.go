@@ -207,6 +207,11 @@ type agentSession struct {
 	// running prompt (adoption plan A3): the target of
 	// HaltCurrentRun — the root-halt bridge. Nil between prompts.
 	runCancel context.CancelFunc
+	// runCtx is the in-flight run's cancellable context, published for seams
+	// that can raise a prompt of their own — the path validator's AskFn asks for
+	// out-of-workspace access from inside a tool call — but are not handed the
+	// run context. Nil when no run is active.
+	runCtx context.Context
 
 	cwd string
 
@@ -215,7 +220,7 @@ type agentSession struct {
 	approveFn func(name, args string) bool
 	// approveCallFn is the call-id-aware approval bridge (ACP). When
 	// set it takes precedence over approveFn.
-	approveCallFn func(callID, name, args string) bool
+	approveCallFn func(ctx context.Context, callID, name, args string) bool
 	mu            sync.RWMutex
 
 	// pendingEvents buffers session-scoped events for views whose
@@ -585,10 +590,12 @@ func (s *agentSession) RunPrompt(ctx context.Context, prompt string) (string, bo
 		runCtx, cancel := context.WithCancel(ctx)
 		s.mu.Lock()
 		s.runCancel = cancel
+		s.runCtx = runCtx
 		s.mu.Unlock()
 		defer func() {
 			s.mu.Lock()
 			s.runCancel = nil
+			s.runCtx = nil
 			s.mu.Unlock()
 			cancel()
 		}()
@@ -769,7 +776,7 @@ func (s *agentSession) SetApproveFn(fn func(name, args string) bool) {
 // SetApproveCallFn installs the call-id-aware approval bridge. It takes
 // precedence over SetApproveFn; drivers that never need the provider
 // tool_call id keep using SetApproveFn.
-func (s *agentSession) SetApproveCallFn(fn func(callID, name, args string) bool) {
+func (s *agentSession) SetApproveCallFn(fn func(ctx context.Context, callID, name, args string) bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.approveCallFn = fn
@@ -783,12 +790,22 @@ func (s *agentSession) promptWorkspaceAccess(path, reason string) bool {
 	s.mu.RLock()
 	call := s.approveCallFn
 	fn := s.approveFn
+	runCtx := s.runCtx
 	s.mu.RUnlock()
 	if call != nil {
 		// Call-id bridge (ACP). The ask carries no tool call, so the
 		// empty id tells requestPermission to fall back to its
 		// request-id identity and emit no tool_call row for it.
-		return call("", "workspace_access", fmt.Sprintf("%s (%s)", path, reason))
+		//
+		// The path-validator seam has no context of its own, but an access
+		// prompt is always raised inside a tool call of the active run, so
+		// chain that run's context: an abandoned turn must end the prompt
+		// rather than wait out the permission timeout.
+		ctx := runCtx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		return call(ctx, "", "workspace_access", fmt.Sprintf("%s (%s)", path, reason))
 	}
 	if fn != nil {
 		return fn("workspace_access", fmt.Sprintf("%s (%s)", path, reason))

@@ -9,6 +9,7 @@
 package yaah
 
 import (
+	"context"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/control"
@@ -76,12 +77,14 @@ func (s ctrlSurface) bound() time.Duration {
 func installControlBridges(sess *agentSession, surface control.Surface) {
 	if reg := sess.ToolReg(); reg != nil {
 		if qt, ok := reg.Get("question").(*tools.QuestionTool); ok {
-			qt.Handler = func(entries []tools.QuestionEntry) []string {
-				return control.AskQuestions(surface, entries)
+			qt.Handler = func(ctx context.Context, entries []tools.QuestionEntry) []string {
+				return control.AskQuestions(ctx, surface, entries)
 			}
 		}
 	}
-	sess.SetApproveCallFn(func(callID, name, args string) bool {
-		return control.Approve(surface, callID, name, args)
+	// The run's ctx reaches the bridge so an aborted turn releases a parked
+	// prompt instead of running out AnswerTimeout.
+	sess.SetApproveCallFn(func(ctx context.Context, callID, name, args string) bool {
+		return control.Approve(ctx, surface, callID, name, args)
 	})
 }

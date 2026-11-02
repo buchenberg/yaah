@@ -27,7 +27,7 @@ type QuestionOption struct {
 
 // QuestionHandler receives questions and returns answers. If nil, the
 // default stdin/stderr handler is used.
-type QuestionHandler func(questions []QuestionEntry) []string
+type QuestionHandler func(ctx context.Context, questions []QuestionEntry) []string
 
 // QuestionTool asks the user structured questions with multiple-choice options.
 type QuestionTool struct {
@@ -107,7 +107,7 @@ func (t *QuestionTool) Execute(ctx context.Context, args string) (string, error)
 
 	var answers []string
 	if t.Handler != nil {
-		answers = t.Handler(entries)
+		answers = t.Handler(ctx, entries)
 	} else {
 		answers = defaultQuestionHandler(entries)
 	}

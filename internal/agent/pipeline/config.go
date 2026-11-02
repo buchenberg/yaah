@@ -43,7 +43,7 @@ type PipelineConfig struct {
 	// classify is nil the approval middleware is inert regardless of
 	// mode.
 	ApprovalClassify func(name, args string) GateDecision
-	ApprovalApprove  func(callID, name, args string) bool
+	ApprovalApprove  func(ctx context.Context, callID, name, args string) bool
 	ApprovalEmitDeny func(name, args, errMsg string)
 
 	LoopDetectCount  int
