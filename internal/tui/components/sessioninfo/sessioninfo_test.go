@@ -9,20 +9,15 @@ import (
 
 func TestFormat(t *testing.T) {
 	th := colors.NewDarkTheme()
-	out := Format(Info{Provider: "openai", Model: "gpt-4", Version: "1.2.3"}, &th)
+	out := Format(Info{Provider: "openai", Model: "gpt-4", Status: "idle"}, &th)
 	if !strings.Contains(out, "openai") {
 		t.Errorf("should contain provider, got %q", out)
 	}
 	if !strings.Contains(out, "gpt-4") {
 		t.Errorf("should contain model, got %q", out)
 	}
-}
-
-func TestFormat_Version(t *testing.T) {
-	th := colors.NewDarkTheme()
-	out := Format(Info{Provider: "openai", Model: "gpt-4", Version: "1.2.3"}, &th)
-	if !strings.Contains(out, "Version:") {
-		t.Errorf("should contain Version label, got %q", out)
+	if strings.Contains(out, "Version:") {
+		t.Errorf("should not contain a Version row (promoted to header), got %q", out)
 	}
 }
 
@@ -31,6 +26,35 @@ func TestFormat_EmptyFields(t *testing.T) {
 	out := Format(Info{}, &th)
 	if out == "" {
 		t.Error("should still produce output with empty fields")
+	}
+}
+
+func TestHeader_Release(t *testing.T) {
+	th := colors.NewDarkTheme()
+	out := Header("v1.2.3-9-gc9023a91", &th)
+	if !strings.Contains(out, "Yaah v1.2.3") {
+		t.Errorf("header = %q, want Yaah v1.2.3", out)
+	}
+	if strings.Contains(out, "dev") {
+		t.Errorf("release header should not say dev, got %q", out)
+	}
+}
+
+func TestHeader_NoPrefix(t *testing.T) {
+	th := colors.NewDarkTheme()
+	out := Header("1.2.3", &th)
+	if !strings.Contains(out, "Yaah v1.2.3") {
+		t.Errorf("header = %q, want Yaah v1.2.3", out)
+	}
+}
+
+func TestHeader_Dev(t *testing.T) {
+	th := colors.NewDarkTheme()
+	for _, v := range []string{"", "0.0.0", "dev", "(devel)"} {
+		out := Header(v, &th)
+		if !strings.Contains(out, "Yaah (dev)") {
+			t.Errorf("Header(%q) = %q, want Yaah (dev)", v, out)
+		}
 	}
 }
 

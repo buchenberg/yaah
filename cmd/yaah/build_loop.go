@@ -81,6 +81,7 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 	s.totalUsage.TotalTokens += loop.State.TotalTokens.TotalTokens
 	s.totalUsage.CachedPromptTokens += loop.State.TotalTokens.CachedPromptTokens
 	s.flushUsage()
+	s.publishUsageLocked()
 	s.mu.Unlock()
 
 	if ctrl != nil {
@@ -169,6 +170,7 @@ func (s *agentSession) loopBuilder(
 			s.totalUsage.PromptTokens, s.totalUsage.CompletionTokens,
 			s.totalUsage.CachedPromptTokens,
 			s.subUsage.PromptTokens, s.subUsage.CompletionTokens)
+		s.publishUsageLocked()
 		s.mu.Unlock()
 	}
 

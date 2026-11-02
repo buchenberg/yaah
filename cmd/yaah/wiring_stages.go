@@ -1219,6 +1219,7 @@ func assemble(lc *sessionConfig, opts SessionOptions, ws *workspaceStage, tr *to
 		sess.subUsage.TotalTokens += u.TotalTokens
 		sess.subUsage.CachedPromptTokens += u.CacheTokens()
 		sess.flushUsage()
+		sess.publishUsageLocked()
 		sess.mu.Unlock()
 	}
 

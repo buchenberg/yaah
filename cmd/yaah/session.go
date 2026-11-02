@@ -634,8 +634,14 @@ func (s *agentSession) FollowUp(text string) {
 
 func (s *agentSession) sendCtrl(msg control.Msg) {
 	s.mu.RLock()
-	ch := s.ctrlCh
+	s.sendCtrlLocked(msg)
 	s.mu.RUnlock()
+}
+
+// sendCtrlLocked delivers a control message without taking s.mu; the caller
+// must already hold it. A nil or full control channel never blocks a run.
+func (s *agentSession) sendCtrlLocked(msg control.Msg) {
+	ch := s.ctrlCh
 	if ch == nil {
 		return
 	}
@@ -643,6 +649,32 @@ func (s *agentSession) sendCtrl(msg control.Msg) {
 	case ch <- msg:
 	default:
 	}
+}
+
+// publishUsageLocked emits the session-cumulative usage split to the control
+// channel so a view can render orchestrator and sub-agent spend separately.
+// Agent is the orchestrator's own spend (the session total minus the sub-agent
+// share), mirroring Loop.OwnUsage. The caller must hold s.mu; it reads
+// totalUsage and subUsage.
+func (s *agentSession) publishUsageLocked() {
+	agent := s.totalUsage
+	agent.PromptTokens -= s.subUsage.PromptTokens
+	agent.CompletionTokens -= s.subUsage.CompletionTokens
+	agent.CachedPromptTokens -= s.subUsage.CachedPromptTokens
+	agent.TotalTokens -= s.subUsage.TotalTokens
+	if agent.PromptTokens < 0 {
+		agent.PromptTokens = 0
+	}
+	if agent.CompletionTokens < 0 {
+		agent.CompletionTokens = 0
+	}
+	if agent.CachedPromptTokens < 0 {
+		agent.CachedPromptTokens = 0
+	}
+	if agent.TotalTokens < 0 {
+		agent.TotalTokens = 0
+	}
+	s.sendCtrlLocked(&control.UsageInfo{Agent: agent, Sub: s.subUsage})
 }
 
 func (s *agentSession) SetView(v agent.View) {

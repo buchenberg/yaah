@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	"github.com/buchenberg/yaah/internal/todo"
+	"github.com/buchenberg/yaah/internal/types"
 )
 
 // Msg is the sealed interface for control-plane messages sent from
@@ -132,6 +133,18 @@ type Fallback struct {
 }
 
 func (*Fallback) marker() {}
+
+// UsageInfo carries the session-cumulative usage split so a view can render
+// orchestrator and sub-agent spend separately. Agent is the orchestrator's
+// own spend (the session total minus the sub-agent share); Sub is the
+// sub-agent share (foreground and background dispatches), already folded
+// into the session totals.
+type UsageInfo struct {
+	Agent types.Usage
+	Sub   types.Usage
+}
+
+func (*UsageInfo) marker() {}
 
 // Done is a sentinel sent once when the session closes.
 // The goroutine forwarding from controlCh to prog.Send must detect

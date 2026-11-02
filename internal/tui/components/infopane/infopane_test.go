@@ -6,6 +6,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/tui/colors"
 	"github.com/buchenberg/yaah/internal/tui/components/mcpinfo"
+	worldstatus "github.com/buchenberg/yaah/internal/worldinfo"
 )
 
 func TestFormat_Basic(t *testing.T) {
@@ -24,6 +25,18 @@ func TestFormat_Basic(t *testing.T) {
 	}
 	if !strings.Contains(out, "gpt-4") {
 		t.Errorf("should contain model, got %q", out)
+	}
+}
+
+func TestFormat_VersionHeader(t *testing.T) {
+	th := colors.NewDarkTheme()
+	s := State{Version: "1.0.0"}
+	out := Format(s, &th)
+	if !strings.Contains(out, "Yaah v1.0.0") {
+		t.Errorf("should render a version header, got %q", out)
+	}
+	if strings.Contains(out, "Version:") {
+		t.Errorf("should not render a Version row, got %q", out)
 	}
 }
 
@@ -87,14 +100,73 @@ func TestFormat_SubAgentsEnabled(t *testing.T) {
 	}
 }
 
-func TestFormat_SubAgentsDisabled(t *testing.T) {
+func TestFormat_SubAgentsDisabledNoWorld(t *testing.T) {
+	th := colors.NewDarkTheme()
+	s := State{SubAgents: SubAgentInfo{Enabled: false}}
+	out := Format(s, &th)
+	if strings.Contains(out, "disabled") {
+		t.Errorf("should hide the sub-agents block when disabled and no posture, got %q", out)
+	}
+	if strings.Contains(out, "Subagents") {
+		t.Errorf("should hide the sub-agents block when disabled and no posture, got %q", out)
+	}
+}
+
+func TestFormat_SubAgentsDisabledWithWorld(t *testing.T) {
 	th := colors.NewDarkTheme()
 	s := State{
 		SubAgents: SubAgentInfo{Enabled: false},
+		World: worldstatus.Status{
+			Backend:       "local",
+			Mode:          "retained",
+			Containment:   "auto",
+			Network:       "allow_all",
+			WorldReq:      "auto",
+			ProposalWorld: "worktree",
+			ReportWorld:   "worktree",
+		},
 	}
 	out := Format(s, &th)
 	if !strings.Contains(out, "disabled") {
-		t.Errorf("should say disabled, got %q", out)
+		t.Errorf("should show disabled when posture exists but sub-agents off, got %q", out)
+	}
+	if !strings.Contains(out, "Containment") {
+		t.Errorf("should show the dissolved posture rows, got %q", out)
+	}
+}
+
+func TestFormat_UsageSplit(t *testing.T) {
+	th := colors.NewDarkTheme()
+	s := State{
+		AgentPromptTokens:     100,
+		AgentCompletionTokens: 50,
+		AgentCostEstimate:     "$0.0001 (at current model rates)",
+		SubPromptTokens:       200,
+		SubCompletionTokens:   100,
+		SubTotalTokens:        300,
+		SubCostEstimate:       "$0.0002",
+	}
+	out := Format(s, &th)
+	if !strings.Contains(out, "Usage") {
+		t.Errorf("should render a Usage section, got %q", out)
+	}
+	if !strings.Contains(out, "Subagents Usage") {
+		t.Errorf("should render a Subagents Usage section, got %q", out)
+	}
+	if !strings.Contains(out, "Cost (approx)") {
+		t.Errorf("should label sub-agent cost as approx, got %q", out)
+	}
+	if !strings.Contains(out, "Total") {
+		t.Errorf("should render a Total row in Subagents Usage, got %q", out)
+	}
+}
+
+func TestFormat_UsageHiddenWhenZero(t *testing.T) {
+	th := colors.NewDarkTheme()
+	s := State{}
+	out := Format(s, &th)
+	if strings.Contains(out, "Subagents Usage") {
+		t.Errorf("should hide Subagents Usage when zero, got %q", out)
 	}
 }
 

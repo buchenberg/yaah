@@ -67,6 +67,12 @@ func (t *App) resetUsage() {
 // calculateCost estimates the cost in USD for the accumulated usage.
 // Returns the total cost as a formatted string.
 func (t *App) calculateCost(modelName string) string {
+	return estimateCost(modelName, t.cumulativeUsage.promptTokens, t.cumulativeUsage.completionTokens)
+}
+
+// estimateCost estimates the cost in USD for an explicit token count at the
+// given model's rate. Returns the total cost as a formatted string.
+func estimateCost(modelName string, promptTokens, completionTokens int) string {
 	prices, ok := modelPrices[modelName]
 	if !ok {
 		// Try to find the longest matching prefix.
@@ -88,8 +94,8 @@ func (t *App) calculateCost(modelName string) string {
 		}
 	}
 
-	inputCost := float64(t.cumulativeUsage.promptTokens) / 1_000_000.0 * prices.input
-	outputCost := float64(t.cumulativeUsage.completionTokens) / 1_000_000.0 * prices.output
+	inputCost := float64(promptTokens) / 1_000_000.0 * prices.input
+	outputCost := float64(completionTokens) / 1_000_000.0 * prices.output
 	totalCost := inputCost + outputCost
 
 	return fmt.Sprintf("$%.4f", totalCost)

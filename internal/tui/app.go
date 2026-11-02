@@ -15,6 +15,7 @@ import (
 	"github.com/buchenberg/yaah/internal/tui/components/reasoning"
 	"github.com/buchenberg/yaah/internal/tui/components/subagent"
 	"github.com/buchenberg/yaah/internal/tui/components/toolblock"
+	"github.com/buchenberg/yaah/internal/types"
 	"github.com/buchenberg/yaah/internal/worldinfo"
 	"github.com/rivo/tview"
 )
@@ -65,6 +66,12 @@ type App struct {
 
 	// Usage tracking
 	cumulativeUsage cumulativeUsage
+
+	// agentUsage and subUsage carry the session-cumulative usage split
+	// pushed via control.UsageInfo. agentUsage is the orchestrator's own
+	// spend; subUsage is the sub-agent share (foreground + background).
+	agentUsage types.Usage
+	subUsage   types.Usage
 
 	// Protects pendingTokens during concurrent writes from the
 	// forwarder goroutine (HandleEvent) and reads on the main
