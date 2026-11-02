@@ -569,10 +569,11 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	var sessionID string
 	var msgIdx int
 
-	messages, sessionID, msgIdx, systemPrompt, err = restoreSession(db, opts.ResumeSessionID, systemPrompt)
+	restored, err := restoreSession(db, opts.ResumeSessionID, systemPrompt)
 	if err != nil {
 		return nil, err
 	}
+	messages, sessionID, msgIdx, systemPrompt = restored.Messages, restored.SessionID, restored.MsgIdx, restored.SystemPrompt
 	if opts.ResumeSessionID == "" {
 		sessionID = fmt.Sprintf("sess-%d", time.Now().UnixNano())
 		if db != nil {
@@ -1157,6 +1158,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		sessionID:      sessionID,
 		messages:       messages,
 		msgIdx:         msgIdx,
+		mode:           restored.Mode,
 		otelShutdown:   otelShutdown,
 		tracker:        tracker,
 		backgroundJobs: backgroundJobs,

@@ -12,6 +12,10 @@ type SessionRepository interface {
 	UpdateSessionSummary(id string, summary string) error
 	GetCompactionCooldown(sessionID string) (cooldownUntil int64, ineffective int, err error)
 	SetCompactionCooldown(sessionID string, cooldownUntil int64, ineffective int) error
+	// Session mode persists the build/plan selection across processes so
+	// a resumed session is not silently widened back to build.
+	SetSessionMode(id, mode string) error
+	SessionMode(id string) (string, error)
 	// Session-lifecycle surface for pickers and multi-session hosts
 	// (ACP session/list, resume, delete; `yaah sessions`).
 	DeleteSession(id string) error

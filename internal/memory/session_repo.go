@@ -348,3 +348,32 @@ func (d *DB) SetCompactionCooldown(sessionID string, cooldownUntil int64, ineffe
 	)
 	return err
 }
+
+// SetSessionMode records the ACP session mode ("build" or "plan"; the empty
+// string is build) so the selection outlives the process: resume reads it back
+// and the session starts in the mode it was left in instead of silently
+// widening to build. Written on the switch rather than at close, because a
+// crash, a harness timeout or a kill never reaches the close path.
+//
+// updated_at is deliberately untouched: it means "timestamp of the last
+// persisted message", and a mode switch is selection state, not activity — a
+// resume picker must not reorder sessions because someone changed a mode.
+func (d *DB) SetSessionMode(id, mode string) error {
+	_, err := d.sql.Exec(`UPDATE sessions SET mode = ? WHERE id = ?`, mode, id)
+	return err
+}
+
+// SessionMode reads the session's persisted mode. The empty string is build:
+// a row created before the column existed (or by a caller that never switched)
+// reads as build, never as an unknown regime. An unknown id returns the
+// underlying sql.ErrNoRows so a caller can tell "no mode stored" from "no such
+// session".
+func (d *DB) SessionMode(id string) (string, error) {
+	var mode string
+	if err := d.sql.QueryRow(
+		`SELECT COALESCE(mode, '') FROM sessions WHERE id = ?`, id,
+	).Scan(&mode); err != nil {
+		return "", err
+	}
+	return mode, nil
+}
