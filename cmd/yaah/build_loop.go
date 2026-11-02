@@ -169,7 +169,8 @@ func (s *agentSession) loopBuilder(
 		// Note: do not publishUsageLocked here. This fires mid-run, before the
 		// loop's totals fold into s.totalUsage, so an Agent = total - sub
 		// split would under-count the orchestrator (and often clamp to zero).
-		// The consistent split is published at run end and on background jobs.
+		// The consistent split is published at run end; background jobs publish
+		// only when idle (runCtx == nil).
 		s.flushUsageValues(
 			s.totalUsage.PromptTokens, s.totalUsage.CompletionTokens,
 			s.totalUsage.CachedPromptTokens,

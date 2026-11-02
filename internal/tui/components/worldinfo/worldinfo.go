@@ -59,17 +59,24 @@ func SubAgentRows(s worldstatus.Status, th *colors.Theme) string {
 	}
 	fmt.Fprintf(&b, "  Network: %s\n", th.Tag(th.Detail, network))
 
-	dispatch := s.WorldReq + " → " + s.ProposalWorld
+	// The lane prefix is derived from s.Mode so the row stays correct if a new
+	// mode is added; every non-shared branch carries it consistently.
+	lane := s.Mode + " · "
+
+	var dispatch string
 	switch {
 	case s.Mode == "shared":
 		// A shared dispatch runs on the session tree by definition.
 		dispatch = "shared · no dispatch world"
 	case s.ReportWorld != s.ProposalWorld:
-		dispatch = fmt.Sprintf("retained · %s → proposal %s · report %s", s.WorldReq, s.ProposalWorld, s.ReportWorld)
+		dispatch = fmt.Sprintf("%s%s → proposal %s · report %s", lane, s.WorldReq, s.ProposalWorld, s.ReportWorld)
 	case s.WorldReq == s.ProposalWorld:
-		// An explicit request that both lanes resolve to verbatim collapses
-		// to just the world name, avoiding "container → container" noise.
-		dispatch = "retained · " + s.ProposalWorld
+		// Both lanes resolve to the requested world verbatim; collapse the
+		// "req → world" ladder (no "container → container" noise) but keep
+		// the lane prefix for visibility.
+		dispatch = lane + s.ProposalWorld
+	default:
+		dispatch = lane + s.WorldReq + " → " + s.ProposalWorld
 	}
 	fmt.Fprintf(&b, "  Dispatch: %s\n", th.Tag(th.Detail, dispatch))
 

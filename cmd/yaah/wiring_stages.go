@@ -1219,7 +1219,14 @@ func assemble(lc *sessionConfig, opts SessionOptions, ws *workspaceStage, tr *to
 		sess.subUsage.TotalTokens += u.TotalTokens
 		sess.subUsage.CachedPromptTokens += u.CacheTokens()
 		sess.flushUsage()
-		sess.publishUsageLocked()
+		// Publish only when idle: while a foreground run is in flight its
+		// totals are not yet folded into totalUsage (only subUsage grows via
+		// onSubUsage), so an Agent = total - sub split would under-count. The
+		// run-end publish covers the foreground; a background completion
+		// between runs is consistent and safe to publish immediately.
+		if sess.runCtx == nil {
+			sess.publishUsageLocked()
+		}
 		sess.mu.Unlock()
 	}
 

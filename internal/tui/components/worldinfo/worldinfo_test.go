@@ -43,7 +43,7 @@ func TestSubAgentRowsLocalDefault(t *testing.T) {
 	thp := testTheme()
 	s := worldstatus.Derive(&config.Config{}, "", false)
 	got := SubAgentRows(s, thp)
-	for _, want := range []string{"Containment", "Network", "Dispatch", "auto → worktree"} {
+	for _, want := range []string{"Containment", "Network", "Dispatch", "retained · ", "auto → worktree"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("output missing %q:\n%s", want, got)
 		}
