@@ -2,8 +2,6 @@ package tui
 
 import (
 	"fmt"
-
-	"github.com/buchenberg/yaah/internal/types"
 )
 
 // modelPrices maps model names to pricing per 1M tokens (input, output).
@@ -49,24 +47,9 @@ var modelPrices = map[string]struct {
 	"gemini-flash":     {0.35, 1.05},
 }
 
-// cumulativeUsage tracks token usage across the entire conversation.
-type cumulativeUsage struct {
-	promptTokens     int
-	completionTokens int
-}
-
-func (t *App) accumulateUsage(usage types.Usage) {
-	t.cumulativeUsage.promptTokens += usage.PromptTokens
-	t.cumulativeUsage.completionTokens += usage.CompletionTokens
-}
-
-func (t *App) resetUsage() {
-	t.cumulativeUsage = cumulativeUsage{}
-}
-
-// calculateCost estimates the cost in USD for the accumulated usage.
-// Returns the total cost as a formatted string.
-func (t *App) calculateCost(modelName string) string {
+// estimateCost estimates the cost in USD for an explicit token count at the
+// given model's rate. Returns the total cost as a formatted string.
+func estimateCost(modelName string, promptTokens, completionTokens int) string {
 	prices, ok := modelPrices[modelName]
 	if !ok {
 		// Try to find the longest matching prefix.
@@ -88,14 +71,9 @@ func (t *App) calculateCost(modelName string) string {
 		}
 	}
 
-	inputCost := float64(t.cumulativeUsage.promptTokens) / 1_000_000.0 * prices.input
-	outputCost := float64(t.cumulativeUsage.completionTokens) / 1_000_000.0 * prices.output
+	inputCost := float64(promptTokens) / 1_000_000.0 * prices.input
+	outputCost := float64(completionTokens) / 1_000_000.0 * prices.output
 	totalCost := inputCost + outputCost
 
 	return fmt.Sprintf("$%.4f", totalCost)
-}
-
-// GetCumulativeUsage returns the accumulated usage statistics.
-func (t *App) GetCumulativeUsage() (promptTokens, completionTokens int) {
-	return t.cumulativeUsage.promptTokens, t.cumulativeUsage.completionTokens
 }

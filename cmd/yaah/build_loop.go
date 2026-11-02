@@ -81,6 +81,7 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 	s.totalUsage.TotalTokens += loop.State.TotalTokens.TotalTokens
 	s.totalUsage.CachedPromptTokens += loop.State.TotalTokens.CachedPromptTokens
 	s.flushUsage()
+	s.publishUsageLocked()
 	s.mu.Unlock()
 
 	if ctrl != nil {
@@ -165,6 +166,11 @@ func (s *agentSession) loopBuilder(
 		s.subUsage.CompletionTokens += sub.CompletionTokens
 		s.subUsage.TotalTokens += sub.TotalTokens
 		s.subUsage.CachedPromptTokens += sub.CacheTokens()
+		// Note: do not publishUsageLocked here. This fires mid-run, before the
+		// loop's totals fold into s.totalUsage, so an Agent = total - sub
+		// split would under-count the orchestrator (and often clamp to zero).
+		// The consistent split is published at run end; background jobs publish
+		// only when idle (runInFlight == false).
 		s.flushUsageValues(
 			s.totalUsage.PromptTokens, s.totalUsage.CompletionTokens,
 			s.totalUsage.CachedPromptTokens,

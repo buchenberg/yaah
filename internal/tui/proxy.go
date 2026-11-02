@@ -127,10 +127,6 @@ func (t *App) HandleEvent(event agent.Event) {
 			}
 			t.markDirty()
 
-			if e.Usage.PromptTokens > 0 || e.Usage.CompletionTokens > 0 {
-				t.accumulateUsage(e.Usage)
-			}
-
 			if e.ContextWindow > 0 {
 				ct := e.ContextTokens
 				if e.LastPromptTokensInclusive > 0 {

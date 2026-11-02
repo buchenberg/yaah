@@ -16,22 +16,27 @@ import (
 
 // State carries live data for the info pane.
 type State struct {
-	Provider         string
-	Model            string
-	SessionMode      string
-	Version          string
-	ContextTokens    int
-	ContextWindow    int
-	McpServers       []mcpinfo.Server
-	EphemeralMsg     string
-	SubAgents        SubAgentInfo
-	Embedding        EmbeddingInfo
-	World            worldinfo.Status
-	Pipeline         []string
-	AgentActive      bool
-	PromptTokens     int
-	CompletionTokens int
-	CostEstimate     string
+	Provider              string
+	Model                 string
+	SessionMode           string
+	Version               string
+	ContextTokens         int
+	ContextWindow         int
+	McpServers            []mcpinfo.Server
+	EphemeralMsg          string
+	SubAgents             SubAgentInfo
+	Embedding             EmbeddingInfo
+	World                 worldinfo.Status
+	Pipeline              []string
+	AgentActive           bool
+	AgentPromptTokens     int
+	AgentCompletionTokens int
+	AgentCostEstimate     string
+	SubPromptTokens       int
+	SubCompletionTokens   int
+	SubTotalTokens        int
+	SubCachedTokens       int
+	SubCostEstimate       string
 }
 
 // SubAgentInfo holds sub-agent configuration for display.
@@ -64,57 +69,79 @@ func Build(borderColor string) *tview.TextView {
 	return tv
 }
 
-// Format assembles the full info pane content: session, context, MCP, and
-// ephemeral message.
+// Format assembles the full info pane content. Pane order: version header,
+// Agent (with the dissolved workspace/scope posture), Context, Usage, the
+// Subagents posture (with the dissolved containment/dispatch/network rows),
+// Subagents Usage, then MCP, Embedding, Middleware, and Ephemeral.
 func Format(s State, th *colors.Theme) string {
 	var b strings.Builder
 
+	// Version header.
+	b.WriteString(sessioninfo.Header(s.Version, th))
+	b.WriteString("\n")
+
+	// Agent: provider/model/status/mode + workspace/scope posture.
 	status := "idle"
 	if s.AgentActive {
 		status = "active"
 	}
+	b.WriteString(th.TagBold(th.Heading, "Agent\n"))
 	b.WriteString(sessioninfo.Format(sessioninfo.Info{
 		Provider: s.Provider,
 		Model:    s.Model,
-		Version:  s.Version,
 		Status:   status,
 	}, th))
 	if s.SessionMode != "" {
 		b.WriteString(fmt.Sprintf("  Mode: %s\n", th.Tag(th.Detail, s.SessionMode)))
 	}
+	b.WriteString(worldsection.AgentRows(s.World, th))
 	b.WriteString("\n")
 
 	b.WriteString(contextinfo.Format(s.ContextTokens, s.ContextWindow, th))
 	b.WriteString("\n")
 
-	if !s.World.IsZero() {
-		b.WriteString(worldsection.Format(s.World, th))
+	// Usage: the orchestrator's own spend (session total minus sub-agents).
+	if s.AgentPromptTokens > 0 || s.AgentCompletionTokens > 0 {
+		b.WriteString(th.TagBold(th.Heading, "Usage\n"))
+		b.WriteString(fmt.Sprintf("  Prompt: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.AgentPromptTokens))))
+		b.WriteString(fmt.Sprintf("  Completion: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.AgentCompletionTokens))))
+		if s.AgentCostEstimate != "" {
+			b.WriteString(fmt.Sprintf("  Cost: %s\n", th.Tag(th.Detail, s.AgentCostEstimate)))
+		}
 		b.WriteString("\n")
 	}
 
-	if s.PromptTokens > 0 || s.CompletionTokens > 0 {
-		b.WriteString(th.TagBold(th.Heading, "Usage\n"))
-		b.WriteString(fmt.Sprintf("  Prompt: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.PromptTokens))))
-		b.WriteString(fmt.Sprintf("  Completion: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.CompletionTokens))))
-		if s.CostEstimate != "" {
-			b.WriteString(fmt.Sprintf("  Cost: %s\n", th.Tag(th.Detail, s.CostEstimate)))
+	// Subagents: provider/model/concurrency + containment/dispatch/network.
+	if s.SubAgents.Enabled || !s.World.IsZero() {
+		b.WriteString(th.TagBold(th.Heading, "Subagents\n"))
+		if s.SubAgents.Enabled {
+			b.WriteString(fmt.Sprintf("  Provider: %s\n", th.Tag(th.Detail, s.SubAgents.Provider)))
+			b.WriteString(fmt.Sprintf("  Model: %s\n", th.Tag(th.Detail, s.SubAgents.Model)))
+			b.WriteString(fmt.Sprintf("  Concurrency: %d\n", s.SubAgents.Concurrency))
+		} else {
+			b.WriteString(th.Tag(th.Dim, "  (disabled)\n"))
+		}
+		b.WriteString(worldsection.SubAgentRows(s.World, th))
+		b.WriteString("\n")
+	}
+
+	// Subagents Usage: sub-agent spend, split from the orchestrator Usage.
+	if s.SubPromptTokens > 0 || s.SubCompletionTokens > 0 {
+		b.WriteString(th.TagBold(th.Heading, "Subagents Usage\n"))
+		b.WriteString(fmt.Sprintf("  Prompt: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.SubPromptTokens))))
+		b.WriteString(fmt.Sprintf("  Completion: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.SubCompletionTokens))))
+		b.WriteString(fmt.Sprintf("  Total: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.SubTotalTokens))))
+		if s.SubCachedTokens > 0 {
+			b.WriteString(fmt.Sprintf("  Cached: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.SubCachedTokens))))
+		}
+		if s.SubCostEstimate != "" {
+			b.WriteString(fmt.Sprintf("  Cost (approx): %s\n", th.Tag(th.Detail, s.SubCostEstimate)))
 		}
 		b.WriteString("\n")
 	}
 
 	b.WriteString(th.TagBold(th.Heading, "MCP\n"))
 	b.WriteString(mcpinfo.Format(s.McpServers, th))
-	b.WriteString("\n")
-
-	if s.SubAgents.Enabled {
-		b.WriteString(th.TagBold(th.Heading, "Sub-agents\n"))
-		b.WriteString(fmt.Sprintf("  Provider: %s\n", th.Tag(th.Detail, s.SubAgents.Provider)))
-		b.WriteString(fmt.Sprintf("  Model: %s\n", th.Tag(th.Detail, s.SubAgents.Model)))
-		b.WriteString(fmt.Sprintf("  Concurrency: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.SubAgents.Concurrency))))
-	} else {
-		b.WriteString(th.TagBold(th.Heading, "Sub-agents\n"))
-		b.WriteString(th.Tag(th.Dim, "  (disabled)\n"))
-	}
 	b.WriteString("\n")
 
 	if s.Embedding.Enabled {

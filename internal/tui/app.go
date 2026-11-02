@@ -63,8 +63,11 @@ type App struct {
 	// order; it is paired with focus and touched only from the UI goroutine.
 	modalDepth int
 
-	// Usage tracking
-	cumulativeUsage cumulativeUsage
+	// agentUsage and subUsage carry the session-cumulative usage split
+	// pushed via control.UsageInfo. agentUsage is the orchestrator's own
+	// spend; subUsage is the sub-agent share (foreground + background).
+	agentUsage control.Usage
+	subUsage   control.Usage
 
 	// Protects pendingTokens during concurrent writes from the
 	// forwarder goroutine (HandleEvent) and reads on the main

@@ -68,6 +68,11 @@ func (t *App) handleControlMsg(msg control.Msg) {
 		t.contextWindow = m.Window
 		t.renderInfoPane()
 
+	case *control.UsageInfo:
+		t.agentUsage = m.Agent
+		t.subUsage = m.Sub
+		t.renderInfoPane()
+
 	case *control.Fallback:
 		t.lastProvider = m.Provider
 		t.lastModel = m.Model
@@ -125,10 +130,18 @@ func setPaneText(tv *tview.TextView, text string) {
 
 // renderInfoPane rebuilds the info pane from live state.
 func (t *App) renderInfoPane() {
-	promptTokens, completionTokens := t.GetCumulativeUsage()
-	costEstimate := ""
-	if t.lastModel != "" && (promptTokens > 0 || completionTokens > 0) {
-		costEstimate = t.calculateCost(t.lastModel) + " (at current model rates)"
+	agentPrompt := t.agentUsage.PromptTokens
+	agentCompletion := t.agentUsage.CompletionTokens
+	agentCost := ""
+	if t.lastModel != "" && (agentPrompt > 0 || agentCompletion > 0) {
+		agentCost = estimateCost(t.lastModel, agentPrompt, agentCompletion) + " (at current model rates)"
+	}
+
+	subPrompt := t.subUsage.PromptTokens
+	subCompletion := t.subUsage.CompletionTokens
+	subCost := ""
+	if t.subAgentsModel != "" && (subPrompt > 0 || subCompletion > 0) {
+		subCost = estimateCost(t.subAgentsModel, subPrompt, subCompletion)
 	}
 
 	setPaneText(t.InfoPane, infopane.Format(infopane.State{
@@ -150,12 +163,17 @@ func (t *App) renderInfoPane() {
 			Enabled: t.embeddingEnabled,
 			Model:   t.embeddingModel,
 		},
-		World:            t.worldStatus,
-		Pipeline:         t.middlewarePipeline,
-		AgentActive:      t.agentActive,
-		PromptTokens:     promptTokens,
-		CompletionTokens: completionTokens,
-		CostEstimate:     costEstimate,
+		World:                 t.worldStatus,
+		Pipeline:              t.middlewarePipeline,
+		AgentActive:           t.agentActive,
+		AgentPromptTokens:     agentPrompt,
+		AgentCompletionTokens: agentCompletion,
+		AgentCostEstimate:     agentCost,
+		SubPromptTokens:       subPrompt,
+		SubCompletionTokens:   subCompletion,
+		SubTotalTokens:        t.subUsage.TotalTokens,
+		SubCachedTokens:       t.subUsage.CachedTokens,
+		SubCostEstimate:       subCost,
 	}, t.Theme))
 }
 
