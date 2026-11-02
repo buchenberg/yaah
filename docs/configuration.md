@@ -601,6 +601,21 @@ advisory** where it cannot, recording which happened on the sub-agent's trace;
 `none`/`advisory`) always runs on the host. The orchestrator is never jailed
 either way.
 
+**When the backend cannot keep its promise.** Being *available* is not the same
+as being *enforceable*: a host can mint a restricted token and still fail its own
+grant-conformance probe (winacl refuses when a declared writable root rejects the
+canary write — "writable root … DENIES writes (profile too strict)"). That state
+used to cost a dispatch lane **every** execution tool it had, because the
+availability check had already passed and nothing re-evaluated afterwards: `go
+build`, `go test`, `staticcheck` and `go_mod` all failed with `confinement:
+fail-closed`, which reads like an agent error rather than a host one. The probe
+failure is now what `auto` degrades on, exactly like an unavailable backend: the
+command runs on the advisory host path, the reason is recorded once per workspace
+(and reported by `tools.WorkspaceDegraded`), and one WARN names the backend. The
+fallback is still withheld whenever it would lose something you asked for — a
+declared `grants:` set or `network: deny_all`/`broker` — so `paddock`, narrowed
+grants and egress rules keep failing closed and naming the fix.
+
 > **The git rule.** A retained dispatch works in a
 > **linked** `git worktree`, whose index and object store live in the *original*
 > repository's `.git` — outside the jail's writable root. So a confined

@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
@@ -139,12 +141,75 @@ type localWorkspace struct {
 	// confined commands — the redirect that points HOME/TMPDIR/caches into the
 	// worktree's scratch.
 	confinedEnv []string
+	// degrade, when non-nil, records the one-time decision to run this
+	// workspace unconfined because the bound backend could not establish the
+	// jail it promised. Clones share the pointer, so the record is per
+	// workspace rather than per call.
+	degrade *confinementDowngrade
 }
 
 var _ Workspace = (*localWorkspace)(nil)
 
 func newLocalWorkspace(pv *PathValidator) *localWorkspace {
 	return &localWorkspace{pv: pv}
+}
+
+// confinementDowngrade is the record of a workspace that could not be jailed
+// and runs unconfined instead. One workspace value is cloned per tool call, so
+// the record lives behind a pointer and is shared across the clones: the
+// fallback is decided once, reported once, and visible to whoever asks later.
+type confinementDowngrade struct {
+	once   sync.Once
+	mu     sync.Mutex
+	reason string
+}
+
+// record stores the first reason and reports it; later calls return "". The
+// first failure is the informative one — the rest are the same condition. A nil
+// record (a workspace built without confinement) accepts the call and reports
+// nothing, so a caller need not test the pointer first.
+func (d *confinementDowngrade) record(reason string) (first string) {
+	if d == nil {
+		return ""
+	}
+	d.once.Do(func() {
+		d.mu.Lock()
+		d.reason = reason
+		d.mu.Unlock()
+		first = reason
+	})
+	return first
+}
+
+// get reports the recorded reason, if a downgrade happened.
+func (d *confinementDowngrade) get() (string, bool) {
+	if d == nil {
+		return "", false
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.reason, d.reason != ""
+}
+
+// ConfinementDegraded reports whether commands in this workspace run unconfined
+// because the backend could not establish its jail, and why.
+func (w *localWorkspace) ConfinementDegraded() (string, bool) { return w.degrade.get() }
+
+// degradedReporter is implemented by workspaces that can lose their jail at
+// run time. Kept separate from Workspace so a remote or container substrate,
+// which cannot degrade silently, simply does not implement it.
+type degradedReporter interface {
+	ConfinementDegraded() (string, bool)
+}
+
+// WorkspaceDegraded reports whether ws lost its jail and is running unconfined,
+// and why. It reports false for workspaces that never requested confinement.
+func WorkspaceDegraded(ws Workspace) (string, bool) {
+	d, ok := ws.(degradedReporter)
+	if !ok {
+		return "", false
+	}
+	return d.ConfinementDegraded()
 }
 
 // NewLocalWorkspace exposes the host workspace for callers that construct a
@@ -160,7 +225,13 @@ func NewLocalWorkspace(pv *PathValidator) Workspace {
 // PlacementAdvisory never jails. The orchestrator's workspace is never built
 // this way.
 func NewConfinedLocalWorkspace(pv *PathValidator, backend containment.Backend, placement containment.Placement, network confinement.NetworkPolicy) *localWorkspace {
-	return &localWorkspace{pv: pv, confiner: backend, placement: placement, network: network}
+	return &localWorkspace{
+		pv:        pv,
+		confiner:  backend,
+		placement: placement,
+		network:   network,
+		degrade:   &confinementDowngrade{},
+	}
 }
 
 // WithWritableRoots narrows the jail to the given roots (yaah-ihfh.2). A nil
@@ -180,6 +251,11 @@ func (w *localWorkspace) WithWritableRoots(roots []string) *localWorkspace {
 // confinement backend, or is configured to fail closed without one. A client
 // workspace overlay must not bypass either posture.
 func (w *localWorkspace) Confined() bool {
+	if _, ok := w.degrade.get(); ok {
+		// The jail was requested and could not be established, so commands run on
+		// the host path: reporting "jailed" here would be a lie.
+		return false
+	}
 	return w.confiner != nil || w.placement == containment.PlacementPaddock
 }
 
@@ -272,6 +348,15 @@ func (w *localWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResult,
 		return w.advisoryExec(ctx, req)
 	}
 
+	// A recorded downgrade is permanent for this workspace: the probe that
+	// failed once fails on every call. Re-attempting confinement would pay for
+	// the same failing probe per command, so take the advisory path directly
+	// rather than re-incurring that cost for every tool in the lane. Per-call
+	// clones share the downgrade pointer, so they all short-circuit here.
+	if _, ok := w.degrade.get(); ok {
+		return w.advisoryExec(ctx, req)
+	}
+
 	available := true
 	if ok, _ := w.confiner.Available(); !ok {
 		available = false
@@ -283,7 +368,50 @@ func (w *localWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResult,
 	if !confine {
 		return w.advisoryExec(ctx, req)
 	}
-	return w.confinedExec(ctx, req)
+	res, err := w.confinedExec(ctx, req)
+	if err == nil || !errors.Is(err, containment.ErrPaddockNotEstablished) {
+		return res, err
+	}
+	// The backend claims to be available but cannot establish the jail it
+	// promised — a probe that fails at confine time, which the availability
+	// check cannot see. This is the failure mode where a dispatch lane used to
+	// lose every execution tool at once, because containment: auto never got the
+	// advisory fallback it documents.
+	if blocker := w.degradeBlocker(); blocker != "" {
+		return res, fmt.Errorf("%w — the dispatch lane's commands cannot run: "+
+			"backend %q could not establish confinement, and the advisory fallback is "+
+			"withheld because %s", err, w.confiner.Name(), blocker)
+	}
+	if first := w.degrade.record(err.Error()); first != "" {
+		slog.Warn("containment unavailable: dispatch lane runs unconfined (containment: auto, advisory fallback recorded)",
+			"backend", w.confiner.Name(),
+			"placement", string(w.placement),
+			"reason", first)
+	}
+	return w.advisoryExec(ctx, req)
+}
+
+// degradeBlocker names the reason the advisory fallback is unavailable, with the
+// setting that would change it. It returns "" when degrading is admissible.
+//
+// The distinction matters for the operator: telling someone on the default
+// `auto` placement to "set containment: auto" is a no-op, and the real objection
+// there is a declared grant set or an egress rule.
+func (w *localWorkspace) degradeBlocker() string {
+	switch {
+	case w.placement != containment.PlacementAuto:
+		return fmt.Sprintf("placement %q refuses to run unconfined — set "+
+			"agents.subagent.containment: auto to allow a recorded advisory fallback, or off "+
+			"to run the lane unconfined deliberately", w.placement)
+	case w.narrowed:
+		return "a declared grants: set cannot be kept on the unconfined host path — drop " +
+			"the restrictive grants:, or fix the host's confinement backend so the jail can be " +
+			"established"
+	case w.network.Mode != "" && w.network.Mode != confinement.NetAllowAll:
+		return fmt.Sprintf("network policy %q cannot be enforced without the jail — set "+
+			"agents.subagent.network: allow_all, or fix the host's confinement backend", w.network.Mode)
+	}
+	return ""
 }
 
 // advisoryExec is the unconfined host path — the behaviour every session had
@@ -329,7 +457,8 @@ func (w *localWorkspace) advisoryExec(ctx context.Context, req ExecRequest) (Exe
 // working directory as the sole writable root. Output is combined unless the
 // request asked for separate streams, matching the host path. A jail that could
 // not be established is reported as a launch failure (ExitCode -1) — the command
-// never ran, so there is no unconfined fallback.
+// never ran. Retrying unconfined is Exec's decision, not this function's: see
+// degradeBlocker for when an advisory fallback is admissible.
 func (w *localWorkspace) confinedExec(ctx context.Context, req ExecRequest) (ExecResult, error) {
 	root := w.WorkDir()
 	roots := w.writableRoots

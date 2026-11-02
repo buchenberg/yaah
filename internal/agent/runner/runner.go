@@ -702,6 +702,10 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 
 		result, runErr := subLoop.Run(ctx, prompt)
 		recordSubAgentUsage(context.WithoutCancel(ctx), opts.traceStore, subTraceID, opts.parentSession, string(role), subModel, params.Lane, subLoop.OwnUsage())
+		// Record the jail the body actually ran under, not just the one the
+		// previous fact resolved: a backend can pass its availability check and
+		// still fail to establish containment at exec time.
+		recordConfinementDegradedFact(context.WithoutCancel(ctx), subScope, subConf)
 
 		// The run is over: cut the bridge now, not at closure return —
 		// trace enrichment and output budgeting below must not sit inside
@@ -1755,6 +1759,9 @@ type subAgentConfinement struct {
 	Writable  string // the bound world — the sole writable root
 	Network   string // the egress posture that rode the jail ("allow_all", …)
 	Broker    int    // the pinned egress port, when the posture is "broker"
+	// ws is the workspace whose jail this describes. Kept so the post-run check
+	// can ask what the lane actually had, rather than what it hoped for.
+	ws tools.Workspace
 }
 
 func (c *subAgentConfinement) payload() map[string]any {
@@ -1767,6 +1774,37 @@ func (c *subAgentConfinement) payload() map[string]any {
 		"writable_root": c.Writable,
 		"network":       c.Network,
 		"broker_port":   c.Broker,
+	}
+}
+
+// degraded reports whether the jail this record describes was lost at run time —
+// the backend passed its availability check but could not establish containment —
+// and why. It is false for a nil workspace (an advisory dispatch never had one).
+func (c *subAgentConfinement) degraded() (string, bool) {
+	if c == nil || c.ws == nil {
+		return "", false
+	}
+	return tools.WorkspaceDegraded(c.ws)
+}
+
+// recordConfinementDegradedFact appends the post-run truth when a dispatch that
+// resolved to a jail ended up running unconfined. The pre-run fact says what was
+// resolved; this one says what the body actually ran under, so a reader never
+// mistakes a degraded lane for a jailed one.
+func recordConfinementDegradedFact(ctx context.Context, scope *goatherd.Scope, conf *subAgentConfinement) {
+	if scope == nil || conf == nil {
+		return
+	}
+	reason, ok := conf.degraded()
+	if !ok {
+		return
+	}
+	payload := conf.payload()
+	payload["resolved"] = "advisory"
+	payload["enforced"] = false
+	payload["degraded_reason"] = reason
+	if _, err := scope.AppendFact(ctx, "yaah.subagent.confinement.degraded.v1", "confinement_degraded", payload); err != nil {
+		slog.Debug("confinement degraded fact: append failed", "scope", scope.ID(), "err", err)
 	}
 }
 
@@ -1868,7 +1906,9 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 		return nil, nil, fmt.Errorf("confinement redirect for %s: %w", workdir, err)
 	}
 	env = append(env, brokerProxyEnv(network)...)
-	return ws.WithEnv(env), rec, nil
+	final := ws.WithEnv(env)
+	rec.ws = final
+	return final, rec, nil
 }
 
 // confinementRecord is the pure decision behind what a dispatch records, split
