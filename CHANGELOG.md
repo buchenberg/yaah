@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.129.4](https://github.com/buchenberg/yaah/compare/v0.129.3...v0.129.4) (2026-11-02)
+
+
+### Bug Fixes
+
+* **plan:** close the argument-position escapes left by [#732](https://github.com/buchenberg/yaah/issues/732) ([b485984](https://github.com/buchenberg/yaah/commit/b485984afef7a42a64572ac270030278a72b0947))
+* **plan:** close the argument-position escapes left by [#732](https://github.com/buchenberg/yaah/issues/732) ([7b23784](https://github.com/buchenberg/yaah/commit/7b2378432fa4f816d06852ff84abcb5c86baba7b))
+* **plan:** stop --sort/--format/--ignore-case passing as listings ([e7b5478](https://github.com/buchenberg/yaah/commit/e7b547844b6b4932e6d1a6c16807c2e9de731547))
+
 ## [0.129.3](https://github.com/buchenberg/yaah/compare/v0.129.2...v0.129.3) (2026-11-02)
 
 
