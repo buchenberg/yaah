@@ -674,7 +674,20 @@ func (s *agentSession) publishUsageLocked() {
 	if agent.TotalTokens < 0 {
 		agent.TotalTokens = 0
 	}
-	s.sendCtrlLocked(&control.UsageInfo{Agent: agent, Sub: s.subUsage})
+	s.sendCtrlLocked(&control.UsageInfo{
+		Agent: control.Usage{
+			PromptTokens:     agent.PromptTokens,
+			CompletionTokens: agent.CompletionTokens,
+			TotalTokens:      agent.TotalTokens,
+			CachedTokens:     agent.CachedPromptTokens,
+		},
+		Sub: control.Usage{
+			PromptTokens:     s.subUsage.PromptTokens,
+			CompletionTokens: s.subUsage.CompletionTokens,
+			TotalTokens:      s.subUsage.TotalTokens,
+			CachedTokens:     s.subUsage.CachedPromptTokens,
+		},
+	})
 }
 
 func (s *agentSession) SetView(v agent.View) {

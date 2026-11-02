@@ -18,7 +18,6 @@ import (
 	"fmt"
 
 	"github.com/buchenberg/yaah/internal/todo"
-	"github.com/buchenberg/yaah/internal/types"
 )
 
 // Msg is the sealed interface for control-plane messages sent from
@@ -134,14 +133,24 @@ type Fallback struct {
 
 func (*Fallback) marker() {}
 
+// Usage is a token-count snapshot for one side of the usage split. It is a
+// local type so the control protocol stays independent of the provider
+// wire-format types in internal/types (see the package doc).
+type Usage struct {
+	PromptTokens     int
+	CompletionTokens int
+	TotalTokens      int
+	CachedTokens     int
+}
+
 // UsageInfo carries the session-cumulative usage split so a view can render
 // orchestrator and sub-agent spend separately. Agent is the orchestrator's
 // own spend (the session total minus the sub-agent share); Sub is the
 // sub-agent share (foreground and background dispatches), already folded
 // into the session totals.
 type UsageInfo struct {
-	Agent types.Usage
-	Sub   types.Usage
+	Agent Usage
+	Sub   Usage
 }
 
 func (*UsageInfo) marker() {}

@@ -172,7 +172,7 @@ func (t *App) renderInfoPane() {
 		SubPromptTokens:       subPrompt,
 		SubCompletionTokens:   subCompletion,
 		SubTotalTokens:        t.subUsage.TotalTokens,
-		SubCachedTokens:       t.subUsage.CachedPromptTokens,
+		SubCachedTokens:       t.subUsage.CachedTokens,
 		SubCostEstimate:       subCost,
 	}, t.Theme))
 }

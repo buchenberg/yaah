@@ -43,7 +43,6 @@ func (t *App) clearConversation() {
 	t.subAgents = nil
 	t.subAgentsBusy.Store(false)
 	t.userScrolled = false
-	t.resetUsage()
 	t.renderBackgroundJobsPane()
 	t.refreshMessages()
 }

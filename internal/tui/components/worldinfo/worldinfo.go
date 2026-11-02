@@ -65,11 +65,11 @@ func SubAgentRows(s worldstatus.Status, th *colors.Theme) string {
 		// A shared dispatch runs on the session tree by definition.
 		dispatch = "shared · no dispatch world"
 	case s.ReportWorld != s.ProposalWorld:
-		dispatch = fmt.Sprintf("%s → proposal %s · report %s", s.WorldReq, s.ProposalWorld, s.ReportWorld)
+		dispatch = fmt.Sprintf("retained · %s → proposal %s · report %s", s.WorldReq, s.ProposalWorld, s.ReportWorld)
 	case s.WorldReq == s.ProposalWorld:
 		// An explicit request that both lanes resolve to verbatim collapses
 		// to just the world name, avoiding "container → container" noise.
-		dispatch = s.ProposalWorld
+		dispatch = "retained · " + s.ProposalWorld
 	}
 	fmt.Fprintf(&b, "  Dispatch: %s\n", th.Tag(th.Detail, dispatch))
 
