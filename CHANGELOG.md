@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.130.0](https://github.com/buchenberg/yaah/compare/v0.129.6...v0.130.0) (2026-11-02)
+
+
+### Features
+
+* **tui:** info pane usage split and World dissolve (yaah-aq70) ([#745](https://github.com/buchenberg/yaah/issues/745)) ([5d7932e](https://github.com/buchenberg/yaah/commit/5d7932ea296c34daf9751bd14ac30806d7b4fb4d))
+
 ## [0.129.6](https://github.com/buchenberg/yaah/compare/v0.129.5...v0.129.6) (2026-11-02)
 
 
