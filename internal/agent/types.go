@@ -50,9 +50,14 @@ const (
 	FullTools ToolsLevel = iota
 	// SubAgentsOnly gives only the task tool — the agent coordinates through sub-agents.
 	SubAgentsOnly
-	// ReadOnlyTools exposes inspection tools only. It backs ACP plan mode:
-	// the model is never shown a mutating tool, and the dispatch gate refuses
-	// one even if a provider/dialect recovers a call that was not advertised.
+	// ReadOnlyTools (a historical name — read it as "inspection set") exposes
+	// the inspection set only: read, grep, glob, ls, file_info, go_outline,
+	// calculate, diff, question, git restricted to its inspection actions,
+	// staticcheck, and the plan tool. It backs plan mode: the model is never
+	// shown a mutating tool, the dispatch gate refuses any name outside the
+	// set even if a provider/dialect recovers a call that was not advertised,
+	// and the approval gate hard-denies a call that turns out to be dangerous
+	// (git commit) instead of offering it for approval.
 	ReadOnlyTools
 )
 

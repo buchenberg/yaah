@@ -33,9 +33,33 @@ Running `yaah` with no arguments starts a readline REPL:
 | `/help`, `/?` | Show commands |
 | `/roles`, `/reload-roles` | Reload role files |
 | `/login`, `/logout` | Manage provider OAuth login |
-| `/plan`, `/build` | Switch the session mode |
+| `/plan`, `/build` | Switch the session mode (`/plan` narrows to the inspection set, see [Plan mode](#plan-mode)) |
 
 History persists at `~/.yaah/history` (or `$YAAH_HOME/history` when `YAAH_HOME` is set).
+
+## Plan mode
+
+`/plan` switches the session into plan mode, `/build` switches back; the TUI
+and web palettes and ACP `session/set_mode` reach the same switch. Plan mode
+narrows the toolset to the **inspection set** — the tools that look at a
+workspace instead of changing it:
+
+`read`, `grep`, `glob`, `ls`, `file_info`, `go_outline`, `calculate`, `diff`,
+`question`, `git` (inspection actions only), `staticcheck`, `plan`.
+
+`git` is admitted as a name and gated per call: its inspection actions
+(`status`, `diff`, `diff_cached`, `log`, `show`, `branch` listing, `fetch`)
+pass, while `add`, `commit`, `push`, `pull`, and `branch -D` are **denied** in
+plan mode rather than offered for approval — the mode's promise is that the
+capability is absent, not that the user may grant it. `staticcheck` reports
+diagnostics and writes nothing.
+
+The `plan` **tool** is not plan **mode**. The tool drafts and updates `PLAN.md`
+files under `.agents/plans/` (see [Plans and todos](#plans-and-todos)); the
+mode is the toolset regime that work runs in, and it admits the tool so the
+plan artifact it exists to produce can be written.
+
+Every other mode, including the default, is build mode with the full toolset.
 
 ## Web UI
 
@@ -171,7 +195,9 @@ Kilo works unchanged.
 
 The `plan` tool manages `PLAN.md` files under `.agents/plans/` with a
 `draft → approved → in_progress → completed → cancelled` workflow. The
-`todowrite` tool tracks in-flight work and feeds the TUI sidebar.
+`todowrite` tool tracks in-flight work and feeds the TUI sidebar. The `plan`
+tool is unrelated to plan mode — that is the session mode described in
+[Plan mode](#plan-mode).
 
 ## Tool belt
 

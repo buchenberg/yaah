@@ -74,9 +74,8 @@ var alwaysDangerous = map[string]bool{
 // the global approval mode (review finding S3).
 //
 // Registered tools with a DangerClassifier defer to it; alwaysDangerous
-// names gate even when not registered on this platform. Both map to
-// GateGlobal — the global ApprovalMode decides what "dangerous" means
-// (ask prompts, deny strips, allow passes).
+// names gate even when not registered on this platform. Both resolve
+// through dangerousGate, which is where the tool level is honoured.
 func (l *Loop) classifyGate(name, args string) pipeline.GateDecision {
 	if l.Config.MCPToolNames[name] {
 		switch l.Config.MCPApproval {
@@ -91,16 +90,36 @@ func (l *Loop) classifyGate(name, args string) pipeline.GateDecision {
 	if t := l.Registry.Get(name); t != nil {
 		if dc, ok := t.(tools.DangerClassifier); ok {
 			if dc.IsDangerous(args) {
-				return pipeline.GateGlobal
+				return l.dangerousGate()
 			}
 			return pipeline.GatePass
 		}
 		return pipeline.GatePass
 	}
 	if alwaysDangerous[name] {
-		return pipeline.GateGlobal
+		return l.dangerousGate()
 	}
 	return pipeline.GatePass
+}
+
+// dangerousGate resolves a call that has been classified as dangerous.
+//
+// Outside plan mode it is GateGlobal: the global ApprovalMode decides what
+// "dangerous" means (ask prompts, deny strips, allow passes).
+//
+// In plan mode it is GateDeny. Plan mode's promise is that mutating tools are
+// withheld, and GateGlobal would break that promise — its default is "ask", so
+// the user could approve a mutation the mode said was unavailable. Denying
+// also covers names that plan mode never advertises but that the gate still
+// sees: allowsTool runs at dispatch, after this classification, so argument-
+// carrying tools admitted by name (git) and alwaysDangerous names synthesized
+// by dialect recovery reach here first. A denial has no override, which is
+// what "withheld" has to mean.
+func (l *Loop) dangerousGate() pipeline.GateDecision {
+	if l.Config.ToolsLevel == ReadOnlyTools {
+		return pipeline.GateDeny
+	}
+	return pipeline.GateGlobal
 }
 
 // approveTool prompts the user on stderr/stdin to approve a tool call.

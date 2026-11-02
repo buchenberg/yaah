@@ -51,7 +51,7 @@ sub-agents, and prompts all resolve against it.
 | `session/delete` | supported | removes the conversation from the store; unknown/deleted ids succeed silently |
 | `session/prompt` | supported | streams updates, then answers with a `stopReason` |
 | `session/cancel` | supported | notification; cancels the in-flight turn |
-| `session/set_mode` | supported alias | switches between `build` (full tools) and `plan` (read-only tool set + planning directive); unknown ids are invalid params and the change is pushed as `config_option_update` |
+| `session/set_mode` | supported alias | switches between `build` (full tools) and `plan` (inspection tool set + planning directive); unknown ids are invalid params and the change is pushed as `config_option_update` |
 | `session/set_config_option` | supported | the mode picker (`configId: "mode"` with `category: "mode"`) and model picker (`configId: "model"`); validates the value, applies it to subsequent turns, emits `config_option_update` for mode changes, and echoes the recomputed `configOptions` set |
 | `session/update` | supported | variants below |
 | `session/request_permission` | supported | tool approvals delegated to the client; all four option kinds (`allow_once`/`allow_always`/`reject_once`/`reject_always`) are offered, and an always-decision is remembered for the rest of the session |
@@ -118,8 +118,12 @@ mode selector as `configOptions` (`id: "mode"`, `category: "mode"`, values
 `build`/`plan`). This server is greenfield and does not emit the legacy
 `modes` field; clients must support config options. `session/set_mode` remains
 an accepted alias and pushes `config_option_update`. Plan mode withholds the
-mutating tool set and injects a planning directive; an in-flight turn keeps
-the mode it started with. Mode is not persisted, so a fresh process defaults
+mutating tool set, leaving the inspection set (see
+[features.md](./features.md#plan-mode) for the full list), and injects a
+planning directive; an in-flight turn keeps the mode it started with. A `git`
+call that turns out to be mutating (`commit`, `push`, `branch -D`) is denied
+rather than offered for approval — the mode promises the capability is absent,
+not that the user may grant it. Mode is not persisted, so a fresh process defaults
 to build on `load`/`resume`; a live load/re-resume keeps the attachment's
 current mode.
 

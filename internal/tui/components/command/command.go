@@ -170,7 +170,7 @@ func DefaultEntries() []Entry {
 		{"steer", "Inject steering text (requires arg)", CmdSteer},
 		{"followup", "Queue text as a follow-up message (requires arg)", CmdFollowUp},
 		{"model", "Switch model", CmdModel},
-		{"plan", "Switch to plan mode (read-only tools)", CmdPlan},
+		{"plan", "Switch to plan mode (inspection tools)", CmdPlan},
 		{"build", "Switch to build mode (full tools)", CmdBuild},
 		{"search", "Search messages (requires arg)", CmdSearch},
 		{"verbose", "Toggle verbose mode", CmdVerbose},
