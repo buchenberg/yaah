@@ -348,6 +348,15 @@ func (w *localWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResult,
 		return w.advisoryExec(ctx, req)
 	}
 
+	// A recorded downgrade is permanent for this workspace: the probe that
+	// failed once fails on every call. Re-attempting confinement would pay for
+	// the same failure per command and re-log the warning each time, so take the
+	// advisory path directly. Per-call clones share the downgrade pointer, so
+	// every tool in the lane short-circuits here.
+	if _, ok := w.degrade.get(); ok {
+		return w.advisoryExec(ctx, req)
+	}
+
 	available := true
 	if ok, _ := w.confiner.Available(); !ok {
 		available = false
@@ -449,7 +458,7 @@ func (w *localWorkspace) advisoryExec(ctx context.Context, req ExecRequest) (Exe
 // request asked for separate streams, matching the host path. A jail that could
 // not be established is reported as a launch failure (ExitCode -1) — the command
 // never ran. Retrying unconfined is Exec's decision, not this function's: see
-// mayDegrade for when an advisory fallback is admissible.
+// degradeBlocker for when an advisory fallback is admissible.
 func (w *localWorkspace) confinedExec(ctx context.Context, req ExecRequest) (ExecResult, error) {
 	root := w.WorkDir()
 	roots := w.writableRoots

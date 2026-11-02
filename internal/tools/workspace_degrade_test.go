@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
@@ -168,6 +169,71 @@ func TestConfinementDegrade_NetworkRuleStillFails(t *testing.T) {
 
 // A nil record is what a workspace built without confinement carries; recording
 // into it must be a no-op rather than a panic.
+// countingBackend is unconfinableBackend plus attempt counters, so a test can
+// prove a recorded downgrade stops the workspace re-attempting — and re-probing
+// — confinement on every subsequent command.
+type countingBackend struct {
+	mu       sync.Mutex
+	probes   int
+	launches int
+}
+
+func (b *countingBackend) Name() string              { return "counting" }
+func (b *countingBackend) EnforcementTier() string   { return "paddock" }
+func (b *countingBackend) Available() (bool, string) { return true, "restricted token" }
+func (b *countingBackend) SupportsNetwork(confinement.NetMode) bool {
+	return true
+}
+func (b *countingBackend) ProfileFor([]string, confinement.NetworkPolicy) string {
+	return "profile"
+}
+func (b *countingBackend) Probe(string, string, []string) error {
+	b.mu.Lock()
+	b.probes++
+	b.mu.Unlock()
+	return fmt.Errorf("%w: writable root %s DENIES writes (profile too strict)",
+		containment.ErrPaddockNotEstablished, "C:/world")
+}
+func (b *countingBackend) Launch(string, containment.LaunchRequest) (containment.LaunchResult, error) {
+	b.mu.Lock()
+	b.launches++
+	b.mu.Unlock()
+	return containment.LaunchResult{}, nil
+}
+
+// attempts reports how many times the workspace asked the backend to establish
+// confinement.
+func (b *countingBackend) attempts() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.probes + b.launches
+}
+
+// A recorded downgrade is permanent — the probe that failed once fails on every
+// call — so later commands must not pay for the failing probe again. Re-running
+// it per command turned a single unenforceable host into a per-command stall
+// across a long dispatch lane.
+func TestConfinementDegrade_SkipsRepeatedConfineAttempts(t *testing.T) {
+	backend := &countingBackend{}
+	ws := confinedTestWorkspace(t.TempDir(), backend, containment.PlacementAuto)
+
+	echoWorkspaceHealth(t, ws)
+	first := backend.attempts()
+	if first == 0 {
+		t.Fatal("the first command never asked the backend to confine; test cannot distinguish a short-circuit from a no-op")
+	}
+	if reason, ok := WorkspaceDegraded(ws); !ok || reason == "" {
+		t.Fatalf("downgrade not recorded after the first command: reason=%q ok=%v", reason, ok)
+	}
+
+	echoWorkspaceHealth(t, ws)
+	echoWorkspaceHealth(t, ws)
+
+	if got := backend.attempts(); got != first {
+		t.Fatalf("backend attempts rose from %d to %d across two later commands; a recorded downgrade must skip the confine attempt", first, got)
+	}
+}
+
 func TestConfinementDowngrade_NilRecordIsSafe(t *testing.T) {
 	var d *confinementDowngrade
 	if got := d.record("boom"); got != "" {
