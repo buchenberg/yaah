@@ -191,6 +191,40 @@ func TestApprovalMiddleware_NilClassifyIsInert(t *testing.T) {
 	}
 }
 
+// TestApprovalMiddleware_ModeWithheldNamesTheMode pins that a plan-mode denial
+// does not claim an MCP origin policy caused it. The two are different
+// promises, and the false cause sent callers to fix a policy they do not
+// control (review finding).
+func TestApprovalMiddleware_ModeWithheldNamesTheMode(t *testing.T) {
+	m := &ApprovalMiddleware{
+		mode:     "allow",
+		classify: func(name, args string) GateDecision { return GateWithheld },
+		approve: func(_ string, name, args string) bool {
+			t.Fatal("GateWithheld must not consult the user")
+			return false
+		},
+		emitDeny: func(name, args, errMsg string) {},
+	}
+	msg := &types.Message{ToolCalls: []types.ToolCall{{ID: "1", Function: types.ToolCallFn{Name: "git"}}}}
+	step := &Step{}
+	if _, err := m.PostModel(context.Background(), msg, step); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.ToolCalls) != 0 {
+		t.Error("withheld call survived")
+	}
+	if len(step.SynthesizedResults) != 1 {
+		t.Fatalf("expected 1 synthesized result, got %d", len(step.SynthesizedResults))
+	}
+	got := step.SynthesizedResults[0].Content
+	if !contains(got, "withheld in plan mode") {
+		t.Errorf("denial does not name plan mode: %q", got)
+	}
+	if contains(got, "mcp_approval") {
+		t.Errorf("denial blames an MCP origin policy: %q", got)
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (len(sub) == 0 ||
 		func() bool {

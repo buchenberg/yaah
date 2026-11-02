@@ -92,7 +92,12 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 	})
 
 	start := time.Now()
-	allowed := l.allowsTool(d.call.Function.Name)
+	// One admission decision for the whole dispatch: the advertised tool
+	// level plus plan mode's per-call danger check. The approval middleware
+	// asks the same questions, but it is optional
+	// (middleware.disabled: [approval]) — a mode that promises mutating
+	// actions are withheld cannot be switched off by config.
+	allowed, refusal := l.admitTool(d.call.Function.Name, d.call.Function.Arguments)
 
 	runCtx := ctx
 	var toolSpan trace.Span
@@ -133,7 +138,7 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 	if allowed {
 		res, err = l.Registry.Execute(runCtx, d.call.Function.Name, d.call.Function.Arguments)
 	} else {
-		err = fmt.Errorf("tool %q is not available at the current tool level", d.call.Function.Name)
+		err = refusal
 	}
 
 	if allowed && d.isDelegate && !d.isBackground {

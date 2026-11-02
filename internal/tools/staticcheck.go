@@ -47,6 +47,48 @@ func (t *StaticcheckTool) Schema() json.RawMessage {
 	}`)
 }
 
+// vetExecFlags are the analyzer options that name an external program to run.
+// `go vet -vettool=<path>` executes <path> as an analysis driver, so a call
+// carrying one is a code-execution action rather than an inspection. The list
+// is short on purpose: every other option only tunes what an analyzer reports,
+// and the danger here is the process, not the option.
+var vetExecFlags = map[string]bool{"vettool": true}
+
+// IsDangerous reports whether the flags would execute an external program.
+//
+// staticcheck is in plan mode's inspection set because analyzing writes
+// nothing, but passing `-vettool` turns `go vet` into a launcher for a
+// caller-supplied binary. Classifying that as dangerous keeps the path denied
+// in plan mode (the gate resolves danger to a mode-level withholding) and
+// approval-gated in build mode, exactly like the mutating git actions.
+func (t *StaticcheckTool) IsDangerous(argsJSON string) bool {
+	var params staticcheckParams
+	if err := json.Unmarshal([]byte(argsJSON), &params); err != nil {
+		// Unparseable arguments are not an execution path: Execute rejects
+		// them before it builds a command, so fail-open here is harmless
+		// and matches the git tool's classifier.
+		return false
+	}
+	for _, f := range params.Flags {
+		if vetExecFlag(f) {
+			return true
+		}
+	}
+	return false
+}
+
+// vetExecFlag reports whether one analyzer flag names a program to execute.
+// go's flag parser accepts `-vettool=p`, `--vettool=p` and the separated
+// `-vettool p`, so the name is compared after dropping the dash prefix and any
+// attached value — catching a spelling variant is the whole point.
+func vetExecFlag(flag string) bool {
+	name := strings.TrimLeft(flag, "-")
+	if i := strings.IndexByte(name, '='); i >= 0 {
+		name = name[:i]
+	}
+	return vetExecFlags[name]
+}
+
 type staticcheckParams struct {
 	Packages  string   `json:"packages"`
 	Analyzers string   `json:"analyzers"`

@@ -8,6 +8,37 @@ import (
 	"testing"
 )
 
+// TestStaticcheckTool_FlagsThatExecuteAreDangerous pins the review finding:
+// the tool forwards model-supplied flags to the analyzers, and `-vettool=<path>`
+// makes `go vet` execute that binary. Plan mode now admits staticcheck because
+// analysis writes nothing, so the danger classifier — not the plan-mode
+// allowlist — is what keeps binary execution denied there.
+func TestStaticcheckTool_FlagsThatExecuteAreDangerous(t *testing.T) {
+	sc := NewStaticcheckTool()
+	tests := []struct {
+		name      string
+		args      string
+		dangerous bool
+	}{
+		{"plain run", `{"packages":"./..."}`, false},
+		{"analyzer choice", `{"packages":"./...","analyzers":"both"}`, false},
+		{"harmless flags", `{"packages":"./...","flags":["-tags=integration"]}`, false},
+		{"separated vettool", `{"packages":"./...","flags":["-vettool","/tmp/evil"]}`, true},
+		{"attached vettool", `{"packages":"./...","flags":["-vettool=/tmp/evil"]}`, true},
+		{"double dash vettool", `{"packages":"./...","flags":["--vettool=/tmp/evil"]}`, true},
+		// Unparseable arguments never reach an analyzer: Execute rejects them
+		// before building a command, so this is not an execution path.
+		{"unparseable args cannot execute", `not json`, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sc.IsDangerous(tt.args); got != tt.dangerous {
+				t.Errorf("IsDangerous(%s) = %v, want %v", tt.args, got, tt.dangerous)
+			}
+		})
+	}
+}
+
 func runStaticcheck(t *testing.T, respond func(ExecRequest) (ExecResult, error), args string) staticcheckResult {
 	t.Helper()
 	out, err := (&StaticcheckTool{WS: &fakeExecWorkspace{respond: respond}}).Execute(context.Background(), args)
