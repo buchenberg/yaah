@@ -67,6 +67,12 @@ func awaitAnswer[T any](ctx context.Context, ch <-chan T, gone <-chan struct{}, 
 		return v, true
 	case <-gone:
 	case <-ctx.Done():
+		// The run is over. Unlike the surface-gone and timeout cases below, a
+		// decision that landed at this instant must NOT be honored: allowing a
+		// call after the caller stopped waiting would act on behalf of a run
+		// nobody is watching.
+		var zero T
+		return zero, false
 	case <-timer.C:
 	}
 	// select chooses uniformly among ready cases, so a decision that landed
