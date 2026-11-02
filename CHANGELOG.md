@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.129.3](https://github.com/buchenberg/yaah/compare/v0.129.2...v0.129.3) (2026-11-02)
+
+
+### Bug Fixes
+
+* address remaining review findings (persistence, no-op switch, sandbox order, parity) ([958beaf](https://github.com/buchenberg/yaah/commit/958beafd041b067fe982131734143d5399394841))
+
 ## [0.129.2](https://github.com/buchenberg/yaah/compare/v0.129.1...v0.129.2) (2026-11-02)
 
 
