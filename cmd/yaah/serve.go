@@ -261,6 +261,15 @@ func (s *agentSession) runHeadless(ctx context.Context, prompt string) (string, 
 }
 
 func (s *agentSession) runHeadlessLocked(ctx context.Context, prompt string) (string, types.Usage, error) {
+	s.mu.Lock()
+	s.runInFlight = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.runInFlight = false
+		s.mu.Unlock()
+	}()
+
 	compactProvider, compactModel, fallbackProvider, fallbackModel, fallbackProviderName := s.auxProviders()
 
 	// Snapshot session state under the mutex, mirroring runPrompt's pattern.

@@ -212,6 +212,10 @@ type agentSession struct {
 	// out-of-workspace access from inside a tool call — but are not handed the
 	// run context. Nil when no run is active.
 	runCtx context.Context
+	// runInFlight is true while any foreground run is executing — interactive
+	// RunPrompt or headless serve/ACP. It gates the background-jobs usage
+	// publish, which is only consistent when no run is folding totals.
+	runInFlight bool
 
 	cwd string
 
@@ -591,11 +595,13 @@ func (s *agentSession) RunPrompt(ctx context.Context, prompt string) (string, bo
 		s.mu.Lock()
 		s.runCancel = cancel
 		s.runCtx = runCtx
+		s.runInFlight = true
 		s.mu.Unlock()
 		defer func() {
 			s.mu.Lock()
 			s.runCancel = nil
 			s.runCtx = nil
+			s.runInFlight = false
 			s.mu.Unlock()
 			cancel()
 		}()

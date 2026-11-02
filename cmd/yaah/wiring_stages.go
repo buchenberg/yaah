@@ -1224,7 +1224,7 @@ func assemble(lc *sessionConfig, opts SessionOptions, ws *workspaceStage, tr *to
 		// onSubUsage), so an Agent = total - sub split would under-count. The
 		// run-end publish covers the foreground; a background completion
 		// between runs is consistent and safe to publish immediately.
-		if sess.runCtx == nil {
+		if !sess.runInFlight {
 			sess.publishUsageLocked()
 		}
 		sess.mu.Unlock()
