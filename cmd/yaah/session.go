@@ -529,6 +529,14 @@ func (s *agentSession) SetMode(mode string) error {
 		return fmt.Errorf("unknown session mode %q (available: %s, %s)", mode, acpModeBuild, acpModePlan)
 	}
 	s.mu.Lock()
+	// A switch to the mode the session is already in is not a switch: it must
+	// not announce, persist, or report one. The comparison is on the mode the
+	// session REPORTS (Mode() normalizes the empty storage form to build), so
+	// switching a session that never switched to build is a no-op too.
+	if sameMode(mode, s.mode) {
+		s.mu.Unlock()
+		return nil
+	}
 	s.mode = mode
 	db, sessionID := s.db, s.sessionID
 	s.mu.Unlock()
@@ -553,7 +561,7 @@ func (s *agentSession) SetMode(mode string) error {
 	// is observable from inside the conversation rather than only from the
 	// next prompt's directive. dispatchEvent buffers it for views that
 	// cannot take writes between runs (REPL, ACP).
-	s.dispatchEvent(&agent.ModeChangedEvent{Mode: mode, Notice: modeChangeNotice(mode)})
+	s.dispatchEvent(&agent.ModeChangedEvent{Mode: mode, Notice: s.modeChangeNotice(mode)})
 	return nil
 }
 

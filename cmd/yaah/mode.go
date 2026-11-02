@@ -52,12 +52,10 @@ func (s *agentSession) toolsLevelForMode(mode string) agent.ToolsLevel {
 // switch is announced in-band — the absence of a plan directive is no longer
 // the only cue that build mode is active.
 func (s *agentSession) modeDirective(mode string) string {
-	level := agent.FullTools
-	label := modeLabel(acpModeBuild)
-	if mode == planModeSpec.Mode {
-		level = planModeSpec.ToolsLevel
-		label = modeLabel(planModeSpec.Mode)
-	}
+	// Level from the same derivation the loop's gate uses, so the directive
+	// cannot describe a regime this session does not enforce.
+	level := s.toolsLevelForMode(mode)
+	label := modeLabel(mode)
 	return prompts.InjectAfterIdentity(s.mainPrompt, []string{
 		label + " mode is active: " + regimeSentence(level),
 		"Only the user switches modes: /plan and /build in the TUI and REPL, the web palette, or ACP session/set_mode. You may ask for a switch with the question tool or in your reply.",
@@ -68,13 +66,11 @@ func (s *agentSession) modeDirective(mode string) string {
 // modeChangeNotice renders the one-line in-band notice announcing a switch to
 // mode. It names the new mode and the regime that mode enforces, and takes the
 // regime sentence from regimeSentence so the notice and the directive can never
-// describe different tool surfaces.
-func modeChangeNotice(mode string) string {
-	level := agent.FullTools
-	if mode == planModeSpec.Mode {
-		level = planModeSpec.ToolsLevel
-	}
-	return "Mode changed to " + modeLabel(mode) + " — " + regimeSentence(level)
+// describe different tool surfaces. The tool level comes from
+// toolsLevelForMode — the same derivation the loop's gate uses — rather than a
+// second copy of the plan-mode condition.
+func (s *agentSession) modeChangeNotice(mode string) string {
+	return "Mode changed to " + modeLabel(mode) + " — " + regimeSentence(s.toolsLevelForMode(mode))
 }
 
 // regimeSentence states what the tool gate actually enforces at level. It is
@@ -90,8 +86,22 @@ func regimeSentence(level agent.ToolsLevel) string {
 // modeLabel renders a mode name as the directive's opening word. The empty
 // mode is build mode.
 func modeLabel(mode string) string {
-	if mode == "" {
-		mode = acpModeBuild
-	}
+	mode = modeOrBuild(mode)
 	return strings.ToUpper(mode[:1]) + mode[1:]
+}
+
+// modeOrBuild resolves a stored mode's zero value to the mode it means: the
+// empty string is build's storage form, not a third mode.
+func modeOrBuild(mode string) string {
+	if mode == "" {
+		return acpModeBuild
+	}
+	return mode
+}
+
+// sameMode reports whether two mode values denote the same regime. A mode is a
+// selection, and the empty storage form and build are one selection, so
+// switching a session that never switched to build is not a change.
+func sameMode(a, b string) bool {
+	return modeOrBuild(a) == modeOrBuild(b)
 }

@@ -69,25 +69,102 @@ func TestCodeOrganizationNamesEveryInternalPackage(t *testing.T) {
 	}
 }
 
+// planModeSection returns features.md's Plan mode section: from the heading to
+// the next "## " heading, or to the end of the page when Plan mode is the last
+// section. The bound is checked rather than assumed — a restructure that moves
+// the section must fail here, because the checks below read the section as the
+// inventory.
+func planModeSection(t *testing.T, doc string) string {
+	t.Helper()
+	const heading = "## Plan mode"
+	start := strings.Index(doc, heading)
+	if start < 0 {
+		t.Fatalf("features.md no longer has a %q section", heading)
+	}
+	rest := doc[start+len(heading):]
+	end := strings.Index(rest, "\n## ")
+	if end < 0 {
+		// No following section: Plan mode is the page's last one, so the tail
+		// is the section. Assert that instead of assuming it — any other
+		// heading level in the tail means the boundary inference missed and
+		// the inventory scan would be reading someone else's prose.
+		if m := headingLine.FindString(rest); m != "" {
+			t.Fatalf("features.md %q section is no longer bounded: %q follows it, so the section boundary must be updated", heading, m)
+		}
+		end = len(rest)
+	}
+	section := rest[:end]
+	if strings.TrimSpace(section) == "" {
+		t.Fatalf("features.md %q section is empty", heading)
+	}
+	return section
+}
+
+// planModeInventory returns the tool names in the Plan mode section's
+// inventory — the run of backticked names introduced by the "inspection set"
+// marker and terminated by the next blank line. Reading that paragraph rather
+// than the whole section is what lets the reverse check below be honest: the
+// section also backticks git subcommands, flags and file names, none of which
+// are tools.
+func planModeInventory(t *testing.T, section string) []string {
+	t.Helper()
+	const marker = "narrows the toolset to the **inspection set**"
+	start := strings.Index(section, marker)
+	if start < 0 {
+		t.Fatalf("features.md Plan mode section no longer introduces the inventory with %q", marker)
+	}
+	rest := section[start:]
+	gap := strings.Index(rest, "\n\n")
+	if gap < 0 {
+		t.Fatalf("features.md Plan mode inventory has no blank line after %q", marker)
+	}
+	list := strings.TrimLeft(rest[gap:], "\n")
+	if end := strings.Index(list, "\n\n"); end >= 0 {
+		list = list[:end]
+	}
+	names := make([]string, 0, len(agent.InspectionSetNames()))
+	for _, m := range backtickedName.FindAllStringSubmatch(list, -1) {
+		names = append(names, m[1])
+	}
+	if len(names) == 0 {
+		t.Fatalf("features.md Plan mode inventory paragraph has no backticked tool names: %q", list)
+	}
+	return names
+}
+
+var (
+	headingLine    = regexp.MustCompile(`(?m)^#{1,6} [^\n]*`)
+	backtickedName = regexp.MustCompile("`([a-z_]+)`")
+)
+
 // TestFeaturesPlanModeNamesInspectionSet pins the Plan mode section of
 // features.md to readOnlyToolNames, the code-side source of truth for the
-// inspection set. The prose inventory drifted from the code in the 2026-06
-// audit; this keeps the tool list and the vocabulary from drifting again.
+// inspection set — in both directions. The prose inventory drifted from the
+// code in the 2026-06 audit (a name it dropped, and names it invented), so the
+// check keeps both from drifting again: every tool in the code's set must be
+// named, and every name the prose lists must be a tool in the set.
 func TestFeaturesPlanModeNamesInspectionSet(t *testing.T) {
 	doc := read(t, "../../docs/features.md")
-	start := strings.Index(doc, "## Plan mode")
-	if start < 0 {
-		t.Fatalf("features.md no longer has a ## Plan mode section")
-	}
-	section := doc[start:]
-	if next := strings.Index(section, "\n## "); next >= 0 {
-		section = section[:next]
-	}
-	for _, name := range agent.InspectionSetNames() {
+	section := planModeSection(t, doc)
+
+	names := agent.InspectionSetNames()
+	for _, name := range names {
 		if !strings.Contains(section, "`"+name+"`") {
-			t.Errorf("features.md Plan mode section does not name %q (inspection set: %v)", name, agent.InspectionSetNames())
+			t.Errorf("features.md Plan mode section does not name %q (inspection set: %v)", name, names)
 		}
 	}
+
+	inSet := make(map[string]bool, len(names))
+	for _, name := range names {
+		inSet[name] = true
+	}
+	inventory := planModeInventory(t, section)
+	for _, name := range inventory {
+		if !inSet[name] {
+			t.Errorf("features.md Plan mode inventory names %q, which is not in the inspection set %v (readOnlyToolNames, internal/agent/tools.go)", name, names)
+		}
+	}
+
 	if strings.Contains(section, "read-only tools") {
 		t.Errorf("features.md Plan mode section still says %q; the vocabulary is now \"inspection set\"", "read-only tools")
 	}

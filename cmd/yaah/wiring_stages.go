@@ -1,6 +1,6 @@
-// This file holds the six construction stages newAgentSessionWithOptions runs,
-// in order: loadConfig, buildWorkspace, buildToolRegistry, buildMCPSkills,
-// buildLoopInfra, assemble.
+// This file holds the seven construction stages newAgentSessionWithOptions
+// runs, in order: loadConfig, buildWorkspace, buildToolRegistry,
+// buildContainment, buildMCPSkills, buildLoopInfra, assemble.
 //
 // The split is mechanical. Every statement, error message, warning, default and
 // cleanup path was moved verbatim out of the single function body that used to
@@ -97,8 +97,9 @@ func loadConfig(opts SessionOptions, skipOtel bool) (*sessionConfig, error) {
 	return out, nil
 }
 
-// workspaceStage is what buildWorkspace produces: the session's working
-// directory and the one containment substrate that applies to it.
+// workspaceStage is what buildWorkspace and buildContainment produce: the
+// session's working directory, the deny patterns, and the one containment
+// substrate that applies to it (filled in by buildContainment).
 type workspaceStage struct {
 	cwd  string
 	deny []string
@@ -118,8 +119,9 @@ type workspaceStage struct {
 }
 
 // buildWorkspace resolves the session's working directory, rebuilds the
-// process-wide role registry over it, and installs the workspace containment
-// substrate. A containerd sandbox it starts stays the caller's to destroy.
+// process-wide role registry over it, and resolves the deny patterns the
+// substrate consumes. It starts nothing: the containment substrate is built by
+// buildContainment, after the tool registry and its gates have run.
 func buildWorkspace(cfg *config.Config, opts SessionOptions) (*workspaceStage, error) {
 	// cancelStart is set on every path, so the caller can defer it
 	// unconditionally.
@@ -164,11 +166,26 @@ func buildWorkspace(cfg *config.Config, opts SessionOptions) (*workspaceStage, e
 		st.deny = defaultWorkspaceDenyPatterns
 	}
 
+	return st, nil
+}
+
+// buildContainment installs the session's workspace containment substrate and
+// attaches it to the tool registry. It runs after buildToolRegistry rather than
+// inside buildWorkspace because starting a containerd sandbox is the one
+// expensive, externally visible side effect of a session build: doing it first
+// meant a registry or tool-gate failure created a container only to destroy it
+// again. Nothing earlier needs the substrate — the isolated/local split reads
+// the config, not the sandbox.
+//
+// Exactly one substrate is installed. A sandbox started here stays the
+// caller's to destroy: it is returned on the workspace stage, with the
+// cancelStart bound that releases its startup timeout.
+func buildContainment(cfg *config.Config, opts SessionOptions, ws *workspaceStage, tr *toolRegistryStage) error {
 	// Workspace containment. Exactly one substrate may be installed:
 	//
 	//   - containerd backend: the session's sandbox is constructed, image-
 	//     probed (D5), and created here, once per session. SetWorkspace
-	//     (after every registration, below) hands the registry the sandbox
+	//     (after every registration) hands the registry the sandbox
 	//     workspace. The host path validator must NOT also run — it would
 	//     install a local workspace over the registry's nil one, and the
 	//     two substrates must not race for tools.
@@ -180,13 +197,13 @@ func buildWorkspace(cfg *config.Config, opts SessionOptions) (*workspaceStage, e
 		// Create, and the contract exec all run under one generous
 		// bound (large enough for a first-run image pull).
 		startCtx, cancelStart := context.WithTimeout(context.Background(), workspaceSandboxStartTimeout)
-		st.cancelStart = cancelStart
+		ws.cancelStart = cancelStart
 		sessionSandbox, serr := tools.StartSessionSandbox(
-			startCtx, cfg.Workspace, tools.OpenContainerdWorkspaceSandbox, st.cwd, st.deny)
+			startCtx, cfg.Workspace, tools.OpenContainerdWorkspaceSandbox, ws.cwd, ws.deny)
 		if serr != nil {
-			return st, serr
+			return serr
 		}
-		st.sessionSandbox = sessionSandbox
+		ws.sessionSandbox = sessionSandbox
 		if opts.WorkspaceRoot != "" {
 			fmt.Fprintf(os.Stderr, "warning: --workspace %s has no effect: the workspace.backend containerd session is isolated from the host\n", opts.WorkspaceRoot)
 		}
@@ -201,14 +218,33 @@ func buildWorkspace(cfg *config.Config, opts SessionOptions) (*workspaceStage, e
 		allowHome := opts.AllowHomeAccess
 		var patterns []string
 		if opts.WorkspaceRoot != "" {
-			patterns = st.deny
+			patterns = ws.deny
 		} else {
 			allowHome = true
 		}
-		st.pathValidator = tools.NewPathValidator(opts.WorkspaceRoot, allowHome, patterns)
-		st.pathValidator.WorkDir = st.cwd
+		ws.pathValidator = tools.NewPathValidator(opts.WorkspaceRoot, allowHome, patterns)
+		ws.pathValidator.WorkDir = ws.cwd
+		// The local substrate's paths gate this registry directly. Exactly
+		// one substrate: the isolated backend instead hands the registry
+		// its workspace at the SetWorkspace gate, after every tool is
+		// registered.
+		tr.reg.SetPathValidator(ws.pathValidator)
 	}
-	return st, nil
+
+	// The accept seam (plan §2.3, D1): the single door changes leave the
+	// container through, registered only in isolated mode — in local mode
+	// the tools write the host directly and there is nothing to let out.
+	//
+	// The pointer is held because the effect sink cannot be attached here: the
+	// trace store, effect bus and root scope are all created further down. The
+	// registry holds the same pointer, so setting the field later reaches the
+	// registered tool — and doing it during wiring, before any turn can
+	// dispatch, means no call can observe the tool half-configured.
+	if ws.sessionSandbox != nil {
+		tr.applyOutTool = &tools.ApplyOutTool{Sandbox: ws.sessionSandbox, HostDir: ws.cwd}
+		tr.reg.Register(tr.applyOutTool)
+	}
+	return nil
 }
 
 // toolRegistryStage is what buildToolRegistry produces: the session's tool
@@ -294,28 +330,10 @@ func buildToolRegistry(cfg *config.Config, opts SessionOptions, ws *workspaceSta
 		}
 	}
 
-	// The local substrate buildWorkspace may have built gates paths for
-	// this registry. Exact one substrate: the isolated backend instead
-	// hands the registry its workspace at the SetWorkspace gate, after
-	// every tool is registered.
-	if ws.pathValidator != nil {
-		st.reg.SetPathValidator(ws.pathValidator)
-	}
-
-	// The accept seam (plan §2.3, D1): the single door changes leave the
-	// container through, registered only in isolated mode — in local mode
-	// the tools write the host directly and there is nothing to let out.
-	//
-	// The pointer is held because the effect sink cannot be attached here: the
-	// trace store, effect bus and root scope are all created further down. The
-	// registry holds the same pointer, so setting the field later reaches the
-	// registered tool — and doing it during wiring, before any turn can
-	// dispatch, means no call can observe the tool half-configured.
-	if ws.sessionSandbox != nil {
-		st.applyOutTool = &tools.ApplyOutTool{Sandbox: ws.sessionSandbox, HostDir: ws.cwd}
-		st.reg.Register(st.applyOutTool)
-	}
-
+	// The substrate is attached by buildContainment, which runs after this
+	// stage: it needs the registry (to hand it the path validator and to
+	// register the accept seam), but the sandbox's startup must not happen
+	// before the registry and its gates are known good.
 	db, err := memory.OpenDefault()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: db open failed, persistence disabled: %v\n", err)
@@ -548,7 +566,11 @@ type loopInfraStage struct {
 func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, ws *workspaceStage, tr *toolRegistryStage, mcps *mcpSkillsStage) (*loopInfraStage, error) {
 	st := &loopInfraStage{}
 
-	restored, err := restoreSession(tr.db, opts.ResumeSessionID, mcps.systemPrompt)
+	var restoreStore sessionRestoreStore
+	if tr.db != nil {
+		restoreStore = tr.db
+	}
+	restored, err := restoreSession(restoreStore, opts.ResumeSessionID, mcps.systemPrompt)
 	if err != nil {
 		return st, err
 	}
