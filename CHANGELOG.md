@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.129.6](https://github.com/buchenberg/yaah/compare/v0.129.5...v0.129.6) (2026-11-02)
+
+
+### Bug Fixes
+
+* **control,acp:** chain the run context through every wait, deny on cancel ([c9023a9](https://github.com/buchenberg/yaah/commit/c9023a91c882a04703083fd7bdc588fff41c3393))
+* **control:** chain the run context into the approval and question waits ([46837a1](https://github.com/buchenberg/yaah/commit/46837a1d508463425a7f774ce7ad89e636280820))
+* **tools:** address review findings on the containment downgrade ([8f93a9c](https://github.com/buchenberg/yaah/commit/8f93a9c01cb7379e58f3deb42b3381eb9f6aff36))
+* **tools:** let containment:auto degrade when the jail probe fails (yaah-1tkp.2) ([41924ff](https://github.com/buchenberg/yaah/commit/41924ff4746513b9c153fd19acdf7cb48a9a2a6a))
+* **tools:** stop re-attempting confinement once a downgrade is recorded ([de2d9f8](https://github.com/buchenberg/yaah/commit/de2d9f80de06e83c7afecdcd90125869f335294e))
+
+
+### Documentation
+
+* **tools:** correct the downgrade short-circuit rationale and test placement ([4d5e686](https://github.com/buchenberg/yaah/commit/4d5e6868e3de05042882de0a001eda50a61b148c))
+
+
+### Tests
+
+* **acp:** cover the elicitation context preference ([89174eb](https://github.com/buchenberg/yaah/commit/89174ebaf36485e4e31753a28dfe0978f6bc1803))
+* **acp:** pin the nil-caller-context fallback with a turn cancel ([218f208](https://github.com/buchenberg/yaah/commit/218f2080b89dfd1b2b07deae0d694ee57a3b248d))
+* **runner:** cover the post-run degraded confinement fact ([c57ba35](https://github.com/buchenberg/yaah/commit/c57ba358ea451279d911527d2cdd2c340fe155ce))
+
 ## [0.129.5](https://github.com/buchenberg/yaah/compare/v0.129.4...v0.129.5) (2026-11-02)
 
 
