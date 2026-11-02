@@ -533,16 +533,15 @@ const (
 
 // Tool kinds (session/update tool_call.kind).
 const (
-	KindRead       = "read"
-	KindEdit       = "edit"
-	KindDelete     = "delete"
-	KindMove       = "move"
-	KindSearch     = "search"
-	KindExecute    = "execute"
-	KindThink      = "think"
-	KindFetch      = "fetch"
-	KindSwitchMode = "switch_mode"
-	KindOther      = "other"
+	KindRead    = "read"
+	KindEdit    = "edit"
+	KindDelete  = "delete"
+	KindMove    = "move"
+	KindSearch  = "search"
+	KindExecute = "execute"
+	KindThink   = "think"
+	KindFetch   = "fetch"
+	KindOther   = "other"
 )
 
 // Plan entry priorities and statuses.
