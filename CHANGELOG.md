@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.129.5](https://github.com/buchenberg/yaah/compare/v0.129.4...v0.129.5) (2026-11-02)
+
+
+### Bug Fixes
+
+* **control:** bind prompt teardown at send, honor a raced answer ([b8f1539](https://github.com/buchenberg/yaah/commit/b8f1539560d4399d2f6ee9777ad4091cb36872b5))
+* **control:** give the TUI surface its own short delivery bound ([967a548](https://github.com/buchenberg/yaah/commit/967a5481eaac1ef6b6c63ad530a7b26910a0c459))
+* **models:** end the warm loop on a settled retry, and run it for the web too ([6840f71](https://github.com/buchenberg/yaah/commit/6840f718f820ef87be7bac20d5cb7b1643bdd3bf))
+
+
+### Code Refactoring
+
+* **control:** one shared control-plane bridge for question/approval/model-catalog ([ce6675d](https://github.com/buchenberg/yaah/commit/ce6675d8eb382aa82bc51975e9dcfdeee50026f1))
+* **control:** one shared control-plane bridge for question/approval/model-catalog ([cb1d28a](https://github.com/buchenberg/yaah/commit/cb1d28ae9a2c691504c1f4622b3cec7a6c4ea404))
+
 ## [0.129.4](https://github.com/buchenberg/yaah/compare/v0.129.3...v0.129.4) (2026-11-02)
 
 
