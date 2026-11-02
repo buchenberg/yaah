@@ -6,8 +6,8 @@
 // separately: two yaah processes each pay their own network round and offer
 // whatever their own provider endpoints answered.
 //
-// Discovery is one attempt per process, bounded by modelCatalogBudget. An attempt
-// that did not finish leaves the snapshot unsettled; a later read after
+// Discovery runs one attempt per budget window, bounded by modelCatalogBudget. An
+// attempt that did not finish leaves the snapshot unsettled; a later read after
 // modelCatalogRetry starts another one, so a provider that was slow at startup
 // does not stay missing for the life of the process.
 package yaah

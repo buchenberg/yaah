@@ -249,7 +249,10 @@ func TestWarmModelListRepublishesWhenDiscoveryLands(t *testing.T) {
 
 	ch := make(chan control.Msg, 4)
 	done := make(chan struct{})
-	go func() { defer close(done); warmModelList(ch, catalog) }()
+	go func() {
+		defer close(done)
+		warmModelList(catalog, func(snap modelSnapshot) { sendModelList(ch, snap) })
+	}()
 
 	first := <-ch
 	second := <-ch
@@ -268,5 +271,29 @@ func TestWarmModelListRepublishesWhenDiscoveryLands(t *testing.T) {
 	}
 	if extra := len(ch); extra != 0 {
 		t.Errorf("warm loop sent %d more lists after the catalog settled, want 0", extra)
+	}
+}
+
+// TestWarmModelListStopsWhenRetrySettles pins the loop's exit condition. A retry
+// that finishes discovery without changing the ids is still terminal: the earlier
+// shape only adopted the new snapshot when the ids changed, so a settled catalog
+// kept the loop sleeping through the remaining attempts.
+func TestWarmModelListStopsWhenRetrySettles(t *testing.T) {
+	var calls atomic.Int32
+	catalog := testModelCatalog(func(context.Context) (modelSnapshot, bool) {
+		// Same models both times; the first attempt is cut short, the second
+		// settles with an identical list.
+		return modelSnapshot{IDs: []string{"fast/one"}}, calls.Add(1) > 1
+	})
+	catalog.retry = time.Millisecond // a third attempt would show up as a third call
+
+	ch := make(chan control.Msg, 4)
+	warmModelList(catalog, func(snap modelSnapshot) { sendModelList(ch, snap) })
+
+	if got := calls.Load(); got != 2 {
+		t.Errorf("discovery attempts = %d, want 2 (the settling retry must end the loop)", got)
+	}
+	if got := len(ch); got != 1 {
+		t.Errorf("lists delivered = %d, want 1 — an unchanged snapshot is not re-sent", got)
 	}
 }

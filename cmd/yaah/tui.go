@@ -118,7 +118,7 @@ func runTUI() error {
 	// unreachable provider endpoint never delays TUI launch; the control
 	// channel is buffered and the control loop starts inside app.Run().
 	catalog := newModelCatalog(cfg, nil)
-	go warmModelList(controlCh, catalog)
+	go warmModelList(catalog, func(snap modelSnapshot) { sendModelList(controlCh, snap) })
 
 	app.OnModelSelect = func(model string) {
 		parts := strings.SplitN(model, "/", 2)
@@ -212,25 +212,32 @@ func runTUI() error {
 // process start runs discovery again from scratch.
 const modelListAttempts = 3
 
-// warmModelList publishes the picker's model list and keeps it honest.
+// warmModelList publishes the model catalog and keeps it honest.
 //
 // The first Load is bounded by the catalog's warm budget, so a provider that
-// misses that window is absent from the snapshot — and since nothing else in a
-// TUI process re-reads the catalog, its models would stay absent for the life of
-// the process. While the snapshot is unsettled, re-read it after the catalog's
-// cooldown and re-send the picker's list when it grew. An earlier, smaller list
-// is left on screen untouched: a settled snapshot never shrinks it.
-func warmModelList(ch chan<- control.Msg, catalog *modelCatalog) {
+// misses that window is absent from the snapshot. While the snapshot is
+// unsettled, re-read it after the catalog's cooldown and deliver it again when it
+// changed, so a provider slower than the budget does not stay absent for the life
+// of the process.
+//
+// deliver is called once per snapshot worth showing. A caller pushing to a lane
+// that can be replaced (the web's SSE stream) resolves the current lane inside
+// deliver, so a retry lands wherever the client is by the time it fires.
+func warmModelList(catalog *modelCatalog, deliver func(modelSnapshot)) {
 	ctx := context.Background()
 	snap := catalog.Load(ctx)
-	sendModelList(ch, snap)
+	deliver(snap)
 	for attempt := 0; attempt < modelListAttempts && !snap.Settled; attempt++ {
 		time.Sleep(catalog.retry)
 		next := catalog.Current(ctx)
-		if slices.Equal(next.IDs, snap.IDs) {
-			continue
+		if !slices.Equal(next.IDs, snap.IDs) {
+			deliver(next)
 		}
-		sendModelList(ch, next)
+		// Adopt the result either way: a retry that finished discovery without
+		// changing the ids is still terminal, and keeping the old snapshot would
+		// sleep through the remaining attempts for nothing. A settled snapshot is
+		// authoritative, so it may replace the shown list even when the provider
+		// now offers fewer models.
 		snap = next
 	}
 }

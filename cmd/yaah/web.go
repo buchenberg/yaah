@@ -288,15 +288,14 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	// can offer model switching without blocking startup, and push it to a
 	// client that connected before discovery settled.
 	ws.catalog = newModelCatalog(sess.cfg, nil)
-	go func() {
-		snap := ws.catalog.Load(context.Background())
+	go warmModelList(ws.catalog, func(snap modelSnapshot) {
 		ws.mu.Lock()
 		v := ws.view
 		ws.mu.Unlock()
 		if v != nil {
 			v.write(marshalWire(sseWireEvent{Type: "ctrl.models", Models: snap.IDs, Providers: snap.ProviderNames}))
 		}
-	}()
+	})
 
 	// One shared bridge for questions and approvals (internal/control);
 	// forwardCtrl in web_view.go turns the messages into SSE dialogs and routes
