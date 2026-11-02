@@ -118,10 +118,10 @@ func canonicalStoredCwd(cwd string) string {
 // CPU and make tview input sluggish on Windows). When skipOtel is true,
 // OTel exporters are not initialised.
 //
-// The body is the six construction stages in order (wiring_stages.go:
-// loadConfig, buildWorkspace, buildToolRegistry, buildMCPSkills,
-// buildLoopInfra, assemble) plus the startup ownership guard that releases a
-// partially-built session. Every resource a stage acquires is returned to this
+// The body is the seven construction stages in order (wiring_stages.go:
+// loadConfig, buildWorkspace, buildToolRegistry, buildContainment,
+// buildMCPSkills, buildLoopInfra, assemble) plus the startup ownership guard
+// that releases a partially-built session. Every resource a stage acquires is returned to this
 // function rather than cleaned up inside the stage, so the guard can close it
 // no matter which later stage failed.
 func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*agentSession, error) {
@@ -175,10 +175,25 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	}()
 
 	ws, err = buildWorkspace(lc.cfg, opts)
+	if err != nil {
+		return nil, err
+	}
+	if toolsStage, err = buildToolRegistry(lc.cfg, opts, ws); err != nil {
+		return nil, err
+	}
+	// The containment substrate comes after the registry and its gates: starting
+	// a containerd sandbox is the one expensive, externally visible side effect
+	// of a session build, so a failed registry or gate build must not create a
+	// container only to destroy it. buildContainment installs exactly one
+	// substrate and hands it to the registry.
+	err = buildContainment(lc.cfg, opts, ws, toolsStage)
 	// The sandbox startup bound lives exactly as long as the build did when
-	// this was one function body — including the failing-startup path, where
-	// the original's defer still cancelled it.
-	defer ws.cancelStart()
+	// this was one function body, including the failing-startup path, where the
+	// original's defer still cancelled it. Guarded: a (nil, err) return from a
+	// stage must not panic here, and ws is non-nil on every path they return.
+	if ws != nil {
+		defer ws.cancelStart()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -202,9 +217,6 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		}()
 	}
 
-	if toolsStage, err = buildToolRegistry(lc.cfg, opts, ws); err != nil {
-		return nil, err
-	}
 	if mcpStage, err = buildMCPSkills(lc.cfg, opts, ws, toolsStage, skipMCP); err != nil {
 		return nil, err
 	}

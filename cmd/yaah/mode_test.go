@@ -189,19 +189,19 @@ func TestModeChangeNotice(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := modeChangeNotice(tc.mode)
+			got := (&agentSession{}).modeChangeNotice(tc.mode)
 			for _, want := range tc.want {
 				if !strings.Contains(got, want) {
-					t.Errorf("modeChangeNotice(%q) = %q; want %q", tc.mode, got, want)
+					t.Errorf("(&agentSession{}).modeChangeNotice(%q) = %q; want %q", tc.mode, got, want)
 				}
 			}
 			for _, deny := range tc.deny {
 				if strings.Contains(got, deny) {
-					t.Errorf("modeChangeNotice(%q) = %q; must not contain %q", tc.mode, got, deny)
+					t.Errorf("(&agentSession{}).modeChangeNotice(%q) = %q; must not contain %q", tc.mode, got, deny)
 				}
 			}
-			if again := modeChangeNotice(tc.mode); again != got {
-				t.Errorf("modeChangeNotice(%q) is not deterministic: %q vs %q", tc.mode, got, again)
+			if again := (&agentSession{}).modeChangeNotice(tc.mode); again != got {
+				t.Errorf("(&agentSession{}).modeChangeNotice(%q) is not deterministic: %q vs %q", tc.mode, got, again)
 			}
 		})
 	}
@@ -217,8 +217,8 @@ func TestModeChangeNotice_ReusesRegimeSentence(t *testing.T) {
 			level = planModeSpec.ToolsLevel
 		}
 		want := "Mode changed to " + modeLabel(mode) + " — " + regimeSentence(level)
-		if got := modeChangeNotice(mode); got != want {
-			t.Errorf("modeChangeNotice(%q) = %q; want %q", mode, got, want)
+		if got := (&agentSession{}).modeChangeNotice(mode); got != want {
+			t.Errorf("(&agentSession{}).modeChangeNotice(%q) = %q; want %q", mode, got, want)
 		}
 	}
 }
@@ -246,8 +246,8 @@ func TestSetModeDispatchesModeChangedEvent(t *testing.T) {
 	if evt.Notice == "" {
 		t.Fatal("event Notice is empty; the views render it verbatim")
 	}
-	if evt.Notice != modeChangeNotice(acpModePlan) {
-		t.Errorf("event Notice = %q; want %q", evt.Notice, modeChangeNotice(acpModePlan))
+	if evt.Notice != (&agentSession{}).modeChangeNotice(acpModePlan) {
+		t.Errorf("event Notice = %q; want %q", evt.Notice, (&agentSession{}).modeChangeNotice(acpModePlan))
 	}
 	for _, want := range []string{"Plan", "withheld"} {
 		if !strings.Contains(evt.Notice, want) {
