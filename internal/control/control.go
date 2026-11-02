@@ -7,6 +7,11 @@
 //
 // Extracting these from internal/types breaks the types → todo dependency,
 // allowing the provider wire-format package to remain dependency-free.
+//
+// bridge.go, question.go and approval.go carry the delivery policy those
+// consumers share — how long a prompt may take to be accepted, how long the
+// user may take to answer it, and what a surface that cannot ask falls back to
+// — so the TUI, the web UI and ACP cannot each re-derive (and drift from) it.
 package control
 
 import (
@@ -73,6 +78,10 @@ func (*Question) marker() {}
 
 // Approval carries a tool approval prompt.
 type Approval struct {
+	// CallID is the provider's tool_call id for the call awaiting a decision,
+	// so a surface can correlate the prompt with the tool row it belongs to.
+	// Empty when the ask carries no call (an out-of-workspace path decision).
+	CallID    string
 	Name      string
 	Args      string
 	ApproveCh chan<- bool
