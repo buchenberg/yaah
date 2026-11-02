@@ -7,6 +7,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/control"
@@ -115,14 +116,9 @@ func runTUI() error {
 
 	// Warm the shared model catalog in the background so a slow or
 	// unreachable provider endpoint never delays TUI launch; the control
-	// channel is buffered and the control loop starts inside app.Run(). The
-	// picker's contents are the very snapshot the web palette and ACP's model
-	// picker read.
+	// channel is buffered and the control loop starts inside app.Run().
 	catalog := newModelCatalog(cfg, nil)
-	go func() {
-		snap := catalog.Load(context.Background())
-		sendCtrlMsg(controlCh, nil, &control.ModelList{Models: snap.IDs, ProviderNames: snap.ProviderNames}, tuiSendTimeout)
-	}()
+	go warmModelList(controlCh, catalog)
 
 	app.OnModelSelect = func(model string) {
 		parts := strings.SplitN(model, "/", 2)
@@ -209,4 +205,37 @@ func runTUI() error {
 	}()
 
 	return app.Run()
+}
+
+// modelListAttempts bounds how many discovery retries the warm loop runs. A
+// provider that never answers is not worth a session-long probe: the next
+// process start runs discovery again from scratch.
+const modelListAttempts = 3
+
+// warmModelList publishes the picker's model list and keeps it honest.
+//
+// The first Load is bounded by the catalog's warm budget, so a provider that
+// misses that window is absent from the snapshot — and since nothing else in a
+// TUI process re-reads the catalog, its models would stay absent for the life of
+// the process. While the snapshot is unsettled, re-read it after the catalog's
+// cooldown and re-send the picker's list when it grew. An earlier, smaller list
+// is left on screen untouched: a settled snapshot never shrinks it.
+func warmModelList(ch chan<- control.Msg, catalog *modelCatalog) {
+	ctx := context.Background()
+	snap := catalog.Load(ctx)
+	sendModelList(ch, snap)
+	for attempt := 0; attempt < modelListAttempts && !snap.Settled; attempt++ {
+		time.Sleep(catalog.retry)
+		next := catalog.Current(ctx)
+		if slices.Equal(next.IDs, snap.IDs) {
+			continue
+		}
+		sendModelList(ch, next)
+		snap = next
+	}
+}
+
+func sendModelList(ch chan<- control.Msg, snap modelSnapshot) {
+	msg := &control.ModelList{Models: snap.IDs, ProviderNames: snap.ProviderNames}
+	sendCtrlMsg(ch, nil, msg, tuiSendTimeout)
 }

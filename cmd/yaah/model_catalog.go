@@ -1,7 +1,15 @@
-// model_catalog.go holds the one model-catalog cache the model pickers share.
-// Discovery runs once per process: the TUI picker, the web command palette and
-// ACP's session/set_config_option all read the same snapshot, so no surface can
-// offer a model another one lacks — and none of them re-runs the network round.
+// model_catalog.go holds the per-process model catalog the model pickers share.
+//
+// One process builds one catalog — the TUI, the web server or ACP, whichever one
+// it hosts — and every picker that process offers reads the same snapshot, so
+// none of them can offer a model another one lacks. Separate processes discover
+// separately: two yaah processes each pay their own network round and offer
+// whatever their own provider endpoints answered.
+//
+// Discovery is one attempt per process, bounded by modelCatalogBudget. An attempt
+// that did not finish leaves the snapshot unsettled; a later read after
+// modelCatalogRetry starts another one, so a provider that was slow at startup
+// does not stay missing for the life of the process.
 package yaah
 
 import (
@@ -43,6 +51,11 @@ const (
 type modelSnapshot struct {
 	IDs           []string
 	ProviderNames map[string]string
+
+	// Settled reports that the network phase finished inside the budget. A
+	// surface that pushes this snapshot to a picker uses it to decide whether
+	// another read later could find more models than the ones it is showing.
+	Settled bool
 }
 
 // modelCatalog is the process-lifetime model catalog behind every picker.
@@ -175,6 +188,7 @@ func (c *modelCatalog) refresh(done chan struct{}) {
 	// caller whose wait was abandoned must not leave the catalog stuck at the
 	// static subset for the rest of the process.
 	c.mu.Lock()
+	snap.Settled = complete
 	c.snap = snap
 	c.settled = complete
 	c.inflight = nil
@@ -224,10 +238,12 @@ func (c *modelCatalog) discover(ctx context.Context) (modelSnapshot, bool) {
 	return snap, true
 }
 
-// newACPModelCatalog builds the process-lifetime catalog handed to the ACP
-// server. Discovery reuses the cache behind the TUI picker and the web command
-// palette (the shared modelCatalog), so ACP offers exactly the models those
-// surfaces offer rather than a second, drifting code path.
+// newACPModelCatalog builds the catalog handed to the ACP server. It is the same
+// modelCatalog type, with the same discovery rules, that the TUI picker and the
+// web command palette run — so ACP offers models the way those surfaces do
+// rather than through a second, drifting code path. The instance itself belongs
+// to this process: `yaah acp` hosts no other surface, and a separate `yaah tui`
+// or `yaah web` discovers independently.
 //
 // A config that cannot be loaded, or that declares no providers, disables the
 // feature: the catalog is nil, which the ACP server treats as "no model

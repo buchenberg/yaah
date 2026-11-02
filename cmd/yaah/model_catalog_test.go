@@ -2,11 +2,13 @@ package yaah
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/control"
 )
 
 // testModelCatalog builds a modelCatalog whose discovery phase is a test stub.
@@ -228,5 +230,43 @@ func TestModelCatalogDisabledIsQuiet(t *testing.T) {
 		if got := (&acpModelCatalog{catalog: catalog}).Options(context.Background()); len(got) != 0 {
 			t.Errorf("%s: ACP options = %#v, want none", name, got)
 		}
+	}
+}
+
+// TestWarmModelListRepublishesWhenDiscoveryLands pins the TUI's warm loop: a
+// snapshot that discovery cut short must not be the picker's last word. The
+// first attempt misses the budget, the retry finds the slow provider's model,
+// and the picker is re-sent the larger list.
+func TestWarmModelListRepublishesWhenDiscoveryLands(t *testing.T) {
+	var calls atomic.Int32
+	catalog := testModelCatalog(func(context.Context) (modelSnapshot, bool) {
+		if calls.Add(1) == 1 {
+			return modelSnapshot{IDs: []string{"fast/one"}}, false
+		}
+		return modelSnapshot{IDs: []string{"fast/one", "slow/two"}}, true
+	})
+	catalog.retry = time.Millisecond
+
+	ch := make(chan control.Msg, 4)
+	done := make(chan struct{})
+	go func() { defer close(done); warmModelList(ch, catalog) }()
+
+	first := <-ch
+	second := <-ch
+	<-done // settles after the retry, so no further attempt is made
+
+	firstList, ok := first.(*control.ModelList)
+	if !ok {
+		t.Fatalf("first message = %T, want *control.ModelList", first)
+	}
+	if got := strings.Join(firstList.Models, ","); got != "fast/one" {
+		t.Errorf("first list = %q, want the truncated snapshot", got)
+	}
+	secondList := second.(*control.ModelList)
+	if got := strings.Join(secondList.Models, ","); got != "fast/one,slow/two" {
+		t.Errorf("second list = %q, want the completed snapshot", got)
+	}
+	if extra := len(ch); extra != 0 {
+		t.Errorf("warm loop sent %d more lists after the catalog settled, want 0", extra)
 	}
 }
