@@ -74,5 +74,3 @@
 sync:
     remote: buchenberg/yaah
 
-# remote: "git+https://github.com/buchenberg/yaah.git"
-
