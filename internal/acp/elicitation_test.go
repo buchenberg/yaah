@@ -75,15 +75,17 @@ func TestElicitAnswer_PrefersCallerContext(t *testing.T) {
 	if msg := h.recvRequest(t, "elicitation/create"); msg.ID == nil {
 		t.Fatal("elicitation/create carried no id")
 	}
+	completed := false
 	var elapsed time.Duration
 	for i := 0; i < 32; i++ {
 		msg := h.recv(t)
 		if msg.Method == "" && msg.ID != nil {
 			elapsed = time.Since(start)
+			completed = true
 			break
 		}
 	}
-	if elapsed == 0 {
+	if !completed {
 		t.Fatal("prompt never completed after the caller context expired")
 	}
 	if elapsed > 1500*time.Millisecond {
@@ -96,14 +98,16 @@ func TestElicitAnswer_PrefersCallerContext(t *testing.T) {
 	}
 }
 
-// TestElicitAnswer_NilCallerContextFallsBackToTurn checks the other half of the
-// preference: a caller with no context must still wait on the session's turn
-// context rather than abort instantly, so the nil guard cannot silently turn
-// every elicitation into a no-op.
-func TestElicitAnswer_NilCallerContextFallsBackToTurn(t *testing.T) {
+// TestElicitAnswer_NilCallerContextHonoursTurnCancel pins the fallback half of
+// the preference: a caller with no context must wait on the session's turn
+// context. Cancelling the turn mid-question has to unwind the wait — which is
+// exactly what a `runCtx = ctx` regression breaks, because a nil channel never
+// fires and the wait would then run out the whole PermissionTimeout with the
+// turn already over.
+func TestElicitAnswer_NilCallerContextHonoursTurnCancel(t *testing.T) {
 	var answer string
 	h := newACPHarness(t, questionSession(t, func() context.Context { return nil }, &answer))
-	h.server.PermissionTimeout = 300 * time.Millisecond
+	h.server.PermissionTimeout = 3 * time.Second
 	sid := handshakeForm(t, h)
 
 	start := time.Now()
@@ -113,21 +117,27 @@ func TestElicitAnswer_NilCallerContextFallsBackToTurn(t *testing.T) {
 	if msg := h.recvRequest(t, "elicitation/create"); msg.ID == nil {
 		t.Fatal("elicitation/create carried no id")
 	}
+	// The question is still on screen when the turn goes away.
+	if err := h.send("session/cancel", nil, fmt.Sprintf(`{"sessionId":%q}`, sid)); err != nil {
+		t.Fatal(err)
+	}
+	completed := false
 	var elapsed time.Duration
 	for i := 0; i < 32; i++ {
 		msg := h.recv(t)
 		if msg.Method == "" && msg.ID != nil {
 			elapsed = time.Since(start)
+			completed = true
 			break
 		}
 	}
-	if elapsed == 0 {
-		t.Fatal("prompt never completed")
+	if !completed {
+		t.Fatal("prompt never completed after the turn was cancelled")
 	}
-	if elapsed < h.server.PermissionTimeout/2 {
-		t.Fatalf("turn ended after %v with a nil caller context; want a wait on the turn context bounded by PermissionTimeout (%v)", elapsed, h.server.PermissionTimeout)
+	if elapsed > 1500*time.Millisecond {
+		t.Fatalf("turn took %v after session/cancel; a nil caller context must still wait on the turn context (PermissionTimeout %v), so the cancel should have released the modal", elapsed, h.server.PermissionTimeout)
 	}
 	if strings.Contains(answer, "left") || strings.Contains(answer, "right") {
-		t.Fatalf("answer = %q, want no selected option after the elicitation timed out", answer)
+		t.Fatalf("answer = %q, want no selected option after the turn was cancelled", answer)
 	}
 }
