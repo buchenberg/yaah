@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.129.1](https://github.com/buchenberg/yaah/compare/v0.129.0...v0.129.1) (2026-11-02)
+
+
+### Code Refactoring
+
+* decompose newAgentSessionWithOptions into staged constructors ([68ff4bb](https://github.com/buchenberg/yaah/commit/68ff4bb9044e5f0642ecffb26f14aaf8a7976b12))
+
 ## [0.129.0](https://github.com/buchenberg/yaah/compare/v0.128.0...v0.129.0) (2026-11-02)
 
 
