@@ -25,9 +25,7 @@ import (
 	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/cwdpath"
 	"github.com/buchenberg/yaah/internal/memory"
-	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/sessions"
-	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/spf13/cobra"
 )
 
@@ -123,13 +121,14 @@ type webServer struct {
 	running         atomic.Bool
 	sseDone         chan struct{}
 	mu              sync.Mutex
-	ctrlChMu        sync.Mutex
-	ctrlCh          chan<- control.Msg
+	// ctrlCh belongs to the current stream; it is read and written under mu
+	// together with view and sseDone, so a send always addresses the stream
+	// whose teardown it checked.
+	ctrlCh chan<- control.Msg
 
-	// models caches the available model list ("provider/model" format)
-	// and provider display names, fetched once in the background.
-	models        []string
-	providerNames map[string]string
+	// catalog is the shared model-catalog cache every picker reads (see
+	// model_catalog.go); the web UI only renders its snapshot.
+	catalog *modelCatalog
 
 	// sessionList serves /api/sessions from the shared session store
 	// (same rows ACP session/list and the CLI read). Wired in runWeb;
@@ -285,80 +284,24 @@ func runWeb(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Pre-fetch model lists from all providers in the background so the
-	// command palette can offer model switching without blocking startup.
+	// Warm the shared model catalog in the background so the command palette
+	// can offer model switching without blocking startup, and push it to a
+	// client that connected before discovery settled.
+	ws.catalog = newModelCatalog(sess.cfg, nil)
 	go func() {
-		names := make(map[string]string)
-		for key, p := range sess.cfg.Providers {
-			if p.Name != "" {
-				names[key] = p.Name
-			}
-		}
-		models := providers.FetchAllModels(context.Background(), sess.cfg, makeModelLister)
-
+		snap := ws.catalog.Load(context.Background())
 		ws.mu.Lock()
-		ws.models = models
-		ws.providerNames = names
 		v := ws.view
 		ws.mu.Unlock()
-
 		if v != nil {
-			v.write(marshalWire(sseWireEvent{Type: "ctrl.models", Models: models, Providers: names}))
+			v.write(marshalWire(sseWireEvent{Type: "ctrl.models", Models: snap.IDs, Providers: snap.ProviderNames}))
 		}
 	}()
 
-	// Wire question tool handler so questions are sent as CtrlQuestion
-	// messages. forwardCtrl in web_view.go converts these to SSE events
-	// for the browser dialog.
-	if qt := sess.toolReg.Get("question"); qt != nil {
-		qtp := qt.(*tools.QuestionTool)
-		qtp.Handler = func(entries []tools.QuestionEntry) []string {
-			var answers []string
-			for _, e := range entries {
-				ws.ctrlChMu.Lock()
-				ch := ws.ctrlCh
-				ws.ctrlChMu.Unlock()
-				if ch == nil {
-					// No active stream — fall back to first option.
-					answers = append(answers, fallbackCtrlAnswer(e))
-					continue
-				}
-				ansCh := make(chan string, 1)
-				q := buildCtrlQuestion(e, ansCh)
-				select {
-				case ch <- q:
-				case <-time.After(ctrlSendTimeout):
-					answers = append(answers, fallbackCtrlAnswer(e))
-					continue
-				}
-				answers = append(answers, awaitCtrlAnswer(e, ansCh))
-			}
-			return answers
-		}
-	}
-
-	sess.SetApproveFn(func(name, args string) bool {
-		ws.mu.Lock()
-		v := ws.view
-		done := ws.sseDone
-		ws.mu.Unlock()
-		if v == nil {
-			return false
-		}
-		id := fmt.Sprintf("q%d", ws.idGen.Add(1))
-		ch := make(chan string, 1)
-		ws.am.register(id, ch)
-		v.write(marshalWire(sseWireEvent{
-			Type: "ctrl.approval", ID: id, Name: name, Args: args,
-		}))
-		select {
-		case ans := <-ch:
-			return ans == "true"
-		case <-done:
-			ws.am.cancel(id)
-			return false
-		}
-	})
+	// One shared bridge for questions and approvals (internal/control);
+	// forwardCtrl in web_view.go turns the messages into SSE dialogs and routes
+	// the answers back through the answer map.
+	installControlBridges(sess, sseSurface{ws: ws})
 
 	handler, err := ws.routes()
 	if err != nil {
@@ -437,14 +380,10 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 	ws.mu.Lock()
 	ws.view = v
 	ws.sseDone = done
+	ws.ctrlCh = ctrlCh
 	ws.sess.SetView(v)
 	ws.sess.SetCtrlCh(ctrlCh)
 	ws.mu.Unlock()
-
-	// Store ctrlCh for the question handler.
-	ws.ctrlChMu.Lock()
-	ws.ctrlCh = ctrlCh
-	ws.ctrlChMu.Unlock()
 
 	// Send meta and current todo state to the newly-connected client.
 	v.SendConnect()
@@ -456,13 +395,10 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 	running := ws.running.Load()
 	v.write(marshalWire(sseWireEvent{Type: "ctrl.state", Running: &running}))
 
-	// If the model list has already been fetched, deliver it immediately;
-	// otherwise the background fetch goroutine sends it when ready.
-	ws.mu.Lock()
-	models, names := ws.models, ws.providerNames
-	ws.mu.Unlock()
-	if len(models) > 0 {
-		v.write(marshalWire(sseWireEvent{Type: "ctrl.models", Models: models, Providers: names}))
+	// If the shared catalog is already warm, deliver it immediately; otherwise
+	// the startup warm goroutine sends it when discovery settles.
+	if snap := ws.modelSnapshot(r.Context()); len(snap.IDs) > 0 {
+		v.write(marshalWire(sseWireEvent{Type: "ctrl.models", Models: snap.IDs, Providers: snap.ProviderNames}))
 	}
 
 	streamCtx, streamCancel := context.WithCancel(r.Context())
@@ -484,17 +420,13 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Clear ctrlCh only when this handler still owns it.
-	ws.ctrlChMu.Lock()
-	if ws.ctrlCh == ctrlCh {
-		ws.ctrlCh = nil
-	}
-	ws.ctrlChMu.Unlock()
-
 	// Re-check under ws.mu before detaching the session. releaseStream having
 	// returned true only says no newer view existed at that instant; a reload
 	// may have installed one since, and that connection must keep its view.
 	ws.mu.Lock()
+	if ws.ctrlCh == ctrlCh {
+		ws.ctrlCh = nil
+	}
 	if ws.view == nil {
 		ws.sess.SetView(agent.NoopView{})
 		ws.sess.SetCtrlCh(nil)
@@ -516,6 +448,47 @@ func (ws *webServer) releaseStream(v *sseView) (owned bool) {
 	ws.view = nil
 	ws.sseDone = nil
 	return true
+}
+
+// modelSnapshot returns the shared model catalog's snapshot, or the empty one
+// when no catalog is wired (a server built without one offers no picker).
+func (ws *webServer) modelSnapshot(ctx context.Context) modelSnapshot {
+	if ws.catalog == nil {
+		return modelSnapshot{}
+	}
+	return ws.catalog.Current(ctx)
+}
+
+// stream reports the live stream's control channel and its done channel, or
+// nil/nil when no client is connected.
+func (ws *webServer) stream() (chan<- control.Msg, <-chan struct{}) {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	return ws.ctrlCh, ws.sseDone
+}
+
+// sseSurface adapts the live SSE stream to control.Surface — the web's
+// transport half of the shared question/approval bridge. The control channel
+// and the done channel belong to whichever /api/stream connection is current,
+// so both are read under ws.mu when a prompt is sent.
+type sseSurface struct{ ws *webServer }
+
+// Send implements control.Surface.
+func (s sseSurface) Send(msg control.Msg) bool {
+	ch, done := s.ws.stream()
+	if ch == nil {
+		// No client: there is nothing to render the prompt in.
+		return false
+	}
+	return sendCtrlMsg(ch, done, msg)
+}
+
+// Done implements control.Surface: the current stream's teardown closes the
+// channel, which ends an unanswered prompt instead of letting it wait out the
+// answer timeout on a stream nobody is reading.
+func (s sseSurface) Done() <-chan struct{} {
+	_, done := s.ws.stream()
+	return done
 }
 
 func (ws *webServer) handleAction(w http.ResponseWriter, r *http.Request) {

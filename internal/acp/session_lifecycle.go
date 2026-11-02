@@ -698,21 +698,24 @@ func (s *Server) installQuestionHandler(st *sessionState) {
 	if !ok {
 		return
 	}
+	// The per-entry loop, the answer formatting and the "could not ask"
+	// fallback are shared with the TUI and web surfaces (control.AskEach); ACP
+	// supplies only what is protocol-specific: the elicitation round-trip and
+	// the headless fallback.
 	qt.Handler = func(entries []tools.QuestionEntry) []string {
-		var answers []string
-		for _, e := range entries {
+		return control.AskEach(entries, func(e tools.QuestionEntry) (string, bool) {
 			answer, asked, accepted := s.elicitAnswer(st, e)
 			switch {
 			case asked && accepted:
-				answers = append(answers, fmt.Sprintf("%s: %s", e.Header, answer))
-				continue
+				return answer, true
 			case asked && !accepted:
 				// The user was offered the modal and withheld an answer
 				// (decline, cancel, timeout): record the empty choice, do
 				// not auto-answer over their decision.
-				answers = append(answers, e.Header+": ")
-				continue
+				return "", true
 			}
+			return "", false
+		}, func(e tools.QuestionEntry) string {
 			// Un-available path: legacy fallback — status prose and
 			// answering per AutoAnswerQuestions (headless/no-capability).
 			msg := fmt.Sprintf("❓ %s\n\n%s\n\n", e.Header, e.Question)
@@ -726,12 +729,10 @@ func (s *Server) installQuestionHandler(st *sessionState) {
 				}
 			}
 			if s.AutoAnswerQuestions && len(e.Options) > 0 {
-				answers = append(answers, fmt.Sprintf("%s: %s", e.Header, e.Options[0].Label))
-			} else {
-				answers = append(answers, e.Header+": ")
+				return control.FormatAnswer(e.Header, e.Options[0].Label)
 			}
-		}
-		return answers
+			return control.FormatAnswer(e.Header, "")
+		})
 	}
 }
 

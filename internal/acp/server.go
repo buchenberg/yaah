@@ -39,8 +39,11 @@ var ErrNoSession = errors.New("unknown session")
 
 // defaultPermissionTimeout bounds how long a session/request_permission
 // or elicitation/create wait for the client when PermissionTimeout is
-// not set (the same bound approval.go and elicitation.go apply).
-const defaultPermissionTimeout = 5 * time.Minute
+// not set (the same bound approval.go and elicitation.go apply). It is the
+// shared control-plane answer timeout: an ACP approval and an ACP question
+// wait exactly as long as one on the TUI or web surface instead of the three
+// surfaces drifting to 30s, 5m and "forever".
+const defaultPermissionTimeout = control.AnswerTimeout
 
 // Session is the narrow capability the ACP server needs from an agent
 // session. *agentSession in cmd/yaah satisfies this interface.
@@ -254,7 +257,7 @@ func NewServer(build SessionFactory, version string, logf func(format string, ar
 		newSession:          build,
 		AutoAnswerQuestions: true,
 		AutoContinue:        true,
-		PermissionTimeout:   5 * time.Minute,
+		PermissionTimeout:   control.AnswerTimeout,
 		pendingReq:          make(map[string]chan clientResponse),
 		sessions:            make(map[string]*sessionState),
 	}

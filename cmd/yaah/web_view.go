@@ -124,7 +124,11 @@ type sseWireEvent struct {
 	// client connects, so it is a pointer: absent everywhere else.
 	Running *bool `json:"running,omitempty"`
 
-	ID       string       `json:"id,omitempty"`
+	ID string `json:"id,omitempty"`
+	// CallID is the provider's tool_call id on a ctrl.approval frame. ID is the
+	// client's own answer id; CallID identifies the call the decision applies
+	// to, so the client can correlate the dialog with the tool row.
+	CallID   string       `json:"call_id,omitempty"`
 	Header   string       `json:"header,omitempty"`
 	Question string       `json:"question,omitempty"`
 	Options  []wireOption `json:"options,omitempty"`
@@ -447,7 +451,7 @@ func forwardCtrl(ctx context.Context, ch <-chan control.Msg, v *sseView, am *ans
 				am.register(id, ansCh)
 				v.write(marshalWire(sseWireEvent{
 					Type: "ctrl.approval", ID: id,
-					Name: m.Name, Args: m.Args,
+					CallID: m.CallID, Name: m.Name, Args: m.Args,
 				}))
 				approveCh := m.ApproveCh
 				go func() {

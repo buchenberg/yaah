@@ -7,12 +7,9 @@ import (
 	"os"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/control"
-	"github.com/buchenberg/yaah/internal/providers"
-	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/tui"
 	"github.com/buchenberg/yaah/internal/tui/components/mcpinfo"
 	"github.com/spf13/cobra"
@@ -116,17 +113,15 @@ func runTUI() error {
 	)
 	app.SetWorld(sess.WorldStatus())
 
-	names := make(map[string]string)
-	for key, p := range cfg.Providers {
-		if p.Name != "" {
-			names[key] = p.Name
-		}
-	}
-	// Fetch model lists in the background so a slow or unreachable
-	// provider endpoint never delays TUI launch; the control channel is
-	// buffered and the control loop starts inside app.Run().
+	// Warm the shared model catalog in the background so a slow or
+	// unreachable provider endpoint never delays TUI launch; the control
+	// channel is buffered and the control loop starts inside app.Run(). The
+	// picker's contents are the very snapshot the web palette and ACP's model
+	// picker read.
+	catalog := newModelCatalog(cfg, nil)
 	go func() {
-		controlCh <- &control.ModelList{Models: providers.FetchAllModels(context.Background(), cfg, makeModelLister), ProviderNames: names}
+		snap := catalog.Load(context.Background())
+		sendCtrlMsg(controlCh, nil, &control.ModelList{Models: snap.IDs, ProviderNames: snap.ProviderNames})
 	}()
 
 	app.OnModelSelect = func(model string) {
@@ -187,43 +182,9 @@ func runTUI() error {
 	app.ControlCh = controlCh
 	sess.SetView(app)
 
-	if qt := sess.toolReg.Get("question"); qt != nil {
-		if qtp, ok := qt.(*tools.QuestionTool); ok {
-			qtp.Handler = func(entries []tools.QuestionEntry) []string {
-				var answers []string
-				for _, e := range entries {
-					ch := make(chan string, 1)
-					select {
-					case controlCh <- buildCtrlQuestion(e, ch):
-					case <-time.After(ctrlSendTimeout):
-						answers = append(answers, fallbackCtrlAnswer(e))
-						continue
-					}
-					answers = append(answers, awaitCtrlAnswer(e, ch))
-				}
-				return answers
-			}
-		}
-	}
-
-	sess.SetApproveFn(func(name, args string) bool {
-		ch := make(chan bool, 1)
-		select {
-		case controlCh <- &control.Approval{
-			Name:      name,
-			Args:      args,
-			ApproveCh: ch,
-		}:
-		default:
-			return false
-		}
-		select {
-		case approved := <-ch:
-			return approved
-		case <-time.After(30 * time.Second):
-			return false
-		}
-	})
+	// One shared bridge for questions and approvals (internal/control): the
+	// TUI's only job is to be the transport.
+	installControlBridges(sess, ctrlSurface{ch: controlCh})
 
 	// Suppress stderr while the TUI is on the alt screen. Anything written
 	// to stderr (slow-refresh logs, MCP warnings, tool output) would bleed
