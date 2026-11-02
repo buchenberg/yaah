@@ -150,11 +150,11 @@ func (t *StaticcheckTool) Execute(ctx context.Context, args string) (string, err
 
 	// packages becomes the argv element that sits where the analyzer expects
 	// options, so a value opening with '-' is parsed as one — the exec-flag
-	// whitelist never inspects it, which is how `-vettool` reached the command
-	// line through a field that names a package pattern. Stripping the dash
-	// would guess at intent, so the call is refused instead.
+	// deny-list inspects only Flags, never this field, which is how `-vettool`
+	// reached the command line through a value that names a package pattern.
+	// Stripping the dash would guess at intent, so the call is refused instead.
 	if packagesAsOption(params.Packages) {
-		return "", fmt.Errorf("staticcheck: packages %q is a package pattern, never an option — the value is forwarded where the analyzer expects options, so a leading '-' would be parsed as one; analyzer options are whitelisted and the ones that launch a program are approval-gated, so a packages value that opens with '-' is refused", params.Packages)
+		return "", fmt.Errorf("staticcheck: packages %q is a package pattern, never an option — the value is forwarded where the analyzer expects options, so a leading '-' would be parsed as one; analyzer options pass through and only the ones naming a program are deny-listed, so a packages value that opens with '-' is refused", params.Packages)
 	}
 
 	analyzers := params.Analyzers

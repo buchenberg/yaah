@@ -379,17 +379,22 @@ var branchReadOnlyFlagPrefixes = []string{
 	"--points-at=", "--sort=", "--format=", "--abbrev=",
 }
 
-// branchFormattingFlags are branchReadOnlyFlags entries that only change how
-// output is rendered and are accepted on branch creation too, so their presence
-// proves nothing about whether the call lists or creates. Reading one as proof
-// of a listing classified `git branch -q <name>` as read-only while it created
-// a ref — the escape this table closes. -v/-vv/--verbose are the same shape and
-// were the miss that reopened it: the listing synopsis documents -v as a
-// display option, but git accepts it on the creation form too, where
-// `git branch -v <name>` still creates the ref (-vv is parse-options' bundled
-// short form of -v -v and only adds upstream/worktree detail). Every other
-// read-only branch option asks git to list or inspect refs, so it implies a
-// listing and positional arguments become ref patterns/values.
+// branchFormattingFlags are branchReadOnlyFlags entries that prove nothing
+// about whether the call lists or creates: git accepts each one while creating
+// a branch, so its presence cannot make positional arguments ref patterns.
+// They tune display, ordering and labelling only — -q and -v/-vv/--verbose
+// select what the listing shows, --color/--column/--abbrev/--omit-empty change
+// how it renders, and --sort/--format/--ignore-case order, label and
+// case-fold it — and none of them selects refs to list. Reading any of them as
+// proof of a listing was exploitable: `git branch -q <name>`,
+// `git branch -v <name>`, `git branch --sort=refname <name>` and
+// `git branch --format='%(refname)' <name>` all created the ref while the
+// read-only table said listing. -v/-vv/--verbose were the miss that reopened it
+// after -q: the listing synopsis documents -v as a display option, but the
+// creation form accepts it too (-vv is parse-options' bundled -v -v and only
+// adds upstream/worktree detail). Every other read-only branch option asks git
+// to list or inspect refs, so it implies a listing and positional arguments
+// become ref patterns/values.
 var branchFormattingFlags = map[string]bool{
 	"--quiet": true, "-q": true,
 	"--verbose": true, "-v": true, "-vv": true,
@@ -397,6 +402,9 @@ var branchFormattingFlags = map[string]bool{
 	"--column": true, "--no-column": true,
 	"--abbrev": true, "--no-abbrev": true,
 	"--omit-empty": true,
+	// Ordering/formatting/filtering, all accepted on the creation form, so
+	// they cannot stand in for --list either.
+	"--sort": true, "--format": true, "--ignore-case": true,
 }
 
 // branchMutatingFlags are the git-branch options that write refs. -D deletes a
@@ -503,11 +511,12 @@ func scanBranchFlags(flags []string) (branchFlagScan, error) {
 			// positional arguments become ref patterns/values. A
 			// formatting option cannot stand in for one: `git branch -q
 			// <name>` and `git branch -v <name>` both create a branch and
-			// must gate. The formatting table is only the display
-			// modifiers git tolerates on the creation form (-q, -v/-vv,
-			// --color, --column, --abbrev, --omit-empty); anything that
-			// selects refs to list belongs on the listing side. The '=' form
-			// (--abbrev=7) is classified read-only via the prefix tables,
+			// must gate. The formatting table holds only the modifiers git
+			// tolerates on the creation form (-q, -v/-vv, --color,
+			// --column, --abbrev, --omit-empty, --sort, --format,
+			// --ignore-case); anything that selects refs to list belongs on
+			// the listing side. The '=' form (--abbrev=7,
+			// --sort=refname) is classified read-only via the prefix tables,
 			// so strip the value before the formatting lookup.
 			base := flag
 			if i := strings.IndexByte(flag, '='); i >= 0 {

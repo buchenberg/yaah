@@ -175,6 +175,37 @@ func TestGitTool_branchDangerIsArgumentAware(t *testing.T) {
 		{"quiet list stays a listing", `{"action":"branch","flags":["-q","--list"]}`, false},
 		{"quiet list with a pattern stays a listing", `{"action":"branch","flags":["-q","--list"],"paths":["feat*"]}`, false},
 		{"verbose list with a pattern stays a listing", `{"action":"branch","flags":["-v","--list"],"paths":["feat*"]}`, false},
+		// --sort, --format and --ignore-case are the same shape as -v: git
+		// uses them to order, label and case-fold a listing yet still
+		// accepts them on the creation form, where each one created the
+		// ref when checked against real git (`git branch --sort=refname
+		// probe`, `git branch --format='%(refname)' probe`,
+		// `git branch --ignore-case probe`). They must not stand in for an
+		// explicit listing selector, in either the attached or the separate
+		// value form.
+		{"ignore-case with a name is still a creation", `{"action":"branch","flags":["--ignore-case"],"paths":["feat"]}`, true},
+		{"sort attached value with a name is still a creation", `{"action":"branch","flags":["--sort=refname"],"paths":["feat"]}`, true},
+		{"format attached value with a name is still a creation", `{"action":"branch","flags":["--format=%(refname)"],"paths":["feat"]}`, true},
+		{"sort separate value with a name is still a creation", `{"action":"branch","flags":["--sort","refname"],"paths":["feat"]}`, true},
+		{"format separate value with a name is still a creation", `{"action":"branch","flags":["--format","%(refname)"],"paths":["feat"]}`, true},
+		// With no positional argument they are plain listings, so they must
+		// not turn a listing into an approval prompt.
+		{"ignore-case listing", `{"action":"branch","flags":["--ignore-case"]}`, false},
+		{"sort attached value listing", `{"action":"branch","flags":["--sort=refname"]}`, false},
+		{"format attached value listing", `{"action":"branch","flags":["--format=%(refname)"]}`, false},
+		{"sort separate value listing", `{"action":"branch","flags":["--sort","refname"]}`, false},
+		{"format separate value listing", `{"action":"branch","flags":["--format","%(refname)"]}`, false},
+		// An explicit listing selector still makes positionals patterns on
+		// top of the formatting flags.
+		{"sort list with a pattern stays a listing", `{"action":"branch","flags":["--sort=refname","--list"],"paths":["feat*"]}`, false},
+		{"format list with a pattern stays a listing", `{"action":"branch","flags":["--format=%(refname)","--list"],"paths":["feat*"]}`, false},
+		// The genuine selection/inspection options keep making a call a
+		// listing: unlike the formatting flags, git does not create through
+		// them, so a positional argument really is a ref pattern there.
+		{"contains with value and a positional stays a listing", `{"action":"branch","flags":["--contains","main"],"paths":["feat*"]}`, false},
+		{"merged with a positional stays a listing", `{"action":"branch","flags":["--merged"],"paths":["feat"]}`, false},
+		{"points-at with value and a positional stays a listing", `{"action":"branch","flags":["--points-at","main"],"paths":["feat"]}`, false},
+		{"show-current with a positional stays a listing", `{"action":"branch","flags":["--show-current"],"paths":["feat"]}`, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

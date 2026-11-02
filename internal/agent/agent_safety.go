@@ -138,14 +138,13 @@ func (l *Loop) planModeWithholds(name, args string) bool {
 }
 
 // admitTool is the always-on dispatch gate: the advertised tool level plus plan
-// mode's per-call danger check. The approval middleware asks the same questions
-// through classifyGate, but that middleware is optional
+// mode's per-call danger check. The approval middleware runs the danger
+// classification through classifyGate, but that middleware is optional
 // (middleware.disabled: [approval]) and a mode whose promise is "mutating
-// actions are withheld" must not be switchable off by configuration. Both
-// layers run the same predicates — allowsTool, planModeWithholds and
-// dangerousCall — so the gate's verdict is a precondition for dispatch rather
-// than a substitute for it: a call the gate withholds is never admitted here,
-// while a call the gate passes can still be refused on the tool level.
+// actions are withheld" must not be switchable off by configuration. The two
+// layers share the danger classification, while the gate adds the tool level
+// and plan-mode withholding on top, so nothing it withholds is ever admitted
+// while a gate-passed call can still be refused on the tool level.
 //
 // The verdict is shared; the wording is not. This gate runs the tool-level
 // check first, so in plan mode a name the level excludes is refused as "not
