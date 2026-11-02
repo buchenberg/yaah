@@ -16,7 +16,7 @@ func TestSendCtrlMsg(t *testing.T) {
 	t.Run("delivers to a live consumer", func(t *testing.T) {
 		ch := make(chan control.Msg, 1)
 		msg := &control.Status{Text: "hi"}
-		if !sendCtrlMsg(ch, nil, msg) {
+		if !sendCtrlMsg(ch, nil, msg, control.SendTimeout) {
 			t.Fatal("sendCtrlMsg = false, want delivery")
 		}
 		if got := <-ch; got != control.Msg(msg) {
@@ -28,13 +28,29 @@ func TestSendCtrlMsg(t *testing.T) {
 		done := make(chan struct{})
 		close(done)
 		begin := time.Now()
-		if sendCtrlMsg(make(chan control.Msg), done, &control.Status{Text: "hi"}) {
+		if sendCtrlMsg(make(chan control.Msg), done, &control.Status{Text: "hi"}, control.SendTimeout) {
 			t.Fatal("sendCtrlMsg = true after the consumer went away")
 		}
 		if elapsed := time.Since(begin); elapsed > 2*time.Second {
 			t.Fatalf("sendCtrlMsg waited %v on a closed consumer", elapsed)
 		}
 	})
+}
+
+// TestCtrlSurfaceFailsFastWhenStalled pins the TUI's short delivery bound. The
+// tview loop drains this channel for the life of the process, so a channel that
+// stays full is a wedged UI; denying promptly keeps the fail-fast behaviour the
+// old approval send had, instead of parking the turn behind the bridge's
+// surface-agnostic bound.
+func TestCtrlSurfaceFailsFastWhenStalled(t *testing.T) {
+	surface := ctrlSurface{ch: make(chan control.Msg), wait: 10 * time.Millisecond}
+	start := time.Now()
+	if _, ok := surface.Send(&control.Status{Text: "hi"}); ok {
+		t.Fatal("Send = true, want false when the tview loop is not draining")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("stalled send took %v, want the surface's own short bound", elapsed)
+	}
 }
 
 // TestCtrlSurfaceNeverEnds pins the TUI transport: its channel is drained for

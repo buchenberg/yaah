@@ -121,7 +121,7 @@ func runTUI() error {
 	catalog := newModelCatalog(cfg, nil)
 	go func() {
 		snap := catalog.Load(context.Background())
-		sendCtrlMsg(controlCh, nil, &control.ModelList{Models: snap.IDs, ProviderNames: snap.ProviderNames})
+		sendCtrlMsg(controlCh, nil, &control.ModelList{Models: snap.IDs, ProviderNames: snap.ProviderNames}, tuiSendTimeout)
 	}()
 
 	app.OnModelSelect = func(model string) {

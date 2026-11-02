@@ -483,7 +483,7 @@ func (s sseSurface) Send(msg control.Msg) (<-chan struct{}, bool) {
 		// No client: there is nothing to render the prompt in.
 		return nil, false
 	}
-	if !sendCtrlMsg(ch, done, msg) {
+	if !sendCtrlMsg(ch, done, msg, control.SendTimeout) {
 		return nil, false
 	}
 	return done, true
