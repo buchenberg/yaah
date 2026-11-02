@@ -78,7 +78,7 @@ func TestInstallControlBridgesTUIPrompt(t *testing.T) {
 	}
 
 	decided := make(chan bool, 1)
-	go func() { decided <- sess.approveCallFn("call-42", "bash", `{"command":"ls"}`) }()
+	go func() { decided <- sess.approveCallFn(context.Background(), "call-42", "bash", `{"command":"ls"}`) }()
 
 	select {
 	case msg := <-ch:
@@ -134,7 +134,7 @@ func TestInstallControlBridgesWebApprovalBounded(t *testing.T) {
 	}
 
 	decided := make(chan bool, 1)
-	go func() { decided <- sess.approveCallFn("call-99", "write", `{"path":"x"}`) }()
+	go func() { decided <- sess.approveCallFn(context.Background(), "call-99", "write", `{"path":"x"}`) }()
 
 	// The browser sees the dialog, with the tool_call id attached.
 	waitForFrame(t, buf, `"call_id":"call-99"`)
@@ -227,7 +227,7 @@ func TestWebApprovalTimesOut(t *testing.T) {
 	go forwardCtrl(ctx, ctrlCh, view, ws.am, &idGen)
 
 	begin := time.Now()
-	if control.ApproveWithin(sseSurface{ws: ws}, 40*time.Millisecond, "call-1", "bash", "{}") {
+	if control.ApproveWithin(context.Background(), sseSurface{ws: ws}, 40*time.Millisecond, "call-1", "bash", "{}") {
 		t.Fatal("approval approved with no client answer")
 	}
 	if elapsed := time.Since(begin); elapsed > 2*time.Second {
@@ -251,7 +251,7 @@ func TestInstallControlBridgesQuestion(t *testing.T) {
 
 	answers := make(chan []string, 1)
 	go func() {
-		answers <- question.Handler([]tools.QuestionEntry{
+		answers <- question.Handler(context.Background(), []tools.QuestionEntry{
 			{Header: "Deploy", Question: "Ship it?", Options: []tools.QuestionOption{{Label: "yes"}}},
 		})
 	}()

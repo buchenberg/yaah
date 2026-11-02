@@ -9,7 +9,10 @@
 // being re-derived, with divergent timeouts, on each surface.
 package control
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 const (
 	// SendTimeout bounds how long a tool goroutine waits for a surface to
@@ -51,17 +54,19 @@ type Surface interface {
 	Send(msg Msg) (gone <-chan struct{}, ok bool)
 }
 
-// awaitAnswer waits for one answer on ch, bounded by timeout and by done (the
-// surface going away). ok reports whether an answer arrived; the zero value is
-// returned when it did not, so a caller can never mistake a torn-down surface
-// for a decision.
-func awaitAnswer[T any](ch <-chan T, gone <-chan struct{}, timeout time.Duration) (T, bool) {
+// awaitAnswer waits for one answer on ch, bounded by timeout, by done (the
+// surface going away) and by ctx (the run behind the prompt being abandoned).
+// ok reports whether an answer arrived; the zero value is returned when it did
+// not, so a caller can never mistake a torn-down surface or a cancelled run for
+// a decision.
+func awaitAnswer[T any](ctx context.Context, ch <-chan T, gone <-chan struct{}, timeout time.Duration) (T, bool) {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
 	case v := <-ch:
 		return v, true
 	case <-gone:
+	case <-ctx.Done():
 	case <-timer.C:
 	}
 	// select chooses uniformly among ready cases, so a decision that landed

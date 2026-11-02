@@ -702,7 +702,7 @@ func (s *Server) installQuestionHandler(st *sessionState) {
 	// fallback are shared with the TUI and web surfaces (control.AskEach); ACP
 	// supplies only what is protocol-specific: the elicitation round-trip and
 	// the headless fallback.
-	qt.Handler = func(entries []tools.QuestionEntry) []string {
+	qt.Handler = func(_ context.Context, entries []tools.QuestionEntry) []string {
 		return control.AskEach(entries, func(e tools.QuestionEntry) (string, bool) {
 			answer, asked, accepted := s.elicitAnswer(st, e)
 			switch {

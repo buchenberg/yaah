@@ -215,7 +215,7 @@ type agentSession struct {
 	approveFn func(name, args string) bool
 	// approveCallFn is the call-id-aware approval bridge (ACP). When
 	// set it takes precedence over approveFn.
-	approveCallFn func(callID, name, args string) bool
+	approveCallFn func(ctx context.Context, callID, name, args string) bool
 	mu            sync.RWMutex
 
 	// pendingEvents buffers session-scoped events for views whose
@@ -769,7 +769,7 @@ func (s *agentSession) SetApproveFn(fn func(name, args string) bool) {
 // SetApproveCallFn installs the call-id-aware approval bridge. It takes
 // precedence over SetApproveFn; drivers that never need the provider
 // tool_call id keep using SetApproveFn.
-func (s *agentSession) SetApproveCallFn(fn func(callID, name, args string) bool) {
+func (s *agentSession) SetApproveCallFn(fn func(ctx context.Context, callID, name, args string) bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.approveCallFn = fn
@@ -788,7 +788,9 @@ func (s *agentSession) promptWorkspaceAccess(path, reason string) bool {
 		// Call-id bridge (ACP). The ask carries no tool call, so the
 		// empty id tells requestPermission to fall back to its
 		// request-id identity and emit no tool_call row for it.
-		return call("", "workspace_access", fmt.Sprintf("%s (%s)", path, reason))
+		// The path-validator seam carries no context of its own, so a
+		// workspace-access ask is not chained to the run that raised it.
+		return call(context.Background(), "", "workspace_access", fmt.Sprintf("%s (%s)", path, reason))
 	}
 	if fn != nil {
 		return fn("workspace_access", fmt.Sprintf("%s (%s)", path, reason))

@@ -58,7 +58,7 @@ type Session interface {
 	TurnBudgetExhausted() bool
 	SetView(agent.View)
 	SetCtrlCh(chan<- control.Msg)
-	SetApproveCallFn(func(callID, name, args string) bool)
+	SetApproveCallFn(func(ctx context.Context, callID, name, args string) bool)
 	// AgentSessionID returns the id of the underlying persisted
 	// conversation (the memory-DB session id). The ACP server exposes
 	// it as the ACP session id, so a later session/load in a fresh

@@ -276,8 +276,8 @@ func (s *Server) handlePrompt(
 
 	sess.SetView(view)
 	sess.SetCtrlCh(ctrlCh)
-	sess.SetApproveCallFn(func(callID, name, args string) bool {
-		return s.requestPermission(p.SessionID, callID, name, args, promptCtx, c)
+	sess.SetApproveCallFn(func(ctx context.Context, callID, name, args string) bool {
+		return s.requestPermission(p.SessionID, callID, name, args, ctx, c)
 	})
 
 	// forwardCtrl consumes control-plane sends during the run (todo

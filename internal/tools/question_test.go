@@ -14,7 +14,7 @@ func questionArgs() string {
 }
 
 func TestQuestionTool_EOFFails(t *testing.T) {
-	qt := &QuestionTool{Handler: func([]QuestionEntry) []string { return nil }}
+	qt := &QuestionTool{Handler: func(_ context.Context, _ []QuestionEntry) []string { return nil }}
 
 	_, err := qt.Execute(context.Background(), questionArgs())
 	if err == nil {
@@ -28,7 +28,7 @@ func TestQuestionTool_EOFFails(t *testing.T) {
 }
 
 func TestQuestionTool_PartialAnswerFails(t *testing.T) {
-	qt := &QuestionTool{Handler: func(entries []QuestionEntry) []string {
+	qt := &QuestionTool{Handler: func(_ context.Context, entries []QuestionEntry) []string {
 		return []string{"DB: postgres"}
 	}}
 
@@ -42,7 +42,7 @@ func TestQuestionTool_PartialAnswerFails(t *testing.T) {
 }
 
 func TestQuestionTool_AllAnsweredSucceeds(t *testing.T) {
-	qt := &QuestionTool{Handler: func(entries []QuestionEntry) []string {
+	qt := &QuestionTool{Handler: func(_ context.Context, entries []QuestionEntry) []string {
 		answers := make([]string, len(entries))
 		for i, e := range entries {
 			answers[i] = e.Header + ": answer"
