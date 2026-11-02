@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/tools"
 )
@@ -65,5 +66,32 @@ func TestCodeOrganizationNamesEveryInternalPackage(t *testing.T) {
 		if !strings.Contains(doc, "── "+entry.Name()+"/") {
 			t.Errorf("code-organization.md does not name internal/%s/; the tree must match `ls internal/`", entry.Name())
 		}
+	}
+}
+
+// TestFeaturesPlanModeNamesInspectionSet pins the Plan mode section of
+// features.md to readOnlyToolNames, the code-side source of truth for the
+// inspection set. The prose inventory drifted from the code in the 2026-06
+// audit; this keeps the tool list and the vocabulary from drifting again.
+func TestFeaturesPlanModeNamesInspectionSet(t *testing.T) {
+	doc := read(t, "../../docs/features.md")
+	start := strings.Index(doc, "## Plan mode")
+	if start < 0 {
+		t.Fatalf("features.md no longer has a ## Plan mode section")
+	}
+	section := doc[start:]
+	if next := strings.Index(section, "\n## "); next >= 0 {
+		section = section[:next]
+	}
+	for _, name := range agent.InspectionSetNames() {
+		if !strings.Contains(section, "`"+name+"`") {
+			t.Errorf("features.md Plan mode section does not name %q (inspection set: %v)", name, agent.InspectionSetNames())
+		}
+	}
+	if strings.Contains(section, "read-only tools") {
+		t.Errorf("features.md Plan mode section still says %q; the vocabulary is now \"inspection set\"", "read-only tools")
+	}
+	if !strings.Contains(section, "inspection set") {
+		t.Errorf("features.md Plan mode section does not say \"inspection set\"")
 	}
 }
