@@ -49,10 +49,20 @@ workspace instead of changing it:
 
 `git` is admitted as a name and gated per call: its inspection actions
 (`status`, `diff`, `diff_cached`, `log`, `show`, `branch` listing, `fetch`)
-pass, while `add`, `commit`, `push`, `pull`, and `branch -D` are **denied** in
-plan mode rather than offered for approval — the mode's promise is that the
-capability is absent, not that the user may grant it. `staticcheck` reports
-diagnostics and writes nothing.
+pass, while `add`, `commit`, `push`, `pull` and every mutating `branch` option
+— `-d`, `-D`, `--delete`, `-m`, `-M`, `--move`, `-c`, `-C`, `--copy`, `-f`,
+`--force`, `-u`, `--set-upstream-to`, `--unset-upstream`, `--edit-description`,
+`--create-reflog`, `--recurse-submodules` — are **denied** in plan mode rather
+than offered for approval, as are a branch name in `paths` that no explicit
+`--list` turns into a pattern and any option the tool does not recognize.
+Formatting flags (`-q`, `--color`, `--column`, `--abbrev`, `--omit-empty`) do
+not make a call a listing: git accepts them when creating a branch too, so
+`git branch -q <name>` is denied while `git branch -q --list` passes. The
+mode's promise is that the capability is absent, not that the user may grant
+it, and the denial is enforced at dispatch, so `middleware.disabled:
+[approval]` cannot switch it off. `staticcheck` reports diagnostics and writes
+nothing, though its `-vettool` flag is denied: that option makes `go vet`
+execute a caller-named binary.
 
 The `plan` **tool** is not plan **mode**. The tool drafts and updates `PLAN.md`
 files under `.agents/plans/` (see [Plans and todos](#plans-and-todos)); the

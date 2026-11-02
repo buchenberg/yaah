@@ -151,6 +151,17 @@ func TestGitTool_branchDangerIsArgumentAware(t *testing.T) {
 		{"abbrev does not consume a following delete", `{"action":"branch","flags":["--abbrev","-D"],"paths":["victim"]}`, true},
 		{"abbrev equals form stays read-only", `{"action":"branch","flags":["--abbrev=7","--list"]}`, false},
 		{"bare name in flags", `{"action":"branch","flags":["feature"]}`, true},
+		// Formatting flags are accepted on creation too, so their presence
+		// cannot prove a listing: `git branch -q <name>` created a branch
+		// while the read-only table was read as proof of a listing (review).
+		{"quiet flag with a name is still a creation", `{"action":"branch","flags":["-q"],"paths":["feature"]}`, true},
+		{"color flag with a name is still a creation", `{"action":"branch","flags":["--color"],"paths":["feature"]}`, true},
+		{"column flag with a name is still a creation", `{"action":"branch","flags":["--column"],"paths":["feature"]}`, true},
+		{"omit-empty with a name is still a creation", `{"action":"branch","flags":["--omit-empty"],"paths":["feature"]}`, true},
+		{"abbrev with a name is still a creation", `{"action":"branch","flags":["--abbrev=7"],"paths":["feature"]}`, true},
+		// An explicit listing selector is what makes positionals patterns.
+		{"quiet list stays a listing", `{"action":"branch","flags":["-q","--list"]}`, false},
+		{"quiet list with a pattern stays a listing", `{"action":"branch","flags":["-q","--list"],"paths":["feat*"]}`, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

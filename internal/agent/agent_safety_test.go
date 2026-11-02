@@ -133,9 +133,10 @@ func TestClassifyDanger_MCPToolsGatedByPolicy(t *testing.T) {
 // TestClassifyDanger_PlanModeDeniesDangerousCalls pins the plan-mode promise:
 // a dangerous call is withheld, not offered for approval. Plain GateGlobal
 // would defer to the global ApprovalMode, whose default is "ask", so plan mode
-// had to resolve danger to GateDeny — otherwise admitting git to the
-// inspection set would have let `git commit` through on a user approval that
-// the mode says cannot exist.
+// had to resolve danger to a mode-level withholding (GateWithheld — GateDeny
+// is reserved for MCP origin policy, and claiming it here named the wrong
+// cause) — otherwise admitting git to the inspection set would have let `git
+// commit` through on a user approval that the mode says cannot exist.
 func TestClassifyDanger_PlanModeDeniesDangerousCalls(t *testing.T) {
 	newGitLoop := func(level ToolsLevel) *Loop {
 		reg := tools.NewEmptyRegistry()
@@ -155,15 +156,15 @@ func TestClassifyDanger_PlanModeDeniesDangerousCalls(t *testing.T) {
 		`{"action":"pull"}`,
 		`{"action":"branch","flags":["-D"],"paths":["main"]}`,
 	} {
-		if got := plan.classifyGate("git", args); got != pipeline.GateDeny {
-			t.Errorf("dangerous git call %s in plan mode = %v, want GateDeny", args, got)
+		if got := plan.classifyGate("git", args); got != pipeline.GateWithheld {
+			t.Errorf("dangerous git call %s in plan mode = %v, want GateWithheld", args, got)
 		}
 	}
 	// Defense in depth: dialect recovery can synthesize calls to names plan
 	// mode never advertises; they are denied rather than gated globally.
 	for _, name := range []string{"bash", "powershell"} {
-		if got := plan.classifyGate(name, "{}"); got != pipeline.GateDeny {
-			t.Errorf("always-dangerous %q in plan mode = %v, want GateDeny", name, got)
+		if got := plan.classifyGate(name, "{}"); got != pipeline.GateWithheld {
+			t.Errorf("always-dangerous %q in plan mode = %v, want GateWithheld", name, got)
 		}
 	}
 

@@ -379,6 +379,21 @@ var branchReadOnlyFlagPrefixes = []string{
 	"--points-at=", "--sort=", "--format=", "--abbrev=",
 }
 
+// branchFormattingFlags are branchReadOnlyFlags entries that only change how
+// output is rendered and are accepted on branch creation too, so their presence
+// proves nothing about whether the call lists or creates. Reading one as proof
+// of a listing classified `git branch -q <name>` as read-only while it created
+// a ref — the escape this table closes. Every other read-only branch option
+// asks git to list or inspect refs, so it implies a listing and positional
+// arguments become ref patterns/values.
+var branchFormattingFlags = map[string]bool{
+	"--quiet": true, "-q": true,
+	"--color": true, "--no-color": true,
+	"--column": true, "--no-column": true,
+	"--abbrev": true, "--no-abbrev": true,
+	"--omit-empty": true,
+}
+
 // branchMutatingFlags are the git-branch options that write refs. -D deletes a
 // branch even when its commits are unmerged (unlike -d), so a branch call
 // carrying any of them must reach the approval gate.
@@ -443,7 +458,7 @@ func classifyBranchFlag(flag string) (branchFlagKind, bool) {
 // branchFlagScan is the result of the shared `git branch` option walk.
 type branchFlagScan struct {
 	mutating bool     // saw a mutating option
-	listing  bool     // saw a read-only listing option
+	listing  bool     // saw an option that requests a listing outright (--list)
 	safe     []string // every token, values paired with their options
 }
 
@@ -478,7 +493,20 @@ func scanBranchFlags(flags []string) (branchFlagScan, error) {
 		case branchFlagMutating:
 			scan.mutating = true
 		case branchFlagReadOnly:
-			scan.listing = true
+			// Every read-only option except the pure formatting flags asks
+			// git to list or inspect refs, so it implies a listing and
+			// positional arguments become ref patterns/values. A
+			// formatting option cannot stand in for one: `git branch -q
+			// <name>` creates a branch and must gate. The '=' form
+			// (--abbrev=7) is classified read-only via the prefix tables,
+			// so strip the value before the formatting lookup.
+			base := flag
+			if i := strings.IndexByte(flag, '='); i >= 0 {
+				base = flag[:i]
+			}
+			if !branchFormattingFlags[base] {
+				scan.listing = true
+			}
 		}
 		expectValue = takesValue
 		scan.safe = append(scan.safe, flag)
@@ -490,7 +518,10 @@ func scanBranchFlags(flags []string) (branchFlagScan, error) {
 // option that is not a known read-only listing option is a mutation signal,
 // and an unrecognized option is assumed mutating — a whitelist hole is worse
 // than an extra approval prompt. Positional arguments are branch names, so they
-// are read-only only alongside a listing option.
+// are read-only only alongside an explicit listing selector (--list), which is
+// what tells git to read them as patterns instead of creating refs. A
+// formatting option cannot stand in for one: `git branch -q <name>` creates a
+// branch and must gate.
 func branchCallDangerous(flags, paths []string) bool {
 	scan, err := scanBranchFlags(flags)
 	if err != nil || scan.mutating {

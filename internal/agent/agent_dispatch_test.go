@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
@@ -126,6 +127,64 @@ func TestDispatch_PlanModeRefusesUnadvertisedToolAtExecution(t *testing.T) {
 	}
 	if result.err == nil || !strings.Contains(result.err.Error(), "not available at the current tool level") {
 		t.Fatalf("result err = %v, want tool-level refusal", result.err)
+	}
+}
+
+// dangerousGitStub classifies exactly like the real git tool — the same
+// safe/mutating tables — but records instead of running a command, so the test
+// can assert the dispatch refusal without risking a real `git commit`.
+type dangerousGitStub struct{ ran int }
+
+func (d *dangerousGitStub) Name() string              { return "git" }
+func (d *dangerousGitStub) Description() string       { return "git stub" }
+func (d *dangerousGitStub) Schema() json.RawMessage   { return json.RawMessage(`{"type":"object"}`) }
+func (d *dangerousGitStub) IsDangerous(a string) bool { return (&tools.GitTool{}).IsDangerous(a) }
+func (d *dangerousGitStub) Execute(context.Context, string) (string, error) {
+	d.ran++
+	return "ran", nil
+}
+
+// TestDispatch_PlanModeDeniesDangerousCallWithoutApprovalMiddleware pins the
+// review finding: the plan-mode denial used to live only in the approval
+// middleware, so `middleware.disabled: [approval]` let `git commit` through.
+// Dispatch is the always-on gate and must refuse on its own.
+func TestDispatch_PlanModeDeniesDangerousCallWithoutApprovalMiddleware(t *testing.T) {
+	const commitArgs = `{"action":"commit","message":"x"}`
+	reg := tools.NewEmptyRegistry()
+	gitStub := &dangerousGitStub{}
+	reg.Register(gitStub)
+
+	l := NewLoop(nil, reg, WithToolsLevel(ReadOnlyTools))
+	l.Config.PipelineDisabled = []string{"approval"}
+	l.Hooks = &HookEmitter{}
+
+	// The middleware really is absent from the configured pipeline, so this
+	// test proves the dispatch layer, not the approval layer.
+	for _, name := range pipeline.ResolvedPipelineNames(l.Config.PipelineNames, l.Config.PipelineDisabled) {
+		if name == "approval" {
+			t.Fatal("approval middleware is still configured; the test proves nothing")
+		}
+	}
+
+	d := l.newDispatch(0, types.ToolCall{ID: "c1", Type: "function", Function: types.ToolCallFn{Name: "git", Arguments: commitArgs}})
+	results := make(chan toolExecResult, 1)
+	d.run(context.Background(), results)
+	result := <-results
+	if gitStub.ran != 0 {
+		t.Fatalf("plan mode executed the dangerous git call %d time(s)", gitStub.ran)
+	}
+	if result.err == nil || !strings.Contains(result.err.Error(), "withheld in plan mode") {
+		t.Fatalf("result err = %v, want a plan-mode withholding", result.err)
+	}
+	if !strings.Contains(result.content, "withheld in plan mode") {
+		t.Errorf("content = %q, want the withholding surfaced to the model", result.content)
+	}
+
+	// Build mode is untouched: dispatch admits the call and the approval
+	// flow decides.
+	full := NewLoop(nil, reg, WithToolsLevel(FullTools))
+	if ok, err := full.admitTool("git", commitArgs); !ok || err != nil {
+		t.Errorf("build mode refused a dangerous call at dispatch: ok=%v err=%v", ok, err)
 	}
 }
 

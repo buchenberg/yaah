@@ -25,7 +25,22 @@ const (
 	// GateGlobal defers to the global ApprovalMode: "ask" prompts,
 	// "deny" strips, anything else passes (built-in dangerous tools).
 	GateGlobal
+	// GateWithheld denies the call because the current mode withholds it
+	// (plan mode's inspection set), independent of the global approval
+	// mode. It is a distinct decision from GateDeny so the denial names the
+	// cause that actually applied: an MCP origin policy and a mode-level
+	// withholding are different promises, and reporting the first when the
+	// second happened sends the caller to fix a policy it does not control.
+	GateWithheld
 )
+
+// WithheldReason explains a mode-level denial in the words the caller needs:
+// what was refused, by which mechanism, and how the mode changes. Shared with
+// the always-on dispatch gate (agent.admitTool) so the same refusal reads the
+// same whether the optional approval middleware or dispatch produced it.
+func WithheldReason(tool string) string {
+	return fmt.Sprintf("tool %q is withheld in plan mode — mutating actions are not available; switch back to build mode to run it", tool)
+}
 
 // ApprovalMiddleware enforces the tool approval policy before dispatch,
 // mirroring the call-stripping behaviour of PermissionMiddleware.
@@ -75,6 +90,10 @@ func (m *ApprovalMiddleware) PostModel(ctx context.Context, msg *types.Message, 
 			// Origin policy denies independent of the global mode —
 			// the user cannot approve past it.
 			errMsg = fmt.Sprintf("error: tool %q is denied by mcp_approval 'deny'", name)
+		case GateWithheld:
+			// The current mode withholds the call outright: a mode
+			// decision, not an origin policy, and not approvable.
+			errMsg = "error: " + WithheldReason(name)
 		case GateAsk:
 			// Origin policy asks independent of the global mode.
 			if m.approve != nil && m.approve(tc.ID, name, args) {

@@ -87,19 +87,26 @@ func (l *Loop) classifyGate(name, args string) pipeline.GateDecision {
 			return pipeline.GateAsk
 		}
 	}
-	if t := l.Registry.Get(name); t != nil {
-		if dc, ok := t.(tools.DangerClassifier); ok {
-			if dc.IsDangerous(args) {
-				return l.dangerousGate()
-			}
-			return pipeline.GatePass
-		}
-		return pipeline.GatePass
-	}
-	if alwaysDangerous[name] {
+	if l.dangerousCall(name, args) {
 		return l.dangerousGate()
 	}
 	return pipeline.GatePass
+}
+
+// dangerousCall reports whether a call would mutate refs, files, or processes,
+// using the registry's DangerClassifier when the tool has one and the
+// alwaysDangerous table for shell names no platform registry carries. The
+// approval middleware and the always-on dispatch gate share this one
+// classification, so the optional layer and the required one cannot disagree
+// about what is dangerous.
+func (l *Loop) dangerousCall(name, args string) bool {
+	if l.Registry != nil {
+		if t := l.Registry.Get(name); t != nil {
+			dc, ok := t.(tools.DangerClassifier)
+			return ok && dc.IsDangerous(args)
+		}
+	}
+	return alwaysDangerous[name]
 }
 
 // dangerousGate resolves a call that has been classified as dangerous.
@@ -107,19 +114,43 @@ func (l *Loop) classifyGate(name, args string) pipeline.GateDecision {
 // Outside plan mode it is GateGlobal: the global ApprovalMode decides what
 // "dangerous" means (ask prompts, deny strips, allow passes).
 //
-// In plan mode it is GateDeny. Plan mode's promise is that mutating tools are
-// withheld, and GateGlobal would break that promise — its default is "ask", so
-// the user could approve a mutation the mode said was unavailable. Denying
-// also covers names that plan mode never advertises but that the gate still
-// sees: allowsTool runs at dispatch, after this classification, so argument-
-// carrying tools admitted by name (git) and alwaysDangerous names synthesized
-// by dialect recovery reach here first. A denial has no override, which is
-// what "withheld" has to mean.
+// In plan mode it is GateWithheld. Plan mode's promise is that mutating tools
+// are withheld, and GateGlobal would break that promise — its default is
+// "ask", so the user could approve a mutation the mode said was unavailable.
+// Withholding also covers names that plan mode never advertises but that the
+// gate still sees: allowsTool runs at dispatch, after this classification, so
+// argument-carrying tools admitted by name (git) and alwaysDangerous names
+// synthesized by dialect recovery reach here first. A withheld call has no
+// override, which is what "withheld" has to mean, and its denial names the
+// mode rather than an MCP origin policy (GateDeny).
 func (l *Loop) dangerousGate() pipeline.GateDecision {
 	if l.Config.ToolsLevel == ReadOnlyTools {
-		return pipeline.GateDeny
+		return pipeline.GateWithheld
 	}
 	return pipeline.GateGlobal
+}
+
+// planModeWithholds reports whether plan mode denies this call outright,
+// independent of the approval mode and of whether the approval middleware is
+// installed at all.
+func (l *Loop) planModeWithholds(name, args string) bool {
+	return l.dangerousGate() == pipeline.GateWithheld && l.dangerousCall(name, args)
+}
+
+// admitTool is the always-on dispatch gate: the advertised tool level plus plan
+// mode's per-call danger check. The approval middleware asks the same questions
+// through classifyGate, but that middleware is optional
+// (middleware.disabled: [approval]) and a mode whose promise is "mutating
+// actions are withheld" must not be switchable off by configuration. Both
+// layers share planModeWithholds and dangerousCall so they cannot drift.
+func (l *Loop) admitTool(name, args string) (bool, error) {
+	if !l.allowsTool(name) {
+		return false, fmt.Errorf("tool %q is not available at the current tool level", name)
+	}
+	if l.planModeWithholds(name, args) {
+		return false, fmt.Errorf("%s", pipeline.WithheldReason(name))
+	}
+	return true, nil
 }
 
 // approveTool prompts the user on stderr/stdin to approve a tool call.
