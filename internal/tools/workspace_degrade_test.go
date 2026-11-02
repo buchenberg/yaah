@@ -70,6 +70,11 @@ func TestConfinementDegrade_AutoFallsBackAndRecords(t *testing.T) {
 	if !strings.Contains(reason, "DENIES writes") {
 		t.Fatalf("recorded reason = %q, want the backend's own explanation", reason)
 	}
+	// The commands run on the host path, so WorkspaceConfined must not keep
+	// claiming the body is jailed.
+	if WorkspaceConfined(ws) {
+		t.Fatal("a degraded workspace still reports itself confined")
+	}
 }
 
 // The record is one-time and shared across the per-call clones of the
@@ -113,8 +118,14 @@ func TestConfinementDegrade_NarrowedGrantsStillFail(t *testing.T) {
 	ws := confinedTestWorkspace(root, unconfinableBackend{}, containment.PlacementAuto).
 		WithWritableRoots([]string{root})
 
-	if _, err := ws.Exec(context.Background(), ExecRequest{Command: "echo", Args: []string{"nope"}}); err == nil {
+	_, err := ws.Exec(context.Background(), ExecRequest{Command: "echo", Args: []string{"nope"}})
+	if err == nil {
 		t.Fatal("a narrowed grant set must not silently run unconfined")
+	}
+	// The remedy must name grants, not offer "containment: auto" — auto is
+	// already the placement here, so that advice would be a no-op.
+	if !strings.Contains(err.Error(), "grants:") {
+		t.Fatalf("error = %v, want it to name the declared grant set", err)
 	}
 	if _, ok := WorkspaceDegraded(ws); ok {
 		t.Fatal("narrowed grants must not record a downgrade")
@@ -123,21 +134,47 @@ func TestConfinementDegrade_NarrowedGrantsStillFail(t *testing.T) {
 
 // Egress rules live in the jail, so degrading would silently drop them.
 func TestConfinementDegrade_NetworkRuleStillFails(t *testing.T) {
-	for _, mode := range []confinement.NetMode{confinement.NetDenyAll, confinement.NetBroker} {
-		t.Run(string(mode), func(t *testing.T) {
+	cases := []struct {
+		mode     confinement.NetMode
+		wantBody string // the text that must explain the refusal
+	}{
+		// deny_all reaches the jail and is refused by degradeBlocker.
+		{confinement.NetDenyAll, "network policy"},
+		// broker cannot even be lowered on this host, so it is refused earlier;
+		// it must still refuse, and must not degrade.
+		{confinement.NetBroker, "NetBroker"},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.mode), func(t *testing.T) {
 			root := t.TempDir()
 			pv := NewPathValidator(root, false, nil)
 			pv.WorkDir = pv.WorkspaceRoot
 			ws := NewConfinedLocalWorkspace(pv, unconfinableBackend{}, containment.PlacementAuto,
-				confinement.NetworkPolicy{Mode: mode})
+				confinement.NetworkPolicy{Mode: tc.mode})
 
-			if _, err := ws.Exec(context.Background(), ExecRequest{Command: "echo", Args: []string{"nope"}}); err == nil {
-				t.Fatalf("network mode %q must not degrade to an unpoliced host path", mode)
+			_, err := ws.Exec(context.Background(), ExecRequest{Command: "echo", Args: []string{"nope"}})
+			if err == nil {
+				t.Fatalf("network mode %q must not degrade to an unpoliced host path", tc.mode)
+			}
+			if !strings.Contains(err.Error(), tc.wantBody) {
+				t.Fatalf("error = %v, want it to name %q", err, tc.wantBody)
 			}
 			if _, ok := WorkspaceDegraded(ws); ok {
-				t.Fatalf("network mode %q must not record a downgrade", mode)
+				t.Fatalf("network mode %q must not record a downgrade", tc.mode)
 			}
 		})
+	}
+}
+
+// A nil record is what a workspace built without confinement carries; recording
+// into it must be a no-op rather than a panic.
+func TestConfinementDowngrade_NilRecordIsSafe(t *testing.T) {
+	var d *confinementDowngrade
+	if got := d.record("boom"); got != "" {
+		t.Fatalf("nil record returned %q, want the empty string", got)
+	}
+	if _, ok := d.get(); ok {
+		t.Fatal("nil record reported a downgrade")
 	}
 }
 

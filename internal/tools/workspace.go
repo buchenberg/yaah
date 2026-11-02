@@ -165,8 +165,13 @@ type confinementDowngrade struct {
 }
 
 // record stores the first reason and reports it; later calls return "". The
-// first failure is the informative one — the rest are the same condition.
+// first failure is the informative one — the rest are the same condition. A nil
+// record (a workspace built without confinement) accepts the call and reports
+// nothing, so a caller need not test the pointer first.
 func (d *confinementDowngrade) record(reason string) (first string) {
+	if d == nil {
+		return ""
+	}
 	d.once.Do(func() {
 		d.mu.Lock()
 		d.reason = reason
@@ -246,6 +251,11 @@ func (w *localWorkspace) WithWritableRoots(roots []string) *localWorkspace {
 // confinement backend, or is configured to fail closed without one. A client
 // workspace overlay must not bypass either posture.
 func (w *localWorkspace) Confined() bool {
+	if _, ok := w.degrade.get(); ok {
+		// The jail was requested and could not be established, so commands run on
+		// the host path: reporting "jailed" here would be a lie.
+		return false
+	}
 	return w.confiner != nil || w.placement == containment.PlacementPaddock
 }
 
@@ -358,12 +368,10 @@ func (w *localWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResult,
 	// check cannot see. This is the failure mode where a dispatch lane used to
 	// lose every execution tool at once, because containment: auto never got the
 	// advisory fallback it documents.
-	if !w.mayDegrade() {
+	if blocker := w.degradeBlocker(); blocker != "" {
 		return res, fmt.Errorf("%w — the dispatch lane's commands cannot run: "+
-			"backend %q could not establish confinement, and placement %q refuses to "+
-			"run unconfined. Set agents.subagent.containment: auto to allow a recorded "+
-			"advisory fallback, or off to run the lane unconfined deliberately",
-			err, w.confiner.Name(), w.placement)
+			"backend %q could not establish confinement, and the advisory fallback is "+
+			"withheld because %s", err, w.confiner.Name(), blocker)
 	}
 	if first := w.degrade.record(err.Error()); first != "" {
 		slog.Warn("containment unavailable: dispatch lane runs unconfined (containment: auto, advisory fallback recorded)",
@@ -374,23 +382,27 @@ func (w *localWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResult,
 	return w.advisoryExec(ctx, req)
 }
 
-// mayDegrade reports whether a jail that could not be established may fall back
-// to the advisory host path for this workspace.
+// degradeBlocker names the reason the advisory fallback is unavailable, with the
+// setting that would change it. It returns "" when degrading is admissible.
 //
-// The fallback is only sound when it loses nothing the caller asked for, so it
-// is limited to: containment: auto (whose documented contract is "advisory,
-// recorded" when enforcement is unavailable); a non-narrowed grant set (a
-// declared grant set is a promise the unpoliced host path cannot keep); and
-// allow-all egress (advisory is unpoliced, so degrading would silently drop a
-// network rule). Everything else still fails closed, naming the fix.
-func (w *localWorkspace) mayDegrade() bool {
-	if w.placement != containment.PlacementAuto {
-		return false
+// The distinction matters for the operator: telling someone on the default
+// `auto` placement to "set containment: auto" is a no-op, and the real objection
+// there is a declared grant set or an egress rule.
+func (w *localWorkspace) degradeBlocker() string {
+	switch {
+	case w.placement != containment.PlacementAuto:
+		return fmt.Sprintf("placement %q refuses to run unconfined — set "+
+			"agents.subagent.containment: auto to allow a recorded advisory fallback, or off "+
+			"to run the lane unconfined deliberately", w.placement)
+	case w.narrowed:
+		return "a declared grants: set cannot be kept on the unconfined host path — drop " +
+			"the restrictive grants:, or fix the host's confinement backend so the jail can be " +
+			"established"
+	case w.network.Mode != "" && w.network.Mode != confinement.NetAllowAll:
+		return fmt.Sprintf("network policy %q cannot be enforced without the jail — set "+
+			"agents.subagent.network: allow_all, or fix the host's confinement backend", w.network.Mode)
 	}
-	if w.narrowed {
-		return false
-	}
-	return w.network.Mode == "" || w.network.Mode == confinement.NetAllowAll
+	return ""
 }
 
 // advisoryExec is the unconfined host path — the behaviour every session had
