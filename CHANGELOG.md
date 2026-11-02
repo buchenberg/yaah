@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.129.0](https://github.com/buchenberg/yaah/compare/v0.128.0...v0.129.0) (2026-11-02)
+
+
+### Features
+
+* persist session mode across resume ([3aa3f01](https://github.com/buchenberg/yaah/commit/3aa3f0188419c2a5e7cd1327d8ef6ec80f22b60e))
+
 ## [0.128.0](https://github.com/buchenberg/yaah/compare/v0.127.1...v0.128.0) (2026-11-02)
 
 
