@@ -12,12 +12,18 @@ import (
 // answers them through the callback.
 type fakeSurface struct {
 	onSend func(Msg) bool
-	done   chan struct{}
+	gone   chan struct{}
 }
 
-func (s fakeSurface) Send(msg Msg) bool { return s.onSend(msg) }
-
-func (s fakeSurface) Done() <-chan struct{} { return s.done }
+// Send implements Surface. The gone channel stands in for the lane's teardown;
+// it is only reportable once the prompt was delivered, which is the property
+// under test in the bridge.
+func (s fakeSurface) Send(msg Msg) (<-chan struct{}, bool) {
+	if !s.onSend(msg) {
+		return nil, false
+	}
+	return s.gone, true
+}
 
 // TestAskQuestionsAnswered pins the answered path: the entry reaches the
 // surface as a control.Question, the answer is rendered "Header: answer", and
@@ -66,7 +72,7 @@ func TestAskQuestionsUndeliverable(t *testing.T) {
 // ends the wait promptly: the answer cannot arrive, so the fallback does.
 func TestAskQuestionsSurfaceGoneIsBounded(t *testing.T) {
 	done := make(chan struct{})
-	surface := fakeSurface{done: done, onSend: func(Msg) bool { return true }}
+	surface := fakeSurface{gone: done, onSend: func(Msg) bool { return true }}
 	close(done)
 
 	begin := time.Now()
@@ -140,7 +146,7 @@ func TestApproveUndeliverableAndGone(t *testing.T) {
 
 	t.Run("surface gone", func(t *testing.T) {
 		done := make(chan struct{})
-		surface := fakeSurface{done: done, onSend: func(Msg) bool { return true }}
+		surface := fakeSurface{gone: done, onSend: func(Msg) bool { return true }}
 		close(done)
 		begin := time.Now()
 		if Approve(surface, "c", "bash", "{}") {

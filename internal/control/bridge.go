@@ -35,27 +35,43 @@ type Surface interface {
 	// False means the prompt could not be delivered — no consumer attached,
 	// the surface stalled, or it went away — and the caller supplies its
 	// fallback rather than waiting for an answer that cannot arrive.
-	Send(msg Msg) bool
-
-	// Done is closed when the surface can no longer accept an answer: the
-	// web client's stream was torn down, the UI exited. A nil channel means
-	// the surface stays answerable for its lifetime, which is the TUI's
-	// case — its channel is consumed until the process ends.
-	Done() <-chan struct{}
+	//
+	// The returned channel is closed when an answer to *this* prompt can no
+	// longer arrive: the lane that accepted it was torn down, the run behind
+	// it was abandoned, the UI exited. A nil channel means the prompt stays
+	// answerable for the surface's lifetime, which is the TUI's case — its
+	// channel is consumed until the process ends.
+	//
+	// The channel is bound at delivery time on purpose. A surface whose lane
+	// can be replaced (the web's SSE stream) must report the lane it actually
+	// used, not re-read current state when the caller starts waiting: by then
+	// a successor lane may own the surface, and waiting on the successor's
+	// channel parks the caller for the full answer timeout on a prompt that
+	// was already orphaned.
+	Send(msg Msg) (gone <-chan struct{}, ok bool)
 }
 
 // awaitAnswer waits for one answer on ch, bounded by timeout and by done (the
 // surface going away). ok reports whether an answer arrived; the zero value is
 // returned when it did not, so a caller can never mistake a torn-down surface
 // for a decision.
-func awaitAnswer[T any](ch <-chan T, done <-chan struct{}, timeout time.Duration) (T, bool) {
+func awaitAnswer[T any](ch <-chan T, gone <-chan struct{}, timeout time.Duration) (T, bool) {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
 	case v := <-ch:
 		return v, true
-	case <-done:
+	case <-gone:
 	case <-timer.C:
+	}
+	// select chooses uniformly among ready cases, so a decision that landed
+	// at the same instant the surface went away — or the bound expired — can
+	// still be sitting in ch. Honor it: the user answered, and discarding
+	// that answer would deny a call nobody declined.
+	select {
+	case v := <-ch:
+		return v, true
+	default:
 	}
 	var zero T
 	return zero, false

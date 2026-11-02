@@ -38,14 +38,15 @@ func TestSendCtrlMsg(t *testing.T) {
 }
 
 // TestCtrlSurfaceNeverEnds pins the TUI transport: its channel is drained for
-// the life of the process, so the surface reports no teardown.
+// the life of the process, so the surface reports no teardown channel.
 func TestCtrlSurfaceNeverEnds(t *testing.T) {
 	surface := ctrlSurface{ch: make(chan control.Msg, 1)}
-	if surface.Done() != nil {
-		t.Error("ctrlSurface.Done() must be nil — the TUI channel never closes")
-	}
-	if !surface.Send(&control.Status{Text: "hi"}) {
+	gone, ok := surface.Send(&control.Status{Text: "hi"})
+	if !ok {
 		t.Error("ctrlSurface.Send = false, want delivery")
+	}
+	if gone != nil {
+		t.Error("ctrlSurface.Send must report no teardown channel — the TUI channel never closes")
 	}
 }
 
@@ -136,6 +137,57 @@ func TestInstallControlBridgesWebApprovalBounded(t *testing.T) {
 	}
 	if elapsed := time.Since(begin); elapsed > 2*time.Second {
 		t.Fatalf("approval took %v after the stream was torn down", elapsed)
+	}
+}
+
+// TestWebSurfaceBindsTeardownAtSend pins the lane the prompt was delivered to.
+// A browser reload installs a successor stream before the caller starts
+// waiting; the successor never saw the prompt, so waiting on its teardown would
+// park the caller for the full answer timeout on a prompt that is already
+// orphaned.
+func TestWebSurfaceBindsTeardownAtSend(t *testing.T) {
+	first := make(chan struct{})
+	second := make(chan struct{})
+	view := &sseView{w: newSyncBuffer()}
+	ctrlCh := make(chan control.Msg, 4)
+	ws := &webServer{
+		view:    view,
+		sseDone: first,
+		ctrlCh:  ctrlCh,
+		am:      newAnswerMap(),
+	}
+	var idGen atomic.Int64
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go forwardCtrl(ctx, ctrlCh, view, ws.am, &idGen)
+
+	gone, ok := sseSurface{ws: ws}.Send(&control.Status{Text: "prompt"})
+	if !ok {
+		t.Fatal("Send = false, want delivery")
+	}
+
+	// The reload lands after the prompt was accepted.
+	ws.mu.Lock()
+	ws.ctrlCh = make(chan control.Msg, 4)
+	ws.sseDone = second
+	ws.mu.Unlock()
+
+	close(first)
+	select {
+	case <-gone:
+	case <-time.After(time.Second):
+		t.Fatal("Send's teardown did not follow the stream that accepted the prompt")
+	}
+	shut := func(ch chan struct{}) (closed bool) {
+		select {
+		case <-ch:
+			return true
+		default:
+			return false
+		}
+	}
+	if shut(second) {
+		t.Error("the successor stream was torn down by the predecessor's teardown")
 	}
 }
 

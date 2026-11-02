@@ -77,8 +77,9 @@ func AskQuestions(s Surface, entries []tools.QuestionEntry) []string {
 // askSurface offers one entry to the surface and waits for its answer.
 func askSurface(s Surface, e tools.QuestionEntry) (string, bool) {
 	ch := make(chan string, 1)
-	if !s.Send(NewQuestion(e, ch)) {
+	gone, ok := s.Send(NewQuestion(e, ch))
+	if !ok {
 		return "", false
 	}
-	return awaitAnswer(ch, s.Done(), AnswerTimeout)
+	return awaitAnswer(ch, gone, AnswerTimeout)
 }

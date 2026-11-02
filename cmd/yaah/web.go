@@ -470,25 +470,23 @@ func (ws *webServer) stream() (chan<- control.Msg, <-chan struct{}) {
 // sseSurface adapts the live SSE stream to control.Surface — the web's
 // transport half of the shared question/approval bridge. The control channel
 // and the done channel belong to whichever /api/stream connection is current,
-// so both are read under ws.mu when a prompt is sent.
+// so both are read under ws.mu when a prompt is sent, and the pair that was
+// read is the pair the caller waits on.
 type sseSurface struct{ ws *webServer }
 
-// Send implements control.Surface.
-func (s sseSurface) Send(msg control.Msg) bool {
+// Send implements control.Surface. The returned channel is the teardown of the
+// stream this prompt actually went to: a reload afterwards installs a new
+// stream that never saw the prompt, so its channel must not be used to wait.
+func (s sseSurface) Send(msg control.Msg) (<-chan struct{}, bool) {
 	ch, done := s.ws.stream()
 	if ch == nil {
 		// No client: there is nothing to render the prompt in.
-		return false
+		return nil, false
 	}
-	return sendCtrlMsg(ch, done, msg)
-}
-
-// Done implements control.Surface: the current stream's teardown closes the
-// channel, which ends an unanswered prompt instead of letting it wait out the
-// answer timeout on a stream nobody is reading.
-func (s sseSurface) Done() <-chan struct{} {
-	_, done := s.ws.stream()
-	return done
+	if !sendCtrlMsg(ch, done, msg) {
+		return nil, false
+	}
+	return done, true
 }
 
 func (ws *webServer) handleAction(w http.ResponseWriter, r *http.Request) {

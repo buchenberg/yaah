@@ -23,9 +23,10 @@ func Approve(s Surface, callID, name, args string) bool {
 // test can exercise the timeout branch without waiting minutes for it.
 func ApproveWithin(s Surface, timeout time.Duration, callID, name, args string) bool {
 	decision := make(chan bool, 1)
-	if !s.Send(&Approval{CallID: callID, Name: name, Args: args, ApproveCh: decision}) {
+	gone, ok := s.Send(&Approval{CallID: callID, Name: name, Args: args, ApproveCh: decision})
+	if !ok {
 		return false
 	}
-	approved, answered := awaitAnswer(decision, s.Done(), timeout)
+	approved, answered := awaitAnswer(decision, gone, timeout)
 	return answered && approved
 }

@@ -38,12 +38,11 @@ func sendCtrlMsg(ch chan<- control.Msg, done <-chan struct{}, msg control.Msg) b
 // send timeout is the only bound on a delivery.
 type ctrlSurface struct{ ch chan<- control.Msg }
 
-// Send implements control.Surface.
-func (s ctrlSurface) Send(msg control.Msg) bool { return sendCtrlMsg(s.ch, nil, msg) }
-
-// Done implements control.Surface: the TUI's channel stays answerable for the
-// life of the process, so it never closes.
-func (s ctrlSurface) Done() <-chan struct{} { return nil }
+// Send implements control.Surface: the TUI's channel stays answerable for the
+// life of the process, so it reports no teardown channel.
+func (s ctrlSurface) Send(msg control.Msg) (<-chan struct{}, bool) {
+	return nil, sendCtrlMsg(s.ch, nil, msg)
+}
 
 // installControlBridges wires the shared question and approval bridges onto
 // sess for one surface. Every UI surface uses this one installer; only the
