@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.129.2](https://github.com/buchenberg/yaah/compare/v0.129.1...v0.129.2) (2026-11-02)
+
+
+### Bug Fixes
+
+* close plan-mode mutating escapes (review follow-ups) ([2e4e72f](https://github.com/buchenberg/yaah/commit/2e4e72f14f21960bbb66b5ccad28da750e31bf58))
+
 ## [0.129.1](https://github.com/buchenberg/yaah/compare/v0.129.0...v0.129.1) (2026-11-02)
 
 
