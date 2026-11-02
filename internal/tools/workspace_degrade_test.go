@@ -167,8 +167,6 @@ func TestConfinementDegrade_NetworkRuleStillFails(t *testing.T) {
 	}
 }
 
-// A nil record is what a workspace built without confinement carries; recording
-// into it must be a no-op rather than a panic.
 // countingBackend is unconfinableBackend plus attempt counters, so a test can
 // prove a recorded downgrade stops the workspace re-attempting — and re-probing
 // — confinement on every subsequent command.
@@ -234,6 +232,8 @@ func TestConfinementDegrade_SkipsRepeatedConfineAttempts(t *testing.T) {
 	}
 }
 
+// A nil record is what a workspace built without confinement carries; recording
+// into it must be a no-op rather than a panic.
 func TestConfinementDowngrade_NilRecordIsSafe(t *testing.T) {
 	var d *confinementDowngrade
 	if got := d.record("boom"); got != "" {

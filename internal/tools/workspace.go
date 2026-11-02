@@ -350,9 +350,9 @@ func (w *localWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResult,
 
 	// A recorded downgrade is permanent for this workspace: the probe that
 	// failed once fails on every call. Re-attempting confinement would pay for
-	// the same failure per command and re-log the warning each time, so take the
-	// advisory path directly. Per-call clones share the downgrade pointer, so
-	// every tool in the lane short-circuits here.
+	// the same failing probe per command, so take the advisory path directly
+	// rather than re-incurring that cost for every tool in the lane. Per-call
+	// clones share the downgrade pointer, so they all short-circuit here.
 	if _, ok := w.degrade.get(); ok {
 		return w.advisoryExec(ctx, req)
 	}
