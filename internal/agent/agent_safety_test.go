@@ -130,6 +130,56 @@ func TestClassifyDanger_MCPToolsGatedByPolicy(t *testing.T) {
 	}
 }
 
+// TestClassifyDanger_PlanModeDeniesDangerousCalls pins the plan-mode promise:
+// a dangerous call is withheld, not offered for approval. Plain GateGlobal
+// would defer to the global ApprovalMode, whose default is "ask", so plan mode
+// had to resolve danger to GateDeny — otherwise admitting git to the
+// inspection set would have let `git commit` through on a user approval that
+// the mode says cannot exist.
+func TestClassifyDanger_PlanModeDeniesDangerousCalls(t *testing.T) {
+	newGitLoop := func(level ToolsLevel) *Loop {
+		reg := tools.NewEmptyRegistry()
+		reg.Register(&tools.GitTool{})
+		return &Loop{Registry: reg, Config: LoopConfig{ToolsLevel: level}}
+	}
+
+	plan := newGitLoop(ReadOnlyTools)
+	// A read-only git action is inspection and passes untouched.
+	if got := plan.classifyGate("git", `{"action":"status"}`); got != pipeline.GatePass {
+		t.Errorf("git status in plan mode = %v, want GatePass", got)
+	}
+	for _, args := range []string{
+		`{"action":"commit","message":"x"}`,
+		`{"action":"add","paths":["."]}`,
+		`{"action":"push"}`,
+		`{"action":"pull"}`,
+		`{"action":"branch","flags":["-D"],"paths":["main"]}`,
+	} {
+		if got := plan.classifyGate("git", args); got != pipeline.GateDeny {
+			t.Errorf("dangerous git call %s in plan mode = %v, want GateDeny", args, got)
+		}
+	}
+	// Defense in depth: dialect recovery can synthesize calls to names plan
+	// mode never advertises; they are denied rather than gated globally.
+	for _, name := range []string{"bash", "powershell"} {
+		if got := plan.classifyGate(name, "{}"); got != pipeline.GateDeny {
+			t.Errorf("always-dangerous %q in plan mode = %v, want GateDeny", name, got)
+		}
+	}
+
+	// Build mode is unchanged: the global approval mode still decides.
+	full := newGitLoop(FullTools)
+	if got := full.classifyGate("git", `{"action":"commit","message":"x"}`); got != pipeline.GateGlobal {
+		t.Errorf("dangerous git call in build mode = %v, want GateGlobal", got)
+	}
+	if got := full.classifyGate("bash", "{}"); got != pipeline.GateGlobal {
+		t.Errorf("bash in build mode = %v, want GateGlobal", got)
+	}
+	if got := full.classifyGate("git", `{"action":"status"}`); got != pipeline.GatePass {
+		t.Errorf("git status in build mode = %v, want GatePass", got)
+	}
+}
+
 // fakeRemoteTool mimics an MCP-served tool as registered by initMCP: it
 // satisfies tools.Tool but deliberately does NOT implement
 // tools.DangerClassifier — the exact shape that made the registry path

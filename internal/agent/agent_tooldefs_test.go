@@ -75,7 +75,7 @@ func TestBuildToolDefs_nilRegistry(t *testing.T) {
 	}
 }
 
-func TestReadOnlyTools_WithholdsMutatingTools(t *testing.T) {
+func TestReadOnlyTools_ExposesInspectionSet(t *testing.T) {
 	reg := tools.NewEmptyRegistry()
 	for _, name := range []string{"read", "grep", "write", "edit", "bash"} {
 		if tool := tools.NewLeafTool(name); tool != nil {
@@ -83,6 +83,8 @@ func TestReadOnlyTools_WithholdsMutatingTools(t *testing.T) {
 		}
 	}
 	reg.Register(namedTestTool("delegate"))
+	reg.Register(&tools.GitTool{})
+	reg.Register(&tools.StaticcheckTool{})
 	reg.Register(&tools.PlanTool{})
 	loop := &Loop{Registry: reg}
 	loop.Config.ToolsLevel = ReadOnlyTools
@@ -91,21 +93,52 @@ func TestReadOnlyTools_WithholdsMutatingTools(t *testing.T) {
 	for _, def := range defs {
 		got[def.Function.Name] = true
 	}
-	for _, want := range []string{"read", "grep"} {
+	for _, want := range []string{"read", "grep", "git", "staticcheck", "plan"} {
 		if !got[want] {
-			t.Errorf("read-only tool set missing %q: %v", want, got)
+			t.Errorf("plan-mode tool set missing %q: %v", want, got)
 		}
 	}
-	for _, forbidden := range []string{"write", "edit", "bash", "delegate", "plan"} {
+	for _, forbidden := range []string{"write", "edit", "bash", "delegate"} {
 		if got[forbidden] {
-			t.Errorf("read-only tool set exposes %q", forbidden)
+			t.Errorf("plan-mode tool set exposes %q", forbidden)
 		}
 	}
-	if loop.allowsTool("write") {
-		t.Error("read-only execution gate allowed write")
+}
+
+// TestReadOnlyToolNames_InspectionSet pins the membership of the inspection
+// set that backs plan mode. Adding "git" is what makes the per-call danger
+// gate load-bearing: the set is matched on names, and git mutates by
+// argument.
+func TestReadOnlyToolNames_InspectionSet(t *testing.T) {
+	want := []string{
+		"read", "grep", "glob", "ls", "file_info", "go_outline", "calculate",
+		"diff", "question", "git", "staticcheck", "plan",
 	}
-	if !loop.allowsTool("read") {
-		t.Error("read-only execution gate refused read")
+	for _, name := range want {
+		if !readOnlyToolNames[name] {
+			t.Errorf("inspection set is missing %q", name)
+		}
+	}
+	if len(readOnlyToolNames) != len(want) {
+		t.Errorf("inspection set has %d entries, want %d: %v", len(readOnlyToolNames), len(want), readOnlyToolNames)
+	}
+}
+
+// TestAllowsTool_ReadOnlyLevel pins the execution gate for plan mode: the
+// inspection set passes, everything that writes source or runs commands stays
+// out.
+func TestAllowsTool_ReadOnlyLevel(t *testing.T) {
+	loop := &Loop{}
+	loop.Config.ToolsLevel = ReadOnlyTools
+	for _, name := range []string{"read", "grep", "git", "staticcheck", "plan"} {
+		if !loop.allowsTool(name) {
+			t.Errorf("plan-mode execution gate refused %q", name)
+		}
+	}
+	for _, name := range []string{"bash", "edit", "write"} {
+		if loop.allowsTool(name) {
+			t.Errorf("plan-mode execution gate allowed %q", name)
+		}
 	}
 }
 

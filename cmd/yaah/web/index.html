@@ -688,7 +688,7 @@ document.addEventListener('alpine:init', () => {
       palCommands() {
         const cur = this.head.provider && this.head.model ? this.head.provider + '/' + this.head.model : ''
         const cmds = [
-          {id:'mode:plan', group:'session', icon:'▤', label:'Plan mode', hint:'read-only tools', current: this.head.sessionMode === 'plan', run: () => this.post({type:'mode', mode:'plan'})},
+          {id:'mode:plan', group:'session', icon:'▤', label:'Plan mode', hint:'inspection tools', current: this.head.sessionMode === 'plan', run: () => this.post({type:'mode', mode:'plan'})},
           {id:'mode:build', group:'session', icon:'⚒', label:'Build mode', hint:'full tools', current: this.head.sessionMode === 'build', run: () => this.post({type:'mode', mode:'build'})},
           {id:'compact', group:'session', icon:'⧗', label:'Compact context', hint:'free tokens', run: () => this.post({type:'compact'})},
           {id:'stop', group:'session', icon:'■', label:'Stop agent', hint:'abort run', disabled: !this.live, run: () => this.stop()},

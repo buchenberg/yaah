@@ -209,7 +209,7 @@ func printHelp() {
 	fmt.Printf("  %s  %s\n", repl.Bold("/compact"), repl.Dim("summarize old messages to free context"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/login"), repl.Dim("authenticate with an OAuth provider"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/logout"), repl.Dim("remove stored OAuth credentials"))
-	fmt.Printf("  %s  %s\n", repl.Bold("/plan"), repl.Dim("read-only planning mode"))
+	fmt.Printf("  %s  %s\n", repl.Bold("/plan"), repl.Dim("inspection/planning mode: inspection tools only, no edits"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/build"), repl.Dim("full coding mode"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/?"), repl.Dim("show this help"))
 	fmt.Println()

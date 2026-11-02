@@ -20,25 +20,44 @@ func (l *Loop) buildToolsForLevel() []types.ToolDef {
 	}
 }
 
-// readOnlyToolNames is the plan-mode surface: inspection only. Shell, edit,
-// write, patch, delete, replace, plan (which writes .agents/plans), and
-// delegation are absent so a plan-mode turn cannot mutate the workspace or
-// widen its own authority.
+// readOnlyToolNames is the plan-mode surface — the inspection set: the tools
+// that look at a workspace instead of changing it. Shell, edit, write, patch,
+// delete, replace, and delegation are absent, so a plan-mode turn cannot
+// mutate the workspace or widen its own authority.
+//
+// Three admitted entries are not literally read-only:
+//
+//   - "plan" writes a PLAN.md under .agents/plans/ — the artifact plan mode
+//     exists to produce. It is the plan tool, not plan mode.
+//   - "staticcheck" only analyzes and reports; it rewrites nothing.
+//   - "git" is admitted as a name but inspected per call. This map sees names
+//     only, so a mutating subcommand (add, commit, push, pull, `branch -D`)
+//     would slip past a name check; the approval gate closes that hole by
+//     hard-denying any call the git tool classifies dangerous while
+//     ToolsLevel is ReadOnlyTools (see classifyGate). Mutating git is denied
+//     in plan mode, never offered for approval.
 var readOnlyToolNames = map[string]bool{
-	"read":       true,
-	"grep":       true,
-	"glob":       true,
-	"ls":         true,
-	"file_info":  true,
-	"go_outline": true,
-	"calculate":  true,
-	"diff":       true,
-	"question":   true,
+	"read":        true,
+	"grep":        true,
+	"glob":        true,
+	"ls":          true,
+	"file_info":   true,
+	"go_outline":  true,
+	"calculate":   true,
+	"diff":        true,
+	"question":    true,
+	"git":         true,
+	"staticcheck": true,
+	"plan":        true,
 }
 
 // allowsTool enforces the advertised tool level at execution time. Hiding a
 // tool definition is not enough: dialect recovery can synthesize calls the
 // model never saw in the tool array.
+//
+// It gates on the name alone. A tool whose danger depends on its arguments
+// (git) is let through here and refused per call by classifyGate, which sees
+// the arguments.
 func (l *Loop) allowsTool(name string) bool {
 	switch l.Config.ToolsLevel {
 	case ReadOnlyTools:
