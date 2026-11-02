@@ -121,8 +121,11 @@ type agentSession struct {
 	// the ACP server can report max_turn_requests instead of end_turn.
 	turnBudgetExhausted bool
 	// mode is the ACP session mode ("build" or "plan"). Empty means build.
-	// It is per ACP attachment, not persisted: a fresh load/resume starts in
-	// build mode unless the live attachment already selected another mode.
+	// It is persisted to the session row on every switch (SetMode) and
+	// restored on resume (restoreSession), so a session left in plan mode
+	// comes back in plan mode rather than silently widening to build. The
+	// restore sets this field directly: it is a recovery, not a switch, so
+	// no ModeChangedEvent is announced for it.
 	mode string
 	// titlePublished tracks the persisted session title (empty until the
 	// first user message derives one). Cached across prompt runs so the
@@ -522,12 +525,29 @@ func (s *agentSession) Mode() string {
 }
 
 func (s *agentSession) SetMode(mode string) error {
-	if mode != acpModeBuild && mode != acpModePlan {
+	if !validMode(mode) {
 		return fmt.Errorf("unknown session mode %q (available: %s, %s)", mode, acpModeBuild, acpModePlan)
 	}
 	s.mu.Lock()
 	s.mode = mode
+	db, sessionID := s.db, s.sessionID
 	s.mu.Unlock()
+	// Persist the switch so the selection survives the process: resume reads
+	// the column back (restoreSession), so a session narrowed to plan mode is
+	// not silently widened to build by the next attachment. Written here, on
+	// the switch, because a crash, a harness timeout or a kill never reaches
+	// close — and a mode is selection state, not turn data.
+	//
+	// Best-effort, like the session's other bookkeeping (usage flush, title,
+	// workspace metadata): the switch has already taken effect in this
+	// process and the notice below announces it, so a store failure must not
+	// be reported as a refused switch — the warning names the real
+	// consequence instead (the next resume falls back to build).
+	if db != nil && sessionID != "" {
+		if err := db.SetSessionMode(sessionID, mode); err != nil {
+			slog.Warn("session: persisting mode failed", "mode", mode, "err", err)
+		}
+	}
 	// Announce the switch in-band, after the lock is released: the notice
 	// states the regime the next run's tool gate enforces, so a mode change
 	// is observable from inside the conversation rather than only from the

@@ -29,6 +29,13 @@ var planModeSpec = PlanModeSpec{
 	ToolsLevel: agent.ReadOnlyTools,
 }
 
+// validMode reports whether mode is one a session can hold. Build and plan are
+// the only two; the empty string is the zero value that MEANS build, not a mode
+// a caller may select, so it is refused rather than normalized here.
+func validMode(mode string) bool {
+	return mode == acpModeBuild || mode == planModeSpec.Mode
+}
+
 // toolsLevelForMode maps a session mode to the tool gate the loop enforces.
 // Only plan mode narrows the surface; every other mode — including the empty
 // default — gets the full toolset.

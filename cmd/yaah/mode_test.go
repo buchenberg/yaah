@@ -1,10 +1,13 @@
 package yaah
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/memory"
 )
 
 // The tool gate is derived from planModeSpec, so plan mode must return the
@@ -306,5 +309,69 @@ func TestSetModeNoticeBuffersForUnsafeView(t *testing.T) {
 	}
 	if _, ok := view.events[0].(*agent.ModeChangedEvent); !ok {
 		t.Fatalf("delivered event = %T; want *agent.ModeChangedEvent", view.events[0])
+	}
+}
+
+// storedSessionMode reads the mode a session row carries, the same read resume
+// performs.
+func storedSessionMode(t *testing.T, db *memory.DB, id string) string {
+	t.Helper()
+	mode, err := db.SessionMode(id)
+	if err != nil {
+		t.Fatalf("SessionMode(%q) error: %v", id, err)
+	}
+	return mode
+}
+
+// A switch is persisted on the switch, so a later resume can restore it: the
+// session row carries the selection, not only this process's memory. Without
+// this, a plan-mode session silently widened to build on resume.
+func TestSetModePersistsSessionMode(t *testing.T) {
+	db, err := memory.Open(filepath.Join(t.TempDir(), "mode.db"))
+	if err != nil {
+		t.Fatalf("memory.Open() error: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := db.CreateSession(memory.Session{ID: "sess-mode", StartedAt: time.Now().Unix()}); err != nil {
+		t.Fatalf("CreateSession() error: %v", err)
+	}
+	sess := &agentSession{db: db, sessionID: "sess-mode"}
+
+	if err := sess.SetMode(acpModePlan); err != nil {
+		t.Fatalf("SetMode(%q) = %v", acpModePlan, err)
+	}
+	if got := storedSessionMode(t, db, "sess-mode"); got != acpModePlan {
+		t.Fatalf("persisted mode = %q after switching to %q; want %q", got, acpModePlan, acpModePlan)
+	}
+
+	// A refused mode persists nothing and leaves the stored selection alone.
+	if err := sess.SetMode("yolo"); err == nil {
+		t.Fatalf("SetMode(%q) = nil; want an error", "yolo")
+	}
+	if got := storedSessionMode(t, db, "sess-mode"); got != acpModePlan {
+		t.Fatalf("persisted mode = %q after a refused switch; want %q", got, acpModePlan)
+	}
+	if got := sess.Mode(); got != acpModePlan {
+		t.Fatalf("Mode() = %q after a refused switch; want %q", got, acpModePlan)
+	}
+
+	if err := sess.SetMode(acpModeBuild); err != nil {
+		t.Fatalf("SetMode(%q) = %v", acpModeBuild, err)
+	}
+	if got := storedSessionMode(t, db, "sess-mode"); got != acpModeBuild {
+		t.Fatalf("persisted mode = %q after switching back; want %q", got, acpModeBuild)
+	}
+}
+
+// A session with no store still switches: persistence is bookkeeping on top of
+// the switch, never a precondition for it.
+func TestSetModeWithoutStoreStillSwitches(t *testing.T) {
+	sess := &agentSession{}
+
+	if err := sess.SetMode(acpModePlan); err != nil {
+		t.Fatalf("SetMode(%q) = %v", acpModePlan, err)
+	}
+	if got := sess.Mode(); got != acpModePlan {
+		t.Fatalf("Mode() = %q; want %q", got, acpModePlan)
 	}
 }

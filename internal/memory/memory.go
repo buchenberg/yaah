@@ -340,7 +340,10 @@ func (d *DB) migrate() error {
 		sub_tokens_in INTEGER DEFAULT 0,
 		sub_tokens_out INTEGER DEFAULT 0,
 		title           TEXT DEFAULT '',
-		updated_at      INTEGER DEFAULT 0
+		updated_at      INTEGER DEFAULT 0,
+		-- mode is the persisted session mode ('build' or 'plan');
+		-- '' is build, the zero value.
+		mode            TEXT DEFAULT ''
 	);
 
 	CREATE TABLE IF NOT EXISTS messages (
@@ -518,6 +521,10 @@ func (d *DB) migrate() error {
 		{"sessions", "sub_tokens_out", "ALTER TABLE sessions ADD COLUMN sub_tokens_out INTEGER DEFAULT 0"},
 		{"sessions", "title", "ALTER TABLE sessions ADD COLUMN title TEXT DEFAULT ''"},
 		{"sessions", "updated_at", "ALTER TABLE sessions ADD COLUMN updated_at INTEGER DEFAULT 0"},
+		// Persisted session mode: additive with a '' default, so existing
+		// rows read as build and no backfill (and no schema-version bump)
+		// is needed — nothing has to run exactly once.
+		{"sessions", "mode", "ALTER TABLE sessions ADD COLUMN mode TEXT DEFAULT ''"},
 	}
 	for _, s := range steps {
 		if err := d.ensureColumn(s.table, s.column, s.ddl); err != nil {
