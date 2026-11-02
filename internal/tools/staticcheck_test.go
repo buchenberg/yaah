@@ -13,6 +13,12 @@ import (
 // makes `go vet` execute that binary. Plan mode now admits staticcheck because
 // analysis writes nothing, so the danger classifier — not the plan-mode
 // allowlist — is what keeps binary execution denied there.
+//
+// `-toolexec=<path>` is the same capability under a second name: it wraps every
+// tool the build invokes, so a run carrying it executes a caller-named binary
+// too. The packages cases cover the second finding: packages reaches the
+// analyzer at flag position, so a dash there is an option the flag scan never
+// sees.
 func TestStaticcheckTool_FlagsThatExecuteAreDangerous(t *testing.T) {
 	sc := NewStaticcheckTool()
 	tests := []struct {
@@ -23,9 +29,22 @@ func TestStaticcheckTool_FlagsThatExecuteAreDangerous(t *testing.T) {
 		{"plain run", `{"packages":"./..."}`, false},
 		{"analyzer choice", `{"packages":"./...","analyzers":"both"}`, false},
 		{"harmless flags", `{"packages":"./...","flags":["-tags=integration"]}`, false},
+		// A legitimate call carrying a safe analyzer option must stay
+		// non-dangerous: the classifier keys on the exec-flag table plus a
+		// dash-leading packages value, not on "flags were passed".
+		{"safe analyzer flag", `{"packages":"./...","flags":["-checks=all"]}`, false},
 		{"separated vettool", `{"packages":"./...","flags":["-vettool","/tmp/evil"]}`, true},
 		{"attached vettool", `{"packages":"./...","flags":["-vettool=/tmp/evil"]}`, true},
 		{"double dash vettool", `{"packages":"./...","flags":["--vettool=/tmp/evil"]}`, true},
+		{"attached toolexec", `{"packages":"./...","flags":["-toolexec=/tmp/evil"]}`, true},
+		{"separated toolexec", `{"packages":"./...","flags":["-toolexec","/tmp/evil"]}`, true},
+		{"double dash toolexec", `{"packages":"./...","flags":["--toolexec=/tmp/evil"]}`, true},
+		// The packages-position bypass: forwarded as one argv element ahead
+		// of the flags, so the leading dash makes it an option.
+		{"vettool as packages", `{"packages":"-vettool=/tmp/evil","flags":["."]}`, true},
+		{"toolexec as packages", `{"packages":"-toolexec=/tmp/evil","flags":["."]}`, true},
+		// Trimming first stops padding from smuggling the dash past the check.
+		{"padded option as packages", `{"packages":"  -toolexec=/tmp/evil"}`, true},
 		// Unparseable arguments never reach an analyzer: Execute rejects them
 		// before building a command, so this is not an execution path.
 		{"unparseable args cannot execute", `not json`, false},
@@ -36,6 +55,91 @@ func TestStaticcheckTool_FlagsThatExecuteAreDangerous(t *testing.T) {
 				t.Errorf("IsDangerous(%s) = %v, want %v", tt.args, got, tt.dangerous)
 			}
 		})
+	}
+}
+
+// TestStaticcheck_RefusesPackagesThatLookLikeOptions pins the second review
+// finding: Execute built argv as `vet` + packages + flags, so packages sat in
+// option position. `{"packages":"-vettool=/tmp/evil","flags":["."]}` therefore
+// ran `go vet -vettool=/tmp/evil .`, executing a caller-named binary while
+// IsDangerous — which only scanned Flags — saw a harmless `.`. The value is
+// refused outright rather than rewritten, and every analyzer path is covered
+// because each one forwards packages the same way.
+func TestStaticcheck_RefusesPackagesThatLookLikeOptions(t *testing.T) {
+	sc := NewStaticcheckTool()
+	tests := []struct {
+		name string
+		args string
+	}{
+		{"vet with vettool as packages", `{"packages":"-vettool=/tmp/evil","flags":["."]}`},
+		{"vet with toolexec as packages", `{"packages":"-toolexec=/tmp/evil","flags":["."]}`},
+		{"staticcheck with toolexec as packages", `{"packages":"-toolexec=/tmp/evil","analyzers":"staticcheck"}`},
+		{"both analyzers with vettool as packages", `{"packages":"-vettool=/tmp/evil","analyzers":"both"}`},
+		// The trim runs before the dash test, so padding cannot get past it.
+		{"padded option as packages", `{"packages":"  -toolexec=/tmp/evil"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ws := &fakeExecWorkspace{respond: func(req ExecRequest) (ExecResult, error) {
+				t.Fatalf("no analyzer should run: go %v", req.Args)
+				return ExecResult{}, nil
+			}}
+			out, err := (&StaticcheckTool{WS: ws}).Execute(context.Background(), tt.args)
+			if err == nil {
+				t.Fatalf("Execute(%s) was not refused, returned %q", tt.args, out)
+			}
+			// The refusal has to teach the caller what packages is for: a bare
+			// "forbidden" leaves them retrying the same shape.
+			if !strings.Contains(err.Error(), "is a package pattern, never an option") {
+				t.Errorf("error does not explain the refusal: %q", err)
+			}
+			// Defense in depth: the approval layer must reach the same verdict
+			// even if a caller-side check were ever bypassed.
+			if !sc.IsDangerous(tt.args) {
+				t.Errorf("IsDangerous(%s) = false; the gate must classify the packages bypass as dangerous", tt.args)
+			}
+		})
+	}
+}
+
+// TestStaticcheck_LegitimateCallPassesThrough is the guard against an
+// over-broad refusal: a real package pattern plus a safe analyzer option is
+// neither dangerous nor refused, and both analyzers still get the pattern in
+// flag position.
+func TestStaticcheck_LegitimateCallPassesThrough(t *testing.T) {
+	const args = `{"packages":"./...","analyzers":"both","flags":["-checks=all"]}`
+	if NewStaticcheckTool().IsDangerous(args) {
+		t.Errorf("IsDangerous(%s) = true; a package pattern with a safe analyzer flag is not dangerous", args)
+	}
+
+	var argv [][]string
+	ws := &fakeExecWorkspace{respond: func(req ExecRequest) (ExecResult, error) {
+		argv = append(argv, append([]string{req.Command}, req.Args...))
+		return ExecResult{ExitCode: 0}, nil
+	}}
+	out, err := (&StaticcheckTool{WS: ws}).Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute(%s) refused a legitimate call: %v", args, err)
+	}
+	var r staticcheckResult
+	if err := json.Unmarshal([]byte(out), &r); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, out)
+	}
+	if r.Status != staticcheckOK {
+		t.Errorf("status = %q, want ok", r.Status)
+	}
+
+	want := [][]string{
+		{"go", "vet", "./...", "-checks=all"},
+		{"staticcheck", "./...", "-checks=all"},
+	}
+	if len(argv) != len(want) {
+		t.Fatalf("ran %v, want %v", argv, want)
+	}
+	for i := range want {
+		if strings.Join(argv[i], "\x00") != strings.Join(want[i], "\x00") {
+			t.Errorf("argv[%d] = %v, want %v", i, argv[i], want[i])
+		}
 	}
 }
 

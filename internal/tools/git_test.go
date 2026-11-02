@@ -159,9 +159,22 @@ func TestGitTool_branchDangerIsArgumentAware(t *testing.T) {
 		{"column flag with a name is still a creation", `{"action":"branch","flags":["--column"],"paths":["feature"]}`, true},
 		{"omit-empty with a name is still a creation", `{"action":"branch","flags":["--omit-empty"],"paths":["feature"]}`, true},
 		{"abbrev with a name is still a creation", `{"action":"branch","flags":["--abbrev=7"],"paths":["feature"]}`, true},
+		// -v looked harmless because the listing synopsis documents it as a
+		// display option, but git accepts it on the creation form too:
+		// `git branch -v <name>` creates the ref. -vv is parse-options'
+		// bundled short form of -v -v, so it behaves the same.
+		{"verbose with a name is still a creation", `{"action":"branch","flags":["-v"],"paths":["feat"]}`, true},
+		{"double verbose with a name is still a creation", `{"action":"branch","flags":["-vv"],"paths":["feat"]}`, true},
+		{"long verbose with a name is still a creation", `{"action":"branch","flags":["--verbose"],"paths":["feat"]}`, true},
+		// Without a positional argument they are plain verbose listings, so
+		// the formatting flags must not turn a listing into a prompt.
+		{"verbose listing", `{"action":"branch","flags":["-v"]}`, false},
+		{"double verbose listing", `{"action":"branch","flags":["-vv"]}`, false},
+		{"long verbose listing", `{"action":"branch","flags":["--verbose"]}`, false},
 		// An explicit listing selector is what makes positionals patterns.
 		{"quiet list stays a listing", `{"action":"branch","flags":["-q","--list"]}`, false},
 		{"quiet list with a pattern stays a listing", `{"action":"branch","flags":["-q","--list"],"paths":["feat*"]}`, false},
+		{"verbose list with a pattern stays a listing", `{"action":"branch","flags":["-v","--list"],"paths":["feat*"]}`, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -191,6 +204,16 @@ func TestBranchFlagTables_AreDisjoint(t *testing.T) {
 			t.Errorf("read-only branch flag %q classifies as %v, want branchFlagReadOnly", flag, kind)
 		}
 	}
+	// The formatting table is documented as a subset of the read-only table:
+	// an entry missing from branchReadOnlyFlags would be refused outright
+	// instead of classified, and -v/-vv/--verbose reached one table without
+	// the other (they were read-only but not formatting, so a verbose
+	// creation passed as a listing).
+	for flag := range branchFormattingFlags {
+		if !branchReadOnlyFlags[flag] {
+			t.Errorf("formatting branch flag %q is missing from branchReadOnlyFlags", flag)
+		}
+	}
 	// The diff-oriented letters a branch call must never inherit silently.
 	for _, flag := range []string{"-D", "-d", "-M", "-m", "-C", "-c", "-u", "-f"} {
 		if branchReadOnlyFlags[flag] {
@@ -215,6 +238,8 @@ func TestValidateActionFlags_branch(t *testing.T) {
 	}{
 		{name: "no flags"},
 		{name: "listing", flags: []string{"--list", "-a"}, want: []string{"--list", "-a"}},
+		{name: "verbose listing flag forwarded", flags: []string{"-v"}, want: []string{"-v"}},
+		{name: "double verbose listing flag forwarded", flags: []string{"-vv"}, want: []string{"-vv"}},
 		{name: "contains with value", flags: []string{"--contains", "main"}, want: []string{"--contains", "main"}},
 		{name: "short -l refused (version-dependent meaning)", flags: []string{"-l"}, wantErr: true},
 		{name: "delete riding a value flag is classified, not swallowed", flags: []string{"--merged", "-D"}, want: []string{"--merged", "-D"}},

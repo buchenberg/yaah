@@ -383,11 +383,16 @@ var branchReadOnlyFlagPrefixes = []string{
 // output is rendered and are accepted on branch creation too, so their presence
 // proves nothing about whether the call lists or creates. Reading one as proof
 // of a listing classified `git branch -q <name>` as read-only while it created
-// a ref — the escape this table closes. Every other read-only branch option
-// asks git to list or inspect refs, so it implies a listing and positional
-// arguments become ref patterns/values.
+// a ref — the escape this table closes. -v/-vv/--verbose are the same shape and
+// were the miss that reopened it: the listing synopsis documents -v as a
+// display option, but git accepts it on the creation form too, where
+// `git branch -v <name>` still creates the ref (-vv is parse-options' bundled
+// short form of -v -v and only adds upstream/worktree detail). Every other
+// read-only branch option asks git to list or inspect refs, so it implies a
+// listing and positional arguments become ref patterns/values.
 var branchFormattingFlags = map[string]bool{
 	"--quiet": true, "-q": true,
+	"--verbose": true, "-v": true, "-vv": true,
 	"--color": true, "--no-color": true,
 	"--column": true, "--no-column": true,
 	"--abbrev": true, "--no-abbrev": true,
@@ -497,7 +502,11 @@ func scanBranchFlags(flags []string) (branchFlagScan, error) {
 			// git to list or inspect refs, so it implies a listing and
 			// positional arguments become ref patterns/values. A
 			// formatting option cannot stand in for one: `git branch -q
-			// <name>` creates a branch and must gate. The '=' form
+			// <name>` and `git branch -v <name>` both create a branch and
+			// must gate. The formatting table is only the display
+			// modifiers git tolerates on the creation form (-q, -v/-vv,
+			// --color, --column, --abbrev, --omit-empty); anything that
+			// selects refs to list belongs on the listing side. The '=' form
 			// (--abbrev=7) is classified read-only via the prefix tables,
 			// so strip the value before the formatting lookup.
 			base := flag
@@ -520,8 +529,8 @@ func scanBranchFlags(flags []string) (branchFlagScan, error) {
 // than an extra approval prompt. Positional arguments are branch names, so they
 // are read-only only alongside an explicit listing selector (--list), which is
 // what tells git to read them as patterns instead of creating refs. A
-// formatting option cannot stand in for one: `git branch -q <name>` creates a
-// branch and must gate.
+// formatting option cannot stand in for one: `git branch -q <name>` and
+// `git branch -v <name>` create branches and must gate.
 func branchCallDangerous(flags, paths []string) bool {
 	scan, err := scanBranchFlags(flags)
 	if err != nil || scan.mutating {
