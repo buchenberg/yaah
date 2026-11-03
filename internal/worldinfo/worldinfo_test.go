@@ -255,6 +255,7 @@ func TestJailLine(t *testing.T) {
 		{name: "available names backend and tier", s: Status{JailOK: true, JailName: "Seatbelt", JailTier: "native-syscall-deny"}, want: "Seatbelt · native-syscall-deny"},
 		{name: "available without tier", s: Status{JailOK: true, JailName: "Landlock"}, want: "Landlock"},
 		{name: "unavailable keeps the reason", s: Status{JailOK: false, JailWhy: "landlock is unusable: probe failed"}, want: "unavailable · landlock is unusable: probe failed"},
+		{name: "nil backend keeps the reason", s: Status{JailOK: false, JailWhy: "no paddock backend on this host"}, want: "unavailable · no paddock backend on this host"},
 		{name: "unavailable without reason", s: Status{JailOK: false}, want: "unavailable on this host"},
 	}
 	for _, tc := range cases {

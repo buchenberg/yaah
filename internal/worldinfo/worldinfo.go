@@ -160,11 +160,18 @@ func Derive(cfg *config.Config, workspaceRoot string, isolated bool) Status {
 // mode shared has no world at all; a container session resolves both lanes
 // against the sibling-container availability.
 func Resolve(cfg *config.Config, isolated bool) Resolution {
+	return resolveWithJail(cfg, isolated, JailAvailable())
+}
+
+// resolveWithJail is Resolve with the jail probe folded in, so a caller that
+// already probed (Derive) can thread its single result through both the
+// dispatch-world resolution and the containment posture.
+func resolveWithJail(cfg *config.Config, isolated bool, jailOK bool) Resolution {
 	if cfg == nil {
 		return Resolution{}
 	}
 	sc := cfg.Agent.SubAgent
-	av := Availability(cfg, isolated)
+	av := availabilityWithJail(cfg, isolated, jailOK)
 	containment := Containment(cfg)
 	network := Network(cfg)
 	grants := len(sc.Grants) > 0
@@ -200,6 +207,11 @@ func Resolve(cfg *config.Config, isolated bool) Resolution {
 // container session (isolated + offered) has no host worktree but can retain
 // into the session container.
 func Availability(cfg *config.Config, isolated bool) subagent.WorldAvailability {
+	return availabilityWithJail(cfg, isolated, JailAvailable())
+}
+
+// availabilityWithJail is Availability with the jail probe folded in.
+func availabilityWithJail(cfg *config.Config, isolated bool, jailOK bool) subagent.WorldAvailability {
 	offered := cfg != nil && runtime.GOOS == "linux" && strings.TrimSpace(cfg.Workspace.Containerd.Image) != ""
 	containerSession := offered && isolated
 	containerRetains := offered
@@ -220,7 +232,7 @@ func Availability(cfg *config.Config, isolated bool) subagent.WorldAvailability 
 		ContainerReason:        "per-dispatch container worlds need workspace.containerd.image on a Linux host, and a wired dispatch setup",
 		Worktree:               worktree,
 		WorktreeReason:         worktreeReason,
-		Jail:                   JailAvailable(),
+		Jail:                   jailOK,
 	}
 }
 
@@ -292,11 +304,7 @@ func Network(cfg *config.Config) string {
 // jail. Availability, not presence: a compiled-in-but-disabled LSM degrades.
 // It is the one probe shared by doctor and every UI surface.
 func JailAvailable() bool {
-	backend := jail.Backend()
-	if backend == nil {
-		return false
-	}
-	ok, _ := backend.Available()
+	_, _, _, ok := probeJail()
 	return ok
 }
 
@@ -306,7 +314,7 @@ func JailAvailable() bool {
 func probeJail() (name, tier, why string, ok bool) {
 	backend := jail.Backend()
 	if backend == nil {
-		return "", "", "no jail backend on this host", false
+		return "", "", "no paddock backend on this host", false
 	}
 	name = jailDisplayName(backend.Name())
 	tier = backend.EnforcementTier()

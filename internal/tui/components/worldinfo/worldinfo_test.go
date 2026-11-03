@@ -156,6 +156,18 @@ func TestSubAgentRowsContainmentSplit(t *testing.T) {
 	if strings.Contains(got, "jail") || strings.Contains(got, "Jail") {
 		t.Fatalf("public metaphor leaks the jail wording:\n%s", got)
 	}
+
+	s.JailOK = false
+	s.JailName = ""
+	s.JailTier = ""
+	s.JailWhy = "no paddock backend on this host"
+	unavailable := SubAgentRows(s, thp)
+	if !strings.Contains(unavailable, "unavailable · no paddock backend on this host") {
+		t.Fatalf("refusal reason missing:\n%s", unavailable)
+	}
+	if strings.Contains(unavailable, "jail") || strings.Contains(unavailable, "Jail") {
+		t.Fatalf("public metaphor leaks the jail wording on the unavailable path:\n%s", unavailable)
+	}
 }
 
 func TestSubAgentRowsCroftLane(t *testing.T) {
