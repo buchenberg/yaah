@@ -140,11 +140,12 @@ func TestFormat_UsageSplit(t *testing.T) {
 	s := State{
 		AgentPromptTokens:     100,
 		AgentCompletionTokens: 50,
-		AgentCostEstimate:     "$0.0001 (at current model rates)",
+		AgentTotalTokens:      150,
+		AgentCachedTokens:     30,
 		SubPromptTokens:       200,
 		SubCompletionTokens:   100,
 		SubTotalTokens:        300,
-		SubCostEstimate:       "$0.0002",
+		SubCachedTokens:       20,
 	}
 	out := Format(s, &th)
 	if !strings.Contains(out, "Usage") {
@@ -153,11 +154,30 @@ func TestFormat_UsageSplit(t *testing.T) {
 	if !strings.Contains(out, "Subagents Usage") {
 		t.Errorf("should render a Subagents Usage section, got %q", out)
 	}
-	if !strings.Contains(out, "Cost (approx)") {
-		t.Errorf("should label sub-agent cost as approx, got %q", out)
+	if strings.Count(out, "Total:") < 2 {
+		t.Errorf("should render a Total row in both Usage sections, got %q", out)
 	}
-	if !strings.Contains(out, "Total") {
-		t.Errorf("should render a Total row in Subagents Usage, got %q", out)
+	if strings.Count(out, "Cached:") < 2 {
+		t.Errorf("should render a Cached row in both Usage sections, got %q", out)
+	}
+	if strings.Contains(out, "Cost") {
+		t.Errorf("should render no cost rows, got %q", out)
+	}
+}
+
+func TestFormat_UsageCachedHiddenWhenZero(t *testing.T) {
+	th := colors.NewDarkTheme()
+	s := State{
+		AgentPromptTokens:     100,
+		AgentCompletionTokens: 50,
+		AgentTotalTokens:      150,
+		SubPromptTokens:       200,
+		SubCompletionTokens:   100,
+		SubTotalTokens:        300,
+	}
+	out := Format(s, &th)
+	if strings.Contains(out, "Cached:") {
+		t.Errorf("should hide Cached rows when zero, got %q", out)
 	}
 }
 
