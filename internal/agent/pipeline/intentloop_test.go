@@ -205,6 +205,73 @@ func TestIntentLoop_ProgressClassification(t *testing.T) {
 
 var errSentinel = errors.New("tool failed")
 
+// designSettledPreambles are the assistant preambles from the 2026-11-02
+// loop (session sess-1793664395632406535): the model re-announced a settled
+// design across several read-only turns. Each permutation keeps the same
+// leading plan statement but swaps the "next step" tail, which is exactly
+// the drift the anchor-only comparison missed.
+var designSettledPreambles = []string{
+	"Yes — per-provider pricing in the provider model config is the right call, and here's why: the same model can price differently depending on which provider hosts it (official API vs. a proxy vs. a self-hosted endpoint), and the current design can't express that at all.",
+	"This is a real feature (config schema + protocol + TUI + tests), so let me map the exact plumbing before writing anything.",
+	"The design is confirmed — now let me find the integration points (who calls `SetModel`/`SetConfig`) so pricing rides along with the model names:",
+	"Design confirmed. Now let me see the exact call sites where model names enter the TUI so pricing rides along:",
+	"Design settled. Let me look at the remaining pieces — `ModelEntry`, the `SetProvider`/`lastProvider` fields in the TUI, and existing tests:",
+	"The design is confirmed and I have all the integration points. Implementing now — config schema first:",
+}
+
+// TestIntentLoop_DesignSettledLoopIsSteered replays the 2026-11-02 incident:
+// the model re-announced a settled design for several read-only turns before
+// finally editing. The anchor-only comparison reset on the third
+// announcement (0.27 overlap, below the 0.30 threshold); comparing against
+// the previous turn as well keeps the streak alive so the steer lands before
+// the model acts.
+func TestIntentLoop_DesignSettledLoopIsSteered(t *testing.T) {
+	m := NewIntentLoopMiddleware(3, 8)
+
+	steerAt := -1
+	for i, preamble := range designSettledPreambles {
+		step, err := loopTurn(t, m, preamble)
+		if err != nil {
+			t.Fatalf("turn %d: unexpected halt: %v", i, err)
+		}
+		prep, err := m.PrepareStep(context.Background(), step)
+		if err != nil {
+			t.Fatalf("turn %d: PrepareStep: %v", i, err)
+		}
+		for _, msg := range prep.Messages {
+			if strings.Contains(msg.Content, "[STEER]") && steerAt < 0 {
+				steerAt = i
+			}
+		}
+	}
+	if steerAt < 0 {
+		t.Fatal("the design-settled loop never produced a steer")
+	}
+	// The steer must arrive before the "Implementing now" turn (index 5),
+	// i.e. before the model finally changes a file.
+	if steerAt >= len(designSettledPreambles)-1 {
+		t.Errorf("steer delivered at turn %d, after the model already acted", steerAt)
+	}
+}
+
+// TestIntentLoop_PreviousTurnKeepsParaphraseDrift: a preamble that scores
+// below threshold against the streak anchor but matches the immediately
+// preceding turn still extends the streak. This is the 0.27/0.33 pair from
+// the 2026-11-02 loop.
+func TestIntentLoop_PreviousTurnKeepsParaphraseDrift(t *testing.T) {
+	m := NewIntentLoopMiddleware(3, 8)
+	preambles := designSettledPreambles[2:5]
+	for i, p := range preambles {
+		step := &Step{}
+		if _, err := m.PostModel(context.Background(), &types.Message{Role: "assistant", Content: p}, step); err != nil {
+			t.Fatal(err)
+		}
+		if want := i + 1; m.streak != want {
+			t.Fatalf("turn %d: streak = %d, want %d", i, m.streak, want)
+		}
+	}
+}
+
 // TestNewIntentLoopMiddlewareClampsHalt: a halt at or below the steer
 // threshold would end the run before the model ever saw the steer.
 func TestNewIntentLoopMiddlewareClampsHalt(t *testing.T) {

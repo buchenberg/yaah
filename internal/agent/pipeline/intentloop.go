@@ -188,6 +188,7 @@ type IntentLoopMiddleware struct {
 	haltAfter  int
 
 	anchor  map[string]struct{}
+	prev    map[string]struct{}
 	streak  int
 	steered bool
 }
@@ -231,18 +232,34 @@ func (m *IntentLoopMiddleware) PostModel(ctx context.Context, msg *types.Message
 		m.anchor = tokens
 		m.streak = 1
 		m.steered = false
-	case overlap(m.anchor, tokens) >= intentSimilarityThreshold:
-		// Compared against the streak ANCHOR, not the previous turn:
+	case m.sameIntent(tokens):
+		// Compared against the streak ANCHOR and the previous turn:
 		// paraphrase drift ("all four findings are real" → "...are
-		// legitimate") converges back on the anchor while adjacent turns
-		// can score below threshold against each other.
+		// legitimate") converges back on the anchor, while a re-worked
+		// "next step" tail ("let me look at ModelEntry" → "let me check
+		// SetModel") can dip below threshold against far-away anchors
+		// yet still match the immediately preceding turn.
 		m.streak++
 	default:
 		m.anchor = tokens
 		m.streak = 1
 		m.steered = false
 	}
+	m.prev = tokens
 	return step, nil
+}
+
+// sameIntent reports whether tokens re-announces the streak's plan. It is
+// compared against both the streak anchor and the previous preamble because
+// models paraphrase the plan's leading statement while varying the "next
+// step" tail. The 2026-11-02 "design settled" loop scored 0.27 against the
+// anchor (just under the threshold, resetting the streak) but 0.33 against
+// the immediately preceding turn.
+func (m *IntentLoopMiddleware) sameIntent(tokens map[string]struct{}) bool {
+	if overlap(m.anchor, tokens) >= intentSimilarityThreshold {
+		return true
+	}
+	return overlap(m.prev, tokens) >= intentSimilarityThreshold
 }
 
 func (m *IntentLoopMiddleware) PostTool(ctx context.Context, results []ToolResult, step *Step) (*Step, error) {
@@ -253,6 +270,7 @@ func (m *IntentLoopMiddleware) PostTool(ctx context.Context, results []ToolResul
 			m.streak = 0
 			m.steered = false
 			m.anchor = nil
+			m.prev = nil
 			break
 		}
 	}
