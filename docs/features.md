@@ -319,11 +319,14 @@ workspace:
   backend: containerd
 ```
 
-The working tree is copied into the container and a git baseline is
-captured. File tools and shell commands run inside the container; the host
-tree stays untouched until `apply_out` is called (dry run first, then an
-approval-gated apply). Sub-agents dispatched with `delegate` inherit the
-same container. See
+The repository's content — tracked files plus untracked files git does not
+ignore — is copied into the container and a git baseline is captured.
+Local-only state such as a scratch clone, an embedded database, or a built
+binary stays on the host, and `.git` is always included so the agent has a
+working repository. File tools and shell commands run inside the container;
+the host tree stays untouched until `apply_out` is called (dry run first,
+then an approval-gated apply). Sub-agents dispatched with `delegate` inherit
+the same container. See
 [configuration.md](./configuration.md#workspace-reference) for the image
 contract and daemon requirements.
 

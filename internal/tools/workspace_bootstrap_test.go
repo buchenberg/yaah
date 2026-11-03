@@ -752,6 +752,145 @@ func TestBootstrap_RejectsTrackedDeniedFile(t *testing.T) {
 	}
 }
 
+// The copy-in's inventory: ignored paths are absent, an ignored directory
+// contributes no walk root, and a tracked path stays in even when an ignore
+// rule matches it (committed content wins over .gitignore, exactly as `git
+// status` reports it). This is the plan half of the property; the bootstrap
+// test below is the user-visible half.
+func TestNewCopyPlan_TracksGitignore(t *testing.T) {
+	src := gitHostRepo(t)
+	writeBootstrapFile(t, src, ".gitignore", "*.log\nignored/\n")
+	writeBootstrapFile(t, src, "keep.log", "tracked\n")
+	gitRun(t, src, "add", "-f", ".gitignore", "keep.log")
+	gitRun(t, src, "commit", "-q", "-m", "ignore logs and local scratch")
+
+	writeBootstrapFile(t, src, "drop.log", "local only\n")
+	writeBootstrapFile(t, src, "ignored/big.bin", "local only\n")
+	writeBootstrapFile(t, src, "notes.txt", "wip\n")
+
+	plan, err := newCopyPlan(context.Background(), src)
+	if err != nil {
+		t.Fatalf("newCopyPlan: %v", err)
+	}
+	for _, want := range []string{"readme.txt", "pkg/run.sh", ".gitignore", "keep.log", "notes.txt"} {
+		if !plan.files[want] {
+			t.Errorf("copy set is missing %s", want)
+		}
+	}
+	for _, ignored := range []string{"drop.log", "ignored/big.bin"} {
+		if plan.files[ignored] {
+			t.Errorf("copy set contains gitignored path %s", ignored)
+		}
+	}
+	if !plan.tracked["keep.log"] {
+		t.Error("the tracked set must include a committed file even when .gitignore matches it")
+	}
+	if !plan.dirs["pkg"] {
+		t.Error("the walk needs pkg/ as a root for its tracked file")
+	}
+	if plan.dirs["ignored"] {
+		t.Error("an ignored directory must not be a walk root")
+	}
+}
+
+// TestBootstrap_RespectsGitignore pins the user-visible half: the sandbox
+// holds the repository's content, including untracked work in progress, and
+// leaves the host's ignored local state behind. That is what keeps a
+// checkout's scratch clones, embedded databases, and built binaries out of
+// every dispatch's startup budget.
+func TestBootstrap_RespectsGitignore(t *testing.T) {
+	src := gitHostRepo(t)
+	writeBootstrapFile(t, src, ".gitignore", "*.log\nignored/\n")
+	writeBootstrapFile(t, src, "keep.log", "tracked\n")
+	gitRun(t, src, "add", "-f", ".gitignore", "keep.log")
+	gitRun(t, src, "commit", "-q", "-m", "ignore logs and local scratch")
+
+	writeBootstrapFile(t, src, "drop.log", "local only\n")
+	writeBootstrapFile(t, src, "ignored/big.bin", "local only\n")
+	// Untracked but not ignored: work in progress a sub-agent may need.
+	writeBootstrapFile(t, src, "notes.txt", "wip\n")
+
+	open, _ := cleanOpener()
+	ss, err := StartSessionSandbox(context.Background(), sessionTestConfig(), open, src, nil)
+	if err != nil {
+		t.Fatalf("StartSessionSandbox: %v", err)
+	}
+	defer ss.Destroy(context.Background())
+
+	ws := ss.Workspace()
+	for _, want := range []string{"readme.txt", "keep.log", "notes.txt"} {
+		p, err := ws.ResolvePath(want)
+		if err != nil {
+			t.Fatalf("ResolvePath(%s): %v", want, err)
+		}
+		if _, err := ws.ReadFile(context.Background(), p); err != nil {
+			t.Errorf("%s must be copied in: %v", want, err)
+		}
+	}
+	for _, ignored := range []string{"drop.log", "ignored/big.bin"} {
+		p, err := ws.ResolvePath(ignored)
+		if err != nil {
+			t.Fatalf("ResolvePath(%s): %v", ignored, err)
+		}
+		if _, err := ws.ReadFile(context.Background(), p); err == nil {
+			t.Errorf("%s is gitignored and must not be copied in", ignored)
+		}
+	}
+	// .git still lands: the agent needs a working repository inside the sandbox.
+	if _, err := ws.ReadFile(context.Background(), "/workspace/.git/HEAD"); err != nil {
+		t.Errorf(".git/HEAD was not copied in: %v", err)
+	}
+	// The host is untouched, ignored files included.
+	if got, err := os.ReadFile(filepath.Join(src, "drop.log")); err != nil || string(got) != "local only\n" {
+		t.Errorf("the host drop.log = %q, %v — excluding it from the sandbox must not touch the host", got, err)
+	}
+}
+
+// TestBootstrap_CopiesNestedRepositoryVerbatim pins the gitlink branch: an
+// untracked nested repository is one git entry, and the copy-in still ships
+// its contents as-is. The nested repository's own ignore rules are not the
+// parent's to apply, so its ignored files travel with it — exactly what the
+// pre-plan walk did.
+func TestBootstrap_CopiesNestedRepositoryVerbatim(t *testing.T) {
+	src := gitHostRepo(t)
+	gitRun(t, src, "init", "-q", "nested")
+	writeBootstrapFile(t, src, "nested/.gitignore", "*.log\n")
+	writeBootstrapFile(t, src, "nested/inner.txt", "inner\n")
+	writeBootstrapFile(t, src, "nested/ignored.log", "nested local\n")
+
+	open, _ := cleanOpener()
+	ss, err := StartSessionSandbox(context.Background(), sessionTestConfig(), open, src, nil)
+	if err != nil {
+		t.Fatalf("StartSessionSandbox: %v", err)
+	}
+	defer ss.Destroy(context.Background())
+
+	ws := ss.Workspace()
+	for _, want := range []string{"nested/inner.txt", "nested/ignored.log"} {
+		p, err := ws.ResolvePath(want)
+		if err != nil {
+			t.Fatalf("ResolvePath(%s): %v", want, err)
+		}
+		if _, err := ws.ReadFile(context.Background(), p); err != nil {
+			t.Errorf("%s must be copied in verbatim: %v", want, err)
+		}
+	}
+}
+
+// writeBootstrapFile writes rel under root, creating parents. The copy-in
+// tests need untracked files in nested directories, which the git fixture
+// does not provide.
+func writeBootstrapFile(t *testing.T, root, rel, content string) {
+	t.Helper()
+	p := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatalf("mkdir for %s: %v", rel, err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", rel, err)
+	}
+}
+
 // gitRecordingSandbox answers in-container git commands with success and
 // records them. The fake's shell has no git; the recorder is how a test proves
 // the bootstrap runs no container-side git at all.

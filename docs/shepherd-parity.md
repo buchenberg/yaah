@@ -186,7 +186,8 @@ choice is part of the implementation, not a later optimisation: at
 
 A host session can give a dispatch its own container world. The lane reuses the
 `workspace.containerd` stanza (image, namespace, address, snapshotter,
-`fifo_dir`) and the session container's copy-in contract: the repository is
+`fifo_dir`) and the session container's copy-in contract: the repository's
+content — tracked plus untracked-not-ignored paths, with `.git` always — is
 copied in at dispatch time, the body runs with the sandbox workspace as its
 substrate, and the scope and container are torn down afterwards. A report never
 seals; a proposal seals a `GitDelta` manifest before teardown.
