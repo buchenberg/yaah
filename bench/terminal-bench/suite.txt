@@ -8,10 +8,9 @@
 # Selection: one category representative each — file operations
 # (hello-world smoke, jsonl-aggregator), software engineering
 # (broken-python), data (csv-to-parquet), algorithms (assign-seats).
-# gomoku-planner was removed on 2026-10-20: the vision-adjacent outlier
-# dominated every total (≈40% of tokens, 2/3 of wall time) and compressed
-# the signal of the other five tasks; its recorded runs stay comparable
-# via the per-task tables in HISTORY.md.
+# gomoku-planner and path-tracing live in long-suite.txt: they dominate
+# wall time and token volume and would compress the signal of the five
+# tasks here. Their recorded runs stay comparable via HISTORY.md.
 #
 # Fresh same-day comparison (runs 2026-10-12__17-26-54 /
 # 2026-10-12__17-35-13, deepseek-flash, one trial each): yaah 6/6

@@ -8,9 +8,10 @@
 #   - the yaah static binary (built by this script if absent)
 #
 # Usage:
-#   ./run.sh                           # the 6-task suite (default, suite.txt)
+#   ./run.sh                           # the 5-task suite (default, suite.txt)
 #   ./run.sh hello-world create-bucket # named tasks (e.g. the 2-task smoke)
 #   SUITE=my-tasks.txt ./run.sh        # any task-list file (relative to this dir)
+#   SUITE=long-suite.txt ./run.sh      # the 2-task long-horizon suite
 #   YAAH_MODEL=deepseek-flash ./run.sh # override the model
 #
 # Orchestration task set (bench/orchestration-tasks):
