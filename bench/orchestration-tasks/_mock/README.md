@@ -36,6 +36,11 @@ export DEEPSEEK_API_KEY=mock          # the adapter requires a non-empty value
 The task's `docker-compose.yaml` adds the `mock` service from this directory
 and waits for `/health`; `bench-orchestration.yaml` points both the parent and
 sub-agent at `http://mock:8080/v1` with model `mock-orchestrator`.
+The compaction model resolves to the same model, the only one in the trap's
+allowlist, so a same-model warning is expected. The trap does not support
+compaction requests; they may be rejected or consume a scripted step and
+break the run. Update the trap before growing the task's context enough to
+trigger compaction.
 
 After two runs, compare them without chasing timestamps or proposal ids:
 

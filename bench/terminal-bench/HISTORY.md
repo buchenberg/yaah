@@ -961,3 +961,64 @@ not byte-identical by construction and should be recorded as its own row.
 Hermes's and OpenCode's totals are one trial each at their recorded
 versions. `subagent_tokens` is 0 for all three arms, so this suite says
 nothing about orchestration cost — see `../orchestration-tasks`.
+
+## Bench config cleanup and fresh three-way (2026-11-02, deepseek-flash)
+
+The container template still wrote `agents.default.small_model`, a key
+that was renamed to `compaction_model` and is now ignored. Every bench
+run therefore logged a rename warning and used the embedded compaction
+default (`deepseek/deepseek-v4-flash`) rather than the key the template
+appeared to set. The fix pins `compaction_model` explicitly in
+`yaah-setup.sh.j2`, replaces the dead key in the mock overlay with
+`mock/mock-orchestrator`, and corrects the README. This is a
+config-correctness change, not a model change: compaction already ran on
+the default, so the token and cache behaviour below is comparable to the
+2026-10-31 rows.
+
+| Metric | yaah | Hermes 0.22.5 | OpenCode 2.1.3 |
+|---|---:|---:|---:|
+| Resolved | **5/5** | **5/5** | **4/5** |
+| Prompt in | 502,745 | 1,048,686 | 421,571 |
+| Out | 15,632 | 10,917 | 8,605 |
+| Reasoning | — | 4,003 | 9,992 |
+| Cache | 94% | 48% | 95% |
+| Steps | 37 | 36 | 46 |
+| Agent time | 156s | 196s | 163s |
+| Cost (peak) | $0.0305 | $0.1843 | $0.0311 |
+
+Reading:
+
+- **The resolved count is unchanged for yaah and Hermes; OpenCode misses
+  one.** OpenCode's `csv-to-parquet` failed `test_data_matches` because
+  the Parquet `age` column was `int32` while pandas read the CSV as
+  `int64`; `test_parquet_exists` passed. OpenCode resolved this task on
+  2026-10-29 and 2026-10-31, so treat it as single-trial variance rather
+  than a task regression.
+- **yaah is the cheapest arm by a hair, and the Hermes gap is 6.0×.**
+  At peak rates yaah spends $0.0305, OpenCode $0.0311, Hermes $0.1843.
+  OpenCode's bill is almost identical despite using 16% fewer prompt
+  tokens: its 9,992 reasoning tokens are billed at the output rate, so
+  its output+reasoning term (18,597) exceeds yaah's (15,632). Hermes
+  loses on uncached input: 544,494 tokens at 48% cache, 88.6% of its
+  bill, against yaah's 29,785 uncached.
+- **Against 2026-10-31, the token shapes are mostly stable.** yaah:
+  502,745/15,632 vs 483,476/14,265 (+4.0%/+9.6%), with cache down from
+  98% to 94% and steps 38→37. Hermes: 1,048,686/10,917 vs
+  1,013,556/11,759 (+3.5%/−7.2%), cache 49→48%, steps 34→36. OpenCode
+  is the outlier: 421,571/8,605 vs 268,208/5,948 (+57.2%/+44.7%), steps
+  38→46, and the missed task.
+- **Prices are not comparable across those dates.** The 2026-10-31 rows
+  ran off-peak; these rows ran at peak, and `pricing.json` charges
+  exactly double. Normalized back to off-peak, yaah is ~$0.0153 vs
+  $0.0114 on 2026-10-31 (+34%), Hermes ~$0.0921 vs $0.0881 (+4.5%), and
+  OpenCode ~$0.0156 vs $0.0089 (+75%). yaah's increase is the cache
+  drop widening its uncached term, not the bench config change.
+- **Latency ordering:** yaah 156s, OpenCode 163s, Hermes 196s. yaah also
+  drew fewer steps than OpenCode (37 vs 46). Single trial; the 7s gap to
+  OpenCode is not a stable ranking.
+
+Caveats: one trial per task per arm; all costs are the extractor's peak
+totals. The yaah arm is `6ac35b8` plus the then-uncommitted bench-config
+diff (recorded as `6ac35b8+bench-config`). The diff changes only bench
+YAML/README text, not the binary, so a rerun at the merged commit is
+behaviourally identical.

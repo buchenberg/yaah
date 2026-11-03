@@ -36,7 +36,9 @@ agents:
   default:
     provider: deepseek
     model: ${YAAH_MODEL:-deepseek-flash}
-    small_model: ${YAAH_MODEL:-deepseek-flash}
+    # Pin the embedded default explicitly: compaction stays on the flash
+    # tier even when YAAH_MODEL selects a larger task model.
+    compaction_model: deepseek/deepseek-v4-flash
     # Benchmark runs are non-interactive: the one-shot session has no
     # human to approve tool calls, and the scaffold default (ask) would
     # block forever on the first write. The task container IS the
