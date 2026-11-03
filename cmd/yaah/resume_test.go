@@ -176,3 +176,94 @@ func TestRestoreSession_FailsLoudlyWhenModeCannotBeRead(t *testing.T) {
 		t.Fatal("restoreSession() = nil error with a failing mode read; want a failed resume")
 	}
 }
+
+func TestRestoreSession_CarriesPersistedUsage(t *testing.T) {
+	db := newResumeFixture(t, "resume-me")
+	if err := db.UpdateSessionUsage("resume-me", 700, 300, 120, 50, 20); err != nil {
+		t.Fatalf("update session usage: %v", err)
+	}
+
+	restored, err := restoreSession(db, "resume-me", "base")
+	if err != nil {
+		t.Fatalf("restoreSession: %v", err)
+	}
+
+	want := restoredUsage{TokensIn: 700, TokensOut: 300, TokensCached: 120, SubTokensIn: 50, SubTokensOut: 20}
+	if restored.Usage != want {
+		t.Errorf("Usage = %+v, want %+v", restored.Usage, want)
+	}
+}
+
+func TestRestoreSession_FreshSessionHasNoUsage(t *testing.T) {
+	restored, err := restoreSession(nil, "", "base")
+	if err != nil {
+		t.Fatalf("restoreSession: %v", err)
+	}
+	if restored.Usage != (restoredUsage{}) {
+		t.Errorf("Usage = %+v, want zero", restored.Usage)
+	}
+}
+
+func TestSeedRestoredUsage_RestoresCountersAndFlushBaselines(t *testing.T) {
+	s := &agentSession{}
+	u := restoredUsage{TokensIn: 700, TokensOut: 300, TokensCached: 120, SubTokensIn: 50, SubTokensOut: 20}
+
+	s.seedRestoredUsage(u)
+
+	if s.totalUsage.PromptTokens != 700 || s.totalUsage.CompletionTokens != 300 ||
+		s.totalUsage.CachedPromptTokens != 120 || s.totalUsage.TotalTokens != 1000 {
+		t.Errorf("totalUsage = %+v, want prompt 700 completion 300 cached 120 total 1000", s.totalUsage)
+	}
+	if s.subUsage.PromptTokens != 50 || s.subUsage.CompletionTokens != 20 || s.subUsage.TotalTokens != 70 {
+		t.Errorf("subUsage = %+v, want prompt 50 completion 20 total 70", s.subUsage)
+	}
+	if s.flushIn != 700 || s.flushOut != 300 || s.flushCached != 120 ||
+		s.flushSubIn != 50 || s.flushSubOut != 20 {
+		t.Errorf("flush baselines = %d/%d/%d/%d/%d, want 700/300/120/50/20",
+			s.flushIn, s.flushOut, s.flushCached, s.flushSubIn, s.flushSubOut)
+	}
+}
+
+func TestFlushUsageValues_AfterResumeDoesNotShrinkRow(t *testing.T) {
+	db := newResumeFixture(t, "resume-me")
+	if err := db.UpdateSessionUsage("resume-me", 700, 300, 120, 50, 20); err != nil {
+		t.Fatalf("update session usage: %v", err)
+	}
+	session, err := db.GetSession("resume-me")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+
+	s := &agentSession{db: db, sessionID: "resume-me"}
+	s.seedRestoredUsage(restoredUsage{
+		TokensIn: session.TokensIn, TokensOut: session.TokensOut,
+		TokensCached: session.TokensCached, SubTokensIn: session.SubTokensIn,
+		SubTokensOut: session.SubTokensOut,
+	})
+
+	// A flush below the restored totals must not shrink the persisted row:
+	// without seeded flush baselines the guard would let this through and
+	// overwrite the larger already-flushed totals.
+	s.flushUsageValues(600, 250, 100, 40, 10)
+	after, err := db.GetSession("resume-me")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if after.TokensIn != 700 || after.TokensOut != 300 || after.TokensCached != 120 ||
+		after.SubTokensIn != 50 || after.SubTokensOut != 20 {
+		t.Errorf("row shrank after resume: got in %d out %d cached %d sub %d/%d, want 700/300/120/50/20",
+			after.TokensIn, after.TokensOut, after.TokensCached, after.SubTokensIn, after.SubTokensOut)
+	}
+
+	// A real increase continues from the restored totals.
+	s.flushUsageValues(750, 320, 130, 60, 25)
+	after, err = db.GetSession("resume-me")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if after.TokensIn != 750 || after.TokensOut != 320 || after.TokensCached != 130 ||
+		after.SubTokensIn != 60 || after.SubTokensOut != 25 {
+		t.Errorf("row after increase = in %d out %d cached %d sub %d/%d, want 750/320/130/60/25",
+			after.TokensIn, after.TokensOut, after.TokensCached, after.SubTokensIn, after.SubTokensOut)
+	}
+}

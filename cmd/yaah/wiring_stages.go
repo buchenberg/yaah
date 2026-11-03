@@ -539,6 +539,7 @@ type loopInfraStage struct {
 	sessionID    string
 	msgIdx       int
 	mode         string
+	usage        restoredUsage
 	systemPrompt string
 	mainPrompt   string
 
@@ -576,6 +577,7 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 	}
 	st.messages, st.sessionID, st.msgIdx, st.systemPrompt = restored.Messages, restored.SessionID, restored.MsgIdx, restored.SystemPrompt
 	st.mode = restored.Mode
+	st.usage = restored.Usage
 	if opts.ResumeSessionID == "" {
 		st.sessionID = fmt.Sprintf("sess-%d", time.Now().UnixNano())
 		if tr.db != nil {
@@ -1183,6 +1185,7 @@ func assemble(lc *sessionConfig, opts SessionOptions, ws *workspaceStage, tr *to
 		egressBroker:   loop.egressBroker,
 		followupCh:     loop.followupCh,
 	}
+	sess.seedRestoredUsage(loop.usage)
 	// Root-scope bridge registration (adoption plan A2/A3): inject into
 	// the root steers the session (its own steering channel); halting it
 	// cancels the session's current run — the supervisor.halt_root

@@ -434,6 +434,28 @@ func (s *agentSession) flushUsage() {
 		s.subUsage.PromptTokens, s.subUsage.CompletionTokens)
 }
 
+// seedRestoredUsage resumes the session's usage accounting from the persisted
+// running totals: the visible counters and the flush baselines both restart
+// where the prior process left off. Seeding the flush baselines matters as
+// much as seeding the counters — flushUsageValues refuses to shrink a flushed
+// total, and with zero baselines the guard would happily let the first flush
+// of a resumed session overwrite the persisted totals with smaller values.
+func (s *agentSession) seedRestoredUsage(u restoredUsage) {
+	s.totalUsage = types.Usage{
+		PromptTokens:       u.TokensIn,
+		CompletionTokens:   u.TokensOut,
+		CachedPromptTokens: u.TokensCached,
+		TotalTokens:        u.TokensIn + u.TokensOut,
+	}
+	s.subUsage = types.Usage{
+		PromptTokens:     u.SubTokensIn,
+		CompletionTokens: u.SubTokensOut,
+		TotalTokens:      u.SubTokensIn + u.SubTokensOut,
+	}
+	s.flushIn, s.flushOut, s.flushCached = u.TokensIn, u.TokensOut, u.TokensCached
+	s.flushSubIn, s.flushSubOut = u.SubTokensIn, u.SubTokensOut
+}
+
 // flushUsageValues writes the given usage counters to the session's
 // row without ending the session. Caller must hold s.mu. Values may be
 // computed (not read from the session's live totals) so the per-call
