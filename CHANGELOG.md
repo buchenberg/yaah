@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.130.1](https://github.com/buchenberg/yaah/compare/v0.130.0...v0.130.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* **providers:** strip reasoning_content on 422 extra_forbidden ([#747](https://github.com/buchenberg/yaah/issues/747)) ([3927cc5](https://github.com/buchenberg/yaah/commit/3927cc516ca98dbc901f133f9ab022302b640814))
+
 ## [0.130.0](https://github.com/buchenberg/yaah/compare/v0.129.6...v0.130.0) (2026-11-02)
 
 
