@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/buchenberg/yaah/internal/tools"
 )
 
 // TestRestoreMessage_carriesReasoningSignature pins that resume does not drop
@@ -265,5 +267,41 @@ func TestFlushUsageValues_AfterResumeDoesNotShrinkRow(t *testing.T) {
 		after.SubTokensIn != 60 || after.SubTokensOut != 25 {
 		t.Errorf("row after increase = in %d out %d cached %d sub %d/%d, want 750/320/130/60/25",
 			after.TokensIn, after.TokensOut, after.TokensCached, after.SubTokensIn, after.SubTokensOut)
+	}
+}
+
+// TestSetCtrlCh_PublishesRestoredUsage pins the startup publish: a resumed
+// session seeds its usage but, without a run having completed, nothing
+// emits a UsageInfo — so the info pane showed zero usage until the first
+// run. SetCtrlCh publishes the current split as soon as a control channel
+// attaches.
+func TestSetCtrlCh_PublishesRestoredUsage(t *testing.T) {
+	db := newResumeFixture(t, "resume-me")
+	if err := db.UpdateSessionUsage("resume-me", 700, 300, 120, 50, 20); err != nil {
+		t.Fatalf("update session usage: %v", err)
+	}
+
+	s := &agentSession{db: db, sessionID: "resume-me", toolReg: tools.NewRegistry()}
+	s.seedRestoredUsage(restoredUsage{TokensIn: 700, TokensOut: 300, TokensCached: 120, SubTokensIn: 50, SubTokensOut: 20})
+
+	ch := make(chan control.Msg, 8)
+	s.SetCtrlCh(ch)
+
+	select {
+	case m := <-ch:
+		got, ok := m.(*control.UsageInfo)
+		if !ok {
+			t.Fatalf("first control message = %T, want *control.UsageInfo", m)
+		}
+		// Orchestrator split is total minus sub-agent spend.
+		if got.Agent.PromptTokens != 650 || got.Agent.CompletionTokens != 280 ||
+			got.Agent.CachedTokens != 120 || got.Agent.TotalTokens != 930 {
+			t.Errorf("agent usage = %+v, want prompt 650 completion 280 cached 120 total 930", got.Agent)
+		}
+		if got.Sub.PromptTokens != 50 || got.Sub.CompletionTokens != 20 || got.Sub.TotalTokens != 70 {
+			t.Errorf("sub usage = %+v, want prompt 50 completion 20 total 70", got.Sub)
+		}
+	default:
+		t.Fatal("SetCtrlCh did not publish usage to the control channel")
 	}
 }

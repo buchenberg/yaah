@@ -73,6 +73,18 @@ func Build(borderColor string) *tview.TextView {
 // Agent (with the dissolved workspace/scope posture), Context, Usage, the
 // Subagents posture (with the dissolved containment/dispatch/network rows),
 // Subagents Usage, then MCP, Embedding, Middleware, and Ephemeral.
+// usageTotal is the number the Total row reports: the provider-reported total
+// when present, prompt+completion otherwise. Some providers omit total_tokens,
+// and a literal "Total: 0" next to non-zero prompt/completion rows reads like
+// broken accounting — the sum is the same number when the total is reported
+// consistently.
+func usageTotal(promptTokens, completionTokens, totalTokens int) int {
+	if totalTokens == 0 {
+		return promptTokens + completionTokens
+	}
+	return totalTokens
+}
+
 func Format(s State, th *colors.Theme) string {
 	var b strings.Builder
 
@@ -105,7 +117,7 @@ func Format(s State, th *colors.Theme) string {
 		b.WriteString(th.TagBold(th.Heading, "Usage\n"))
 		b.WriteString(fmt.Sprintf("  Prompt: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.AgentPromptTokens))))
 		b.WriteString(fmt.Sprintf("  Completion: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.AgentCompletionTokens))))
-		b.WriteString(fmt.Sprintf("  Total: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.AgentTotalTokens))))
+		b.WriteString(fmt.Sprintf("  Total: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", usageTotal(s.AgentPromptTokens, s.AgentCompletionTokens, s.AgentTotalTokens)))))
 		if s.AgentCachedTokens > 0 {
 			b.WriteString(fmt.Sprintf("  Cached: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.AgentCachedTokens))))
 		}
@@ -131,7 +143,7 @@ func Format(s State, th *colors.Theme) string {
 		b.WriteString(th.TagBold(th.Heading, "Subagents Usage\n"))
 		b.WriteString(fmt.Sprintf("  Prompt: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.SubPromptTokens))))
 		b.WriteString(fmt.Sprintf("  Completion: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.SubCompletionTokens))))
-		b.WriteString(fmt.Sprintf("  Total: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.SubTotalTokens))))
+		b.WriteString(fmt.Sprintf("  Total: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", usageTotal(s.SubPromptTokens, s.SubCompletionTokens, s.SubTotalTokens)))))
 		if s.SubCachedTokens > 0 {
 			b.WriteString(fmt.Sprintf("  Cached: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.SubCachedTokens))))
 		}

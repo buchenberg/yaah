@@ -252,3 +252,35 @@ func TestFormat_EphemeralMsgEmpty(t *testing.T) {
 		t.Error("should not show ephemeral message when empty")
 	}
 }
+
+func TestFormat_TotalFallsBackToPromptPlusCompletion(t *testing.T) {
+	th := colors.NewDarkTheme()
+	s := State{
+		AgentPromptTokens:     100,
+		AgentCompletionTokens: 50, // provider omitted total_tokens
+		SubPromptTokens:       20,
+		SubCompletionTokens:   10,
+	}
+	out := Format(s, &th)
+	if strings.Contains(out, "Total: "+th.Tag(th.Detail, "0")) {
+		t.Errorf("should not render Total: 0 when prompt/completion are non-zero, got %q", out)
+	}
+	if !strings.Contains(out, th.Tag(th.Detail, "150")) {
+		t.Errorf("agent Total should fall back to 100+50=150, got %q", out)
+	}
+	if !strings.Contains(out, th.Tag(th.Detail, "30")) {
+		t.Errorf("sub Total should fall back to 20+10=30, got %q", out)
+	}
+}
+
+func TestUsageTotal(t *testing.T) {
+	if got := usageTotal(100, 50, 0); got != 150 {
+		t.Errorf("usageTotal(100, 50, 0) = %d, want fallback 150", got)
+	}
+	if got := usageTotal(100, 50, 999); got != 999 {
+		t.Errorf("usageTotal(100, 50, 999) = %d, want reported 999", got)
+	}
+	if got := usageTotal(0, 0, 0); got != 0 {
+		t.Errorf("usageTotal(0, 0, 0) = %d, want 0", got)
+	}
+}
