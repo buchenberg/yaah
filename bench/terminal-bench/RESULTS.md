@@ -32,7 +32,13 @@ Detail, methodology and caveats: [HISTORY.md](HISTORY.md).
 | 2026-10-31 | yaah | 728b016+tool-gating | 2026-10-31__15-15-09 | 5/5 | 483,476 | 14,265 | | 98% | 38 | 131s | $0.0114 |
 | 2026-10-31 | hermes | 0.22.5 | 2026-10-31__15-20-11 | 5/5 | 1,013,556 | 11,759 | 4,174 | 49% | 34 | 219s | $0.0881 |
 | 2026-10-31 | opencode | 2.1.3 | 2026-10-31__15-26-47 | 5/5 | 268,208 | 5,948 | 3,800 | 94% | 38 | 140s | $0.0089 |
+| 2026-11-02 | yaah | 6ac35b8+bench-config | 2026-11-02__19-04-25 | 5/5 | 502,745 | 15,632 | | 94% | 37 | 156s | $0.0305 |
+| 2026-11-02 | hermes | 0.22.5 | 2026-11-02__19-10-13 | 5/5 | 1,048,686 | 10,917 | 4,003 | 48% | 36 | 196s | $0.1843 |
+| 2026-11-02 | opencode | 2.1.3 | 2026-11-02__19-16-35 | 4/5 | 421,571 | 8,605 | 9,992 | 95% | 46 | 163s | $0.0311 |
 
 Only rows with the same `Resolved` denominator are comparable: the suite was
 15 tasks, then 6, then 5 from 2026-10-17 on. Model `deepseek-flash` and
-harness pin `d28711d` for every row.
+harness pin `d28711d` for every row. The 2026-11-02 rows ran at peak
+pricing (the 2026-10-31 rows ran off-peak), so their dollar totals are
+roughly double; compare token shapes and resolved counts, not cost, across
+those dates.

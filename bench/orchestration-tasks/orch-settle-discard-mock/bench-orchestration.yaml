@@ -6,7 +6,7 @@ agents:
   default:
     provider: mock
     model: mock-orchestrator
-    small_model: mock-orchestrator
+    compaction_model: mock/mock-orchestrator
   subagent:
     provider: mock
     mode: retained
