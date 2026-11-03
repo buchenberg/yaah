@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.130.2](https://github.com/buchenberg/yaah/compare/v0.130.1...v0.130.2) (2026-11-03)
+
+
+### Bug Fixes
+
+* **pipeline:** catch paraphrased intent loops before the acting turn ([#749](https://github.com/buchenberg/yaah/issues/749)) ([3c56e28](https://github.com/buchenberg/yaah/commit/3c56e288a5a8e45c49cc1469888e3fb02d2ef3f9))
+
 ## [0.130.1](https://github.com/buchenberg/yaah/compare/v0.130.0...v0.130.1) (2026-11-03)
 
 
