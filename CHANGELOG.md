@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.132.0](https://github.com/buchenberg/yaah/compare/v0.131.2...v0.132.0) (2026-11-03)
+
+
+### Features
+
+* **bench:** add a two-task long-horizon suite ([12a2d5d](https://github.com/buchenberg/yaah/commit/12a2d5d707f7bbcd8d3dce01efaa03f01faac1e0))
+
 ## [0.131.2](https://github.com/buchenberg/yaah/compare/v0.131.1...v0.131.2) (2026-11-03)
 
 
