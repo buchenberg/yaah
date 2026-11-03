@@ -51,6 +51,20 @@ type Status struct {
 	Containment string
 	// JailOK reports that this host can establish the syscall jail.
 	JailOK bool
+	// JailName is the containment backend this host provides
+	// ("Seatbelt", "Landlock", "WinACL").
+	JailName string
+	// JailTier is the backend's enforcement tier ("native-syscall-deny").
+	JailTier string
+	// JailWhy is the backend's availability explanation — most useful when
+	// JailOK is false (the refusal reason).
+	JailWhy string
+	// ContainmentResolved is the effective placement the configured
+	// containment setting resolves to on this host: "auto" paddocks when the
+	// jail is available and degrades to advisory when it is not, "paddock"
+	// resolves to "refused" without one (dispatches fail closed), "off" stays
+	// "off".
+	ContainmentResolved string
 	// Network is the configured egress posture: "allow_all", "deny_all",
 	// or "broker" (default applied).
 	Network string
@@ -99,19 +113,24 @@ func Derive(cfg *config.Config, workspaceRoot string, isolated bool) Status {
 		return Status{}
 	}
 	res := Resolve(cfg, isolated)
+	jailName, jailTier, jailWhy, jailOK := probeJail()
 
 	s := Status{
-		Backend:       backendOf(cfg),
-		Isolated:      isolated,
-		Root:          rootOf(cfg, workspaceRoot, isolated),
-		Image:         strings.TrimSpace(cfg.Workspace.Containerd.Image),
-		Mode:          Mode(cfg),
-		Containment:   Containment(cfg),
-		JailOK:        JailAvailable(),
-		Network:       Network(cfg),
-		WorldReq:      RequestedWorld(cfg),
-		ProposalWorld: worldOrUnavailable(res.Proposal, res.ProposalErr),
-		ReportWorld:   worldOrUnavailable(res.Report, res.ReportErr),
+		Backend:             backendOf(cfg),
+		Isolated:            isolated,
+		Root:                rootOf(cfg, workspaceRoot, isolated),
+		Image:               strings.TrimSpace(cfg.Workspace.Containerd.Image),
+		Mode:                Mode(cfg),
+		Containment:         Containment(cfg),
+		JailOK:              jailOK,
+		JailName:            jailName,
+		JailTier:            jailTier,
+		JailWhy:             jailWhy,
+		ContainmentResolved: resolvedContainment(Containment(cfg), jailOK),
+		Network:             Network(cfg),
+		WorldReq:            RequestedWorld(cfg),
+		ProposalWorld:       worldOrUnavailable(res.Proposal, res.ProposalErr),
+		ReportWorld:         worldOrUnavailable(res.Report, res.ReportErr),
 	}
 	if s.Network == "broker" {
 		s.NetworkHosts = len(cfg.Agent.SubAgent.NetworkHosts)
@@ -141,11 +160,18 @@ func Derive(cfg *config.Config, workspaceRoot string, isolated bool) Status {
 // mode shared has no world at all; a container session resolves both lanes
 // against the sibling-container availability.
 func Resolve(cfg *config.Config, isolated bool) Resolution {
+	return resolveWithJail(cfg, isolated, JailAvailable())
+}
+
+// resolveWithJail is Resolve with the jail probe folded in, so a caller that
+// already probed (Derive) can thread its single result through both the
+// dispatch-world resolution and the containment posture.
+func resolveWithJail(cfg *config.Config, isolated bool, jailOK bool) Resolution {
 	if cfg == nil {
 		return Resolution{}
 	}
 	sc := cfg.Agent.SubAgent
-	av := Availability(cfg, isolated)
+	av := availabilityWithJail(cfg, isolated, jailOK)
 	containment := Containment(cfg)
 	network := Network(cfg)
 	grants := len(sc.Grants) > 0
@@ -181,6 +207,11 @@ func Resolve(cfg *config.Config, isolated bool) Resolution {
 // container session (isolated + offered) has no host worktree but can retain
 // into the session container.
 func Availability(cfg *config.Config, isolated bool) subagent.WorldAvailability {
+	return availabilityWithJail(cfg, isolated, JailAvailable())
+}
+
+// availabilityWithJail is Availability with the jail probe folded in.
+func availabilityWithJail(cfg *config.Config, isolated bool, jailOK bool) subagent.WorldAvailability {
 	offered := cfg != nil && runtime.GOOS == "linux" && strings.TrimSpace(cfg.Workspace.Containerd.Image) != ""
 	containerSession := offered && isolated
 	containerRetains := offered
@@ -201,7 +232,7 @@ func Availability(cfg *config.Config, isolated bool) subagent.WorldAvailability 
 		ContainerReason:        "per-dispatch container worlds need workspace.containerd.image on a Linux host, and a wired dispatch setup",
 		Worktree:               worktree,
 		WorktreeReason:         worktreeReason,
-		Jail:                   JailAvailable(),
+		Jail:                   jailOK,
 	}
 }
 
@@ -273,12 +304,110 @@ func Network(cfg *config.Config) string {
 // jail. Availability, not presence: a compiled-in-but-disabled LSM degrades.
 // It is the one probe shared by doctor and every UI surface.
 func JailAvailable() bool {
+	_, _, _, ok := probeJail()
+	return ok
+}
+
+// probeJail inspects the host's containment backend once for a derived
+// status: name and enforcement tier identify what is installed; Available's
+// explanation says why it can or cannot run.
+func probeJail() (name, tier, why string, ok bool) {
 	backend := jail.Backend()
 	if backend == nil {
-		return false
+		return "", "", "no paddock backend on this host", false
 	}
-	ok, _ := backend.Available()
-	return ok
+	name = jailDisplayName(backend.Name())
+	tier = backend.EnforcementTier()
+	ok, why = backend.Available()
+	return name, tier, why, ok
+}
+
+// jailDisplayName humanizes a containment backend name for display.
+func jailDisplayName(name string) string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "seatbelt":
+		return "Seatbelt"
+	case "landlock":
+		return "Landlock"
+	case "winacl":
+		return "WinACL"
+	default:
+		return name
+	}
+}
+
+// resolvedContainment maps a normalized containment setting and jail
+// availability onto the effective placement at dispatch time, in the same
+// vocabulary the dispatch ledger records ("paddock", "advisory"): "auto"
+// paddocks when the host can jail and degrades to advisory when it cannot;
+// "paddock" refuses without a jail (dispatches fail closed); "off" never
+// jails.
+func resolvedContainment(setting string, jailOK bool) string {
+	switch setting {
+	case "off":
+		return "off"
+	case "paddock":
+		if jailOK {
+			return "paddock"
+		}
+		return "refused"
+	case "auto", "":
+		if jailOK {
+			return "paddock"
+		}
+		return "advisory"
+	default:
+		return "off"
+	}
+}
+
+// ContainmentLine renders the effective containment for the resolved dispatch
+// world — the mechanism, not the configured setting: "croft" when dispatches
+// are contained by the croft container world, else the placement the setting
+// resolves to ("paddock", "advisory", "off"), with the fail-closed refusal
+// spelled out.
+func (s Status) ContainmentLine() string {
+	if s.ProposalWorld == "container" {
+		return "croft"
+	}
+	switch s.ContainmentResolved {
+	case "":
+		return s.Containment
+	case "refused":
+		return "refused (no paddock on this host — dispatches fail closed)"
+	default:
+		return s.ContainmentResolved
+	}
+}
+
+// PaddockLine renders the host paddock ("Seatbelt · native-syscall-deny"),
+// returning "" when the resolved world makes it irrelevant: the croft
+// container lane carries its own boundary, a substitute for the paddock.
+func (s Status) PaddockLine() string {
+	if s.ProposalWorld == "container" {
+		return ""
+	}
+	return s.JailLine()
+}
+
+// JailLine renders the jail this host provides: backend name and enforcement
+// tier when available ("Seatbelt · native-syscall-deny"), the refusal reason
+// when not ("unavailable · <why>").
+func (s Status) JailLine() string {
+	if s.JailOK {
+		name := s.JailName
+		if name == "" {
+			name = "paddock"
+		}
+		if s.JailTier != "" {
+			return name + " · " + s.JailTier
+		}
+		return name
+	}
+	if s.JailWhy != "" {
+		return "unavailable · " + s.JailWhy
+	}
+	return "unavailable on this host"
 }
 
 // worldOrUnavailable renders a lane's resolution, naming an illegal request

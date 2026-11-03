@@ -130,7 +130,7 @@ func Format(s State, th *colors.Theme) string {
 		if s.SubAgents.Enabled {
 			b.WriteString(fmt.Sprintf("  Provider: %s\n", th.Tag(th.Detail, s.SubAgents.Provider)))
 			b.WriteString(fmt.Sprintf("  Model: %s\n", th.Tag(th.Detail, s.SubAgents.Model)))
-			b.WriteString(fmt.Sprintf("  Concurrency: %d\n", s.SubAgents.Concurrency))
+			b.WriteString(fmt.Sprintf("  Concurrency: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.SubAgents.Concurrency))))
 		} else {
 			b.WriteString(th.Tag(th.Dim, "  (disabled)\n"))
 		}

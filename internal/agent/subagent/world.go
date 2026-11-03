@@ -197,13 +197,13 @@ func worktreeRefusal(req WorldRequest, av WorldAvailability) string {
 		return "a per-dispatch worktree is unavailable in this session"
 	}
 	if req.RestrictiveGrants && !av.Jail {
-		return "restrictive grants need the syscall jail, which this host cannot establish"
+		return "restrictive grants need a paddock (syscall-deny), which this host cannot establish"
 	}
 	if normalizeContainment(req.Containment) == "paddock" && !av.Jail {
-		return "containment is paddock (fail-closed) but this host cannot jail"
+		return "containment is paddock (fail-closed) but this host cannot establish one"
 	}
 	if restrictiveNetwork(req.Network) && !av.Jail {
-		return "a restrictive network posture needs the syscall jail, which this host cannot establish"
+		return "a restrictive network posture needs a paddock (syscall-deny), which this host cannot establish"
 	}
 	return ""
 }

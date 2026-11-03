@@ -81,7 +81,7 @@ func TestContainmentCheck_EgressPosture(t *testing.T) {
 	}
 	// The detail must show the posture and, for a broker, its allowlist size.
 	ok := containmentCheck(true, "test-backend", "retained", "auto", "broker", 3, true, false)
-	for _, want := range []string{"egress broker", "3 allowed host(s)", "enforced by the jail"} {
+	for _, want := range []string{"egress broker", "3 allowed host(s)", "enforced by the paddock"} {
 		if !strings.Contains(ok.Detail, want) {
 			t.Errorf("detail %q must mention %q", ok.Detail, want)
 		}

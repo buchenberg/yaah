@@ -131,3 +131,74 @@ func TestSubAgentRowsCollapsedSameWorld(t *testing.T) {
 		t.Fatalf("dispatch row missing:\n%s", got)
 	}
 }
+
+func TestSubAgentRowsContainmentSplit(t *testing.T) {
+	thp := testTheme()
+	s := worldstatus.Status{
+		Backend:             "containerd",
+		Mode:                "retained",
+		Containment:         "auto",
+		ContainmentResolved: "paddock",
+		JailOK:              true,
+		JailName:            "Seatbelt",
+		JailTier:            "native-syscall-deny",
+		Network:             "deny_all",
+		WorldReq:            "worktree",
+		ProposalWorld:       "worktree",
+		ReportWorld:         "worktree",
+	}
+	got := SubAgentRows(s, thp)
+	for _, want := range []string{"Containment:", "paddock", "Paddock:", "Seatbelt · native-syscall-deny"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "jail") || strings.Contains(got, "Jail") {
+		t.Fatalf("public metaphor leaks the jail wording:\n%s", got)
+	}
+
+	s.JailOK = false
+	s.JailName = ""
+	s.JailTier = ""
+	s.JailWhy = "no paddock backend on this host"
+	unavailable := SubAgentRows(s, thp)
+	if !strings.Contains(unavailable, "unavailable · no paddock backend on this host") {
+		t.Fatalf("refusal reason missing:\n%s", unavailable)
+	}
+	if strings.Contains(unavailable, "jail") || strings.Contains(unavailable, "Jail") {
+		t.Fatalf("public metaphor leaks the jail wording on the unavailable path:\n%s", unavailable)
+	}
+
+	// The leak guard must also cover the producer strings, not just the
+	// renderer's echo: render a status derived from the real probe path.
+	cfg := &config.Config{}
+	cfg.Agent.SubAgent.Containment = "auto"
+	derived := SubAgentRows(worldstatus.Derive(cfg, "workdir", false), thp)
+	if strings.Contains(derived, "jail") || strings.Contains(derived, "Jail") {
+		t.Fatalf("producer wording leaks the jail metaphor:\n%s", derived)
+	}
+}
+
+func TestSubAgentRowsCroftLane(t *testing.T) {
+	thp := testTheme()
+	s := worldstatus.Status{
+		Backend:             "containerd",
+		Mode:                "retained",
+		Containment:         "auto",
+		ContainmentResolved: "paddock",
+		JailOK:              true,
+		JailName:            "Landlock",
+		JailTier:            "native-syscall-deny",
+		Network:             "deny_all",
+		WorldReq:            "container",
+		ProposalWorld:       "container",
+		ReportWorld:         "container",
+	}
+	got := SubAgentRows(s, thp)
+	if !strings.Contains(got, "Containment:") || !strings.Contains(got, "croft") {
+		t.Fatalf("croft lane does not name the container boundary:\n%s", got)
+	}
+	if strings.Contains(got, "Paddock:") {
+		t.Fatalf("paddock row shown on a lane that carries its own boundary:\n%s", got)
+	}
+}
