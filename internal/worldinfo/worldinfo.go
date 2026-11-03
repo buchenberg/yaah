@@ -226,6 +226,7 @@ type ContainerSetup struct {
 // strings and the retain/worktree rules are written: internal/tools'
 // per-dispatch ladder resolves against exactly this record.
 func AvailabilityFor(setup ContainerSetup, jailOK bool) subagent.WorldAvailability {
+
 	retainsReason := ""
 	if !setup.Retains {
 		retainsReason = "container settlement is unavailable in this session: no per-dispatch container setup is wired"

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.131.0](https://github.com/buchenberg/yaah/compare/v0.130.3...v0.131.0) (2026-11-03)
+
+
+### Features
+
+* **tui:** containment/paddock split with resolution and backend identity ([#754](https://github.com/buchenberg/yaah/issues/754)) ([2661b7c](https://github.com/buchenberg/yaah/commit/2661b7c54ec08bf339cbba6403833ff71ab0f131))
+
 ## [0.130.3](https://github.com/buchenberg/yaah/compare/v0.130.2...v0.130.3) (2026-11-03)
 
 

@@ -84,11 +84,12 @@ PYTHONPATH=<this-dir> OPENCODE_BIN="$HOME/.opencode/bin/opencode" \
   --dataset-path original-tasks --output-path runs --n-concurrent 1
 ```
 
-Model config inside the task container: `agents.default.model` and
-`small_model` are the model (default deepseek-flash); sub-agents inherit
-it (`small_model` is compaction-only). `approval: allow` — benchmark
-sessions are non-interactive; the task container is the sandbox, same as
-every other CLI agent benched here.
+Model config inside the task container: `agents.default.model` is the
+task model (default deepseek-flash) and `agents.default.compaction_model`
+is the flash-tier compaction model (`deepseek/deepseek-v4-flash`);
+sub-agents inherit the task model. `approval: allow` — benchmark sessions
+are non-interactive; the task container is the sandbox, same as every
+other CLI agent benched here.
 
 ## Orchestration suite and combined runs
 
