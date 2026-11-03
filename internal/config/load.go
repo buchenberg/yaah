@@ -102,8 +102,14 @@ func (p Provider) ThinkingOverride(modelName string) *bool {
 // Default intent-repetition thresholds (epic yaah-v378): the model is
 // steered after this many consecutive same-plan turns and the run halts at
 // the second. The pipeline and the load-time validation share these.
+//
+// The steer threshold is 3 rather than 4 because a model that finally acts
+// on its fourth announcement makes progress in PostTool, which resets the
+// streak before the next PrepareStep can deliver the steer. Steer one turn
+// earlier so the nudge lands before the acting turn
+// (sess-1793664395632406535, 2026-11-02).
 const (
-	DefaultIntentSteerAfter = 4
+	DefaultIntentSteerAfter = 3
 	DefaultIntentHaltAfter  = 8
 )
 
@@ -117,7 +123,7 @@ type Defaults struct {
 	CompactionModel string `yaml:"compaction_model"`
 	// IntentSteerAfter / IntentHaltAfter tune the intent-repetition
 	// detector: steer after N consecutive same-plan turns, halt at N.
-	// Zero uses 4 / 8.
+	// Zero uses 3 / 8.
 	IntentSteerAfter int    `yaml:"intent_steer_after"`
 	IntentHaltAfter  int    `yaml:"intent_halt_after"`
 	MaxLoopCycles    int    `yaml:"max_iterations"`
@@ -632,7 +638,7 @@ func Load() (*Config, error) {
 	if cfg.Agent.Default.IntentSteerAfter < 0 || cfg.Agent.Default.IntentHaltAfter < 0 {
 		return nil, fmt.Errorf("agents.default.intent_steer_after / intent_halt_after must not be negative")
 	}
-	// Both knobs fall back to the middleware defaults (4 / 8) when unset;
+	// Both knobs fall back to the middleware defaults (3 / 8) when unset;
 	// validate the EFFECTIVE pair so neither a low halt nor a high steer can
 	// slip through and be silently clamped later.
 	steer := cfg.Agent.Default.IntentSteerAfter

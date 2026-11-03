@@ -51,7 +51,7 @@ type PipelineConfig struct {
 
 	// IntentSteerAfter / IntentHaltAfter configure the cross-turn
 	// intent-repetition detector: steer after N consecutive same-plan
-	// turns, halt after N. Zero uses the defaults (4 / 8).
+	// turns, halt after N. Zero uses the defaults (3 / 8).
 	IntentSteerAfter int
 	IntentHaltAfter  int
 

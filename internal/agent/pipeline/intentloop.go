@@ -56,14 +56,27 @@ const (
 	intentMinTokens = 8
 
 	// intentSimilarityThreshold is the token-set OVERLAP COEFFICIENT
-	// (|A∩B| / min(|A|,|B|)) against the streak anchor at or above which
-	// a preamble counts as the same intent. Tuned on the recorded
+	// (|A∩B| / min(|A|,|B|)) at or above which a preamble counts as the
+	// same intent. It is measured against the streak anchor, and — bounded
+	// by maxPrevOnlyExtensions — against the immediately preceding preamble
+	// to bridge one-turn paraphrase drift. Tuned on the recorded
 	// 2026-10-26/27 loops: consecutive paraphrased announcements scored
 	// 0.21–0.38 Jaccard but 0.33–0.53 overlap against the anchor, while
 	// unrelated consecutive turns sat around 0.20. Jaccard was rejected:
 	// the model paraphrases ("verified as real" / "are legitimate"), and
 	// set Jaccard punishes exactly that variation.
 	intentSimilarityThreshold = 0.30
+
+	// maxPrevOnlyExtensions bounds consecutive turns that match only the
+	// previous preamble, never the streak anchor. Without a bound,
+	// A→B→C→D can each resemble its predecessor while the plan drifts
+	// away from the anchor, eventually reaching the halt on a legitimate
+	// read-only investigation. The recorded 2026-10-26 loop needs five
+	// consecutive prev-only turns to reach its halt, so cap there: the
+	// incident still halts, while a sixth consecutive drift resets the
+	// streak and re-anchors on the current preamble. The 2026-11-02
+	// "design settled" loop needs one (anchor 0.27, previous 0.33).
+	maxPrevOnlyExtensions = 5
 )
 
 // delegateStatusWindow bounds the head inspected for a delegate status
@@ -187,9 +200,11 @@ type IntentLoopMiddleware struct {
 	steerAfter int
 	haltAfter  int
 
-	anchor  map[string]struct{}
-	streak  int
-	steered bool
+	anchor   map[string]struct{}
+	prev     map[string]struct{}
+	prevOnly int
+	streak   int
+	steered  bool
 }
 
 // NewIntentLoopMiddleware builds the detector. A non-positive steerAfter
@@ -229,20 +244,47 @@ func (m *IntentLoopMiddleware) PostModel(ctx context.Context, msg *types.Message
 	switch {
 	case m.anchor == nil:
 		m.anchor = tokens
+		m.prevOnly = 0
 		m.streak = 1
 		m.steered = false
-	case overlap(m.anchor, tokens) >= intentSimilarityThreshold:
-		// Compared against the streak ANCHOR, not the previous turn:
-		// paraphrase drift ("all four findings are real" → "...are
-		// legitimate") converges back on the anchor while adjacent turns
-		// can score below threshold against each other.
+	case m.sameIntent(tokens):
+		// Compared against the streak ANCHOR and, for bounded
+		// paraphrase drift, the previous turn: "all four findings are
+		// real" → "...are legitimate" converges back on the anchor, while
+		// a re-worked "next step" tail ("let me look at ModelEntry" →
+		// "let me check SetModel") can dip below threshold against
+		// far-away anchors yet still match the immediately preceding
+		// turn. sameIntent caps how often the prev-only path can extend.
 		m.streak++
 	default:
 		m.anchor = tokens
+		m.prevOnly = 0
 		m.streak = 1
 		m.steered = false
 	}
+	m.prev = tokens
 	return step, nil
+}
+
+// sameIntent reports whether tokens re-announces the streak's plan. It is
+// compared against both the streak anchor and the previous preamble because
+// models paraphrase the plan's leading statement while varying the "next
+// step" tail. The 2026-11-02 "design settled" loop scored 0.27 against the
+// anchor (just under the threshold, resetting the streak) but 0.33 against
+// the immediately preceding turn. Prev-only matches are capped so a plan
+// that keeps drifting cannot extend the streak indefinitely.
+func (m *IntentLoopMiddleware) sameIntent(tokens map[string]struct{}) bool {
+	if overlap(m.anchor, tokens) >= intentSimilarityThreshold {
+		// Back on the streak's original plan: the drift is over, so a
+		// later paraphrase gets its full prev-only allowance again.
+		m.prevOnly = 0
+		return true
+	}
+	if overlap(m.prev, tokens) >= intentSimilarityThreshold && m.prevOnly < maxPrevOnlyExtensions {
+		m.prevOnly++
+		return true
+	}
+	return false
 }
 
 func (m *IntentLoopMiddleware) PostTool(ctx context.Context, results []ToolResult, step *Step) (*Step, error) {
@@ -253,6 +295,8 @@ func (m *IntentLoopMiddleware) PostTool(ctx context.Context, results []ToolResul
 			m.streak = 0
 			m.steered = false
 			m.anchor = nil
+			m.prev = nil
+			m.prevOnly = 0
 			break
 		}
 	}
