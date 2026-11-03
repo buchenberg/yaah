@@ -8,6 +8,21 @@ import (
 	"github.com/buchenberg/yaah/internal/types"
 )
 
+// restoredUsage is the persisted running token totals for a session being
+// resumed: the monotonic counters the usage flush maintains across runs. They
+// seed both the resumed session's visible usage and its flush baselines, so a
+// resume neither re-displays zero usage nor lets the first flush overwrite a
+// larger already-flushed total with a smaller one. Sub-agent cached tokens are
+// not persisted (the schema stores sub_tokens_in/out only), so they resume at
+// zero.
+type restoredUsage struct {
+	TokensIn     int
+	TokensOut    int
+	TokensCached int
+	SubTokensIn  int
+	SubTokensOut int
+}
+
 // restoredSession is what resume recovery yields for a session being attached:
 // the transcript, the conversation id its rows are keyed by, the next message
 // index, a possibly-replaced system prompt, and the mode the session was left
@@ -25,6 +40,9 @@ type restoredSession struct {
 	// user made, so losing it on resume would silently widen the toolset of
 	// a session they had narrowed.
 	Mode string
+	// Usage is the persisted token accounting, so the resumed session shows
+	// and continues the running totals instead of restarting them at zero.
+	Usage restoredUsage
 }
 
 // sessionRestoreStore is the slice of the session store restore needs: the
@@ -54,6 +72,13 @@ func restoreSession(db sessionRestoreStore, resumeSessionID, systemPrompt string
 	session, err := db.GetSession(resumeSessionID)
 	if err != nil {
 		return restoredSession{}, fmt.Errorf("cannot resume session %s: %w", resumeSessionID, err)
+	}
+	out.Usage = restoredUsage{
+		TokensIn:     session.TokensIn,
+		TokensOut:    session.TokensOut,
+		TokensCached: session.TokensCached,
+		SubTokensIn:  session.SubTokensIn,
+		SubTokensOut: session.SubTokensOut,
 	}
 	dbMsgs, err := db.GetMessages(resumeSessionID)
 	if err != nil {

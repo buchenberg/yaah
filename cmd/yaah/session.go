@@ -434,6 +434,35 @@ func (s *agentSession) flushUsage() {
 		s.subUsage.PromptTokens, s.subUsage.CompletionTokens)
 }
 
+// seedRestoredUsage resumes the session's usage accounting from the persisted
+// running totals: the visible counters and the flush baselines both restart
+// where the prior process left off. Seeding the flush baselines matters as
+// much as seeding the counters — flushUsageValues refuses to shrink a flushed
+// total, and with zero baselines the guard would happily let the first flush
+// of a resumed session overwrite the persisted totals with smaller values.
+//
+// Sub-agent cached tokens are not persisted (the schema stores
+// sub_tokens_in/out only), so the sub-usage cached count resumes at zero and
+// the resumed orchestrator Cached row over-reports: publishUsageLocked
+// attributes total minus sub to the orchestrator, and historical sub-agent
+// cache reads land in that remainder. Clamping would need the missing
+// history, so the over-attribution is accepted and documented here.
+func (s *agentSession) seedRestoredUsage(u restoredUsage) {
+	s.totalUsage = types.Usage{
+		PromptTokens:       u.TokensIn,
+		CompletionTokens:   u.TokensOut,
+		CachedPromptTokens: u.TokensCached,
+		TotalTokens:        u.TokensIn + u.TokensOut,
+	}
+	s.subUsage = types.Usage{
+		PromptTokens:     u.SubTokensIn,
+		CompletionTokens: u.SubTokensOut,
+		TotalTokens:      u.SubTokensIn + u.SubTokensOut,
+	}
+	s.flushIn, s.flushOut, s.flushCached = u.TokensIn, u.TokensOut, u.TokensCached
+	s.flushSubIn, s.flushSubOut = u.SubTokensIn, u.SubTokensOut
+}
+
 // flushUsageValues writes the given usage counters to the session's
 // row without ending the session. Caller must hold s.mu. Values may be
 // computed (not read from the session's live totals) so the per-call
@@ -808,6 +837,13 @@ func (s *agentSession) SetCtrlCh(ch chan<- control.Msg) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ctrlCh = ch
+
+	// A resumed session seeds its usage from the persisted totals, but those
+	// only reach the view when a UsageInfo message is emitted — and before a
+	// run completes nothing emits one. Publish the current split now that a
+	// control channel is attached, so the info pane shows restored usage
+	// instead of zero until the first run.
+	s.publishUsageLocked()
 
 	if tt := s.toolReg.Get("todowrite"); tt != nil {
 		if ttp, ok := tt.(*tools.TodoWriteTool); ok {

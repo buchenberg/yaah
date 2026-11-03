@@ -140,11 +140,12 @@ func TestFormat_UsageSplit(t *testing.T) {
 	s := State{
 		AgentPromptTokens:     100,
 		AgentCompletionTokens: 50,
-		AgentCostEstimate:     "$0.0001 (at current model rates)",
+		AgentTotalTokens:      150,
+		AgentCachedTokens:     30,
 		SubPromptTokens:       200,
 		SubCompletionTokens:   100,
 		SubTotalTokens:        300,
-		SubCostEstimate:       "$0.0002",
+		SubCachedTokens:       20,
 	}
 	out := Format(s, &th)
 	if !strings.Contains(out, "Usage") {
@@ -153,11 +154,30 @@ func TestFormat_UsageSplit(t *testing.T) {
 	if !strings.Contains(out, "Subagents Usage") {
 		t.Errorf("should render a Subagents Usage section, got %q", out)
 	}
-	if !strings.Contains(out, "Cost (approx)") {
-		t.Errorf("should label sub-agent cost as approx, got %q", out)
+	if strings.Count(out, "Total:") < 2 {
+		t.Errorf("should render a Total row in both Usage sections, got %q", out)
 	}
-	if !strings.Contains(out, "Total") {
-		t.Errorf("should render a Total row in Subagents Usage, got %q", out)
+	if strings.Count(out, "Cached:") < 2 {
+		t.Errorf("should render a Cached row in both Usage sections, got %q", out)
+	}
+	if strings.Contains(out, "Cost") {
+		t.Errorf("should render no cost rows, got %q", out)
+	}
+}
+
+func TestFormat_UsageCachedHiddenWhenZero(t *testing.T) {
+	th := colors.NewDarkTheme()
+	s := State{
+		AgentPromptTokens:     100,
+		AgentCompletionTokens: 50,
+		AgentTotalTokens:      150,
+		SubPromptTokens:       200,
+		SubCompletionTokens:   100,
+		SubTotalTokens:        300,
+	}
+	out := Format(s, &th)
+	if strings.Contains(out, "Cached:") {
+		t.Errorf("should hide Cached rows when zero, got %q", out)
 	}
 }
 
@@ -230,5 +250,37 @@ func TestFormat_EphemeralMsgEmpty(t *testing.T) {
 	out := Format(s, &th)
 	if strings.Contains(out, "Copied!") {
 		t.Error("should not show ephemeral message when empty")
+	}
+}
+
+func TestFormat_TotalFallsBackToPromptPlusCompletion(t *testing.T) {
+	th := colors.NewDarkTheme()
+	s := State{
+		AgentPromptTokens:     100,
+		AgentCompletionTokens: 50, // provider omitted total_tokens
+		SubPromptTokens:       20,
+		SubCompletionTokens:   10,
+	}
+	out := Format(s, &th)
+	if strings.Contains(out, "Total: "+th.Tag(th.Detail, "0")) {
+		t.Errorf("should not render Total: 0 when prompt/completion are non-zero, got %q", out)
+	}
+	if !strings.Contains(out, th.Tag(th.Detail, "150")) {
+		t.Errorf("agent Total should fall back to 100+50=150, got %q", out)
+	}
+	if !strings.Contains(out, th.Tag(th.Detail, "30")) {
+		t.Errorf("sub Total should fall back to 20+10=30, got %q", out)
+	}
+}
+
+func TestUsageTotal(t *testing.T) {
+	if got := usageTotal(100, 50, 0); got != 150 {
+		t.Errorf("usageTotal(100, 50, 0) = %d, want fallback 150", got)
+	}
+	if got := usageTotal(100, 50, 999); got != 999 {
+		t.Errorf("usageTotal(100, 50, 999) = %d, want reported 999", got)
+	}
+	if got := usageTotal(0, 0, 0); got != 0 {
+		t.Errorf("usageTotal(0, 0, 0) = %d, want 0", got)
 	}
 }

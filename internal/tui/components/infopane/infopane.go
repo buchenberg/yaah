@@ -31,12 +31,12 @@ type State struct {
 	AgentActive           bool
 	AgentPromptTokens     int
 	AgentCompletionTokens int
-	AgentCostEstimate     string
+	AgentTotalTokens      int
+	AgentCachedTokens     int
 	SubPromptTokens       int
 	SubCompletionTokens   int
 	SubTotalTokens        int
 	SubCachedTokens       int
-	SubCostEstimate       string
 }
 
 // SubAgentInfo holds sub-agent configuration for display.
@@ -67,6 +67,18 @@ func Build(borderColor string) *tview.TextView {
 		tv.SetTitleColor(tcell.GetColor(borderColor))
 	}
 	return tv
+}
+
+// usageTotal is the number the Total row reports: the provider-reported total
+// when present, prompt+completion otherwise. Some providers omit total_tokens,
+// and a literal "Total: 0" next to non-zero prompt/completion rows reads like
+// broken accounting — the sum is the same number when the total is reported
+// consistently.
+func usageTotal(promptTokens, completionTokens, totalTokens int) int {
+	if totalTokens == 0 {
+		return promptTokens + completionTokens
+	}
+	return totalTokens
 }
 
 // Format assembles the full info pane content. Pane order: version header,
@@ -105,8 +117,9 @@ func Format(s State, th *colors.Theme) string {
 		b.WriteString(th.TagBold(th.Heading, "Usage\n"))
 		b.WriteString(fmt.Sprintf("  Prompt: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.AgentPromptTokens))))
 		b.WriteString(fmt.Sprintf("  Completion: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.AgentCompletionTokens))))
-		if s.AgentCostEstimate != "" {
-			b.WriteString(fmt.Sprintf("  Cost: %s\n", th.Tag(th.Detail, s.AgentCostEstimate)))
+		b.WriteString(fmt.Sprintf("  Total: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", usageTotal(s.AgentPromptTokens, s.AgentCompletionTokens, s.AgentTotalTokens)))))
+		if s.AgentCachedTokens > 0 {
+			b.WriteString(fmt.Sprintf("  Cached: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.AgentCachedTokens))))
 		}
 		b.WriteString("\n")
 	}
@@ -130,12 +143,9 @@ func Format(s State, th *colors.Theme) string {
 		b.WriteString(th.TagBold(th.Heading, "Subagents Usage\n"))
 		b.WriteString(fmt.Sprintf("  Prompt: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.SubPromptTokens))))
 		b.WriteString(fmt.Sprintf("  Completion: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.SubCompletionTokens))))
-		b.WriteString(fmt.Sprintf("  Total: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.SubTotalTokens))))
+		b.WriteString(fmt.Sprintf("  Total: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", usageTotal(s.SubPromptTokens, s.SubCompletionTokens, s.SubTotalTokens)))))
 		if s.SubCachedTokens > 0 {
 			b.WriteString(fmt.Sprintf("  Cached: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.SubCachedTokens))))
-		}
-		if s.SubCostEstimate != "" {
-			b.WriteString(fmt.Sprintf("  Cost (approx): %s\n", th.Tag(th.Detail, s.SubCostEstimate)))
 		}
 		b.WriteString("\n")
 	}
