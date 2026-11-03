@@ -168,6 +168,15 @@ func TestSubAgentRowsContainmentSplit(t *testing.T) {
 	if strings.Contains(unavailable, "jail") || strings.Contains(unavailable, "Jail") {
 		t.Fatalf("public metaphor leaks the jail wording on the unavailable path:\n%s", unavailable)
 	}
+
+	// The leak guard must also cover the producer strings, not just the
+	// renderer's echo: render a status derived from the real probe path.
+	cfg := &config.Config{}
+	cfg.Agent.SubAgent.Containment = "auto"
+	derived := SubAgentRows(worldstatus.Derive(cfg, "workdir", false), thp)
+	if strings.Contains(derived, "jail") || strings.Contains(derived, "Jail") {
+		t.Fatalf("producer wording leaks the jail metaphor:\n%s", derived)
+	}
 }
 
 func TestSubAgentRowsCroftLane(t *testing.T) {

@@ -266,3 +266,12 @@ func TestJailLine(t *testing.T) {
 		})
 	}
 }
+
+func TestProbeJailWording(t *testing.T) {
+	name, tier, why, _ := probeJail()
+	for _, v := range []string{name, tier, why} {
+		if strings.Contains(v, "jail") || strings.Contains(v, "Jail") {
+			t.Errorf("probeJail() leaks the jail wording: name=%q tier=%q why=%q", name, tier, why)
+		}
+	}
+}
