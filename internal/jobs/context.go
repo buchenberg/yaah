@@ -180,6 +180,42 @@ func SendHeartbeat(ctx context.Context) {
 	}
 }
 
+// subAgentReadyKey is a context key for the closure a dispatch body calls
+// once its dispatch world exists and the child's run is about to begin.
+type subAgentReadyKey struct{}
+
+// WithSubAgentReadyNotifier stores fn in ctx so the dispatching body can
+// report that its dispatch world is ready.
+//
+// The stuck-child watchdog arms its deadline on this signal. A world that
+// is still being provisioned — a worktree being created, a container being
+// started — cannot heartbeat, so charging that window against the child's
+// deadline reported healthy dispatches as stuck (yaah-95ri.2). The notifier
+// is fired at most once per dispatch; the watchdog ignores repeats.
+func WithSubAgentReadyNotifier(ctx context.Context, fn func()) context.Context {
+	return context.WithValue(ctx, subAgentReadyKey{}, fn)
+}
+
+// NotifySubAgentReady invokes the ready notifier stored in ctx, if present.
+// Call it from a dispatch body once the dispatch world exists and the
+// child's run is about to start.
+func NotifySubAgentReady(ctx context.Context) {
+	if fn, ok := ctx.Value(subAgentReadyKey{}).(func()); ok && fn != nil {
+		fn()
+	}
+}
+
 // ErrStuckChild is returned when a sub-agent is cancelled by the parent
-// watchdog after StuckChildTimeout elapses with no heartbeat.
+// watchdog after StuckChildTimeout elapses with no heartbeat from a child
+// that had already reported at least one.
 var ErrStuckChild = errors.New("sub-agent stuck: no heartbeat received within deadline")
+
+// ErrDispatchStartup is returned when a dispatched sub-agent never started:
+// its dispatch world became ready, but the child produced no heartbeat
+// before the startup deadline.
+//
+// It is deliberately distinct from ErrStuckChild. A world that never got the
+// child going is a dispatch/setup failure and its message names the world
+// that was stood up; only a child that was beating and then went silent is
+// stuck (yaah-95ri.3).
+var ErrDispatchStartup = errors.New("sub-agent dispatch failed to start: the child never produced a heartbeat after its dispatch world became ready")

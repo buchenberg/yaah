@@ -24,6 +24,11 @@ const (
 // ErrStuckChild stays a variable alias so errors.Is identity is preserved.
 var ErrStuckChild = jobs.ErrStuckChild
 
+// ErrDispatchStartup is the dispatch-startup counterpart of ErrStuckChild:
+// the world was provisioned but the child never heartbeat, so the dispatch
+// never started rather than hanging mid-run.
+var ErrDispatchStartup = jobs.ErrDispatchStartup
+
 func ParseSubAgentOutput(output string, runErr error) *jobs.SubAgentOutput {
 	return jobs.ParseSubAgentOutput(output, runErr)
 }
@@ -70,6 +75,14 @@ func WithSubAgentUsage(ctx context.Context, usage *types.Usage) context.Context 
 
 func AddSubAgentUsage(ctx context.Context, delta types.Usage) {
 	jobs.AddSubAgentUsage(ctx, delta)
+}
+
+func WithSubAgentReadyNotifier(ctx context.Context, fn func()) context.Context {
+	return jobs.WithSubAgentReadyNotifier(ctx, fn)
+}
+
+func NotifySubAgentReady(ctx context.Context) {
+	jobs.NotifySubAgentReady(ctx)
 }
 
 func WithSubAgentHeartbeat(ctx context.Context, hb chan struct{}) context.Context {

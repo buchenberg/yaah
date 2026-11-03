@@ -261,6 +261,11 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 		defer cancel()
 	}
 
+	// No dispatch world to provision on this lane: the child's run starts
+	// here, so this is when a heartbeat is genuinely expected and the
+	// stuck-child deadline may start counting (yaah-95ri.2).
+	NotifySubAgentReady(runCtx)
+
 	result, err := t.Runner(runCtx, params.Prompt, subParams)
 
 	return t.classifyRunnerResult(result, err, params.Role, timeout, runCtx)

@@ -1,7 +1,9 @@
 package tools
 
 import (
+	"os"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/buchenberg/yaah/internal/agent/subagent"
@@ -12,7 +14,9 @@ import (
 // TestWorldInfoParityWithRuntimeLadder pins the session-level derivation
 // (internal/worldinfo) to the per-dispatch ladder the runtime actually runs
 // (resolveDispatchWorld). Doctor and every UI surface display worldinfo, so a
-// drift here would describe a world a dispatch would not get.
+// drift here would describe a world a dispatch would not get. The availability
+// record itself is single-sourced (TestDispatchWorldAvailabilityHasOne
+// Producer); this stays as regression armor on the inputs each side derives.
 func TestWorldInfoParityWithRuntimeLadder(t *testing.T) {
 	linux := runtime.GOOS == "linux"
 	withImage := func() *config.Config {
@@ -168,4 +172,111 @@ func TestWorldInfoParityWithRoleOverride(t *testing.T) {
 		Network:     cfg.Agent.SubAgent.Network,
 	}, worldinfo.Availability(cfg, isolated))
 	assertSameResolution(t, "role developer", got, gotErr, want, wantErr)
+}
+
+// TestWorldInfoParityAvailabilityRecord pins the two input derivations — the
+// config-derived one display surfaces use and the wiring-derived one a dispatch
+// uses — to the record worldinfo.AvailabilityFor produces. Both sides resolve
+// against that one builder, so this test fails if either starts inventing its
+// own container facts.
+func TestWorldInfoParityAvailabilityRecord(t *testing.T) {
+	rtWith := func(mutate func(rt *RetainedRuntime)) RetainedRuntime {
+		rt := RetainedRuntime{}
+		mutate(&rt)
+		return rt
+	}
+
+	// Production wiring only offers a per-dispatch container where the
+	// setup can exist: the config-derived side gates on Linux, so the
+	// wiring facts this test feeds it must be gated the same way or the
+	// records diverge on non-Linux hosts for reasons that are not drift.
+	linux := runtime.GOOS == "linux"
+
+	cases := []struct {
+		name     string
+		cfg      *config.Config
+		isolated bool
+		rt       RetainedRuntime
+	}{
+		{
+			name: "unwired local session",
+			cfg:  &config.Config{},
+			rt:   rtWith(func(*RetainedRuntime) {}),
+		},
+		{
+			name: "wired dispatch setup",
+			cfg: func() *config.Config {
+				cfg := &config.Config{}
+				cfg.Workspace.Containerd.Image = "registry.example/yaah:1"
+				return cfg
+			}(),
+			rt: rtWith(func(rt *RetainedRuntime) {
+				if linux {
+					rt.ContainerWorlds = true
+					rt.DispatchWorlds = &DispatchWorlds{}
+				}
+			}),
+		},
+		{
+			name: "container session",
+			cfg: func() *config.Config {
+				cfg := &config.Config{}
+				cfg.Workspace.Backend = config.BackendContainerd
+				cfg.Workspace.Containerd.Image = "registry.example/yaah:1"
+				return cfg
+			}(),
+			isolated: true,
+			rt: rtWith(func(rt *RetainedRuntime) {
+				if linux {
+					rt.ContainerWorlds = true
+					rt.DispatchWorlds = &DispatchWorlds{SessionSandbox: &SessionSandbox{}}
+				}
+			}),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fromConfig := worldinfo.Availability(tc.cfg, tc.isolated)
+			fromWiring := worldinfo.AvailabilityFor(worldinfo.ContainerSetup{
+				Offered: tc.rt.ContainerWorlds,
+				Retains: tc.rt.DispatchWorlds != nil,
+				Session: tc.rt.DispatchWorlds != nil && tc.rt.DispatchWorlds.SessionSandbox != nil,
+			}, fromConfig.Jail)
+			if fromConfig != fromWiring {
+				t.Fatalf("availability records diverged:\nconfig %+v\nwiring %+v", fromConfig, fromWiring)
+			}
+		})
+	}
+}
+
+// TestDispatchWorldAvailabilityHasOneProducer asserts the single source:
+// retained.go must build its availability record with
+// worldinfo.AvailabilityFor, and must not carry a copy of the policy (its
+// reason strings or a raw paddock probe). The scan is scoped to retained.go —
+// the file that historically held the duplication — so a legitimate mention
+// of the strings elsewhere in the package cannot false-positive.
+func TestDispatchWorldAvailabilityHasOneProducer(t *testing.T) {
+	const producer = "worldinfo.AvailabilityFor("
+	retained, err := os.ReadFile("retained.go")
+	if err != nil {
+		t.Fatalf("read retained.go: %v", err)
+	}
+	src := string(retained)
+	if !strings.Contains(src, producer) {
+		t.Fatalf("retained.go must resolve against %s, not its own record", producer)
+	}
+
+	duplicated := []string{
+		"container settlement is unavailable in this session",
+		"a container session has no host worktree",
+		"per-dispatch container worlds need workspace.containerd.image",
+		"subagent.WorldAvailability{",
+		"jail.Backend()",
+	}
+	for _, dup := range duplicated {
+		if strings.Contains(src, dup) {
+			t.Errorf("retained.go duplicates the availability policy (%q); use worldinfo.AvailabilityFor / JailAvailable", dup)
+		}
+	}
 }

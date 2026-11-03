@@ -44,7 +44,14 @@ type toolDispatch struct {
 	startOnce  sync.Once
 	finishOnce sync.Once
 
-	watchdogActive  bool
+	watchdogActive bool
+	// watch holds the liveness evidence the stuck-child watchdog needs to
+	// classify a kill (world readiness, heartbeats, the resolved world).
+	watch watchdogState
+	// watchDone ends the watchdog goroutine when the dispatch returns,
+	// so a body that exits without ever signalling readiness cannot leak
+	// the goroutine for the rest of the parent's context lifetime.
+	watchDone       chan struct{}
 	releaseSubAgent func()
 	releaseTool     func()
 }
@@ -167,12 +174,14 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 
 	// Watchdog kill: task.go already converted the cancellation into a
 	// structured {"error":"cancelled","partial":...} result. Keep that
-	// payload so the child's partial output survives and surface the
-	// stuck classification alongside it (yaah-1ep).
-	stuckPartial := ""
+	// payload so the child's partial output survives and surface the kill
+	// classification alongside it (yaah-1ep). The verdict distinguishes a
+	// child that went silent mid-run (stuck) from one that never started
+	// after its world was ready (dispatch startup, yaah-95ri.3).
+	killPartial := ""
 	if allowed && d.isDelegate && !d.isBackground && d.watchdogActive && ctx.Err() == nil && runCtx.Err() == context.Canceled {
-		err = tools.ErrStuckChild
-		stuckPartial = l.truncateToolResult(res)
+		err = d.killVerdict()
+		killPartial = l.truncateToolResult(res)
 	}
 	if l.Config.OtelEnabled && toolSpan != nil {
 		if allowed && d.isDelegate && !d.isBackground {
@@ -188,8 +197,8 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 	if err != nil {
 		errStr = err.Error()
 		res = fmt.Sprintf("error: %v", err)
-		if stuckPartial != "" {
-			res += "\n" + stuckPartial
+		if killPartial != "" {
+			res += "\n" + killPartial
 		}
 	} else {
 		res = l.truncateToolResult(res)
@@ -307,6 +316,51 @@ func (d *toolDispatch) publishStartFn() func(model string) {
 	}
 }
 
+// watchdogState is the liveness evidence a kill verdict depends on: whether
+// the dispatch world became ready, how many heartbeats arrived afterwards, and
+// which world was stood up. The watchdog goroutine writes it and the dispatch
+// goroutine reads it, so every field is guarded.
+type watchdogState struct {
+	mu      sync.Mutex
+	ready   bool
+	fired   bool
+	beats   int
+	world   tools.SubAgentWorld
+	timeout time.Duration
+}
+
+// markReady records that the dispatch world exists and the child's run is
+// about to begin, capturing the world so a startup verdict can name what was
+// stood up when the child never beat.
+func (w *watchdogState) markReady(world tools.SubAgentWorld) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.ready = true
+	w.world = world
+}
+
+// beat records one liveness heartbeat from the child.
+func (w *watchdogState) beat() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.beats++
+}
+
+// markFired records that the deadline elapsed and the watchdog cancelled the
+// dispatch.
+func (w *watchdogState) markFired() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.fired = true
+}
+
+// snapshot returns the recorded state. Callers must hold no lock.
+func (w *watchdogState) snapshot() (ready, fired bool, beats int, world tools.SubAgentWorld, timeout time.Duration) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.ready, w.fired, w.beats, w.world, w.timeout
+}
+
 // setupSubAgent wires model/usage capture, the start notifier, and the
 // stuck-child watchdog for a foreground sub-agent dispatch, returning
 // the context the child should run under.
@@ -329,37 +383,123 @@ func (d *toolDispatch) setupSubAgent(runCtx context.Context) context.Context {
 	}
 	if childTimeout > 0 {
 		d.watchdogActive = true
+		d.watch.mu.Lock()
+		d.watch.timeout = childTimeout
+		d.watch.mu.Unlock()
+
 		hb := make(chan struct{}, 1)
+		ready := make(chan struct{})
+		d.watchDone = make(chan struct{})
 		runCtx = tools.WithSubAgentHeartbeat(runCtx, hb)
+		// The dispatch body reports its world ready once provisioning is
+		// done; that — not arming — is when the stuck-child deadline starts
+		// counting (yaah-95ri.2).
+		var readyOnce sync.Once
+		runCtx = tools.WithSubAgentReadyNotifier(runCtx, func() {
+			readyOnce.Do(func() {
+				d.watch.markReady(d.world)
+				close(ready)
+			})
+		})
 		watchCtx, watchCancel := context.WithCancel(runCtx)
 		runCtx = watchCtx
-		go func() {
-			defer watchCancel()
-			timer := time.NewTimer(childTimeout)
-			defer timer.Stop()
-			for {
-				select {
-				case <-hb:
-					if !timer.Stop() {
-						<-timer.C
-					}
-					timer.Reset(childTimeout)
-				case <-timer.C:
-					watchCancel()
-					return
-				case <-watchCtx.Done():
-					return
-				}
-			}
-		}()
+		go d.armStuckChildWatchdog(watchCtx, watchCancel, ready, d.watchDone, hb, childTimeout)
 	}
 	return runCtx
+}
+
+// armStuckChildWatchdog supervises one child dispatch.
+//
+// It waits for the dispatch world to become ready before it starts the
+// deadline at all: creating a worktree or starting a container cannot
+// heartbeat, so counting that window against the child killed healthy
+// dispatches as "stuck" (yaah-95ri.2). Only after readiness — the point at
+// which the child's loop is expected to beat — does the deadline run, and it
+// is reset by every heartbeat.
+//
+// When the deadline elapses the kill is classified from the evidence
+// collected in d.watch: a child that never beat after its world was ready
+// never started (ErrDispatchStartup), while a child that beat and then went
+// silent is stuck (ErrStuckChild) (yaah-95ri.3).
+func (d *toolDispatch) armStuckChildWatchdog(ctx context.Context, cancel context.CancelFunc, ready <-chan struct{}, done <-chan struct{}, hb <-chan struct{}, timeout time.Duration) {
+	defer cancel()
+	select {
+	case <-ready:
+	case <-done:
+		return
+	case <-ctx.Done():
+		return
+	}
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		select {
+		case <-hb:
+			d.watch.beat()
+			if !timer.Stop() {
+				<-timer.C
+			}
+			timer.Reset(timeout)
+		case <-timer.C:
+			// The select may pick the timer over a heartbeat that is
+			// already buffered; give a pending beat precedence so an
+			// in-flight heartbeat is not read as zero heartbeats (which
+			// would misreport a mid-run stall as a dispatch-startup
+			// failure, yaah-95ri.3).
+			select {
+			case <-hb:
+				d.watch.beat()
+				timer.Reset(timeout)
+				continue
+			default:
+			}
+			d.watch.markFired()
+			cancel()
+			return
+		case <-done:
+			return
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// killVerdict classifies a cancelled sub-agent dispatch.
+//
+// ErrDispatchStartup is the verdict only when the watchdog itself fired and
+// the child had not produced a single heartbeat since its world became ready:
+// the dispatch never started, so the world/provisioning phase is what failed,
+// not the child's run. A child that beat and then stopped mid-run is stuck,
+// and a cancellation the watchdog did not cause keeps the historical stuck
+// classification (yaah-95ri.3).
+func (d *toolDispatch) killVerdict() error {
+	_, fired, beats, world, timeout := d.watch.snapshot()
+	if !fired || beats > 0 {
+		return tools.ErrStuckChild
+	}
+	detail := fmt.Sprintf("no heartbeat within %s of world readiness", timeout)
+	if world.Resolved != "" {
+		detail += fmt.Sprintf(" (world: %s)", world.Resolved)
+	}
+	if world.Degraded {
+		if world.Reason != "" {
+			detail += fmt.Sprintf(" (degraded: %s)", world.Reason)
+		} else {
+			detail += " (degraded)"
+		}
+	}
+	return fmt.Errorf("%w — %s", tools.ErrDispatchStartup, detail)
 }
 
 // finishSubAgent delivers usage captured from the child back to the
 // loop. Called by owners of a foreground dispatch once execution ends.
 func (d *toolDispatch) finishSubAgent() {
 	d.finishOnce.Do(func() {
+		if d.watchDone != nil {
+			close(d.watchDone)
+			d.watchDone = nil
+		}
 		if d.subUsage.TotalTokens > 0 {
 			d.loop.addSubAgentUsage(d.subUsage)
 			if d.loop.OnSubUsage != nil {
@@ -486,11 +626,13 @@ func (l *Loop) runGateDispatch(ctx context.Context, validatorRole, gatePrompt st
 	if gd.watchdogActive && ctx.Err() == nil && runCtx.Err() == context.Canceled {
 		// Gate callers only log dispatch errors; wrap the structured
 		// result so the child's partial output reaches that log instead
-		// of being dropped (yaah-1ep).
+		// of being dropped (yaah-1ep). The verdict separates a stuck child
+		// from a dispatch that never started (yaah-95ri.3).
+		verdict := gd.killVerdict()
 		if res != "" {
-			err = fmt.Errorf("%w: %s", tools.ErrStuckChild, l.truncateToolResult(res))
+			err = fmt.Errorf("%w: %s", verdict, l.truncateToolResult(res))
 		} else {
-			err = tools.ErrStuckChild
+			err = verdict
 		}
 		res = ""
 	}

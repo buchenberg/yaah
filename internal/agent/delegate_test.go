@@ -418,6 +418,10 @@ func TestLoop_stuckChildPreservesPartial(t *testing.T) {
 	// captured: the structured {"error":"cancelled","partial":...} payload
 	// must reach the model alongside the stuck classification (yaah-1ep).
 	hangingRunner := func(ctx context.Context, prompt string, params tools.SubAgentParams) (string, error) {
+		// One heartbeat first: the child is beating, so going silent now is
+		// a mid-run stall (ErrStuckChild), not a dispatch that never started
+		// (ErrDispatchStartup, yaah-95ri.3).
+		tools.SendHeartbeat(ctx)
 		<-ctx.Done()
 		return "half-finished review notes", ctx.Err()
 	}
