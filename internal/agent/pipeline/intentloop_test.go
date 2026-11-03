@@ -32,15 +32,21 @@ var recordedLoopPreambles = []string{
 // then a batch of read-only tool results (the incident's shape).
 func loopTurn(t *testing.T, m *IntentLoopMiddleware, preamble string) (*Step, error) {
 	t.Helper()
+	return loopTurnWith(t, m, preamble, []ToolResult{
+		{Name: "bash", Args: `{"command":"gh pr view 597 --json comments"}`, Result: "comment batch"},
+		{Name: "bash", Args: `{"command":"sed -n '1,40p' internal/tools/retained.go"}`, Result: "file body"},
+	})
+}
+
+// loopTurnWith is loopTurn with caller-supplied tool results, for replaying
+// the turn where the model finally mutates a file.
+func loopTurnWith(t *testing.T, m *IntentLoopMiddleware, preamble string, results []ToolResult) (*Step, error) {
+	t.Helper()
 	step := &Step{Messages: []types.Message{types.SystemMsg("sys")}}
 	msg := &types.Message{Role: "assistant", Content: preamble}
 	step, err := m.PostModel(context.Background(), msg, step)
 	if err != nil {
 		t.Fatalf("PostModel: %v", err)
-	}
-	results := []ToolResult{
-		{Name: "bash", Args: `{"command":"gh pr view 597 --json comments"}`, Result: "comment batch"},
-		{Name: "bash", Args: `{"command":"sed -n '1,40p' internal/tools/retained.go"}`, Result: "file body"},
 	}
 	step, err = m.PostTool(context.Background(), results, step)
 	return step, err
@@ -230,9 +236,24 @@ func TestIntentLoop_DesignSettledLoopIsSteered(t *testing.T) {
 
 	steerAt := -1
 	for i, preamble := range designSettledPreambles {
-		step, err := loopTurn(t, m, preamble)
+		results := []ToolResult{
+			{Name: "bash", Args: `{"command":"sed -n '1,40p' internal/tools/retained.go"}`, Result: "file body"},
+		}
+		if i == len(designSettledPreambles)-1 {
+			// The final turn is the one that actually edits. PostTool
+			// resets the streak on that progress, so a steer that only
+			// arrives at this turn would be wiped before PrepareStep —
+			// exactly the race this test guards.
+			results = []ToolResult{
+				{Name: "edit", Args: `{"filePath":"config.go"}`, Result: "Replaced 1 occurrence(s)"},
+			}
+		}
+		step, err := loopTurnWith(t, m, preamble, results)
 		if err != nil {
 			t.Fatalf("turn %d: unexpected halt: %v", i, err)
+		}
+		if i == len(designSettledPreambles)-1 && m.streak != 0 {
+			t.Fatalf("turn %d: edit did not reset the streak (streak=%d)", i, m.streak)
 		}
 		prep, err := m.PrepareStep(context.Background(), step)
 		if err != nil {
@@ -269,6 +290,54 @@ func TestIntentLoop_PreviousTurnKeepsParaphraseDrift(t *testing.T) {
 		if want := i + 1; m.streak != want {
 			t.Fatalf("turn %d: streak = %d, want %d", i, m.streak, want)
 		}
+	}
+}
+
+// tokenSet builds the token maps sameIntent compares.
+func tokenSet(words ...string) map[string]struct{} {
+	s := make(map[string]struct{}, len(words))
+	for _, w := range words {
+		s[w] = struct{}{}
+	}
+	return s
+}
+
+// TestIntentLoop_PrevOnlyDriftIsBounded: consecutive preambles that only
+// match their predecessor must not chain indefinitely. The 2026-11-02
+// incident needed one prev-only extension; after maxPrevOnlyExtensions the
+// streak must reset rather than drift to the halt on a legitimate read-only
+// investigation. A return to the anchor refills the allowance.
+func TestIntentLoop_PrevOnlyDriftIsBounded(t *testing.T) {
+	m := &IntentLoopMiddleware{
+		anchor: tokenSet("a", "b", "c", "d", "e", "f"),
+		prev:   tokenSet("a", "b", "c", "x", "y", "z"),
+		streak: 2,
+	}
+
+	drift := []map[string]struct{}{
+		tokenSet("x", "y", "z", "u", "v", "w"),
+		tokenSet("u", "v", "w", "p", "q", "r"),
+		tokenSet("p", "q", "r", "s", "t", "u"),
+		tokenSet("s", "t", "u", "m", "n", "o"),
+		tokenSet("m", "n", "o", "i", "j", "k"),
+		tokenSet("i", "j", "k", "g", "h", "l"),
+	}
+	for i, tokens := range drift {
+		want := i < maxPrevOnlyExtensions
+		if got := m.sameIntent(tokens); got != want {
+			t.Fatalf("drift turn %d: sameIntent = %v, want %v (prevOnly=%d)", i, got, want, m.prevOnly)
+		}
+		m.prev = tokens
+	}
+	if m.prevOnly != maxPrevOnlyExtensions {
+		t.Errorf("prevOnly = %d after the bound, want %d", m.prevOnly, maxPrevOnlyExtensions)
+	}
+
+	if !m.sameIntent(tokenSet("a", "b", "c", "d", "e", "g")) {
+		t.Fatal("a preamble back on the anchor was not recognized")
+	}
+	if m.prevOnly != 0 {
+		t.Errorf("anchor match did not reset prevOnly: %d", m.prevOnly)
 	}
 }
 
