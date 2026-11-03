@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.131.1](https://github.com/buchenberg/yaah/compare/v0.131.0...v0.131.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* **agent:** arm stuck-child watchdog at world readiness, distinct startup verdict (yaah-95ri.2, yaah-95ri.3) ([df88db3](https://github.com/buchenberg/yaah/commit/df88db36a2972de3d7e97cd9e7ceb1e0e25db6ff))
+* **agent:** close review findings on the stuck-child watchdog (yaah-95ri.2, yaah-95ri.3) ([692035d](https://github.com/buchenberg/yaah/commit/692035dee176eefe54c06b48653ff1742099b8af))
+* dispatch friction P1s — watchdog arming, startup verdict, availability single-source (yaah-voz1, yaah-95ri.2, yaah-95ri.3) ([2c700ab](https://github.com/buchenberg/yaah/commit/2c700aba64a650a51887c0a36ea22910ebc7154f))
+* **worldinfo:** single-source the dispatch-world availability policy (yaah-voz1) ([6374dd6](https://github.com/buchenberg/yaah/commit/6374dd60144347bb1233854090654f9f372eee33))
+
+
+### Tests
+
+* **tools:** gate parity-record wiring facts on the host like production does (yaah-voz1) ([6517452](https://github.com/buchenberg/yaah/commit/65174523f3d3d19a28b1ec3c18c4f5cab243bd59))
+
 ## [0.131.0](https://github.com/buchenberg/yaah/compare/v0.130.3...v0.131.0) (2026-11-03)
 
 
