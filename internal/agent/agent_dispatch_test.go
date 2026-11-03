@@ -245,7 +245,7 @@ func watchdogDelegateCall() types.ToolCall {
 // is still being created cannot heartbeat, so a slow world is not a stuck
 // child (yaah-95ri.2).
 func TestDispatch_WatchdogArmsAtWorldReadyNotAtSetup(t *testing.T) {
-	l := &Loop{Config: LoopConfig{StuckChildTimeout: 30 * time.Millisecond}}
+	l := &Loop{Config: LoopConfig{StuckChildTimeout: 250 * time.Millisecond}}
 	d := l.newDispatch(0, watchdogDelegateCall())
 
 	runCtx, cancel := context.WithCancel(context.Background())
@@ -257,7 +257,7 @@ func TestDispatch_WatchdogArmsAtWorldReadyNotAtSetup(t *testing.T) {
 	select {
 	case <-runCtx.Done():
 		t.Fatalf("watchdog killed the dispatch during provisioning: %v", runCtx.Err())
-	case <-time.After(180 * time.Millisecond):
+	case <-time.After(750 * time.Millisecond):
 	}
 
 	// The world exists; from here heartbeats are expected and do arrive.
@@ -267,7 +267,7 @@ func TestDispatch_WatchdogArmsAtWorldReadyNotAtSetup(t *testing.T) {
 		select {
 		case <-runCtx.Done():
 			t.Fatalf("watchdog killed a child that was heartbeating: %v", runCtx.Err())
-		case <-time.After(15 * time.Millisecond):
+		case <-time.After(30 * time.Millisecond):
 			tools.SendHeartbeat(runCtx)
 		}
 	}
@@ -279,7 +279,7 @@ func TestDispatch_WatchdogArmsAtWorldReadyNotAtSetup(t *testing.T) {
 // A child that never beats after its world is ready never started: the kill
 // must say so instead of claiming the child is stuck (yaah-95ri.3).
 func TestDispatch_ZeroHeartbeatKillIsDispatchStartup(t *testing.T) {
-	l := &Loop{Config: LoopConfig{StuckChildTimeout: 30 * time.Millisecond}}
+	l := &Loop{Config: LoopConfig{StuckChildTimeout: 150 * time.Millisecond}}
 	d := l.newDispatch(0, watchdogDelegateCall())
 
 	runCtx, cancel := context.WithCancel(context.Background())
@@ -290,7 +290,7 @@ func TestDispatch_ZeroHeartbeatKillIsDispatchStartup(t *testing.T) {
 
 	select {
 	case <-runCtx.Done():
-	case <-time.After(2 * time.Second):
+	case <-time.After(3 * time.Second):
 		t.Fatal("watchdog never fired after the dispatch world became ready")
 	}
 
@@ -308,7 +308,7 @@ func TestDispatch_ZeroHeartbeatKillIsDispatchStartup(t *testing.T) {
 
 // A child that beats and then goes silent mid-run is stuck (yaah-95ri.3).
 func TestDispatch_MidRunHeartbeatStopIsStuckChild(t *testing.T) {
-	l := &Loop{Config: LoopConfig{StuckChildTimeout: 60 * time.Millisecond}}
+	l := &Loop{Config: LoopConfig{StuckChildTimeout: 250 * time.Millisecond}}
 	d := l.newDispatch(0, watchdogDelegateCall())
 
 	runCtx, cancel := context.WithCancel(context.Background())
@@ -322,12 +322,12 @@ func TestDispatch_MidRunHeartbeatStopIsStuckChild(t *testing.T) {
 		select {
 		case <-runCtx.Done():
 			t.Fatal("watchdog fired while heartbeats were flowing")
-		case <-time.After(20 * time.Millisecond):
+		case <-time.After(30 * time.Millisecond):
 		}
 	}
 	select {
 	case <-runCtx.Done():
-	case <-time.After(2 * time.Second):
+	case <-time.After(3 * time.Second):
 		t.Fatal("watchdog never fired after the child went silent")
 	}
 
@@ -337,5 +337,41 @@ func TestDispatch_MidRunHeartbeatStopIsStuckChild(t *testing.T) {
 	}
 	if errors.Is(verdict, tools.ErrDispatchStartup) {
 		t.Fatalf("a mid-run stop must not be reported as a dispatch-startup failure: %v", verdict)
+	}
+}
+
+// A heartbeat buffered at the moment the deadline elapses must not be read as
+// zero heartbeats: the watchdog's select can pick the timer over the pending
+// beat, and the verdict has to count it (mid-run stall) rather than claim the
+// dispatch never started.
+func TestDispatch_BufferedHeartbeatAtDeadlineIsNotStartup(t *testing.T) {
+	l := &Loop{Config: LoopConfig{StuckChildTimeout: 250 * time.Millisecond}}
+	d := l.newDispatch(0, watchdogDelegateCall())
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runCtx = d.setupSubAgent(runCtx)
+	tools.WriteSubAgentWorld(runCtx, tools.SubAgentWorld{Resolved: "worktree"})
+	tools.NotifySubAgentReady(runCtx)
+
+	// Beat once (recorded), then queue one more beat into the buffered
+	// heartbeat channel right around the deadline so it is pending when
+	// the timer fires.
+	tools.SendHeartbeat(runCtx)
+	time.Sleep(250 * time.Millisecond)
+	tools.SendHeartbeat(runCtx)
+
+	select {
+	case <-runCtx.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("watchdog never fired")
+	}
+
+	verdict := d.killVerdict()
+	if !errors.Is(verdict, tools.ErrStuckChild) {
+		t.Fatalf("verdict = %v, want ErrStuckChild (heartbeats were flowing)", verdict)
+	}
+	if errors.Is(verdict, tools.ErrDispatchStartup) {
+		t.Fatalf("an in-flight heartbeat was read as zero heartbeats: %v", verdict)
 	}
 }

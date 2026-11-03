@@ -47,7 +47,11 @@ type toolDispatch struct {
 	watchdogActive bool
 	// watch holds the liveness evidence the stuck-child watchdog needs to
 	// classify a kill (world readiness, heartbeats, the resolved world).
-	watch           watchdogState
+	watch watchdogState
+	// watchDone ends the watchdog goroutine when the dispatch returns,
+	// so a body that exits without ever signalling readiness cannot leak
+	// the goroutine for the rest of the parent's context lifetime.
+	watchDone       chan struct{}
 	releaseSubAgent func()
 	releaseTool     func()
 }
@@ -385,6 +389,7 @@ func (d *toolDispatch) setupSubAgent(runCtx context.Context) context.Context {
 
 		hb := make(chan struct{}, 1)
 		ready := make(chan struct{})
+		d.watchDone = make(chan struct{})
 		runCtx = tools.WithSubAgentHeartbeat(runCtx, hb)
 		// The dispatch body reports its world ready once provisioning is
 		// done; that — not arming — is when the stuck-child deadline starts
@@ -398,7 +403,7 @@ func (d *toolDispatch) setupSubAgent(runCtx context.Context) context.Context {
 		})
 		watchCtx, watchCancel := context.WithCancel(runCtx)
 		runCtx = watchCtx
-		go d.armStuckChildWatchdog(watchCtx, watchCancel, ready, hb, childTimeout)
+		go d.armStuckChildWatchdog(watchCtx, watchCancel, ready, d.watchDone, hb, childTimeout)
 	}
 	return runCtx
 }
@@ -416,10 +421,12 @@ func (d *toolDispatch) setupSubAgent(runCtx context.Context) context.Context {
 // collected in d.watch: a child that never beat after its world was ready
 // never started (ErrDispatchStartup), while a child that beat and then went
 // silent is stuck (ErrStuckChild) (yaah-95ri.3).
-func (d *toolDispatch) armStuckChildWatchdog(ctx context.Context, cancel context.CancelFunc, ready <-chan struct{}, hb <-chan struct{}, timeout time.Duration) {
+func (d *toolDispatch) armStuckChildWatchdog(ctx context.Context, cancel context.CancelFunc, ready <-chan struct{}, done <-chan struct{}, hb <-chan struct{}, timeout time.Duration) {
 	defer cancel()
 	select {
 	case <-ready:
+	case <-done:
+		return
 	case <-ctx.Done():
 		return
 	}
@@ -435,8 +442,22 @@ func (d *toolDispatch) armStuckChildWatchdog(ctx context.Context, cancel context
 			}
 			timer.Reset(timeout)
 		case <-timer.C:
+			// The select may pick the timer over a heartbeat that is
+			// already buffered; give a pending beat precedence so an
+			// in-flight heartbeat is not read as zero heartbeats (which
+			// would misreport a mid-run stall as a dispatch-startup
+			// failure, yaah-95ri.3).
+			select {
+			case <-hb:
+				d.watch.beat()
+				timer.Reset(timeout)
+				continue
+			default:
+			}
 			d.watch.markFired()
 			cancel()
+			return
+		case <-done:
 			return
 		case <-ctx.Done():
 			return
@@ -475,6 +496,10 @@ func (d *toolDispatch) killVerdict() error {
 // loop. Called by owners of a foreground dispatch once execution ends.
 func (d *toolDispatch) finishSubAgent() {
 	d.finishOnce.Do(func() {
+		if d.watchDone != nil {
+			close(d.watchDone)
+			d.watchDone = nil
+		}
 		if d.subUsage.TotalTokens > 0 {
 			d.loop.addSubAgentUsage(d.subUsage)
 			if d.loop.OnSubUsage != nil {
