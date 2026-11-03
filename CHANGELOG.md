@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.130.3](https://github.com/buchenberg/yaah/compare/v0.130.2...v0.130.3) (2026-11-03)
+
+
+### Bug Fixes
+
+* **resume:** restore persisted token usage across sessions ([#750](https://github.com/buchenberg/yaah/issues/750)) ([dc7f872](https://github.com/buchenberg/yaah/commit/dc7f8724b50351cf907e4ee6cf9e74691360e4b5))
+
 ## [0.130.2](https://github.com/buchenberg/yaah/compare/v0.130.1...v0.130.2) (2026-11-03)
 
 
