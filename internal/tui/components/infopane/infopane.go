@@ -69,10 +69,6 @@ func Build(borderColor string) *tview.TextView {
 	return tv
 }
 
-// Format assembles the full info pane content. Pane order: version header,
-// Agent (with the dissolved workspace/scope posture), Context, Usage, the
-// Subagents posture (with the dissolved containment/dispatch/network rows),
-// Subagents Usage, then MCP, Embedding, Middleware, and Ephemeral.
 // usageTotal is the number the Total row reports: the provider-reported total
 // when present, prompt+completion otherwise. Some providers omit total_tokens,
 // and a literal "Total: 0" next to non-zero prompt/completion rows reads like
@@ -85,6 +81,10 @@ func usageTotal(promptTokens, completionTokens, totalTokens int) int {
 	return totalTokens
 }
 
+// Format assembles the full info pane content. Pane order: version header,
+// Agent (with the dissolved workspace/scope posture), Context, Usage, the
+// Subagents posture (with the dissolved containment/dispatch/network rows),
+// Subagents Usage, then MCP, Embedding, Middleware, and Ephemeral.
 func Format(s State, th *colors.Theme) string {
 	var b strings.Builder
 
