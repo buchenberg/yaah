@@ -180,11 +180,17 @@ func TestWorldInfoParityWithRoleOverride(t *testing.T) {
 // against that one builder, so this test fails if either starts inventing its
 // own container facts.
 func TestWorldInfoParityAvailabilityRecord(t *testing.T) {
-	winning := func(mutate func(rt *RetainedRuntime)) RetainedRuntime {
+	rtWith := func(mutate func(rt *RetainedRuntime)) RetainedRuntime {
 		rt := RetainedRuntime{}
 		mutate(&rt)
 		return rt
 	}
+
+	// Production wiring only offers a per-dispatch container where the
+	// setup can exist: the config-derived side gates on Linux, so the
+	// wiring facts this test feeds it must be gated the same way or the
+	// records diverge on non-Linux hosts for reasons that are not drift.
+	linux := runtime.GOOS == "linux"
 
 	cases := []struct {
 		name     string
@@ -195,7 +201,7 @@ func TestWorldInfoParityAvailabilityRecord(t *testing.T) {
 		{
 			name: "unwired local session",
 			cfg:  &config.Config{},
-			rt:   winning(func(*RetainedRuntime) {}),
+			rt:   rtWith(func(*RetainedRuntime) {}),
 		},
 		{
 			name: "wired dispatch setup",
@@ -204,9 +210,11 @@ func TestWorldInfoParityAvailabilityRecord(t *testing.T) {
 				cfg.Workspace.Containerd.Image = "registry.example/yaah:1"
 				return cfg
 			}(),
-			rt: winning(func(rt *RetainedRuntime) {
-				rt.ContainerWorlds = true
-				rt.DispatchWorlds = &DispatchWorlds{}
+			rt: rtWith(func(rt *RetainedRuntime) {
+				if linux {
+					rt.ContainerWorlds = true
+					rt.DispatchWorlds = &DispatchWorlds{}
+				}
 			}),
 		},
 		{
@@ -218,9 +226,11 @@ func TestWorldInfoParityAvailabilityRecord(t *testing.T) {
 				return cfg
 			}(),
 			isolated: true,
-			rt: winning(func(rt *RetainedRuntime) {
-				rt.ContainerWorlds = true
-				rt.DispatchWorlds = &DispatchWorlds{SessionSandbox: &SessionSandbox{}}
+			rt: rtWith(func(rt *RetainedRuntime) {
+				if linux {
+					rt.ContainerWorlds = true
+					rt.DispatchWorlds = &DispatchWorlds{SessionSandbox: &SessionSandbox{}}
+				}
 			}),
 		},
 	}
