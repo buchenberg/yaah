@@ -65,23 +65,84 @@ func checkHostGitWorkTree(ctx context.Context, dir string) error {
 	return nil
 }
 
-// gitTrackedFiles returns the repository's tracked paths, slash-separated
-// and work-tree-relative. The copy-in uses it to distinguish repository
-// content from incidental files: a tracked entry the container cannot represent
-// (a symlink) or must exclude (a deny pattern) fails the bootstrap instead of
-// silently changing what the agent sees.
-func gitTrackedFiles(ctx context.Context, dir string) (map[string]bool, error) {
-	out, err := exec.CommandContext(ctx, "git", "-C", dir, "ls-files", "-z").Output()
+// copyPlan is the copy-in's host-side inventory. files is the set git would
+// ship — tracked paths plus untracked paths that are not ignored — and dirs
+// names every parent directory those files need. A path outside files (and
+// outside .git) is ignored content: it is neither read nor written, and a
+// directory no wanted file lives under is pruned, so a local-only scratch
+// tree costs neither a walk nor a backend round trip.
+//
+// tracked is the narrower committed set. It is what makes skipping an entry
+// fatal rather than silent: a tracked symlink or tracked denied file cannot
+// be represented, and dropping it would change repository content.
+type copyPlan struct {
+	tracked map[string]bool
+	files   map[string]bool
+	dirs    map[string]bool
+}
+
+// newCopyPlan inventories src from git. Two listings, because they answer
+// different questions: `ls-files` is the repository's content for the
+// skip-is-fatal decision, while `ls-files -c -o --exclude-standard` is what
+// the copy-in should ship — tracked files plus untracked files the repository
+// does not ignore. Deriving the copy set from git, instead of walking
+// everything on disk, is what keeps a checkout's local-only directories
+// (.scratch, .kilo, a built binary, an embedded database) out of every
+// sandbox and out of the dispatch-startup budget.
+//
+// Both invocations are context-bound: a wedged host git must fail the
+// startup bound, not hang past it.
+func newCopyPlan(ctx context.Context, dir string) (copyPlan, error) {
+	tracked, err := gitPathSet(ctx, dir, "ls-files", "-z")
 	if err != nil {
-		return nil, fmt.Errorf("workspace bootstrap: git ls-files: %w", err)
+		return copyPlan{}, err
 	}
-	tracked := make(map[string]bool)
+	files, err := gitPathSet(ctx, dir, "ls-files", "-z", "-c", "-o", "--exclude-standard")
+	if err != nil {
+		return copyPlan{}, err
+	}
+	return copyPlan{tracked: tracked, files: files, dirs: parentDirs(files)}, nil
+}
+
+// gitPathSet runs one git listing and returns its NUL-separated paths as a
+// set. `-z` is not optional: it keeps paths byte-exact, with no quoting and
+// no newline ambiguity. A trailing slash is trimmed because git reports an
+// untracked nested repository as a single directory entry.
+func gitPathSet(ctx context.Context, dir string, args ...string) (map[string]bool, error) {
+	out, err := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...).Output()
+	if err != nil {
+		return nil, fmt.Errorf("workspace bootstrap: git %s: %w", strings.Join(args, " "), err)
+	}
+	set := make(map[string]bool)
 	for _, p := range bytes.Split(out, []byte{0}) {
 		if len(p) > 0 {
-			tracked[string(p)] = true
+			set[strings.TrimSuffix(string(p), "/")] = true
 		}
 	}
-	return tracked, nil
+	return set, nil
+}
+
+// parentDirs returns every directory an entry of files lives under, so the
+// walk descends only where something is wanted.
+func parentDirs(files map[string]bool) map[string]bool {
+	dirs := make(map[string]bool)
+	for f := range files {
+		for d := path.Dir(f); d != "." && d != "/"; d = path.Dir(d) {
+			if dirs[d] {
+				break // this chain was already recorded
+			}
+			dirs[d] = true
+		}
+	}
+	return dirs
+}
+
+// isGitMetadata reports whether a slash-separated work-tree-relative path is
+// the repository metadata directory or beneath it. `.git` is copied
+// unconditionally: the agent needs a working repository inside the sandbox,
+// and git's own listings never include it.
+func isGitMetadata(slashRel string) bool {
+	return slashRel == ".git" || strings.HasPrefix(slashRel, ".git/")
 }
 
 // deniedBy reports the first deny pattern matching the slash-separated,
@@ -104,12 +165,21 @@ func deniedBy(deny []string, p string) string {
 }
 
 // copyTreeIn copies the host working tree into the sandbox root, file by
-// file through the kernel's Sandbox.WriteFile. Every copyable regular
-// file lands at the same relative path under the root, parent directories
-// are created by the backend's WriteFile, and the full mode rides along —
-// perm bits and setuid/setgid/sticky, which the kernel preserves.
+// file through the kernel's Sandbox.WriteFile. Every wanted regular file
+// lands at the same relative path under the root, parent directories are
+// created by the backend's WriteFile, and the full mode rides along — perm
+// bits and setuid/setgid/sticky, which the kernel preserves.
 //
-// Three kinds of entries are deliberately excluded, each loudly:
+// "Wanted" is the plan's git-derived copy set: tracked files plus untracked
+// files the repository does not ignore. Ignored paths are local state — a
+// scratch clone, an embedded database, a built binary — and are deliberately
+// absent from the sandbox, so the walk prunes a directory no wanted file
+// lives under instead of reading it. `.git` is always wanted, and a gitlink
+// (a nested repository or submodule recorded as one entry) is copied
+// verbatim: its contents are that repository's, and its ignore rules are not
+// the parent's to apply.
+//
+// Three kinds of wanted entries are excluded, each loudly:
 //
 //   - Tracked symlinks fail the bootstrap. The Sandbox interface cannot
 //     create symlinks, so the container would silently hold a tree missing
@@ -129,8 +199,23 @@ func deniedBy(deny []string, p string) string {
 //
 // Known cost, deliberate for D1's correctness-first landing: one WriteFile
 // round trip per file. A bundle-based fast path is the anticipated follow-up.
-func copyTreeIn(ctx context.Context, sb goatherdsandbox.Sandbox, src, root string, deny []string, tracked map[string]bool) error {
+func copyTreeIn(ctx context.Context, sb goatherdsandbox.Sandbox, src, root string, deny []string, plan copyPlan) error {
 	src = filepath.Clean(src)
+	// gitlinks are nested repositories recorded as one entry. Everything
+	// under one is copied verbatim, matching the pre-plan walk's behavior;
+	// the prefixes accumulate as the walk descends.
+	var gitlinks []string
+	wanted := func(slashRel string) bool {
+		if plan.files[slashRel] || isGitMetadata(slashRel) {
+			return true
+		}
+		for _, prefix := range gitlinks {
+			if strings.HasPrefix(slashRel, prefix) {
+				return true
+			}
+		}
+		return false
+	}
 	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -145,16 +230,28 @@ func copyTreeIn(ctx context.Context, sb goatherdsandbox.Sandbox, src, root strin
 		slashRel := filepath.ToSlash(rel)
 		switch {
 		case d.IsDir():
-			return nil
+			if plan.files[slashRel] {
+				gitlinks = append(gitlinks, slashRel+"/")
+			}
+			if wanted(slashRel) || plan.dirs[slashRel] {
+				return nil
+			}
+			return fs.SkipDir
 		case d.Type()&fs.ModeSymlink != 0:
-			if tracked[slashRel] {
+			if !wanted(slashRel) {
+				return nil
+			}
+			if plan.tracked[slashRel] {
 				return fmt.Errorf("%s: a tracked symlink — sandbox backends cannot create symlinks, so the container tree would be missing a file the repository tracks; remove the symlink (or materialize its target) before starting an isolated session", rel)
 			}
 			fmt.Fprintf(os.Stderr, "warning: workspace bootstrap: skipping untracked symlink %s — sandbox backends cannot create symlinks\n", rel)
 			return nil
 		case d.Type().IsRegular():
+			if !wanted(slashRel) {
+				return nil
+			}
 			if pattern := deniedBy(deny, slashRel); pattern != "" {
-				if tracked[slashRel] {
+				if plan.tracked[slashRel] {
 					return fmt.Errorf("%s: matches the workspace deny pattern %q and is tracked by git — the isolated workspace cannot both exclude it and reproduce the repository; untrack it or narrow the pattern", rel, pattern)
 				}
 				fmt.Fprintf(os.Stderr, "warning: workspace bootstrap: excluding %s from the sandbox (deny pattern %q)\n", rel, pattern)
@@ -176,6 +273,9 @@ func copyTreeIn(ctx context.Context, sb goatherdsandbox.Sandbox, src, root strin
 			}
 			return nil
 		default:
+			if !wanted(slashRel) {
+				return nil
+			}
 			fmt.Fprintf(os.Stderr, "warning: workspace bootstrap: skipping special file %s\n", rel)
 			return nil
 		}
@@ -197,11 +297,11 @@ func bootstrapSession(ctx context.Context, ss *SessionSandbox, src string, deny 
 	if err := checkHostGitWorkTree(ctx, src); err != nil {
 		return err
 	}
-	tracked, err := gitTrackedFiles(ctx, src)
+	plan, err := newCopyPlan(ctx, src)
 	if err != nil {
 		return err
 	}
-	if err := copyTreeIn(ctx, ss.sb, src, ss.ws.root, deny, tracked); err != nil {
+	if err := copyTreeIn(ctx, ss.sb, src, ss.ws.root, deny, plan); err != nil {
 		return fmt.Errorf("workspace: copy-in: %w", err)
 	}
 	base, err := ss.sb.Capture(ctx)
