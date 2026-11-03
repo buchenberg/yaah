@@ -3,12 +3,15 @@
 // sub-agent dispatch, and which world the configured request resolves to on
 // this host.
 //
-// It is the session-level counterpart of internal/tools' per-dispatch
-// resolution. The derivation here deliberately mirrors the runtime ladder in
-// internal/tools/retained.go (resolveDispatchWorld) rather than doctor's
-// historical degradation flags: the surfaces must describe what a dispatch
-// would actually get, and doctor consumes this package for the same reason.
-// The parity test in internal/tools pins the two constructions together.
+// It is also the single source of the dispatch-world availability policy:
+// AvailabilityFor builds the record every resolution resolves against, and
+// the runtime ladder in internal/tools/retained.go (resolveDispatchWorld)
+// calls it rather than carrying its own copy of the reason strings and the
+// fallback rules. The derivation here deliberately follows that ladder instead
+// of doctor's historical degradation flags: the surfaces must describe what a
+// dispatch would actually get, and doctor consumes this package for the same
+// reason. The parity test in internal/tools stays as regression armor on the
+// inputs each side derives.
 //
 // Everything here is a cheap, non-mutating probe: a config read and the
 // syscall-jail LSM check. No daemon round-trip happens at display time.
@@ -201,33 +204,43 @@ func resolveWithJail(cfg *config.Config, isolated bool, jailOK bool) Resolution 
 	return out
 }
 
-// Availability reports what this host and session can provide, constructed
-// exactly as internal/tools' resolveDispatchWorld constructs it. A
-// per-dispatch container is offered on Linux with an image configured; a
-// container session (isolated + offered) has no host worktree but can retain
-// into the session container.
-func Availability(cfg *config.Config, isolated bool) subagent.WorldAvailability {
-	return availabilityWithJail(cfg, isolated, JailAvailable())
+// ContainerSetup is what a session can offer a dispatch as a container world.
+// It is the input side of AvailabilityFor: a config-derived surface knows what
+// the config and this host allow, the composition root knows which setup it
+// actually wired, and both feed the same builder so no surface can describe a
+// world a dispatch would not get.
+type ContainerSetup struct {
+	// Offered reports that a per-dispatch container world can be attempted:
+	// this build ships the lane and this host can provide it.
+	Offered bool
+	// Retains reports that the wired setup can seal and settle a container
+	// dispatch.
+	Retains bool
+	// Session reports that the session itself runs in a container, so a
+	// dispatch's world is a sibling container rather than a host worktree.
+	Session bool
 }
 
-// availabilityWithJail is Availability with the jail probe folded in.
-func availabilityWithJail(cfg *config.Config, isolated bool, jailOK bool) subagent.WorldAvailability {
-	offered := cfg != nil && runtime.GOOS == "linux" && strings.TrimSpace(cfg.Workspace.Containerd.Image) != ""
-	containerSession := offered && isolated
-	containerRetains := offered
+// AvailabilityFor builds the availability record from a container setup and a
+// probed jail capability. This is the only place the availability reason
+// strings and the retain/worktree rules are written: internal/tools'
+// per-dispatch ladder resolves against exactly this record.
+func AvailabilityFor(setup ContainerSetup, jailOK bool) subagent.WorldAvailability {
 	retainsReason := ""
-	if !containerRetains {
+	if !setup.Retains {
 		retainsReason = "container settlement is unavailable in this session: no per-dispatch container setup is wired"
 	}
-	worktree := !containerSession
+	// A container session has no host worktree: its dispatches run as siblings
+	// of the session container instead.
+	worktree := !setup.Session
 	worktreeReason := ""
-	if containerSession {
+	if setup.Session {
 		worktreeReason = "a container session has no host worktree; dispatches use a sibling container"
 	}
 	return subagent.WorldAvailability{
-		Container:              offered,
-		ContainerOffered:       offered,
-		ContainerRetains:       containerRetains,
+		Container:              setup.Offered,
+		ContainerOffered:       setup.Offered,
+		ContainerRetains:       setup.Retains,
 		ContainerRetainsReason: retainsReason,
 		ContainerReason:        "per-dispatch container worlds need workspace.containerd.image on a Linux host, and a wired dispatch setup",
 		Worktree:               worktree,
@@ -236,11 +249,41 @@ func availabilityWithJail(cfg *config.Config, isolated bool, jailOK bool) subage
 	}
 }
 
+// Availability reports what this host and session can provide, derived from
+// the config. A per-dispatch container is offered on Linux with an image
+// configured; a container session (isolated + offered) has no host worktree
+// but can retain into the session container.
+func Availability(cfg *config.Config, isolated bool) subagent.WorldAvailability {
+	return availabilityWithJail(cfg, isolated, JailAvailable())
+}
+
+// availabilityWithJail is Availability with the jail probe folded in.
+func availabilityWithJail(cfg *config.Config, isolated bool, jailOK bool) subagent.WorldAvailability {
+	return AvailabilityFor(containerSetup(cfg, isolated), jailOK)
+}
+
+// containerSetup derives the container facts this session's config and host
+// allow. A wired session both offers and settles a per-dispatch container.
+func containerSetup(cfg *config.Config, isolated bool) ContainerSetup {
+	offered := containerOffered(cfg)
+	return ContainerSetup{
+		Offered: offered,
+		Retains: offered,
+		Session: ContainerSession(cfg, isolated),
+	}
+}
+
 // ContainerSession reports whether the session runs inside a containerd
 // sandbox that also offers per-dispatch containers. The wiring's
 // containerSession is exactly this condition.
 func ContainerSession(cfg *config.Config, isolated bool) bool {
-	return isolated && cfg != nil && runtime.GOOS == "linux" &&
+	return isolated && containerOffered(cfg)
+}
+
+// containerOffered reports whether this build and host can create a
+// per-dispatch container world at all.
+func containerOffered(cfg *config.Config) bool {
+	return cfg != nil && runtime.GOOS == "linux" &&
 		strings.TrimSpace(cfg.Workspace.Containerd.Image) != ""
 }
 

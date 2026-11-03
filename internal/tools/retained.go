@@ -23,8 +23,8 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/recovery"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/jail"
 	"github.com/buchenberg/yaah/internal/jobs"
+	"github.com/buchenberg/yaah/internal/worldinfo"
 )
 
 // retained.go implements the retained-run primitive (Plan 7 Phase 2): a
@@ -824,31 +824,18 @@ func resolveDispatchWorld(rt RetainedRuntime, role string, report bool) (subagen
 	// docs/shepherd-parity.md). Both lanes get a sibling world when the setup
 	// is wired.
 	containerSession := rt.DispatchWorlds != nil && rt.DispatchWorlds.SessionSandbox != nil
-	containerRetains := rt.DispatchWorlds != nil
-	containerOffered := rt.ContainerWorlds
-	retainsReason := ""
-	if !containerRetains {
-		retainsReason = "container settlement is unavailable in this session: no per-dispatch container setup is wired"
-	}
-	worktree := !containerSession
-	worktreeReason := ""
-	if containerSession {
-		worktreeReason = "a container session has no host worktree; dispatches use a sibling container"
-	}
 
-	av := subagent.WorldAvailability{
-		// A per-dispatch container is created only where the session wired the
-		// setup: a Linux host with workspace.containerd.image on session or
-		// dispatch config.
-		Container:              rt.ContainerWorlds,
-		ContainerOffered:       containerOffered,
-		ContainerRetains:       containerRetains,
-		ContainerRetainsReason: retainsReason,
-		ContainerReason:        "per-dispatch container worlds need workspace.containerd.image on a Linux host, and a wired dispatch setup",
-		Worktree:               worktree,
-		WorktreeReason:         worktreeReason,
-		Jail:                   jailAvailable(),
-	}
+	// The availability record — the reason strings, the retain rule, and the
+	// jail capability — comes from internal/worldinfo, so a dispatch resolves
+	// against exactly the record every display surface and doctor describe.
+	// Only the wiring facts are this file's business: a per-dispatch container
+	// is created only where the session wired the setup, i.e. on a Linux host
+	// with workspace.containerd.image on session or dispatch config.
+	av := worldinfo.AvailabilityFor(worldinfo.ContainerSetup{
+		Offered: rt.ContainerWorlds,
+		Retains: rt.DispatchWorlds != nil,
+		Session: containerSession,
+	}, worldinfo.JailAvailable())
 
 	grants := dispatchGrants(rt, role)
 	return subagent.ResolveWorld(subagent.WorldRequest{
@@ -859,17 +846,6 @@ func resolveDispatchWorld(rt RetainedRuntime, role string, report bool) (subagen
 		Network:           rt.Network,
 		RestrictiveGrants: len(grants) > 0,
 	}, av)
-}
-
-// jailAvailable reports whether this host can actually establish a syscall
-// jail. Availability, not presence: a compiled-in-but-disabled LSM degrades.
-func jailAvailable() bool {
-	backend := jail.Backend()
-	if backend == nil {
-		return false
-	}
-	ok, _ := backend.Available()
-	return ok
 }
 
 // recordDispatchWorld publishes the resolved world to the run context so the
