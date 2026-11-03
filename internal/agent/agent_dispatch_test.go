@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -228,4 +229,113 @@ func TestDispatch_SubAgentSemaphoreBoundsFanOut(t *testing.T) {
 		t.Fatalf("the slot must be reusable once the first dispatch ends: %v", err)
 	}
 	second.release()
+}
+
+// --- Stuck-child watchdog: arming window and kill classification ---
+
+// watchdogDelegateCall builds a foreground delegate call for the tester role.
+func watchdogDelegateCall() types.ToolCall {
+	return types.ToolCall{ID: "c1", Type: "function", Function: types.ToolCallFn{
+		Name:      "delegate",
+		Arguments: `{"description":"x","prompt":"y","role":"tester"}`,
+	}}
+}
+
+// The stuck-child deadline must not cover provisioning: a dispatch world that
+// is still being created cannot heartbeat, so a slow world is not a stuck
+// child (yaah-95ri.2).
+func TestDispatch_WatchdogArmsAtWorldReadyNotAtSetup(t *testing.T) {
+	l := &Loop{Config: LoopConfig{StuckChildTimeout: 30 * time.Millisecond}}
+	d := l.newDispatch(0, watchdogDelegateCall())
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runCtx = d.setupSubAgent(runCtx)
+
+	// Provisioning: several multiples of the deadline pass with neither a
+	// readiness signal nor a heartbeat.
+	select {
+	case <-runCtx.Done():
+		t.Fatalf("watchdog killed the dispatch during provisioning: %v", runCtx.Err())
+	case <-time.After(180 * time.Millisecond):
+	}
+
+	// The world exists; from here heartbeats are expected and do arrive.
+	tools.WriteSubAgentWorld(runCtx, tools.SubAgentWorld{Resolved: "worktree"})
+	tools.NotifySubAgentReady(runCtx)
+	for range 4 {
+		select {
+		case <-runCtx.Done():
+			t.Fatalf("watchdog killed a child that was heartbeating: %v", runCtx.Err())
+		case <-time.After(15 * time.Millisecond):
+			tools.SendHeartbeat(runCtx)
+		}
+	}
+	if err := runCtx.Err(); err != nil {
+		t.Fatalf("a healthy heartbeating dispatch was cancelled: %v", err)
+	}
+}
+
+// A child that never beats after its world is ready never started: the kill
+// must say so instead of claiming the child is stuck (yaah-95ri.3).
+func TestDispatch_ZeroHeartbeatKillIsDispatchStartup(t *testing.T) {
+	l := &Loop{Config: LoopConfig{StuckChildTimeout: 30 * time.Millisecond}}
+	d := l.newDispatch(0, watchdogDelegateCall())
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runCtx = d.setupSubAgent(runCtx)
+	tools.WriteSubAgentWorld(runCtx, tools.SubAgentWorld{Resolved: "worktree"})
+	tools.NotifySubAgentReady(runCtx)
+
+	select {
+	case <-runCtx.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("watchdog never fired after the dispatch world became ready")
+	}
+
+	verdict := d.killVerdict()
+	if !errors.Is(verdict, tools.ErrDispatchStartup) {
+		t.Fatalf("verdict = %v, want ErrDispatchStartup", verdict)
+	}
+	if errors.Is(verdict, tools.ErrStuckChild) {
+		t.Fatalf("a dispatch that never started must not be reported as stuck: %v", verdict)
+	}
+	if !strings.Contains(verdict.Error(), "worktree") {
+		t.Errorf("verdict should name the dispatch world that never got going: %v", verdict)
+	}
+}
+
+// A child that beats and then goes silent mid-run is stuck (yaah-95ri.3).
+func TestDispatch_MidRunHeartbeatStopIsStuckChild(t *testing.T) {
+	l := &Loop{Config: LoopConfig{StuckChildTimeout: 60 * time.Millisecond}}
+	d := l.newDispatch(0, watchdogDelegateCall())
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runCtx = d.setupSubAgent(runCtx)
+	tools.WriteSubAgentWorld(runCtx, tools.SubAgentWorld{Resolved: "worktree"})
+	tools.NotifySubAgentReady(runCtx)
+
+	for range 3 {
+		tools.SendHeartbeat(runCtx)
+		select {
+		case <-runCtx.Done():
+			t.Fatal("watchdog fired while heartbeats were flowing")
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	select {
+	case <-runCtx.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("watchdog never fired after the child went silent")
+	}
+
+	verdict := d.killVerdict()
+	if !errors.Is(verdict, tools.ErrStuckChild) {
+		t.Fatalf("verdict = %v, want ErrStuckChild", verdict)
+	}
+	if errors.Is(verdict, tools.ErrDispatchStartup) {
+		t.Fatalf("a mid-run stop must not be reported as a dispatch-startup failure: %v", verdict)
+	}
 }

@@ -481,6 +481,10 @@ func sessionContainerFallback(
 		runCtx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
+	// The world this dispatch runs in is the session container itself, and
+	// it already exists: the child starts here, so the stuck-child deadline
+	// may start counting (yaah-95ri.2).
+	NotifySubAgentReady(runCtx)
 	result, err := rt.Runner(runCtx, prompt, subParams)
 	if err != nil {
 		return "", err
@@ -597,6 +601,9 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		}
 		ss, seedBasis, seedDigest, perr := openDispatchWorld(ctx, rt, authority)
 		if perr == nil {
+			// The dispatch world exists; the child starts inside it, so the
+			// stuck-child deadline may start counting (yaah-95ri.2).
+			NotifySubAgentReady(ctx)
 			if report {
 				return runDispatchContainer(ctx, rt, parent, prompt, subParams, timeout, worldRes, ss)
 			}
@@ -668,6 +675,10 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	if timeout > 0 {
 		runCtx, cancel = context.WithTimeout(ctx, timeout)
 	}
+	// The worktree world exists and the child is about to start in it:
+	// provisioning time is over, so the stuck-child deadline may start
+	// counting from here (yaah-95ri.2).
+	NotifySubAgentReady(runCtx)
 	result, bodyErr := runRetainedBody(runCtx, rt, prompt, sp)
 	runErr := runCtx.Err()
 	parentErr := ctx.Err()
