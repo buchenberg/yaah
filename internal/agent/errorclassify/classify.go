@@ -66,9 +66,11 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 	}
 
 	// ── 0. Semantic checks that outrank the status code ───────────
-	// Scoped to 400 (and unknown status): a transient 429/5xx whose body
-	// merely contains this wording must still back off and retry.
-	if meta.StatusCode == 400 || meta.StatusCode == 0 {
+	// Scoped to 400/422 (and unknown status): a transient 429/5xx whose body
+	// merely contains this wording must still back off and retry. 422 matters
+	// for strict OpenAI-compatible endpoints (Mistral, ZAI/GLM) that reject an
+	// unknown message field as `extra_forbidden` rather than with a 400.
+	if meta.StatusCode == 400 || meta.StatusCode == http.StatusUnprocessableEntity || meta.StatusCode == 0 {
 		// A provider in thinking mode demanding the content be replayed.
 		// Checked first: when a message carries both signals, replay is the
 		// remedy that matches, because stripping is its exact opposite.

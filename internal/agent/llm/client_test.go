@@ -81,6 +81,55 @@ func TestCall_stripReasoningRecoversWhenProviderHeals(t *testing.T) {
 	}
 }
 
+// statusError carries a typed HTTP status so Classify can read it, mirroring
+// providers.APIError.
+type statusError struct {
+	msg    string
+	status int
+}
+
+func (e statusError) Error() string        { return e.msg }
+func (e statusError) HTTPStatus() int      { return e.status }
+func (e statusError) ProviderCode() string { return "" }
+
+// Mistral-hosted GLM rejects a replayed reasoning_content with 422
+// extra_forbidden. That used to abort because the strip classification only
+// ran for 400 and unknown status. The client must strip and replay on 422 too.
+func TestCall_stripReasoningRecoversFrom422(t *testing.T) {
+	p := &healingProvider{
+		failErr: statusError{
+			status: 422,
+			msg:    `provider returned 422: {"detail":[{"type":"extra_forbidden","loc":["body","messages",2,"assistant","reasoning_content"],"msg":"Extra inputs are not permitted"}]}`,
+		},
+		response: &types.ChatResponse{
+			Choices: []types.Choice{{
+				Message:      types.Message{Role: "assistant", Content: "recovered"},
+				FinishReason: "stop",
+			}},
+		},
+		maxFails: 1,
+	}
+	strips := 0
+	c := &Client{
+		Provider:       p,
+		Model:          "test-model",
+		MaxRetries:     3,
+		RetryBackoff:   time.Millisecond,
+		StripReasoning: func() { strips++ },
+	}
+
+	res, err := c.Call(context.Background(), types.ChatRequest{Model: "test-model"})
+	if err != nil {
+		t.Fatalf("Call() error after 422 strip recovery: %v", err)
+	}
+	if res.Message.Content != "recovered" {
+		t.Fatalf("content = %q, want %q", res.Message.Content, "recovered")
+	}
+	if strips == 0 {
+		t.Error("expected a strip attempt before recovering from the 422")
+	}
+}
+
 // healingProvider fails with failErr while stripped < maxFails, then
 // succeeds with the canned response. stripped counts the failures.
 type healingProvider struct {

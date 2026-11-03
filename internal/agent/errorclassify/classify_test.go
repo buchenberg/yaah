@@ -437,6 +437,25 @@ func TestClassify_reasoningContentUnsupportedStillStrips(t *testing.T) {
 	}
 }
 
+// Strict OpenAI-compatible endpoints (Mistral, ZAI/GLM) reject an unknown
+// message field with 422 extra_forbidden, not 400. The strip-and-retry path
+// must cover that status too: the body still names reasoning_content and an
+// unsupported-field phrase.
+func TestClassify_reasoningContentRejectedWith422(t *testing.T) {
+	err := errors.New(`provider returned 422: {"detail":[{"type":"extra_forbidden","loc":["body","messages",2,"assistant","reasoning_content"],"msg":"Extra inputs are not permitted"}]}`)
+	c := Classify(err, ErrorMeta{StatusCode: 422, Model: "zai-glm-5-3", NumMessages: 4})
+
+	if c.Reason != ReasonReasoningContentMissing {
+		t.Fatalf("reason = %v, want %v", c.Reason, ReasonReasoningContentMissing)
+	}
+	if !c.ShouldStripReasoning {
+		t.Error("ShouldStripReasoning should be set for a 422 extra_forbidden rejection")
+	}
+	if c.ShouldAbort {
+		t.Error("ShouldAbort must be false - stripping and retrying is a recovery")
+	}
+}
+
 // A message carrying BOTH signals must resolve to replay, not strip. The two
 // remedies are opposites, so the ordering is load-bearing: "thinking is not
 // supported" (a genuine strip case) must still classify as strip while a
