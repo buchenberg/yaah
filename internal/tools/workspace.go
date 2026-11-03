@@ -343,7 +343,7 @@ func (w *localWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResult,
 			// Fail closed: a paddock placement with no backend refuses rather
 			// than running unconfined.
 			return ExecResult{ExitCode: -1}, fmt.Errorf(
-				"%w: no syscall-jail backend on this host", containment.ErrPaddockNotEstablished)
+				"%w: no paddock backend on this host (syscall-deny unavailable)", containment.ErrPaddockNotEstablished)
 		}
 		return w.advisoryExec(ctx, req)
 	}
@@ -405,10 +405,10 @@ func (w *localWorkspace) degradeBlocker() string {
 			"to run the lane unconfined deliberately", w.placement)
 	case w.narrowed:
 		return "a declared grants: set cannot be kept on the unconfined host path — drop " +
-			"the restrictive grants:, or fix the host's confinement backend so the jail can be " +
+			"the restrictive grants:, or fix the host's confinement backend so the paddock can be " +
 			"established"
 	case w.network.Mode != "" && w.network.Mode != confinement.NetAllowAll:
-		return fmt.Sprintf("network policy %q cannot be enforced without the jail — set "+
+		return fmt.Sprintf("network policy %q cannot be enforced without the paddock — set "+
 			"agents.subagent.network: allow_all, or fix the host's confinement backend", w.network.Mode)
 	}
 	return ""

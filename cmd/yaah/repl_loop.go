@@ -45,9 +45,9 @@ func worldBannerLines(s worldinfo.Status) []string {
 	}
 	line1 := "workspace: " + workspace + " · mode: " + s.Mode
 
-	jail := "unavailable"
-	if s.JailOK {
-		jail = "available"
+	paddock := ""
+	if line := s.PaddockLine(); line != "" {
+		paddock = " · paddock: " + line
 	}
 	world := s.WorldReq + " → " + s.ProposalWorld
 	if s.Mode == "shared" {
@@ -56,7 +56,7 @@ func worldBannerLines(s worldinfo.Status) []string {
 		world = s.WorldReq + " → proposal " + s.ProposalWorld + " · report " + s.ReportWorld
 	}
 	line2 := "world: " + world +
-		" · containment: " + s.Containment + " · jail: " + jail +
+		" · containment: " + s.ContainmentLine() + paddock +
 		" · network: " + s.Network
 	if s.Degraded && s.Reason != "" {
 		line2 += " (" + s.Reason + ")"

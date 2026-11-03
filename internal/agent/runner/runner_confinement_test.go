@@ -320,8 +320,8 @@ func TestRequireEnforceableEgress(t *testing.T) {
 	}{
 		{"allow_all needs nothing", false, nil, allow, containment.PlacementAuto, workdir, false, ""},
 		{"allow_all with no placement needs nothing", false, nil, allow, "", "", false, ""},
-		{"deny_all with no backend refuses", false, nil, deny, containment.PlacementAuto, workdir, true, "no usable syscall-jail backend"},
-		{"broker with no backend refuses", false, nil, broker, containment.PlacementAuto, workdir, true, "no usable syscall-jail backend"},
+		{"deny_all with no backend refuses", false, nil, deny, containment.PlacementAuto, workdir, true, "no usable paddock backend"},
+		{"broker with no backend refuses", false, nil, broker, containment.PlacementAuto, workdir, true, "no usable paddock backend"},
 		{"deny_all without network rules refuses", true, usableNoNet, deny, containment.PlacementAuto, workdir, true, "ABI >= 4"},
 		{"broker without network rules refuses", true, usableNoNet, broker, containment.PlacementAuto, workdir, true, "ABI >= 4"},
 		{"deny_all with rules is fine", true, usableNet, deny, containment.PlacementAuto, workdir, false, ""},

@@ -194,3 +194,74 @@ func TestContainmentNormalization(t *testing.T) {
 		}
 	}
 }
+
+func TestResolvedContainment(t *testing.T) {
+	cases := []struct {
+		setting string
+		jailOK  bool
+		want    string
+	}{
+		{setting: "off", jailOK: true, want: "off"},
+		{setting: "off", jailOK: false, want: "off"},
+		{setting: "auto", jailOK: true, want: "paddock"},
+		{setting: "auto", jailOK: false, want: "advisory"},
+		{setting: "", jailOK: true, want: "paddock"},
+		{setting: "paddock", jailOK: true, want: "paddock"},
+		{setting: "paddock", jailOK: false, want: "refused"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.setting+"/"+boolWord(tc.jailOK), func(t *testing.T) {
+			if got := resolvedContainment(tc.setting, tc.jailOK); got != tc.want {
+				t.Errorf("resolvedContainment(%q, %v) = %q, want %q", tc.setting, tc.jailOK, got, tc.want)
+			}
+		})
+	}
+}
+
+func boolWord(v bool) string {
+	if v {
+		return "jail"
+	}
+	return "nojail"
+}
+
+func TestContainmentLine(t *testing.T) {
+	cases := []struct {
+		name string
+		s    Status
+		want string
+	}{
+		{name: "auto resolves to paddock", s: Status{Containment: "auto", ContainmentResolved: "paddock"}, want: "paddock"},
+		{name: "auto degrades to advisory", s: Status{Containment: "auto", ContainmentResolved: "advisory"}, want: "advisory"},
+		{name: "off stays off", s: Status{Containment: "off", ContainmentResolved: "off"}, want: "off"},
+		{name: "croft lane names the container boundary", s: Status{Containment: "auto", ContainmentResolved: "paddock", ProposalWorld: "container"}, want: "croft"},
+		{name: "paddock refused names the failure", s: Status{Containment: "paddock", ContainmentResolved: "refused"}, want: "refused (no paddock on this host — dispatches fail closed)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.s.ContainmentLine(); got != tc.want {
+				t.Errorf("ContainmentLine() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestJailLine(t *testing.T) {
+	cases := []struct {
+		name string
+		s    Status
+		want string
+	}{
+		{name: "available names backend and tier", s: Status{JailOK: true, JailName: "Seatbelt", JailTier: "native-syscall-deny"}, want: "Seatbelt · native-syscall-deny"},
+		{name: "available without tier", s: Status{JailOK: true, JailName: "Landlock"}, want: "Landlock"},
+		{name: "unavailable keeps the reason", s: Status{JailOK: false, JailWhy: "landlock is unusable: probe failed"}, want: "unavailable · landlock is unusable: probe failed"},
+		{name: "unavailable without reason", s: Status{JailOK: false}, want: "unavailable on this host"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.s.JailLine(); got != tc.want {
+				t.Errorf("JailLine() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

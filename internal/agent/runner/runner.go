@@ -1859,7 +1859,7 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 		}
 	}
 	if grants.Restrictive() && placement == "" {
-		return nil, nil, fmt.Errorf("grants: restrictive grants need a jail, but containment is %q — set containment: auto or paddock", requested)
+		return nil, nil, fmt.Errorf("grants: restrictive grants need a paddock, but containment is %q — set containment: auto or paddock", requested)
 	}
 
 	if placement == "" || workdir == "" {
@@ -1867,7 +1867,7 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 	}
 
 	if grants.Restrictive() && !available && placement != containment.PlacementPaddock {
-		return nil, nil, fmt.Errorf("grants: restrictive grants need a syscall jail, which this host cannot establish")
+		return nil, nil, fmt.Errorf("grants: restrictive grants need a paddock (syscall-deny), which this host cannot establish")
 	}
 
 	rec, confine := confinementRecord(requested, placement, available, backend, workdir, network)
@@ -2003,7 +2003,7 @@ func requireEnforceableEgress(available bool, backend containment.Backend, netwo
 	// return — a dropped posture is a rule the user believes is in force.
 	if workdir == "" {
 		return fmt.Errorf(
-			"agents.subagent.network is %q, but this dispatch has no workdir to jail against, so the posture cannot be applied: "+
+			"agents.subagent.network is %q, but this dispatch has no workdir to confine against, so the posture cannot be applied: "+
 				"set network: allow_all to accept open egress", mode)
 	}
 	if placement == "" {
@@ -2012,7 +2012,7 @@ func requireEnforceableEgress(available bool, backend containment.Backend, netwo
 			configured = "off"
 		}
 		return fmt.Errorf(
-			"agents.subagent.network is %q, which needs a jail, but agents.subagent.containment is %q: "+
+			"agents.subagent.network is %q, which needs a paddock, but agents.subagent.containment is %q: "+
 				"set containment: auto (or paddock) to enforce it, or network: allow_all to accept open egress",
 			mode, configured)
 	}
@@ -2022,14 +2022,14 @@ func requireEnforceableEgress(available bool, backend containment.Backend, netwo
 	}
 	if !available {
 		return fmt.Errorf(
-			"agents.subagent.network is %q, which needs a jail, but this host has no usable syscall-jail backend: "+
+			"agents.subagent.network is %q, which needs a paddock, but this host has no usable paddock backend: "+
 				"the dispatch would run with open egress. Set network: allow_all to accept that, or run where confinement is available",
 			mode)
 	}
 	if !backend.SupportsNetwork(network.Mode) {
 		return fmt.Errorf(
-			"agents.subagent.network is %q, which this host's syscall jail cannot enforce (no network-rule support on this backend: Landlock needs ABI >= 4 on Linux, winacl has none): "+
-				"set network: allow_all, or remove the jail requirement", mode)
+			"agents.subagent.network is %q, which this host's paddock cannot enforce (no network-rule support on this backend: Landlock needs ABI >= 4 on Linux, winacl has none): "+
+				"set network: allow_all, or remove the paddock requirement", mode)
 	}
 	return nil
 }

@@ -341,7 +341,7 @@ func CheckContainment(cfg *config.Config, cfgErr error) Check {
 	sc := cfg.Agent.SubAgent
 	backend := jail.Backend()
 	available := false
-	backendDesc := "none (no jail on this host)"
+	backendDesc := "none (no paddock on this host)"
 	if backend != nil {
 		if ok, why := backend.Available(); ok {
 			available = true
@@ -449,7 +449,7 @@ func containmentCheck(available bool, backendDesc, mode, containment, network st
 	if jailed(p, available) && n != "allow_all" {
 		// The egress rule lives in the jail: without one there is nowhere to
 		// put it, and the posture is a setting rather than a control.
-		detail += " — enforced by the jail"
+		detail += " — enforced by the paddock"
 	}
 	if containerWorld && n != "allow_all" {
 		detail += " — the container world enforces it in its own netns"
@@ -461,7 +461,7 @@ func containmentCheck(available bool, backendDesc, mode, containment, network st
 		// usable backend names that, not a feature some backend lacks.
 		cause := "no containment backend on this host, so nothing enforces network rules"
 		if available {
-			cause = "this host's containment jail cannot enforce network rules (no network-rule support on this backend: Landlock needs ABI >= 4 on Linux, winacl has none)"
+			cause = "this host's containment paddock cannot enforce network rules (no network-rule support on this backend: Landlock needs ABI >= 4 on Linux, winacl has none)"
 		}
 		return Check{Label: "Containment", Status: "FAIL",
 			Detail: detail + " — " + cause + ", and a restrictive egress posture is refused rather than run open; set network: allow_all or run where it can be enforced"}
@@ -475,10 +475,10 @@ func containmentCheck(available bool, backendDesc, mode, containment, network st
 			}
 			return Check{Label: "Containment", Status: "FAIL", Detail: detail + " — placement=paddock fails closed with no usable backend; every dispatch would refuse"}
 		}
-		return Check{Label: "Containment", Status: "OK", Detail: detail + " — sub-agents are jailed"}
+		return Check{Label: "Containment", Status: "OK", Detail: detail + " — sub-agents run in the paddock"}
 	case "auto":
 		if available {
-			return Check{Label: "Containment", Status: "OK", Detail: detail + " — sub-agents are jailed"}
+			return Check{Label: "Containment", Status: "OK", Detail: detail + " — sub-agents run in the paddock"}
 		}
 		if containerWorld {
 			return Check{Label: "Containment", Status: "OK", Detail: detail + " — the container world supplies enforcement"}
@@ -492,7 +492,7 @@ func containmentCheck(available bool, backendDesc, mode, containment, network st
 			return Check{Label: "Containment", Status: "FAIL",
 				Detail: detail + " — sub-agents run unconfined on the host and a restrictive egress posture is refused rather than run open; set containment: auto (or paddock) to enforce it, or network: allow_all"}
 		}
-		return Check{Label: "Containment", Status: "OK", Detail: detail + " — sub-agents are jailed or container-bound"}
+		return Check{Label: "Containment", Status: "OK", Detail: detail + " — sub-agents run in the paddock or a container"}
 	}
 }
 

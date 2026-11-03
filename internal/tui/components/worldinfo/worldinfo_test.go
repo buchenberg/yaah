@@ -131,3 +131,53 @@ func TestSubAgentRowsCollapsedSameWorld(t *testing.T) {
 		t.Fatalf("dispatch row missing:\n%s", got)
 	}
 }
+
+func TestSubAgentRowsContainmentSplit(t *testing.T) {
+	thp := testTheme()
+	s := worldstatus.Status{
+		Backend:             "containerd",
+		Mode:                "retained",
+		Containment:         "auto",
+		ContainmentResolved: "paddock",
+		JailOK:              true,
+		JailName:            "Seatbelt",
+		JailTier:            "native-syscall-deny",
+		Network:             "deny_all",
+		WorldReq:            "worktree",
+		ProposalWorld:       "worktree",
+		ReportWorld:         "worktree",
+	}
+	got := SubAgentRows(s, thp)
+	for _, want := range []string{"Containment:", "paddock", "Paddock:", "Seatbelt · native-syscall-deny"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "jail") || strings.Contains(got, "Jail") {
+		t.Fatalf("public metaphor leaks the jail wording:\n%s", got)
+	}
+}
+
+func TestSubAgentRowsCroftLane(t *testing.T) {
+	thp := testTheme()
+	s := worldstatus.Status{
+		Backend:             "containerd",
+		Mode:                "retained",
+		Containment:         "auto",
+		ContainmentResolved: "paddock",
+		JailOK:              true,
+		JailName:            "Landlock",
+		JailTier:            "native-syscall-deny",
+		Network:             "deny_all",
+		WorldReq:            "container",
+		ProposalWorld:       "container",
+		ReportWorld:         "container",
+	}
+	got := SubAgentRows(s, thp)
+	if !strings.Contains(got, "Containment:") || !strings.Contains(got, "croft") {
+		t.Fatalf("croft lane does not name the container boundary:\n%s", got)
+	}
+	if strings.Contains(got, "Paddock:") {
+		t.Fatalf("paddock row shown on a lane that carries its own boundary:\n%s", got)
+	}
+}
