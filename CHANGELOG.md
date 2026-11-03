@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.131.2](https://github.com/buchenberg/yaah/compare/v0.131.1...v0.131.2) (2026-11-03)
+
+
+### Bug Fixes
+
+* **workspace:** respect .gitignore in the container copy-in (yaah-f19x) ([ea73521](https://github.com/buchenberg/yaah/commit/ea735214f9905c4de1cd2af5745d4c8d3472c225))
+
 ## [0.131.1](https://github.com/buchenberg/yaah/compare/v0.131.0...v0.131.1) (2026-11-03)
 
 
