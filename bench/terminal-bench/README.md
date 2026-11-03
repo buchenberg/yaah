@@ -4,9 +4,12 @@ A small Terminal-Bench task subset for CLI-vs-CLI comparison at
 flash-model prices, plus the yaah agent adapter that plugs yaah into
 the Terminal-Bench harness as an installed agent.
 
-- Tasks: `suite.txt` (6 tasks, editable — unfrozen; cite the file's
+- Tasks: `suite.txt` (5 tasks, editable — unfrozen; cite the file's
   commit alongside any score. The frozen 15- and 12-task lists live
   in git history; recorded runs cite their pinned commits)
+- Long-horizon suite: `long-suite.txt` (2 tasks, separate scoreboard) and
+  [LONG-SUITE.md](LONG-SUITE.md) — deliberately excluded from the
+  five-task totals because they dominate wall time
 - Agent adapter: `yaah_agent.py` (import path `yaah_agent:YaahAgent`)
 - Comparison adapters: `hermes_agent.py` for hermes (import path
   `hermes_agent:HermesAgent`; ships a single prebuilt tarball with its
@@ -17,6 +20,7 @@ the Terminal-Bench harness as an installed agent.
 - Container setup: `yaah-setup.sh.j2` (config written in-container)
 - Runner: `run.sh`
 - Results: [RESULTS.md](RESULTS.md) — one row per run, nothing else
+- Long-horizon results: [LONG-SUITE.md](LONG-SUITE.md)
 - History: [HISTORY.md](HISTORY.md) — methodology, per-task breakdowns,
   run-over-run analysis
 
@@ -53,9 +57,10 @@ uv venv .venv && uv pip install -e .
 
 ```bash
 export DEEPSEEK_API_KEY=...      # required; the same key your yaah config interpolates
-./run.sh                          # the 6-task suite (default, suite.txt)
+./run.sh                          # the 5-task suite (default, suite.txt)
 ./run.sh hello-world broken-python  # the 2-task smoke
 SUITE=my-tasks.txt ./run.sh       # any task-list file in this directory
+SUITE=long-suite.txt ./run.sh     # the 2-task long-horizon suite
 YAAH_MODEL=<model> ./run.sh       # any tier you like; default deepseek-flash
 ```
 
@@ -72,7 +77,7 @@ recorded runs):
 PYTHONPATH=<this-dir> .venv/bin/tb run \
   --agent-import-path hermes_agent:HermesAgent \
   -t hello-world -t broken-python -t csv-to-parquet \
-  -t jsonl-aggregator -t assign-seats -t gomoku-planner \
+  -t jsonl-aggregator -t assign-seats \
   --dataset-path original-tasks --output-path runs --n-concurrent 1
 
 # opencode (adapter on PYTHONPATH; private server + JSON event stream)
@@ -80,9 +85,14 @@ PYTHONPATH=<this-dir> OPENCODE_BIN="$HOME/.opencode/bin/opencode" \
   OPENCODE_MODEL=deepseek/deepseek-flash \
   .venv/bin/tb run --agent-import-path opencode_agent:OpenCodeAgent \
   -t hello-world -t broken-python -t csv-to-parquet \
-  -t jsonl-aggregator -t assign-seats -t gomoku-planner \
+  -t jsonl-aggregator -t assign-seats \
   --dataset-path original-tasks --output-path runs --n-concurrent 1
 ```
+
+The long-horizon suite uses the same commands with
+`-t gomoku-planner -t path-tracing` (and `SUITE=long-suite.txt` for
+yaah). It is a separate two-task scoreboard; see
+[LONG-SUITE.md](LONG-SUITE.md).
 
 Model config inside the task container: `agents.default.model` is the
 task model (default deepseek-flash) and `agents.default.compaction_model`

@@ -1022,3 +1022,13 @@ totals. The yaah arm is `6ac35b8` plus the then-uncommitted bench-config
 diff (recorded as `6ac35b8+bench-config`). The diff changes only bench
 YAML/README text, not the binary, so a rerun at the merged commit is
 behaviourally identical.
+
+## Long-horizon suite split (2026-11-02, deepseek-flash)
+
+`gomoku-planner` and `path-tracing` moved to `long-suite.txt` after the
+combined seven-task run showed that `path-tracing` alone can consume the
+full 30-minute/50-iteration budget. All three arms resolved both long
+tasks: yaah and Hermes via the agent timeout (their `image.c` still
+passed every test), OpenCode inside the budget. The two-task scoreboard
+is in [LONG-SUITE.md](LONG-SUITE.md); the five-task main suite remains in
+[RESULTS.md](RESULTS.md).

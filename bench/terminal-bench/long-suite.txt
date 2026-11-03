@@ -1,0 +1,10 @@
+# yaah long-horizon suite — separate from the five-task scoreboard.
+#
+# gomoku-planner and path-tracing are deliberately excluded from
+# suite.txt because they dominate wall time and token volume. Run them
+# only when a long-horizon signal is needed; cite as "n/2 on the yaah
+# long-horizon suite" with the exact commit of this file.
+#
+# task id          category              notes
+gomoku-planner     # games                 image decode + board analysis + forced-line search
+path-tracing       # software-engineering  renderer reconstruction from an image
