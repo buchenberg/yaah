@@ -12,18 +12,20 @@ func TestInFlightDispatchScopesTrackLiveSet(t *testing.T) {
 		t.Fatalf("zero-value runtime: InFlightDispatchScopeIDs = %v, want empty", got)
 	}
 
-	rt.BeginDispatchScope("scope:dispatch-1")
-	rt.BeginDispatchScope("scope:dispatch-2")
-	if got := rt.InFlightDispatchScopeIDs(); len(got) != 2 {
-		t.Fatalf("two in-flight dispatches: got %v, want 2 IDs", got)
+	rt.BeginDispatchScope("dispatch-1") // raw owner-id form
+	if got := rt.InFlightDispatchScopeIDs(); len(got) != 1 || got[0] != "scope:dispatch-1" {
+		t.Fatalf("raw id must be keyed in kernel form (scope:<id>), got %v", got)
 	}
 
+	// The teardown path ends with scope.ID() — the kernel form. Begin and
+	// End must meet (yaah-95ri.6 review: the ID-form mismatch made every
+	// entry leak and the spare ineffective).
 	rt.EndDispatchScope("scope:dispatch-1")
-	if got := rt.InFlightDispatchScopeIDs(); len(got) != 1 {
-		t.Fatalf("after ending one: got %v, want 1 ID", got)
+	if got := rt.InFlightDispatchScopeIDs(); len(got) != 0 {
+		t.Fatalf("kernel-form end must clear a raw-form begin: got %v", got)
 	}
 
-	rt.EndDispatchScope("scope:dispatch-2")
+	rt.BeginDispatchScope("scope:dispatch-2")
 	rt.EndDispatchScope("scope:dispatch-2") // idempotent
 	if got := rt.InFlightDispatchScopeIDs(); len(got) != 0 {
 		t.Fatalf("after ending both: got %v, want empty", got)

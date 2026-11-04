@@ -82,7 +82,9 @@ type RetainedRuntime struct {
 	// (yaah-95ri.6). It lives behind a pointer because RetainedRuntime is
 	// passed by value throughout the dispatch paths — every copy must
 	// share the same live set, and a mutex field would both break that
-	// convention and trip go vet's lock copying.
+	// convention and trip go vet's lock copying. Entries are keyed in
+	// kernel ID form ("scope:<id>") — the form scope.ID() reports and the
+	// form the reaper compares against — so Begin and End always meet.
 	inFlight *inFlightScopes
 
 	// World is the configured dispatch world (agents.subagent.world:
@@ -668,6 +670,11 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 
 	id := fmt.Sprintf("proposal:%d:%d", time.Now().UnixNano(), proposalSeq.Add(1))
 	rt.BeginDispatchScope(id)
+	// Every return path below — provisioning failure, report lane, success
+	// proposal — must clear the in-flight mark once the scope is either
+	// dead or handed to the pending-proposal set, which takes over the
+	// sparing (yaah-95ri.6 review).
+	defer rt.EndDispatchScope(id)
 	wt := retainedWorktreePath(rt, id)
 
 	scopeID, provErr := provisionRetainedBranch(ctx, rt, id, wt, forkPoint)
@@ -1353,22 +1360,34 @@ func (rt *RetainedRuntime) EnsureInFlight() {
 	}
 }
 
+// dispatchScopeKey normalizes an owner id to the kernel scope-ID form
+// ("scope:<id>") — the form scope.ID() reports, the reaper compares
+// against, and Begin/End must therefore agree on (yaah-95ri.6 review).
+func dispatchScopeKey(id string) string {
+	if strings.HasPrefix(id, "scope:") {
+		return id
+	}
+	return "scope:" + id
+}
+
 // BeginDispatchScope marks a container or worktree dispatch scope as in
 // flight so the scope reaper spares it for as long as the dispatch runs
-// (yaah-95ri.6).
+// (yaah-95ri.6). Accepts either the raw owner id or the kernel scope-ID
+// form.
 func (rt *RetainedRuntime) BeginDispatchScope(id string) {
 	if rt.inFlight == nil {
 		return
 	}
-	rt.inFlight.begin(id)
+	rt.inFlight.begin(dispatchScopeKey(id))
 }
 
-// EndDispatchScope clears a dispatch scope's in-flight mark.
+// EndDispatchScope clears a dispatch scope's in-flight mark. Accepts
+// either form; see dispatchScopeKey.
 func (rt *RetainedRuntime) EndDispatchScope(id string) {
 	if rt.inFlight == nil {
 		return
 	}
-	rt.inFlight.end(id)
+	rt.inFlight.end(dispatchScopeKey(id))
 }
 
 // InFlightDispatchScopeIDs returns the in-flight dispatch scope IDs
@@ -1377,10 +1396,14 @@ func (rt *RetainedRuntime) EndDispatchScope(id string) {
 // settlement and must never be reaped, however long the dispatch runs
 // (yaah-95ri.6).
 func (rt *RetainedRuntime) InFlightDispatchScopeIDs() []string {
-	if rt.inFlight == nil {
-		return nil
+	var ids []string
+	if rt.inFlight != nil {
+		ids = rt.inFlight.list()
 	}
-	return append(rt.inFlight.list(), rt.PendingProposalScopeIDs()...)
+	// Pending proposals are spared regardless of in-flight bookkeeping —
+	// a runtime without an initialized live set must not silently stop
+	// protecting unsettled proposals (yaah-95ri.6 review).
+	return append(ids, rt.PendingProposalScopeIDs()...)
 }
 
 // recordRetainedReview writes the proposal half of the review provenance pair.

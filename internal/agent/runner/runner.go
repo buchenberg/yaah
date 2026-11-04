@@ -1169,11 +1169,17 @@ func CreateRootScope(mgr *goatherd.ScopeManager, sessionID, repoPath string, iso
 // createSubAgentScope creates the sub-agent's execution scope (adoption
 // plan D1): a fork of the session's root scope, so the scope tree mirrors
 // the dispatch tree and recovery can rebuild it. A workdir dispatch forks
-// in isolation with its own worktree sandbox (destroyed on halt/discard by
-// the kernel, exactly as the pre-plan Create+WorktreeSandbox path was);
-// every other dispatch shares the root's sandbox. The fork snapshot is nil
-// (D1): seed messages live in the loop config, not the trace. An empty
-// root scope ID — tracing came up without a root — falls back to the
+// in isolation with its own worktree sandbox attached NON-owned
+// (WithSandbox(sb, false), yaah-95ri.6): the fork record still carries
+// the sandbox address for recovery and turn checkpoints still read it,
+// but run-end Discard never destroys the worktree — it must outlive the
+// run for recovery and, on the retained lane, for the proposal's seal.
+// Destroying it is the teardown paths' job (container teardown,
+// teardownReportScratch, retained settlement), never run-end
+// completion's. Every other dispatch shares the root's sandbox. The fork
+// snapshot is nil (D1): seed messages live in the loop config, not the
+// trace. An empty root scope ID — tracing came up without a root — falls
+// back to the
 // legacy flat Create so the sub-agent still gets a superviseable scope.
 func createSubAgentScope(mgr *goatherd.ScopeManager, opts taskRunnerOpts, subTraceID, workdir string) (*goatherd.Scope, error) {
 	if mgr != nil {
