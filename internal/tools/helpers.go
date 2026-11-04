@@ -105,11 +105,15 @@ func isNestedWorktreeRoot(ctx context.Context, ws Workspace, path string) bool {
 // worktree (…/.git/worktrees/<id>) rather than a submodule
 // (…/.git/modules/<path>). The admin directory — worktrees for a worktree,
 // modules for a submodule — sits directly under the repository's git
-// directory, so the check locates the git directory (a ".git" or "*.git"
+// directory, so the check locates the git directory (a ".git"/"*.git"
 // component, excluding the trailing worktree id) and inspects the component
 // after it. A submodule path that itself contains a "worktrees" segment
 // (e.g. vendor/worktrees/browser → .git/modules/vendor/worktrees/browser)
 // therefore stays a submodule.
+//
+// A git dir relocated with --separate-git-dir has no .git component and is
+// not detected. Failing open (showing duplicate hits) is safer than risking
+// a submodule's sources being dropped.
 func isWorktreeGitdir(content string) bool {
 	line := strings.TrimSpace(content)
 	if !strings.HasPrefix(line, "gitdir:") {
@@ -123,10 +127,7 @@ func isWorktreeGitdir(content string) bool {
 			return parts[i+1] == "worktrees"
 		}
 	}
-	// No git-directory component: the git dir was relocated with
-	// --separate-git-dir. A submodule always points under the superproject's
-	// .git, so without one this can only be a linked worktree.
-	return len(parts) >= 2 && parts[len(parts)-2] == "worktrees"
+	return false
 }
 
 // wsPath* helpers route path manipulation through the workspace's own path
