@@ -114,7 +114,13 @@ func isWorktreeGitdir(content string) bool {
 	p := strings.TrimSpace(strings.TrimPrefix(line, "gitdir:"))
 	p = strings.ReplaceAll(p, "\\", "/")
 	parts := strings.Split(strings.Trim(p, "/"), "/")
-	return len(parts) >= 2 && parts[len(parts)-2] == "worktrees"
+	if len(parts) < 2 || parts[len(parts)-2] != "worktrees" {
+		return false
+	}
+	// A submodule's gitdir lives under .../modules/<name>. If a submodule path
+	// itself contains a "worktrees" segment (modules/worktrees/<id>), the
+	// trailing component still names a submodule, not a linked worktree.
+	return len(parts) < 3 || parts[len(parts)-3] != "modules"
 }
 
 // wsPath* helpers route path manipulation through the workspace's own path
