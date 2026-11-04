@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,6 +22,59 @@ func (p *stripReasoningProvider) Send(ctx context.Context, req types.ChatRequest
 	p.calls++
 	return nil, errors.New(
 		"invalid_request_error: reasoning_content is not supported by this model [msgs=3 roles=user]")
+}
+
+// swapStateProvider models the fallback: after the swap it always fails
+// with the thinking-replay 400 (a thinking-mode endpoint that cannot
+// consume the swapped-out primary's history).
+type swapStateProvider struct{ calls int }
+
+func (p *swapStateProvider) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
+	p.calls++
+	return nil, statusError{
+		msg:    "The `content[].thinking` in the thinking mode must be passed back to the API.",
+		status: 400,
+	}
+}
+
+// degeneratePrimaryProvider fails with a degenerate stream until it has
+// been swapped away from (mirroring a provider whose stream cut before any
+// content).
+type degeneratePrimaryProvider struct{ calls int }
+
+func (p *degeneratePrimaryProvider) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
+	p.calls++
+	return nil, errors.New("non-streaming response produced no content")
+}
+
+// TestCall_swapStatePersistsAcrossTurns pins the yaah-31j wiring: the
+// swap happened in Call 1, but the mixed history keeps failing on the
+// thinking-mode fallback in Call 2 and beyond — so the swap attribution
+// must persist on the client, not in per-Call state.
+func TestCall_swapStatePersistsAcrossTurns(t *testing.T) {
+	primary := &degeneratePrimaryProvider{}
+	fallback := &swapStateProvider{}
+	c := &Client{
+		Provider:         primary,
+		FallbackProvider: fallback,
+		Model:            "test-model",
+		MaxRetries:       2,
+		RetryBackoff:     time.Millisecond,
+		StripReasoning:   func() {},
+	}
+
+	for turn := 1; turn <= 2; turn++ {
+		_, err := c.Call(context.Background(), types.ChatRequest{Model: "test-model"})
+		if err == nil {
+			t.Fatalf("turn %d: expected the thinking-replay error to surface", turn)
+		}
+		if !strings.Contains(err.Error(), "swapped-out primary") {
+			t.Fatalf("turn %d: error must attribute the failure to the mid-session swap, got: %s", turn, err.Error())
+		}
+		if strings.Contains(err.Error(), "set `thinking: true`") {
+			t.Fatalf("turn %d: config advice must not be given after a swap, got: %s", turn, err.Error())
+		}
+	}
 }
 
 func TestCall_stripReasoningRetryIsBounded(t *testing.T) {

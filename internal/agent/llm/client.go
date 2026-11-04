@@ -377,6 +377,7 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 		case classified.ShouldRotateCred && c.FallbackProvider != nil && !providerSwapped:
 			c.swapToFallback(&req)
 			providerSwapped = true
+			c.swappedFromPrimary = true
 			attempt--
 			continue
 
