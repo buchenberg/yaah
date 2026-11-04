@@ -456,10 +456,6 @@ func TestClassify_reasoningContentRejectedWith422(t *testing.T) {
 	}
 }
 
-// A message carrying BOTH signals must resolve to replay, not strip. The two
-// remedies are opposites, so the ordering is load-bearing: "thinking is not
-// supported" (a genuine strip case) must still classify as strip while a
-// message that also says the content must be passed back resolves to replay.
 func TestClassify_responseFormatRejectedWith422(t *testing.T) {
 	err := errors.New(`provider returned 422: {"detail":[{"type":"extra_forbidden","loc":["body","response_format","type"],"msg":"Extra inputs are not permitted"}]}`)
 	c := Classify(err, ErrorMeta{StatusCode: 422, Model: "mistral-large", NumMessages: 4})
@@ -488,6 +484,10 @@ func TestClassify_responseFormatProseOnlyDoesNotDrop(t *testing.T) {
 	}
 }
 
+// A message carrying BOTH signals must resolve to replay, not strip. The two
+// remedies are opposites, so the ordering is load-bearing: "thinking is not
+// supported" (a genuine strip case) must still classify as strip while a
+// message that also says the content must be passed back resolves to replay.
 func TestClassify_replayOutranksStripWhenBothSignalsPresent(t *testing.T) {
 	err := errors.New("reasoning_content is not supported unless content[].thinking in the thinking mode must be passed back to the API")
 	c := Classify(err, ErrorMeta{StatusCode: 400, Model: "deepseek-flash", NumMessages: 3})

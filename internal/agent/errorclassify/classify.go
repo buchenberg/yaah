@@ -103,11 +103,15 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 		// Same rejection class for response_format itself (yaah-n7k, the
 		// #747 sibling): strict OpenAI-compatible endpoints reject
 		// {"type":"json_object"} with a 422 extra_forbidden naming
-		// ["body","response_format"] in loc. Both the field name and an
-		// explicit unsupported phrase are required — prose that merely
-		// mentions response_format does not strip (same rule as the
-		// reasoning_content block above).
-		if strings.Contains(msg, "response_format") && matchAny(msg, responseFormatUnsupportedPatterns) {
+		// ["body","response_format"] in loc. Both the field name (either
+		// the underscore or spaced form) and an explicit unsupported phrase
+		// are required — prose that merely mentions response_format does
+		// not strip. Overflow and content-policy signals outrank the drop:
+		// they are the more specific remedies, matching the 400 branch's
+		// precedence below.
+		fieldMentioned := strings.Contains(msg, "response_format") || strings.Contains(msg, "response format")
+		if fieldMentioned && matchAny(msg, responseFormatUnsupportedPatterns) &&
+			!matchAny(msg, contextOverflowPatterns) && !matchAny(msg, contentPolicyPatterns) {
 			c.Reason = ReasonFormatError
 			c.Retryable = false
 			c.ShouldDropResponseFormat = true
@@ -592,13 +596,20 @@ var responseFormatPatterns = []string{
 var responseFormatUnsupportedPatterns = []string{
 	"extra_forbidden",
 	"extra inputs are not permitted",
-	"not supported",
-	"unsupported",
+	// Compound field-word forms, mirroring the sibling reasoning list —
+	// bare "unsupported"/"invalid type" against a whole fastapi detail
+	// array would false-positive on unrelated field errors that merely
+	// mention response_format elsewhere in the body.
+	"unsupported parameter",
+	"unsupported field",
+	"unknown parameter",
 	"unknown field",
+	"unexpected parameter",
 	"unexpected field",
 	"unexpected reserved field",
-	"invalid type",
+	"invalid parameter",
 	"not allowed",
+	"is not permitted",
 }
 
 var providerPolicyPatterns = []string{
