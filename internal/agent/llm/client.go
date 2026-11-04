@@ -453,17 +453,6 @@ func historyHasSignatureGaps(msgs []types.Message) bool {
 	return false
 }
 
-// heartbeatInterval returns the throttle interval for liveness heartbeats
-// (default 5s when unset).
-func (c *Client) heartbeatInterval() time.Duration {
-	for _, m := range msgs {
-		if m.Role == "assistant" && m.ReasoningSignature == "" {
-			return true
-		}
-	}
-	return false
-}
-
 func (c *Client) heartbeatInterval() time.Duration {
 	if c.HeartbeatInterval > 0 {
 		return c.HeartbeatInterval
