@@ -417,7 +417,7 @@ func TestClassify_thinkingModeReplayWithForeignHistoryGetsSwapAdvice(t *testing.
 	if strings.Contains(c.Message, "set `thinking: true`") {
 		t.Fatalf("config advice must not be given for foreign history: %s", c.Message)
 	}
-	if !strings.Contains(c.Message, "thinking signatures") {
+	if !strings.Contains(c.Message, "swapped-out primary") {
 		t.Fatalf("message should name the swap cause: %s", c.Message)
 	}
 }
