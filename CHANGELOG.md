@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.132.3](https://github.com/buchenberg/yaah/compare/v0.132.2...v0.132.3) (2026-11-04)
+
+
+### Bug Fixes
+
+* **errorclassify:** drop yields to overflow remedies on status 0 too ([1fc81c4](https://github.com/buchenberg/yaah/commit/1fc81c45c2549f1389f70116d66bbffe4091bd06))
+* **errorclassify:** scope the overflow yield to 400 only ([c7a7422](https://github.com/buchenberg/yaah/commit/c7a74228d25ee35e66997f0bf051e62590795362))
+* **errorclassify:** strip response_format on 422 extra_forbidden rejections (yaah-n7k) ([6529b89](https://github.com/buchenberg/yaah/commit/6529b8994375b34eb64c806a03bc09e52ab68477))
+* **errorclassify:** strip response_format on 422 extra_forbidden rejections (yaah-n7k) ([2271b01](https://github.com/buchenberg/yaah/commit/2271b016d87f7e078d41efb12f7ebd2212799ca5))
+* **errorclassify:** tighten response_format patterns per review ([1299c2e](https://github.com/buchenberg/yaah/commit/1299c2ecc3f6634522997e9c19344bf0ece379dc))
+
 ## [0.132.2](https://github.com/buchenberg/yaah/compare/v0.132.1...v0.132.2) (2026-11-04)
 
 
