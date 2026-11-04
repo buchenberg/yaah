@@ -193,8 +193,15 @@ func (t *App) refreshMessages() {
 
 // itemRows returns the item's display-row count at width w, cached on
 // the convItem. In-place block mutations clear the cache; width changes
-// remeasure wholesale (rowsWidth mismatch).
+// remeasure wholesale (rowsWidth mismatch). A non-positive width is
+// measured without storing: rowsWidth 0 doubles as the uncached
+// sentinel, and tightening the guard keeps w<=0 (only possible via the
+// 80 fallback in messageWidth, but cheap to make explicit) from
+// poisoning the cache key.
 func (t *App) itemRows(ci *convItem, it messages.Item, w int) int {
+	if w <= 0 {
+		return messages.ItemRows(it, messages.Content{Width: 80, Theme: t.Theme})
+	}
 	if ci.rowsWidth == w {
 		return ci.rowsCache
 	}

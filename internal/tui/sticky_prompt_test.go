@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/tui/components/messages"
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -116,40 +117,37 @@ func TestReconcilePromptPin_Rules(t *testing.T) {
 	}
 }
 
-// TestPromptAnchors_AppendMatchesFull pins anchor-table integrity: after
-// a stretch of incremental renders (fast-path tool appends, in-place
-// block mutations with their cache invalidations, full-rendered text
-// flushes), the delta-maintained table must equal what a full recompute
-// produces for the same log.
+// TestPromptAnchors_AppendMatchesFull pins anchor-table integrity across
+// the incremental paths with no full rebuild sneaking into the captured
+// state: after the baseline render, a stretch of pure-append refreshes
+// (tool lines plus a mixed [tool, prompt] batch — the only way
+// extendPromptAnchors delta-adds a prompt anchor) must produce the same
+// table an explicit full recompute of that state produces.
 func TestPromptAnchors_AppendMatchesFull(t *testing.T) {
 	ui := New("test")
 	ui.AddPrompt("a reasonably long question that might wrap on narrower panes")
 	ui.refreshMessages()
-
-	ui.AddToolStart("1", "bash", "ls")
-	ui.refreshMessages()
-
-	// In-place expand toggle of the completed tool block: the row count
-	// changes with the block, so the cache must remeasure.
-	ui.AddToolEnd("1", "bash · ls", strings.Repeat("line\n", 8))
-	ui.refreshMessages()
-
-	ui.AddPrompt("second question after the tool output")
-	fullRendersBefore := ui.fullRenderCount
-	ui.refreshMessages()
-	if ui.fullRenderCount == fullRendersBefore {
-		t.Fatalf("text flush must take the full-render path")
+	if ui.fullRenderCount != 1 {
+		t.Fatalf("baseline should be exactly one full render, got %d", ui.fullRenderCount)
 	}
-	ui.AddToolStart("2", "grep", "pattern")
-	ui.refreshMessages()
 
-	// The completed tool block is the first toggleable block.
-	ui.ToggleBlockByIndex(0)
+	// Mixed batch with no refresh in between: the first new item is a
+	// tool block (append path) and the batch also carries a prompt, so
+	// extendPromptAnchors must delta-add its anchor.
+	ui.AddToolStart("1", "bash", "ls")
+	ui.AddPrompt("second question in one mixed batch")
 	ui.refreshMessages()
+	if ui.fullRenderCount != 1 {
+		t.Fatalf("mixed batch took the full-render path (%d rebuilds)", ui.fullRenderCount)
+	}
+	if len(ui.promptAnchors) != 2 {
+		t.Fatalf("expected a delta-added second anchor, got %+v", ui.promptAnchors)
+	}
 
-	// All incremental paths exercised; capture the delta-maintained table.
+	// Pure-delta table, captured before any full-render trigger.
 	appended := append([]promptAnchor(nil), ui.promptAnchors...)
 
+	// Force the full recompute in this exact state and diff.
 	ui.needsFullRender.Store(true)
 	ui.refreshMessages()
 	full := ui.promptAnchors
@@ -159,8 +157,34 @@ func TestPromptAnchors_AppendMatchesFull(t *testing.T) {
 	}
 	for i := range full {
 		if appended[i] != full[i] {
-			t.Fatalf("anchor %d drifted between incremental and full: %+v vs %+v",
+			t.Fatalf("anchor %d drifted between delta and full: %+v vs %+v",
 				i, appended[i], full[i])
+		}
+	}
+
+	// Cache invariant after an in-place block mutation: AddToolEnd
+	// changes the block's row count and must invalidate the cache; the
+	// next render's cached counts must equal a fresh measure at the
+	// cache's own key width (whose pre-layout default is not a real
+	// pane width — deliberately not hardcoded here).
+	ui.AddToolEnd("1", "bash · ls", strings.Repeat("line\n", 8))
+	ui.refreshMessages()
+	for i := range ui.conversationLog {
+		ci := &ui.conversationLog[i]
+		if ci.rowsWidth == 0 {
+			t.Fatalf("item %d left uncached after a full render", i)
+		}
+		if ci.rowsCache != messages.ItemRows(ui.buildItems(i, i+1, ci.rowsWidth)[0], messages.Content{Width: ci.rowsWidth, Theme: ui.Theme}) {
+			t.Fatalf("item %d cached a stale row count (%d at width %d)", i, ci.rowsCache, ci.rowsWidth)
+		}
+	}
+
+	// Expand toggle: same invariant after the row count changes in place.
+	ui.ToggleBlockByIndex(0)
+	for i := range ui.conversationLog {
+		ci := &ui.conversationLog[i]
+		if ci.rowsCache != messages.ItemRows(ui.buildItems(i, i+1, ci.rowsWidth)[0], messages.Content{Width: ci.rowsWidth, Theme: ui.Theme}) {
+			t.Fatalf("item %d cached a stale row count after toggle (%d at width %d)", i, ci.rowsCache, ci.rowsWidth)
 		}
 	}
 }
@@ -201,9 +225,10 @@ func TestReconcilePromptPin_DeadlockSafety(t *testing.T) {
 
 	focusBefore := ui.App.GetFocus()
 
-	time.AfterFunc(10*time.Second, func() {
+	watchdog := time.AfterFunc(10*time.Second, func() {
 		panic("reconcilePromptPin deadlocked inside the application draw (app lock re-entered)")
 	})
+	defer watchdog.Stop()
 
 	ui.App.ForceDraw()
 
