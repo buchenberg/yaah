@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.134.1](https://github.com/buchenberg/yaah/compare/v0.134.0...v0.134.1) (2026-11-04)
+
+
+### Documentation
+
+* architecture audit 2026-11 (yaah, goatherd-runtime, kernel, croft) ([80dd779](https://github.com/buchenberg/yaah/commit/80dd779fe076e6e5bfdc1806ad89bf3622b91082))
+* **plans:** track plan/build-mode clarity and infopane restructure plans ([1e59d5b](https://github.com/buchenberg/yaah/commit/1e59d5b3464f05a0ba21cc3077c6e8a4f8d89a8f))
+* track completed plan docs + 2026-11 architecture audit ([72832cf](https://github.com/buchenberg/yaah/commit/72832cfae3858fdb38a734df165bb7fb24512bfc))
+
 ## [0.134.0](https://github.com/buchenberg/yaah/compare/v0.133.0...v0.134.0) (2026-11-04)
 
 
