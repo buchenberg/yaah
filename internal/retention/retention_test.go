@@ -88,10 +88,6 @@ func (f *fixture) wantEvicted(owner string) {
 	}
 }
 
-// math32Max is the through value the evictor itself uses: an ordinal cap
-// no retained path exceeds.
-const math32Max = int(^uint(0) >> 1)
-
 func TestDeleterEvictsKernelFirstThenCascades(t *testing.T) {
 	f := newFixture(t)
 
