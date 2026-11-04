@@ -52,6 +52,12 @@ func (t *App) ActivityState() activity.State {
 // The prompt is prefixed with a marker glyph and wraps to at most
 // promptEchoMaxLines rows; a longer prompt is truncated with an
 // ellipsis. An empty prompt hides the echo entirely.
+//
+// Draw-safe: it must not touch app-level state (no SetFocus, no
+// redraw requests) because reconcilePromptPin runs from the AfterDraw
+// hook while tview holds the application lock — taking that lock again
+// deadlocks the UI. Widget mutations (SetText, flex ResizeItem) are
+// plain data writes and become visible on the next frame.
 func (t *App) SetCurrentPrompt(text string) {
 	if strings.TrimSpace(text) == "" {
 		t.promptEcho.SetText("")
@@ -68,5 +74,4 @@ func (t *App) SetCurrentPrompt(text string) {
 
 	t.promptEcho.SetText(t.Theme.Tag(t.Theme.User, full))
 	t.resizePromptEcho(len(tview.WordWrap(full, w)))
-	t.App.SetFocus(t.Input)
 }

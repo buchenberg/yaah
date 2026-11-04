@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 )
@@ -140,5 +141,55 @@ func TestPromptAnchors_AppendMatchesFull(t *testing.T) {
 			t.Fatalf("anchor %d drifted between append and full: %+v vs %+v",
 				i, appended[i], full[i])
 		}
+	}
+}
+
+// TestReconcilePromptPin_DeadlockSafety pins the freeze fix: tview
+// invokes the AfterDraw hook while still holding the application lock,
+// so the pin-change path must not take that lock again (SetFocus used
+// to, freezing the UI at the first pin swap). A pin change is queued
+// via the scroll position before the draw; the draw must return and
+// leave focus untouched.
+func TestReconcilePromptPin_DeadlockSafety(t *testing.T) {
+	sim := tcell.NewSimulationScreen("UTF-8")
+	if err := sim.Init(); err != nil {
+		t.Fatalf("init simulation screen: %v", err)
+	}
+	defer sim.Fini()
+	sim.SetSize(120, 30)
+	ui := New("test")
+	ui.App.SetScreen(sim)
+
+	ui.AddPrompt("question one")
+	ui.refreshMessages()
+	if len(ui.promptAnchors) != 1 {
+		t.Fatalf("expected one anchor, got %+v", ui.promptAnchors)
+	}
+
+	// Content taller than the pane: the refresh's auto-scroll carries the
+	// viewport past the prompt's seam, so the draw below has a pin change
+	// pending (empty -> question one).
+	ui.tokenMu.Lock()
+	ui.pendingTokens.WriteString(strings.Repeat("word ", 800))
+	ui.isStreaming.Store(true)
+	ui.tokenMu.Unlock()
+	if !ui.flushPendingTokens() {
+		t.Fatalf("flush did not render the streamed response")
+	}
+	ui.refreshMessages()
+
+	focusBefore := ui.App.GetFocus()
+
+	time.AfterFunc(10*time.Second, func() {
+		panic("reconcilePromptPin deadlocked inside the application draw (app lock re-entered)")
+	})
+
+	ui.App.ForceDraw()
+
+	if ui.pinnedPrompt != "question one" {
+		t.Fatalf("pin change did not land during the draw: %q", ui.pinnedPrompt)
+	}
+	if ui.App.GetFocus() != focusBefore {
+		t.Fatalf("pin reconciliation stole focus")
 	}
 }
