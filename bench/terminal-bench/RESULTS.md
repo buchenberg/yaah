@@ -35,6 +35,9 @@ Detail, methodology and caveats: [HISTORY.md](HISTORY.md).
 | 2026-11-02 | yaah | 6ac35b8+bench-config | 2026-11-02__19-04-25 | 5/5 | 502,745 | 15,632 | | 94% | 37 | 156s | $0.0305 |
 | 2026-11-02 | hermes | 0.22.5 | 2026-11-02__19-10-13 | 5/5 | 1,048,686 | 10,917 | 4,003 | 48% | 36 | 196s | $0.1843 |
 | 2026-11-02 | opencode | 2.1.3 | 2026-11-02__19-16-35 | 4/5 | 421,571 | 8,605 | 9,992 | 95% | 46 | 163s | $0.0311 |
+| 2026-11-04 | yaah | a61eb145 | 2026-11-04__14-06-40 | 4/5 | 470,211 | 19,438 | | 98% | 36 | 156s | $0.0147 |
+| 2026-11-04 | hermes | 0.22.5 | 2026-11-04__14-11-58 | 3/5 | 624,265 | 8,997 | | 48% | 21 | 123s | $0.0577 |
+| 2026-11-04 | opencode | 2.1.3 | 2026-11-04__14-17-01 | 5/5 | 357,799 | 8,891 | | 96% | 44 | 182s | $0.0128 |
 
 Only rows with the same `Resolved` denominator are comparable: the suite was
 15 tasks, then 6, then 5 from 2026-10-17 on. Model `deepseek-flash` and
@@ -42,3 +45,16 @@ harness pin `d28711d` for every row. The 2026-11-02 rows ran at peak
 pricing (the 2026-10-31 rows ran off-peak), so their dollar totals are
 roughly double; compare token shapes and resolved counts, not cost, across
 those dates.
+
+The 2026-11-04 three-way rows exclude two contaminations, which is why
+their token/cost shapes differ from every earlier row: yaah's
+broken-python trial ended `parse_error` (the verifier could not parse the
+agent's final episode; the task itself resolved 2/2 in the clean re-run
+`2026-11-04__13-45-28`), and hermes lost csv-to-parquet and
+jsonl-aggregator to `agent_installation_failed` — the first hermes bolt-on
+tarball built after the upstream 0.22.5 pillow-pin conflict (hermes pins
+pillow==13.0.0, the locked browser-harness pins pillow==12.3.0; the
+tarball forces 12.3.0 and drops what the installer expected). Only three
+of the hermes five tasks produced accounting; its row's step and time
+totals cover those three. Treat the hermes row as instrumentation noise,
+not a quality datapoint.
