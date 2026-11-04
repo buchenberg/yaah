@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 )
@@ -86,54 +85,75 @@ func isNestedWorktreeRoot(ctx context.Context, ws Workspace, path string) bool {
 	return err == nil && !info.IsDir()
 }
 
-// preferNativeWalk reports whether a search must use the native walker even
-// when ripgrep is available. Ripgrep's glob language cannot express "this
-// directory contains a .git file", so a top-level linked worktree under an
-// unknown name would otherwise be traversed. Checking the search root's
-// immediate children is one ReadDir plus one Lstat per directory and keeps
-// the common custom-worktree-root case correct on both code paths.
-func preferNativeWalk(ctx context.Context, ws Workspace, root string) bool {
-	entries, err := ws.ReadDir(ctx, root)
+// nestedWorktreeFilter drops ripgrep results that live under a linked
+// worktree nested below the search root. Ripgrep's glob language cannot
+// express "this directory contains a .git file", so filtering the results
+// keeps the rg path consistent with the native walker without a second tree
+// scan. Results are checked lazily and per-directory answers are cached.
+type nestedWorktreeFilter struct {
+	ctx  context.Context
+	ws   Workspace
+	root string
+	seen map[string]bool
+}
+
+func newNestedWorktreeFilter(ctx context.Context, ws Workspace, root string) *nestedWorktreeFilter {
+	return &nestedWorktreeFilter{
+		ctx:  ctx,
+		ws:   ws,
+		root: filepath.Clean(root),
+		seen: make(map[string]bool),
+	}
+}
+
+func (f *nestedWorktreeFilter) excluded(file string) bool {
+	abs := file
+	if !filepath.IsAbs(abs) {
+		resolved, err := f.ws.ResolvePath(file)
+		if err != nil {
+			return false
+		}
+		abs = resolved
+	}
+	dir := filepath.Dir(filepath.Clean(abs))
+	for {
+		if sameFilePath(dir, f.root) {
+			return false
+		}
+		if excluded, ok := f.seen[dir]; ok {
+			if excluded {
+				return true
+			}
+		} else {
+			if !pathWithin(f.root, dir) {
+				f.seen[dir] = false
+				return false
+			}
+			if isNestedWorktreeRoot(f.ctx, f.ws, dir) {
+				f.seen[dir] = true
+				return true
+			}
+			f.seen[dir] = false
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
+	}
+}
+
+func sameFilePath(a, b string) bool {
+	return filepath.Clean(a) == filepath.Clean(b)
+}
+
+// pathWithin reports whether child is inside root (or equal to it).
+func pathWithin(root, child string) bool {
+	rel, err := filepath.Rel(root, child)
 	if err != nil {
 		return false
 	}
-	for _, e := range entries {
-		if !e.IsDir() || commonIgnoreDirs[e.Name()] {
-			continue
-		}
-		if isNestedWorktreeRoot(ctx, ws, ws.Join(root, e.Name())) {
-			return true
-		}
-	}
-	return false
-}
-
-// ripgrepIgnoreArgs returns negative --glob patterns for the known
-// harness/tool directories. Ripgrep already skips hidden directories, but
-// making the list explicit keeps the rg and native paths aligned for visible
-// names such as node_modules, target, and vendor. A name that appears in the
-// search root itself is omitted so an explicit search of that directory still
-// works (the native walker never skips its root either).
-func ripgrepIgnoreArgs(root string) []string {
-	skip := make(map[string]bool)
-	for _, part := range strings.Split(filepath.ToSlash(root), "/") {
-		skip[part] = true
-	}
-	names := make([]string, 0, len(commonIgnoreDirs))
-	for name := range commonIgnoreDirs {
-		if skip[name] {
-			continue
-		}
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	args := make([]string, 0, len(names)*4)
-	for _, name := range names {
-		args = append(args,
-			"--glob", "!"+name+"/**",
-			"--glob", "!**/"+name+"/**")
-	}
-	return args
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 // binaryExtensions is a rough set of extensions that should be skipped

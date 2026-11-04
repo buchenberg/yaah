@@ -64,7 +64,7 @@ func (t *GlobTool) Execute(ctx context.Context, args string) (string, error) {
 	}
 	params.Path = resolved
 
-	if rgAvailable() && !preferNativeWalk(ctx, ws, params.Path) {
+	if rgAvailable() {
 		return t.globRipgrep(ctx, params.Pattern, params.Path)
 	}
 	return t.globNative(ctx, params.Pattern, params.Path)
@@ -72,9 +72,7 @@ func (t *GlobTool) Execute(ctx context.Context, args string) (string, error) {
 
 func (t *GlobTool) globRipgrep(ctx context.Context, pattern, path string) (string, error) {
 	pattern = filepath.ToSlash(pattern)
-	rgArgs := []string{"--files", "--glob", pattern, "--no-messages"}
-	rgArgs = append(rgArgs, ripgrepIgnoreArgs(path)...)
-	rgArgs = append(rgArgs, "--", path)
+	rgArgs := []string{"--files", "--glob", pattern, "--no-messages", "--", path}
 
 	ws := workspaceOf(t.WS, t.PV)
 	res, err := ws.Exec(ctx, ExecRequest{Command: "rg", Args: rgArgs})
@@ -95,6 +93,18 @@ func (t *GlobTool) globRipgrep(ctx context.Context, pattern, path string) (strin
 	}
 
 	lines := strings.Split(strings.TrimSpace(result), "\n")
+	filter := newNestedWorktreeFilter(ctx, ws, path)
+	kept := lines[:0]
+	for _, line := range lines {
+		if line == "" || filter.excluded(line) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if len(kept) == 0 {
+		return "No files found.", nil
+	}
+	lines = kept
 	sort.Strings(lines)
 
 	result = strings.Join(lines, "\n")
@@ -118,7 +128,7 @@ func (t *GlobTool) globNative(ctx context.Context, pattern, path string) (string
 			return nil
 		}
 		if d.IsDir() {
-			if commonIgnoreDirs[d.Name()] {
+			if p != path && commonIgnoreDirs[d.Name()] {
 				return filepath.SkipDir
 			}
 			if p != path && isNestedWorktreeRoot(ctx, ws, p) {

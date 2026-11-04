@@ -98,7 +98,7 @@ func (t *ReplaceTool) Execute(ctx context.Context, args string) (string, error) 
 			return nil
 		}
 		if d.IsDir() {
-			if commonIgnoreDirs[d.Name()] {
+			if p != root && commonIgnoreDirs[d.Name()] {
 				return filepath.SkipDir
 			}
 			if p != root && isNestedWorktreeRoot(ctx, ws, p) {

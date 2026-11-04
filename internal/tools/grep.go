@@ -65,18 +65,19 @@ func (t *GrepTool) Execute(ctx context.Context, args string) (string, error) {
 	}
 	params.Path = resolved
 
-	if rgAvailable() && !preferNativeWalk(ctx, ws, params.Path) {
+	if rgAvailable() {
 		return t.execRipgrep(ctx, params.Pattern, params.Path, params.Include)
 	}
 	return t.grepNative(ctx, params.Pattern, params.Path, params.Include)
 }
+
+var grepResultLineRe = regexp.MustCompile(`^(.+?):\d+:`)
 
 func (t *GrepTool) execRipgrep(ctx context.Context, pattern, path, include string) (string, error) {
 	rgArgs := []string{"--no-heading", "--line-number", "--color", "never", "--no-messages", "-e", pattern}
 	if include != "" {
 		rgArgs = append(rgArgs, "--glob", include)
 	}
-	rgArgs = append(rgArgs, ripgrepIgnoreArgs(path)...)
 	rgArgs = append(rgArgs, "--", path)
 
 	ws := workspaceOf(t.WS, t.PV)
@@ -97,6 +98,22 @@ func (t *GrepTool) execRipgrep(ctx context.Context, pattern, path, include strin
 	if result == "" {
 		return "No matches found.", nil
 	}
+	filter := newNestedWorktreeFilter(ctx, ws, path)
+	lines := strings.Split(strings.TrimSpace(result), "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		if m := grepResultLineRe.FindStringSubmatch(line); m != nil && filter.excluded(m[1]) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if len(kept) == 0 {
+		return "No matches found.", nil
+	}
+	result = strings.Join(kept, "\n")
 	result = string(truncateOutput([]byte(result)))
 	return truncateResult(result), nil
 }
@@ -125,7 +142,7 @@ func (t *GrepTool) grepNative(ctx context.Context, pattern, path, include string
 			return nil
 		}
 		if d.IsDir() {
-			if commonIgnoreDirs[d.Name()] {
+			if p != path && commonIgnoreDirs[d.Name()] {
 				return filepath.SkipDir
 			}
 			if p != path && isNestedWorktreeRoot(ctx, ws, p) {

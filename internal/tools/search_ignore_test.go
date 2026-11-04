@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -68,25 +69,38 @@ func TestGlobNative_WorktreeRootStillSearchable(t *testing.T) {
 	}
 }
 
-// TestPreferNativeWalk_DetectsLinkedWorktree keeps the ripgrep dispatch
-// honest: a top-level linked worktree under an unknown name forces the
-// native walker, which can skip it structurally.
-func TestPreferNativeWalk_DetectsLinkedWorktree(t *testing.T) {
+// TestNestedWorktreeFilter_DropsNestedResults keeps the ripgrep path's
+// post-filter aligned with the native walker: a linked worktree under an
+// unknown name is excluded, while the real tree is kept.
+func TestNestedWorktreeFilter_DropsNestedResults(t *testing.T) {
 	tmp := dispatchSearchFixture(t)
-	if !preferNativeWalk(context.Background(), workspaceOf(nil, nil), tmp) {
-		t.Fatal("top-level linked worktree should force the native walker")
+	filter := newNestedWorktreeFilter(context.Background(), workspaceOf(nil, nil), tmp)
+	if !filter.excluded(filepath.Join(tmp, "custom-world", "hit.go")) {
+		t.Error("nested linked-worktree result should be excluded")
+	}
+	if filter.excluded(filepath.Join(tmp, "real", "real.go")) {
+		t.Error("real result must be kept")
 	}
 }
 
-func TestRipgrepIgnoreArgs_ExplicitRootWins(t *testing.T) {
-	inside := strings.Join(ripgrepIgnoreArgs(filepath.Join("repo", ".yaah")), " ")
-	if strings.Contains(inside, "!.yaah/**") || strings.Contains(inside, "!**/.yaah/**") {
-		t.Errorf("explicit root under .yaah must not be excluded:\n%s", inside)
+func TestNestedWorktreeFilter_ExplicitRootSearchAllowed(t *testing.T) {
+	tmp := dispatchSearchFixture(t)
+	root := filepath.Join(tmp, "custom-world")
+	filter := newNestedWorktreeFilter(context.Background(), workspaceOf(nil, nil), root)
+	if filter.excluded(filepath.Join(root, "hit.go")) {
+		t.Error("an explicit search rooted at a worktree must keep its results")
 	}
+}
 
-	normal := strings.Join(ripgrepIgnoreArgs("repo"), " ")
-	if !strings.Contains(normal, "!**/.yaah/**") {
-		t.Errorf("normal search should exclude .yaah:\n%s", normal)
+func TestGlobNative_ExplicitIgnoredRootStillSearchable(t *testing.T) {
+	tmp := dispatchSearchFixture(t)
+	root := filepath.Join(tmp, ".yaah", "shepherd-worktrees", "proposal-1")
+	out, err := (&GlobTool{}).globNative(context.Background(), "*.go", root)
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	if !strings.Contains(out, "hit.go") {
+		t.Errorf("an explicit search of an ignored-looking root must work: %q", out)
 	}
 }
 
@@ -106,6 +120,83 @@ func TestGrepNative_SkipsDispatchWorlds(t *testing.T) {
 		if strings.Contains(out, stale) {
 			t.Errorf("grep descended into %s:\n%s", stale, out)
 		}
+	}
+}
+
+func TestGrepResultLineRe_ParsesWindowsPaths(t *testing.T) {
+	cases := []struct {
+		line string
+		file string
+	}{
+		{"real/real.go:3:// needle", "real/real.go"},
+		{`C:\repo\real.go:12:needle`, `C:\repo\real.go`},
+	}
+	for _, tc := range cases {
+		m := grepResultLineRe.FindStringSubmatch(tc.line)
+		if m == nil || m[1] != tc.file {
+			t.Errorf("grepResultLineRe(%q) = %v, want file %q", tc.line, m, tc.file)
+		}
+	}
+}
+
+// installFakeRipgrep puts a script named rg first on PATH. The script emits
+// one real result and one linked-worktree result, which lets the ripgrep path
+// be exercised deterministically on hosts without rg installed.
+func installFakeRipgrep(t *testing.T, root string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fake rg script uses a POSIX shell")
+	}
+	dir := t.TempDir()
+	script := `#!/bin/sh
+case "$1" in
+  --files)
+    printf '%s\n' "$FAKE_RG_ROOT/real/real.go" "$FAKE_RG_ROOT/custom-world/hit.go"
+    ;;
+  --no-heading)
+    printf '%s\n' "$FAKE_RG_ROOT/real/real.go:3:// needle" "$FAKE_RG_ROOT/custom-world/hit.go:3:// needle"
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(dir, "rg"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FAKE_RG_ROOT", root)
+}
+
+func TestGlobRipgrep_FiltersNestedWorktree(t *testing.T) {
+	tmp := dispatchSearchFixture(t)
+	installFakeRipgrep(t, tmp)
+	args, _ := json.Marshal(map[string]any{"pattern": "**/*.go", "path": tmp})
+	out, err := (&GlobTool{}).Execute(context.Background(), string(args))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	if strings.Contains(out, "custom-world") {
+		t.Errorf("ripgrep path returned a nested-worktree result:\n%s", out)
+	}
+	if !strings.Contains(out, filepath.Join("real", "real.go")) {
+		t.Errorf("ripgrep path dropped the real result:\n%s", out)
+	}
+}
+
+func TestGrepRipgrep_FiltersNestedWorktree(t *testing.T) {
+	tmp := dispatchSearchFixture(t)
+	installFakeRipgrep(t, tmp)
+	args, _ := json.Marshal(map[string]any{"pattern": "needle", "path": tmp})
+	out, err := (&GrepTool{}).Execute(context.Background(), string(args))
+	if err != nil {
+		t.Fatalf("grep: %v", err)
+	}
+	if strings.Contains(out, "custom-world") {
+		t.Errorf("ripgrep path returned a nested-worktree result:\n%s", out)
+	}
+	if got := strings.Count(out, "needle"); got != 1 {
+		t.Errorf("ripgrep path should keep exactly the real hit, got %d:\n%s", got, out)
 	}
 }
 
