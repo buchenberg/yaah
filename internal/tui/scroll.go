@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/observability"
@@ -76,6 +77,9 @@ func (t *App) buildItems(from, to, w int) []messages.Item {
 // canAppend reports whether the conversation view is eligible for the
 // incremental fast path: only new items at the tail, nothing mutated in
 // place, same width, no thinking-indicator line to reconcile.
+//
+// It says nothing about the chunk itself; refreshMessages additionally
+// refuses chunks that begin with "\n" (see there for why).
 func (t *App) canAppend(w, n int) bool {
 	return !t.needsFullRender.Load() &&
 		t.renderedWidth == w &&
@@ -99,14 +103,25 @@ func (t *App) refreshMessages() {
 	var formatDur, writeDur time.Duration
 	var msgLen int
 
+	// tview's TextView keeps an incremental line index: after a Draw it
+	// resumes parsing from the last indexed line when more bytes arrive
+	// via Write. A chunk that begins with "\n" is mis-parsed at that
+	// continuation boundary — the blank line between the previous item
+	// and the new text collapses into a single leading space on the
+	// response's first row. Every text item's chunk starts with "\n"
+	// (messages.Format), so those take the full-render path, which
+	// resets the index via SetText. Tool-line chunks start with content
+	// and keep the O(new) append path.
+	var chunk string
 	if t.canAppend(w, n) {
 		formatStart := time.Now()
-		chunk := messages.Format(t.buildItems(t.renderedItems, n, w), messages.Content{
+		chunk = messages.Format(t.buildItems(t.renderedItems, n, w), messages.Content{
 			Width: w,
 			Theme: t.Theme,
 		})
 		formatDur = time.Since(formatStart)
-
+	}
+	if chunk != "" && !strings.HasPrefix(chunk, "\n") {
 		writeStart := time.Now()
 		io.WriteString(t.Messages, chunk)
 		writeDur = time.Since(writeStart)

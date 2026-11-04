@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gdamore/tcell/v2"
 )
 
 // TestRefreshMessages_AppendsNewTailOnly verifies the incremental fast
@@ -37,6 +39,109 @@ func TestRefreshMessages_AppendsNewTailOnly(t *testing.T) {
 	}
 	if ui.renderedItems != 2 {
 		t.Fatalf("expected renderedItems=2, got %d", ui.renderedItems)
+	}
+}
+
+// msgColumn trims a painted row to the messages column, cutting at the
+// right pane's border glyph when present.
+func msgColumn(row string) string {
+	if i := strings.Index(row, "│"); i >= 0 {
+		row = row[:i]
+	}
+	return row
+}
+
+// TestRefreshMessages_ResponseChunkHasSeparator verifies the painted output
+// of a flushed assistant response: a blank line must separate it from the
+// preceding tool line, and its first row must carry no stray leading space.
+// This pins the tview incremental-reindex workaround in refreshMessages:
+// writing a chunk that begins with "\n" onto the TextView mis-renders the
+// separator as a one-space indent until the next full render fixes it.
+func TestRefreshMessages_ResponseChunkHasSeparator(t *testing.T) {
+	sim := tcell.NewSimulationScreen("UTF-8")
+	if err := sim.Init(); err != nil {
+		t.Fatalf("init simulation screen: %v", err)
+	}
+	defer sim.Fini()
+	sim.SetSize(120, 40)
+
+	ui := New("test")
+	ui.Root.SetRect(0, 0, 120, 40)
+	ui.Root.Draw(sim)
+
+	paint := func() []string {
+		ui.Root.Draw(sim)
+		sim.Show()
+		cells, w, _ := sim.GetContents()
+		rows := make([]string, 0, 40)
+		for y := 0; y < 40; y++ {
+			var b strings.Builder
+			for x := 0; x < w; x++ {
+				i := y*w + x
+				if i >= len(cells) || len(cells[i].Runes) == 0 {
+					b.WriteRune(' ')
+					continue
+				}
+				b.WriteRune(cells[i].Runes[0])
+			}
+			rows = append(rows, strings.TrimRight(b.String(), " "))
+		}
+		return rows
+	}
+
+	ui.appendMessage("comment on the bead please")
+	ui.AddToolStart("1", "bash", "bd comment yaah-95ri.7")
+	ui.AddToolEnd("1", "bash · bd comment", "ok")
+	ui.refreshMessages()
+
+	ui.tokenMu.Lock()
+	ui.pendingTokens.WriteString("Posted to the bead. Here's the complete picture — what the fix looks like and your stopgap.")
+	ui.isStreaming.Store(true)
+	ui.tokenMu.Unlock()
+	if !ui.flushPendingTokens() {
+		t.Fatalf("flush did not render the streamed response")
+	}
+	ui.refreshMessages()
+	rows := paint()
+
+	posted := -1
+	for i, r := range rows {
+		if strings.Contains(r, "Posted to the bead") {
+			posted = i
+			break
+		}
+	}
+	if posted < 2 {
+		t.Fatalf("response row not found in painted output: %v", rows)
+	}
+	if strings.HasPrefix(msgColumn(rows[posted]), " ") {
+		t.Errorf("response first row is visually indented by a stray space: %q", rows[posted])
+	}
+	if strings.TrimSpace(msgColumn(rows[posted-1])) != "" {
+		t.Errorf("no blank line between response and preceding tool line: %q / %q", rows[posted-2], rows[posted-1])
+	}
+	if !strings.Contains(msgColumn(rows[posted-2]), "✓") {
+		t.Errorf("expected tool line above the response separator: %q", rows[posted-2])
+	}
+
+	// The layout must be stable: a subsequent full render (forced by the
+	// next tool completing) may not shift or re-indent the response.
+	ui.AddToolStart("2", "bash", "git status")
+	ui.AddToolEnd("2", "bash · git status", "clean")
+	ui.refreshMessages()
+	rows2 := paint()
+	posted2 := -1
+	for i, r := range rows2 {
+		if strings.Contains(r, "Posted to the bead") {
+			posted2 = i
+			break
+		}
+	}
+	if posted2 != posted {
+		t.Errorf("response shifted between renders: %d -> %d", posted, posted2)
+	}
+	if posted2 >= 0 && strings.HasPrefix(msgColumn(rows2[posted2]), " ") {
+		t.Errorf("full render indented the response: %q", rows2[posted2])
 	}
 }
 
