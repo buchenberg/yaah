@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,6 +53,33 @@ func TestWriteTool_returnsErrorForMissingPath(t *testing.T) {
 	_, err := wt.Execute(context.Background(), `{"content":"hi"}`)
 	if err == nil {
 		t.Fatal("expected error for missing filePath")
+	}
+}
+
+// TestWriteTool_OutsideWorkspaceNamesPathAndRoot pins yaah-c688: the refusal
+// must name both the rejected target and the allowed root, and point at the
+// in-workspace scratch directory rather than leaving an opaque error.
+func TestWriteTool_OutsideWorkspaceNamesPathAndRoot(t *testing.T) {
+	ws := t.TempDir()
+	outside := t.TempDir()
+	if real, err := filepath.EvalSymlinks(ws); err == nil {
+		ws = real
+	}
+	if real, err := filepath.EvalSymlinks(outside); err == nil {
+		outside = real
+	}
+
+	wt := &WriteTool{PV: NewPathValidator(ws, false, nil)}
+	target := filepath.Join(outside, "evil.txt")
+	args, _ := json.Marshal(map[string]any{"content": "x", "filePath": target})
+	_, err := wt.Execute(context.Background(), string(args))
+	if err == nil {
+		t.Fatal("write outside workspace must fail")
+	}
+	for _, want := range []string{fmt.Sprintf("%q", target), fmt.Sprintf("%q", ws), "outside the workspace root", ".scratch/"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
 	}
 }
 

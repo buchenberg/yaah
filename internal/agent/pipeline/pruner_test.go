@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -425,5 +426,154 @@ func TestPruner_DefaultConfig(t *testing.T) {
 	}
 	if !p.cfg.ProtectedTools["delegate"] {
 		t.Errorf("ProtectedTools default should include 'delegate'")
+	}
+}
+
+// TestPruner_ProtectsNewestBatch pins yaah-e3qs acceptance #1: a batch of
+// four tool results in the newest turn is never stubbed, even while an older
+// result is pruned.
+func TestPruner_ProtectsNewestBatch(t *testing.T) {
+	p := NewPruner(PruneConfig{ProtectTokens: 100, MinReclaim: 1, MinTurns: 1})
+	var msgs []types.Message
+	msgs = append(msgs, types.SystemMsg("sys"))
+	msgs = append(msgs, turn("c_old", "read", 5000)...)
+	msgs = append(msgs, types.UserMsg("current task"))
+
+	calls := make([]types.ToolCall, 4)
+	for i := range calls {
+		calls[i] = types.ToolCall{
+			ID:       fmt.Sprintf("c%d", i),
+			Type:     "function",
+			Function: types.ToolCallFn{Name: "read", Arguments: fmt.Sprintf(`{"filePath":"f%d.go"}`, i)},
+		}
+	}
+	msgs = append(msgs, types.AssistantMsg("", calls))
+	for i := range calls {
+		msgs = append(msgs, bigToolResult(calls[i].ID, "read", 5000))
+	}
+
+	stats := p.Mark(msgs, "post_tool")
+	if !stats.Committed {
+		t.Fatalf("expected older result to commit a prune, got %+v", stats)
+	}
+	if !p.IsPruned("c_old") {
+		t.Errorf("older tool result should be pruned")
+	}
+	for i := range calls {
+		if p.IsPruned(calls[i].ID) {
+			t.Errorf("newest batch result %q must not be pruned", calls[i].ID)
+		}
+	}
+}
+
+// TestPruner_ShrinkRetainsExcerptAndIdentity pins yaah-e3qs acceptance #2 and
+// #3: the replacement names the tool + primary argument, keeps the first and
+// last lines, and reports the original byte count.
+func TestPruner_ShrinkRetainsExcerptAndIdentity(t *testing.T) {
+	p := NewPruner(PruneConfig{ProtectTokens: 1, MinReclaim: 1, MinTurns: 1})
+
+	var lines []string
+	for i := 0; i < 100; i++ {
+		lines = append(lines, fmt.Sprintf("line-%02d: %s", i, repeat("x", 40)))
+	}
+	content := strings.Join(lines, "\n")
+
+	msgs := []types.Message{
+		types.SystemMsg("sys"),
+		types.UserMsg("read the file"),
+		types.AssistantMsg("", []types.ToolCall{{
+			ID:       "c1",
+			Type:     "function",
+			Function: types.ToolCallFn{Name: "read", Arguments: `{"filePath":"src/main.go"}`},
+		}}),
+		types.ToolResultMsg("c1", "read", content),
+		types.UserMsg("thanks"),
+	}
+
+	if stats := p.Mark(msgs, "post_tool"); !stats.Committed {
+		t.Fatalf("expected commit, got %+v", stats)
+	}
+	out := p.Filter(msgs)
+	var got string
+	for _, m := range out {
+		if m.ToolCallID == "c1" {
+			got = m.Content
+		}
+	}
+	if got == content {
+		t.Fatal("pruned result was not shrunk")
+	}
+	for _, want := range []string{
+		"pruned",
+		"read",
+		"src/main.go",
+		fmt.Sprintf("%d bytes", len(content)),
+		"line-00",
+		"line-99",
+		"lines omitted",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("shrunk result missing %q:\n%s", want, got)
+		}
+	}
+	if !strings.HasPrefix(got, "[output pruned") {
+		head := got
+		if len(head) > 40 {
+			head = head[:40]
+		}
+		t.Errorf("notice should lead the replacement, got %q", head)
+	}
+}
+
+// TestPruner_SmallResultNotPruned keeps cheap results out of the pruned set:
+// stubbing a small result costs more than keeping it and forces a refetch.
+func TestPruner_SmallResultNotPruned(t *testing.T) {
+	p := NewPruner(PruneConfig{ProtectTokens: 1, MinReclaim: 1, MinTurns: 1})
+	small := repeat("x", pruneMinResultTokens*4-100)
+
+	msgs := []types.Message{
+		types.SystemMsg("sys"),
+		types.UserMsg("read"),
+		types.AssistantMsg("", []types.ToolCall{{
+			ID:       "c1",
+			Type:     "function",
+			Function: types.ToolCallFn{Name: "read", Arguments: `{"filePath":"small.go"}`},
+		}}),
+		types.ToolResultMsg("c1", "read", small),
+		types.UserMsg("next"),
+	}
+
+	stats := p.Mark(msgs, "post_tool")
+	if stats.Candidates != 0 || p.IsPruned("c1") {
+		t.Errorf("small result should not be a prune candidate, got %+v", stats)
+	}
+}
+
+// TestPruner_MinReclaimUsesNetExcerptCost pins the accounting fix: a result
+// just above the pruning floor can have a large full estimate but save very
+// little after its excerpt is substituted. MinReclaim must see the net saving.
+func TestPruner_MinReclaimUsesNetExcerptCost(t *testing.T) {
+	p := NewPruner(PruneConfig{ProtectTokens: 1, MinReclaim: 100, MinTurns: 1})
+	content := repeat("x", pruneMinResultTokens*4) // exactly at the floor
+
+	msgs := []types.Message{
+		types.SystemMsg("sys"),
+		types.UserMsg("read"),
+		types.AssistantMsg("", []types.ToolCall{{
+			ID:       "c1",
+			Type:     "function",
+			Function: types.ToolCallFn{Name: "read", Arguments: `{"filePath":"f.go"}`},
+		}}),
+		types.ToolResultMsg("c1", "read", content),
+		types.UserMsg("next"),
+	}
+
+	stats := p.Mark(msgs, "post_tool")
+	if stats.Committed || p.IsPruned("c1") {
+		t.Fatalf("net reclaim below MinReclaim must not commit, got %+v", stats)
+	}
+	if stats.ReclaimedTokens >= len(content)/4 {
+		t.Errorf("ReclaimedTokens should be net of excerpt cost: got %d, full estimate %d",
+			stats.ReclaimedTokens, len(content)/4)
 	}
 }

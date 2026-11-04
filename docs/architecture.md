@@ -733,15 +733,25 @@ the token threshold).
 ### Tier-0: Soft-prune (`Pruner`, `SoftPruneMiddleware`)
 
 Before compaction ever fires, the `SoftPruneMiddleware` reclaims context by
-eliding the *content* of stale tool-result messages. The tool message itself
-stays in the conversation (preserving the `tool_call_id` linkage required by
-the Chat Completions wire format), but its body is replaced with a compact
-placeholder:
+eliding most of the *content* of stale tool-result messages. The tool message
+itself stays in the conversation (preserving the `tool_call_id` linkage required
+by the Chat Completions wire format), but its body is replaced with a bounded
+excerpt: a notice naming the tool, its primary argument, and the original byte
+count, followed by the first 20 and last 10 lines (byte-capped so a single huge
+line cannot defeat the bound):
 
-> `[output pruned — 12345 chars omitted to save context; re-run the tool if you need it again]`
+> `[output pruned — 12345 bytes; read internal/tui/infopane/infopane.go]`
+> `<first lines ...>`
+> `[... 70 lines omitted ...]`
+> `<last lines ...>`
+
+Results smaller than 300 tokens are kept whole, and the newest tool-call batch
+is protected while it is still the tail of the conversation. Both avoid pruning
+something the model is about to use, which would force an identical refetch.
 
 The algorithm (`Pruner.Mark`) walks messages backwards from the most recent,
 shielding:
+- The newest tool-call batch (while no user message follows it)
 - The last `MinTurns` user turns (default 1)
 - The last `ProtectTokens` tokens of tool output (default 2,000)
 - Results from `ProtectedTools` (default: `skill`, `delegate`)

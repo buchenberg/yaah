@@ -92,12 +92,16 @@ func (t *ReplaceTool) Execute(ctx context.Context, args string) (string, error) 
 	totalMatches := 0
 	totalChanged := 0
 
-	walkErr := walkWorkspace(ctx, ws, params.Path, func(p string, d fs.DirEntry, err error) error {
+	root := params.Path
+	walkErr := walkWorkspace(ctx, ws, root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
 		if d.IsDir() {
-			if commonIgnoreDirs[d.Name()] {
+			if p != root && commonIgnoreDirs[d.Name()] {
+				return filepath.SkipDir
+			}
+			if p != root && isNestedWorktreeRoot(ctx, ws, p) {
 				return filepath.SkipDir
 			}
 			return nil

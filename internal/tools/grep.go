@@ -66,13 +66,17 @@ func (t *GrepTool) Execute(ctx context.Context, args string) (string, error) {
 	params.Path = resolved
 
 	if rgAvailable() {
-		return t.execRipgrep(ctx, params.Pattern, params.Path, params.Include)
+		if filter, derr := newNestedWorktreeFilter(ctx, ws, params.Path); derr == nil {
+			return t.execRipgrep(ctx, params.Pattern, params.Path, params.Include, filter)
+		}
+		// Worktree discovery failed; the native walker remains the structural
+		// fallback and still skips nested worktrees.
 	}
 	return t.grepNative(ctx, params.Pattern, params.Path, params.Include)
 }
 
-func (t *GrepTool) execRipgrep(ctx context.Context, pattern, path, include string) (string, error) {
-	rgArgs := []string{"--no-heading", "--line-number", "--color", "never", "--no-messages", "-e", pattern}
+func (t *GrepTool) execRipgrep(ctx context.Context, pattern, path, include string, filter *nestedWorktreeFilter) (string, error) {
+	rgArgs := []string{"--no-heading", "--line-number", "--color", "never", "--no-messages", "--null", "-e", pattern}
 	if include != "" {
 		rgArgs = append(rgArgs, "--glob", include)
 	}
@@ -96,6 +100,30 @@ func (t *GrepTool) execRipgrep(ctx context.Context, pattern, path, include strin
 	if result == "" {
 		return "No matches found.", nil
 	}
+	lines := strings.Split(strings.TrimSpace(result), "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		// With --null the path is NUL-terminated, so the file/rest split is
+		// unambiguous even when a file name contains a colon.
+		file, rest, ok := strings.Cut(line, "\x00")
+		if !ok {
+			// A line without a path separator (e.g. a binary-file note) is kept.
+			kept = append(kept, line)
+			continue
+		}
+		if filter.excluded(file) {
+			continue
+		}
+		kept = append(kept, file+":"+rest)
+	}
+
+	if len(kept) == 0 {
+		return "No matches found.", nil
+	}
+	result = strings.Join(kept, "\n")
 	result = string(truncateOutput([]byte(result)))
 	return truncateResult(result), nil
 }
@@ -124,7 +152,10 @@ func (t *GrepTool) grepNative(ctx context.Context, pattern, path, include string
 			return nil
 		}
 		if d.IsDir() {
-			if commonIgnoreDirs[d.Name()] {
+			if p != path && commonIgnoreDirs[d.Name()] {
+				return filepath.SkipDir
+			}
+			if p != path && isNestedWorktreeRoot(ctx, ws, p) {
 				return filepath.SkipDir
 			}
 			return nil

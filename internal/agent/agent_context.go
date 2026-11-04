@@ -27,7 +27,7 @@ func (l *Loop) EstimatedTokens() int {
 //
 //  1. repairOrphans — drop orphaned tool results, synthesize results for
 //     interrupted tool calls (allocates a fresh slice).
-//  2. applyPruning  — stub soft-pruned tool results (Tier-0 context reclaim).
+//  2. applyPruning  — replace soft-pruned tool results with bounded excerpts (Tier-0 context reclaim).
 //
 // ReasoningContent is NOT stripped: thinking-mode providers (e.g. DeepSeek)
 // require it to be passed back in every assistant message. Stripping it

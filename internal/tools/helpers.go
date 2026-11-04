@@ -1,8 +1,11 @@
 package tools
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -53,14 +56,252 @@ func rgAvailable() bool {
 
 // commonIgnoreDirs lists directories that are nearly always safe to skip
 // during filesystem walks (glob, grep, ls).
+//
+// Harness-owned state and retained dispatch worlds are included: they hold
+// stale copies of the repository, so searching them returns duplicate hits
+// with wrong line numbers. dist/build/bin/obj are deliberately NOT listed —
+// they are valid Go package names and a project may keep source there.
 var commonIgnoreDirs = map[string]bool{
 	".git": true, "node_modules": true, ".venv": true, "venv": true,
 	"__pycache__": true, ".mypy_cache": true, ".pytest_cache": true,
-	".tox": true, ".eggs": true, "dist": true, "build": true,
+	".tox": true, ".eggs": true,
 	".next": true, ".nuxt": true, ".output": true,
 	"vendor": true, ".idea": true, ".vscode": true,
 	"target": true, ".dart_tool": true, ".turbo": true,
-	"bin": true, "obj": true,
+
+	// yaah state and dispatch worlds (retained worktrees, proposals, scratch).
+	".yaah": true, ".kilo": true, ".scratch": true,
+	// Other coding-tool state directories observed in the wild.
+	".entire": true, ".serena": true, ".qwen": true, ".runtime": true,
+	".sandbox": true, ".playwright-mcp": true, ".release": true,
+	".codex": true, ".claude": true, ".ghost": true, ".hermes": true,
+}
+
+// isNestedWorktreeRoot reports whether path is the root of a linked git
+// worktree nested inside the directory being walked. A linked worktree has a
+// .git file (not a directory) whose gitdir points under <main>/.git/worktrees.
+// Skipping it structurally covers dispatch worlds mounted under a name we do
+// not know, while still letting an explicit search of the worktree root work.
+// A submodule also carries a .git file (pointing under .git/modules), but its
+// sources are a legitimate part of the tree and must not be dropped.
+//
+// The probe is one Lstat per directory (plus a ReadFile only for directories
+// that actually have a .git file). commonIgnoreDirs is checked before this, so
+// the heavy dependency trees are skipped without the probe.
+func isNestedWorktreeRoot(ctx context.Context, ws Workspace, path string) bool {
+	gitPath := ws.Join(path, ".git")
+	info, err := ws.Lstat(ctx, gitPath)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	data, err := ws.ReadFile(ctx, gitPath)
+	if err != nil {
+		return false
+	}
+	return isWorktreeGitdir(string(data))
+}
+
+// isWorktreeGitdir reports whether a .git file's gitdir points at a linked
+// worktree (…/.git/worktrees/<id>) rather than a submodule
+// (…/.git/modules/<path>). The admin directory — worktrees for a worktree,
+// modules for a submodule — sits directly under the repository's git
+// directory, so the check locates the git directory (a ".git"/"*.git"
+// component, excluding the trailing worktree id) and inspects the component
+// after it. A submodule path that itself contains a "worktrees" segment
+// (e.g. vendor/worktrees/browser → .git/modules/vendor/worktrees/browser)
+// therefore stays a submodule.
+//
+// A git dir relocated with --separate-git-dir has no .git component and is
+// not detected. Failing open (showing duplicate hits) is safer than risking
+// a submodule's sources being dropped.
+func isWorktreeGitdir(content string) bool {
+	line := strings.TrimSpace(content)
+	if !strings.HasPrefix(line, "gitdir:") {
+		return false
+	}
+	p := strings.TrimSpace(strings.TrimPrefix(line, "gitdir:"))
+	p = strings.ReplaceAll(p, "\\", "/")
+	parts := strings.Split(strings.Trim(p, "/"), "/")
+	for i := len(parts) - 2; i >= 0; i-- {
+		if parts[i] == ".git" || strings.HasSuffix(parts[i], ".git") {
+			return parts[i+1] == "worktrees"
+		}
+	}
+	return false
+}
+
+// wsPath* helpers route path manipulation through the workspace's own path
+// semantics. A sandbox is POSIX regardless of the host OS (workspace.go:71),
+// so applying filepath.Clean/Dir/IsAbs/Rel to sandbox paths would rewrite
+// "/root/a" as "\root\a" on a Windows host and break the .git probe.
+func wsPathClean(ws Workspace, p string) string {
+	if ws.Local() {
+		return filepath.Clean(p)
+	}
+	return path.Clean(p)
+}
+
+func wsPathDir(ws Workspace, p string) string {
+	if ws.Local() {
+		return filepath.Dir(p)
+	}
+	return path.Dir(p)
+}
+
+func wsPathIsAbs(ws Workspace, p string) bool {
+	if ws.Local() {
+		return filepath.IsAbs(p)
+	}
+	return path.IsAbs(p)
+}
+
+func wsPathRel(ws Workspace, base, target string) (string, error) {
+	if ws.Local() {
+		return filepath.Rel(base, target)
+	}
+	return posixRel(base, target)
+}
+
+// posixRel is the POSIX-path analogue of filepath.Rel, for sandbox workspaces
+// (the path package has no Rel).
+func posixRel(base, target string) (string, error) {
+	base = path.Clean(base)
+	target = path.Clean(target)
+	if base == target {
+		return ".", nil
+	}
+	b := splitPOSIXPath(base)
+	t := splitPOSIXPath(target)
+	i := 0
+	for i < len(b) && i < len(t) && b[i] == t[i] {
+		i++
+	}
+	var parts []string
+	for j := i; j < len(b); j++ {
+		parts = append(parts, "..")
+	}
+	parts = append(parts, t[i:]...)
+	rel := strings.Join(parts, "/")
+	if rel == "" {
+		return ".", nil
+	}
+	return rel, nil
+}
+
+// splitPOSIXPath splits a clean POSIX path into non-empty components. The root
+// "/" yields nil, so posixRel("/", child) produces the child without a leading
+// "..".
+func splitPOSIXPath(p string) []string {
+	if p == "/" {
+		return nil
+	}
+	p = strings.Trim(p, "/")
+	if p == "" {
+		return nil
+	}
+	return strings.Split(p, "/")
+}
+
+func wsPathWithin(ws Workspace, root, child string) bool {
+	rel, err := wsPathRel(ws, root, child)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return true
+	}
+	sep := string(os.PathSeparator)
+	if !ws.Local() {
+		sep = "/"
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+sep)
+}
+
+// nestedWorktreeFilter drops ripgrep results that live under a linked
+// worktree nested below the search root. Ripgrep's glob language cannot
+// express "this directory contains a linked worktree", so newNestedWorktreeFilter
+// discovers the set of nested roots in one pass (ripgrep listing the .git
+// files whose gitdir points under .git/worktrees) and excluded() then checks a
+// result's ancestors in memory against that set without a per-directory Lstat.
+type nestedWorktreeFilter struct {
+	ws    Workspace
+	root  string
+	roots map[string]bool
+}
+
+func newNestedWorktreeFilter(ctx context.Context, ws Workspace, root string) (*nestedWorktreeFilter, error) {
+	f := &nestedWorktreeFilter{ws: ws, root: wsPathClean(ws, root), roots: make(map[string]bool)}
+	if !rgAvailable() {
+		return f, nil
+	}
+	// List every .git file under visible directories, then read each one and
+	// keep only the linked worktrees via isWorktreeGitdir — the same check the
+	// native walker uses. --hidden reveals the .git file itself (a dotfile);
+	// !**/.*/** keeps the pass from descending into hidden directories, which
+	// the search skips anyway.
+	res, err := ws.Exec(ctx, ExecRequest{Command: "rg", Args: []string{
+		"--files", "--hidden", "--glob", "**/.git", "--glob", "!**/.*/**",
+		"--no-messages", "--", root,
+	}})
+	if res.ExitCode == 1 {
+		return f, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if res.ExitCode != 0 {
+		return nil, fmt.Errorf("rg worktree discovery exited %d", res.ExitCode)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(res.Stdout), "\n") {
+		if line == "" {
+			continue
+		}
+		p := line
+		if !wsPathIsAbs(ws, p) {
+			if resolved, rerr := ws.ResolvePath(p); rerr == nil {
+				p = resolved
+			}
+		}
+		data, rerr := ws.ReadFile(ctx, p)
+		if rerr != nil || !isWorktreeGitdir(string(data)) {
+			continue
+		}
+		parent := wsPathClean(ws, wsPathDir(ws, p))
+		if !wsPathWithin(ws, f.root, parent) || parent == f.root {
+			continue
+		}
+		f.roots[parent] = true
+	}
+	return f, nil
+}
+
+func (f *nestedWorktreeFilter) excluded(file string) bool {
+	if len(f.roots) == 0 {
+		return false
+	}
+	p := file
+	if !wsPathIsAbs(f.ws, p) {
+		if resolved, err := f.ws.ResolvePath(p); err == nil {
+			p = resolved
+		}
+	}
+	dir := wsPathClean(f.ws, wsPathDir(f.ws, p))
+	for {
+		if dir == f.root {
+			return false
+		}
+		if f.roots[dir] {
+			return true
+		}
+		if !wsPathWithin(f.ws, f.root, dir) {
+			return false
+		}
+		parent := wsPathDir(f.ws, dir)
+		if parent == dir {
+			return false
+		}
+		dir = wsPathClean(f.ws, parent)
+	}
 }
 
 // binaryExtensions is a rough set of extensions that should be skipped

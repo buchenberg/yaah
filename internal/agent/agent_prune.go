@@ -10,7 +10,7 @@ import (
 )
 
 // applyPruning returns the message slice to send to the provider, with
-// soft-pruned tool results replaced by compact stubs. It is a no-op
+// soft-pruned tool results replaced by bounded excerpts. It is a no-op
 // (returns the input slice unchanged) when no Pruner is attached or
 // nothing has been pruned — the Pruner.Filter fast path returns the same
 // backing array, so the common early-session case allocates nothing.
