@@ -1,6 +1,11 @@
 # Changelog
 
-## [0.132.6](https://github.com/buchenberg/yaah/compare/v0.132.5...v0.132.6) (2026-11-04)
+## [0.133.0](https://github.com/buchenberg/yaah/compare/v0.132.5...v0.133.0) (2026-11-04)
+
+
+### Features
+
+* kernel-first session deletion (retention wiring, yaah-1e6g) ([a4a9489](https://github.com/buchenberg/yaah/commit/a4a94899bc58984fb8a27736a74a367d945a92e3))
 
 
 ### Bug Fixes
@@ -8,6 +13,8 @@
 * **agent:** address review round 2 — skipped-method rendering, nil-resp guard, adaptive neutrality ([ecfcf07](https://github.com/buchenberg/yaah/commit/ecfcf077df471be3f312bdf3a0204a696cd68dfb))
 * **agent:** review fixes — no summary install over unchanged history; length reject on chunk/merge paths ([6612d17](https://github.com/buchenberg/yaah/commit/6612d1763aa56cfa4f0b272e4223d045bda2adf7))
 * **agent:** tune compaction semantic engine per 2026-11 audit ([7bbb604](https://github.com/buchenberg/yaah/commit/7bbb604aa77e06ff5f4db3d70bcad450f131d364))
+* review round 2 on retention wiring (yaah-1e6g) ([39ded62](https://github.com/buchenberg/yaah/commit/39ded622ff66a8bbc2f7a4751d0b08a7b9e78437))
+* round-3 review findings (sweep guard, unknown-id normalization) ([02c0b13](https://github.com/buchenberg/yaah/commit/02c0b138ed02e267295f09483f6f9fcb910c7a70))
 
 ## [0.132.5](https://github.com/buchenberg/yaah/compare/v0.132.4...v0.132.5) (2026-11-04)
 
