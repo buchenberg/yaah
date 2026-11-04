@@ -146,6 +146,7 @@ func (t *App) refreshMessages() {
 		t.Messages.SetText(msg)
 		writeDur = time.Since(writeStart)
 
+		t.fullRenderCount++
 		t.renderedItems = n
 		t.renderedWidth = w
 		t.needsFullRender.Store(false)

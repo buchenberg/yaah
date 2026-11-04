@@ -158,6 +158,11 @@ type App struct {
 	renderedItems int
 	renderedWidth int
 
+	// fullRenderCount counts refreshMessages passes that rebuilt the
+	// buffer via SetText instead of appending. Test-visible so render
+	// tests can prove which branch ran.
+	fullRenderCount int
+
 	// Sticky prompt-header state (QueueUpdateDraw ONLY). promptAnchors
 	// maps each user prompt item to its estimated first painted row in
 	// the Messages buffer; reconcilePromptPin derives the pinned header

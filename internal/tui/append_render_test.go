@@ -150,8 +150,9 @@ func TestRefreshMessages_ResponseChunkHasSeparator(t *testing.T) {
 
 // TestRefreshMessages_ToolChunkAppends verifies the tool-line fast path:
 // a batch whose first new item is a tool block is appended onto the
-// existing buffer (append branch taken, existing text preserved as a
-// prefix) rather than rebuilt via SetText.
+// existing buffer — the append branch is proven by fullRenderCount not
+// moving (a SetText rebuild would satisfy a prefix assertion anyway,
+// since Format reproduces items 0..renderedItems verbatim).
 func TestRefreshMessages_ToolChunkAppends(t *testing.T) {
 	ui := New("test")
 
@@ -159,6 +160,10 @@ func TestRefreshMessages_ToolChunkAppends(t *testing.T) {
 	ui.AddToolStart("1", "bash", "ls")
 	ui.refreshMessages()
 	before := ui.Messages.GetText(true)
+	fullRenders := ui.fullRenderCount
+	if fullRenders != 1 {
+		t.Fatalf("expected the base render to be one full rebuild, got %d", fullRenders)
+	}
 
 	ui.AddToolStart("2", "grep", "pattern")
 	if ui.needsFullRender.Load() {
@@ -166,6 +171,9 @@ func TestRefreshMessages_ToolChunkAppends(t *testing.T) {
 	}
 	ui.refreshMessages()
 
+	if ui.fullRenderCount != fullRenders {
+		t.Fatalf("tool chunk took the full-render path (%d rebuilds, want %d)", ui.fullRenderCount, fullRenders)
+	}
 	after := ui.Messages.GetText(true)
 	if !strings.HasPrefix(after, before) {
 		t.Fatalf("append path rewrote existing content:\nbefore=%q\nafter=%q", before, after)
@@ -181,15 +189,30 @@ func TestRefreshMessages_ToolChunkAppends(t *testing.T) {
 
 // TestRefreshMessages_MixedBatchAppendsToolChunk verifies a batch that
 // starts with a tool block but contains a later text item (e.g. a tool
-// start coalesced with a flush): the batch is appended and the text
-// item's blank-line separator survives, since only the batch's very
-// first cluster matters to tview's resumed parse.
+// start coalesced with a flush). Buffer-level assertions prove the text
+// item kept its separator; the painted-rows assertions prove the
+// paint-time behavior of the tview resumed parse — the whole point of
+// the append eligibility guard — since GetText alone cannot see
+// paint-time reindexing.
 func TestRefreshMessages_MixedBatchAppendsToolChunk(t *testing.T) {
+	sim := tcell.NewSimulationScreen("UTF-8")
+	if err := sim.Init(); err != nil {
+		t.Fatalf("init simulation screen: %v", err)
+	}
+	defer sim.Fini()
+	sim.SetSize(120, 40)
+
 	ui := New("test")
+	ui.Root.SetRect(0, 0, 120, 40)
+	// Warm the layout before any render, so the first full render runs at
+	// the pane's real width and the drawing below does not trigger tview's
+	// width-change reindex (which would fresh-parse instead of continuing).
+	ui.Root.Draw(sim)
 
 	ui.appendMessage("run something")
 	ui.refreshMessages()
-	before := ui.Messages.GetText(true)
+	ui.Root.Draw(sim)
+	fullRenders := ui.fullRenderCount
 
 	// Tool added first, then a streamed response flushed, with no
 	// refresh in between — one mixed tail batch.
@@ -205,13 +228,54 @@ func TestRefreshMessages_MixedBatchAppendsToolChunk(t *testing.T) {
 		t.Fatalf("mixed batch must not force a full rebuild")
 	}
 	ui.refreshMessages()
-
-	after := ui.Messages.GetText(true)
-	if !strings.HasPrefix(after, before) {
-		t.Fatalf("append path rewrote existing content:\nbefore=%q\nafter=%q", before, after)
+	if ui.fullRenderCount != fullRenders {
+		t.Fatalf("mixed batch took the full-render path (%d rebuilds, want %d)", ui.fullRenderCount, fullRenders)
 	}
-	if !strings.Contains(after, "\n\nthe streamed answer") {
-		t.Fatalf("text item lost its blank-line separator; got %q", after)
+
+	// Paint through the continuation parse and assert the text item's
+	// blank-line separator survived: no leading space on its first row,
+	// blank row between it and the tool line above.
+	ui.Root.Draw(sim)
+	sim.Show()
+	cells, w, _ := sim.GetContents()
+	rows := make([]string, 0, 40)
+	for y := 0; y < 40; y++ {
+		var b strings.Builder
+		for x := 0; x < w; x++ {
+			i := y*w + x
+			if i >= len(cells) || len(cells[i].Runes) == 0 {
+				b.WriteRune(' ')
+				continue
+			}
+			b.WriteRune(cells[i].Runes[0])
+		}
+		rows = append(rows, strings.TrimRight(b.String(), " "))
+	}
+
+	answer := -1
+	for i, r := range rows {
+		if strings.Contains(r, "the streamed answer") {
+			answer = i
+			break
+		}
+	}
+	if answer < 2 {
+		t.Fatalf("streamed answer row not painted: %v", rows)
+	}
+	if strings.HasPrefix(msgColumn(rows[answer]), " ") {
+		t.Errorf("mixed batch re-collapsed the separator: %q", rows[answer])
+	}
+	if strings.TrimSpace(msgColumn(rows[answer-1])) != "" {
+		t.Errorf("no blank row between tool line and appended text: %q / %q", rows[answer-2], rows[answer-1])
+	}
+	if !strings.Contains(msgColumn(rows[answer-2]), "💻") {
+		t.Errorf("expected tool line above the separator: %q", rows[answer-2])
+	}
+
+	// Buffer-level: append preserved prior content verbatim.
+	after := ui.Messages.GetText(true)
+	if !strings.Contains(after, "run something") {
+		t.Fatalf("append path dropped existing content: %q", after)
 	}
 }
 
