@@ -1216,7 +1216,7 @@ func TestForceCompact_ReportsSummaryAndMethod(t *testing.T) {
 
 // TestCompactContext_emptyOldFitsTail: the whole conversation fits the
 // preserve tail while the message-count trigger forces the pass (token
-// estimates stay under target — window 4000, ~340 estimated tokens), so
+// estimates stay under target — window 4000, ~270 estimated tokens), so
 // this exercises the CompactMaxMessages path that motivated the guard. The
 // compact provider is still called, but the summary must NOT install over
 // unchanged history — that grew context (kilo review, yaah-pcd2). The pass
