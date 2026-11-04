@@ -65,7 +65,7 @@ func (t *GrepTool) Execute(ctx context.Context, args string) (string, error) {
 	}
 	params.Path = resolved
 
-	if rgAvailable() {
+	if rgAvailable() && !preferNativeWalk(ctx, ws, params.Path) {
 		return t.execRipgrep(ctx, params.Pattern, params.Path, params.Include)
 	}
 	return t.grepNative(ctx, params.Pattern, params.Path, params.Include)
@@ -76,6 +76,7 @@ func (t *GrepTool) execRipgrep(ctx context.Context, pattern, path, include strin
 	if include != "" {
 		rgArgs = append(rgArgs, "--glob", include)
 	}
+	rgArgs = append(rgArgs, ripgrepIgnoreArgs(path)...)
 	rgArgs = append(rgArgs, "--", path)
 
 	ws := workspaceOf(t.WS, t.PV)

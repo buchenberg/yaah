@@ -64,7 +64,7 @@ func (t *GlobTool) Execute(ctx context.Context, args string) (string, error) {
 	}
 	params.Path = resolved
 
-	if rgAvailable() {
+	if rgAvailable() && !preferNativeWalk(ctx, ws, params.Path) {
 		return t.globRipgrep(ctx, params.Pattern, params.Path)
 	}
 	return t.globNative(ctx, params.Pattern, params.Path)
@@ -72,7 +72,9 @@ func (t *GlobTool) Execute(ctx context.Context, args string) (string, error) {
 
 func (t *GlobTool) globRipgrep(ctx context.Context, pattern, path string) (string, error) {
 	pattern = filepath.ToSlash(pattern)
-	rgArgs := []string{"--files", "--glob", pattern, "--no-messages", "--", path}
+	rgArgs := []string{"--files", "--glob", pattern, "--no-messages"}
+	rgArgs = append(rgArgs, ripgrepIgnoreArgs(path)...)
+	rgArgs = append(rgArgs, "--", path)
 
 	ws := workspaceOf(t.WS, t.PV)
 	res, err := ws.Exec(ctx, ExecRequest{Command: "rg", Args: rgArgs})

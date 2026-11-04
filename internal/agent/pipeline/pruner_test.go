@@ -507,7 +507,7 @@ func TestPruner_ShrinkRetainsExcerptAndIdentity(t *testing.T) {
 		"pruned",
 		"read",
 		"src/main.go",
-		fmt.Sprintf("%d chars", len(content)),
+		fmt.Sprintf("%d bytes", len(content)),
 		"line-00",
 		"line-99",
 		"lines omitted",
@@ -546,5 +546,34 @@ func TestPruner_SmallResultNotPruned(t *testing.T) {
 	stats := p.Mark(msgs, "post_tool")
 	if stats.Candidates != 0 || p.IsPruned("c1") {
 		t.Errorf("small result should not be a prune candidate, got %+v", stats)
+	}
+}
+
+// TestPruner_MinReclaimUsesNetExcerptCost pins the accounting fix: a result
+// just above the pruning floor can have a large full estimate but save very
+// little after its excerpt is substituted. MinReclaim must see the net saving.
+func TestPruner_MinReclaimUsesNetExcerptCost(t *testing.T) {
+	p := NewPruner(PruneConfig{ProtectTokens: 1, MinReclaim: 100, MinTurns: 1})
+	content := repeat("x", pruneMinResultTokens*4) // exactly at the floor
+
+	msgs := []types.Message{
+		types.SystemMsg("sys"),
+		types.UserMsg("read"),
+		types.AssistantMsg("", []types.ToolCall{{
+			ID:       "c1",
+			Type:     "function",
+			Function: types.ToolCallFn{Name: "read", Arguments: `{"filePath":"f.go"}`},
+		}}),
+		types.ToolResultMsg("c1", "read", content),
+		types.UserMsg("next"),
+	}
+
+	stats := p.Mark(msgs, "post_tool")
+	if stats.Committed || p.IsPruned("c1") {
+		t.Fatalf("net reclaim below MinReclaim must not commit, got %+v", stats)
+	}
+	if stats.ReclaimedTokens >= len(content)/4 {
+		t.Errorf("ReclaimedTokens should be net of excerpt cost: got %d, full estimate %d",
+			stats.ReclaimedTokens, len(content)/4)
 	}
 }

@@ -740,7 +740,7 @@ excerpt: a notice naming the tool, its primary argument, and the original byte
 count, followed by the first 20 and last 10 lines (byte-capped so a single huge
 line cannot defeat the bound):
 
-> `[output pruned — 12345 chars; read internal/tui/infopane/infopane.go]`
+> `[output pruned — 12345 bytes; read internal/tui/infopane/infopane.go]`
 > `<first lines ...>`
 > `[... 70 lines omitted ...]`
 > `<last lines ...>`

@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,7 +76,7 @@ func TestWriteTool_OutsideWorkspaceNamesPathAndRoot(t *testing.T) {
 	if err == nil {
 		t.Fatal("write outside workspace must fail")
 	}
-	for _, want := range []string{target, ws, "outside the workspace root", ".scratch/"} {
+	for _, want := range []string{fmt.Sprintf("%q", target), fmt.Sprintf("%q", ws), "outside the workspace root", ".scratch/"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q missing %q", err.Error(), want)
 		}

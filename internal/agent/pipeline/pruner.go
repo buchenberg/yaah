@@ -70,7 +70,7 @@ type PruneStats struct {
 	Reason           string // "post_tool" | "post_compaction" | "payload_limit"
 	Candidates       int    // tool messages considered beyond the protect window
 	Marked           int    // tool messages added to the pruned set this call
-	ReclaimedTokens  int    // tokens estimated reclaimed this call
+	ReclaimedTokens  int    // tokens estimated reclaimed this call, net of excerpt cost
 	ProtectedSkipped int    // candidates skipped due to ProtectedTools
 	Committed        bool   // false if ReclaimedTokens <= MinReclaim
 	TotalMarked      int    // current size of the pruned set (live)
@@ -124,11 +124,18 @@ func estimateToolTokens(m types.Message) int {
 	return t
 }
 
+// estimateTextTokens is the same /4 heuristic without the 10-token floor,
+// used to subtract an excerpt's cost from the reclaim estimate.
+func estimateTextTokens(s string) int {
+	return len(s) / 4
+}
+
 type pruneCandidate struct {
 	id      string
 	name    string
 	content string
-	tokens  int
+	reclaim int    // tokens attributable to this result beyond the protect window
+	preview string // cached replacement, built once before commit
 }
 
 // Mark walks messages backwards from the most recent, deciding which stale
@@ -145,7 +152,8 @@ type pruneCandidate struct {
 //     and the first pruned block are still considered. The system-message
 //     boundary (compaction summary) is the walk's only hard termination
 //     guarantee; without a prior compaction the walk scans to index 0.
-//   - A candidate is only committed if total reclaim exceeds MinReclaim.
+//   - A candidate is only committed if net reclaim (after excerpt cost)
+//     exceeds MinReclaim.
 func (p *Pruner) Mark(messages []types.Message, reason string) PruneStats {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -238,7 +246,7 @@ func (p *Pruner) Mark(messages []types.Message, reason string) PruneStats {
 			id:      m.ToolCallID,
 			name:    m.Name,
 			content: m.Content,
-			tokens:  est,
+			reclaim: reclaimable,
 		})
 	}
 
@@ -254,25 +262,47 @@ func (p *Pruner) Mark(messages []types.Message, reason string) PruneStats {
 		return stats
 	}
 
+	// Build each excerpt once and charge its cost against the reclaim. The
+	// replacement is no longer near-empty, so using the full original
+	// estimate would overstate the saving and let MinReclaim commit a prune
+	// that barely shrinks the turn.
 	calls := toolCallIndex(messages)
-	for _, c := range candidates {
-		p.pruned[c.id] = true
+	actualReclaim := 0
+	for i := range candidates {
+		c := &candidates[i]
 		call := calls[c.id]
 		name := c.name
 		if name == "" {
 			name = call.Function.Name
 		}
-		// Build the excerpt once, at commit time. Filter runs on every
-		// provider request; regenerating the same preview there would turn a
-		// one-off slice into a per-request scan of every pruned payload.
-		p.previews[c.id] = shrinkToolResult(c.content, name, call.Function.Arguments)
+		c.preview = shrinkToolResult(c.content, name, call.Function.Arguments)
+		c.reclaim -= estimateTextTokens(c.preview)
+		if c.reclaim < 0 {
+			c.reclaim = 0
+		}
+		actualReclaim += c.reclaim
+	}
+	stats.ReclaimedTokens = actualReclaim
+
+	if actualReclaim <= p.cfg.MinReclaim {
+		stats.Committed = false
+		stats.TotalMarked = len(p.pruned)
+		stats.CumMarked = p.cumMarked
+		stats.CumReclaimed = p.cumReclaimed
+		p.last = stats
+		return stats
+	}
+
+	for _, c := range candidates {
+		p.pruned[c.id] = true
+		p.previews[c.id] = c.preview
 	}
 	stats.Marked = len(candidates)
 	stats.Committed = true
 	stats.TotalMarked = len(p.pruned)
 
 	p.cumMarked += len(candidates)
-	p.cumReclaimed += reclaim
+	p.cumReclaimed += actualReclaim
 	stats.CumMarked = p.cumMarked
 	stats.CumReclaimed = p.cumReclaimed
 
@@ -281,7 +311,7 @@ func (p *Pruner) Mark(messages []types.Message, reason string) PruneStats {
 }
 
 // Filter returns a copy of messages with pruned tool-result Content
-// replaced by a compact stub. Role/Name/ToolCallID are preserved so
+// replaced by a bounded excerpt. Role/Name/ToolCallID are preserved so
 // tool_call_id linkage required by the Chat Completions wire format
 // stays intact (the tool message is never removed). Fast path: when
 // nothing is pruned, the input slice is returned unchanged (zero alloc).
@@ -360,7 +390,7 @@ func pruneNotice(size int, toolName, primary string) string {
 	if primary != "" {
 		label += " " + primary
 	}
-	return pruneNoticePrefix + strconv.Itoa(size) + " chars; " + label + "]"
+	return pruneNoticePrefix + strconv.Itoa(size) + " bytes; " + label + "]"
 }
 
 // primaryArgument extracts the argument that best identifies a tool call for

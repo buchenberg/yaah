@@ -39,15 +39,14 @@ func dispatchSearchFixture(t *testing.T) string {
 
 func TestGlobNative_SkipsDispatchWorlds(t *testing.T) {
 	tmp := dispatchSearchFixture(t)
-	args, _ := json.Marshal(map[string]any{"pattern": "**/*.go", "path": tmp})
-	out, err := (&GlobTool{}).Execute(context.Background(), string(args))
+	out, err := (&GlobTool{}).globNative(context.Background(), "**/*.go", tmp)
 	if err != nil {
 		t.Fatalf("glob: %v", err)
 	}
-	if !strings.Contains(out, "real/real.go") {
+	if !strings.Contains(out, filepath.Join("real", "real.go")) {
 		t.Errorf("real file missing from glob results:\n%s", out)
 	}
-	if !strings.Contains(out, "build/foo.go") {
+	if !strings.Contains(out, filepath.Join("build", "foo.go")) {
 		t.Errorf("build/foo.go must stay searchable:\n%s", out)
 	}
 	for _, stale := range []string{".yaah", ".kilo", ".scratch", "custom-world"} {
@@ -60,8 +59,7 @@ func TestGlobNative_SkipsDispatchWorlds(t *testing.T) {
 func TestGlobNative_WorktreeRootStillSearchable(t *testing.T) {
 	tmp := dispatchSearchFixture(t)
 	root := filepath.Join(tmp, "custom-world")
-	args, _ := json.Marshal(map[string]any{"pattern": "*.go", "path": root})
-	out, err := (&GlobTool{}).Execute(context.Background(), string(args))
+	out, err := (&GlobTool{}).globNative(context.Background(), "*.go", root)
 	if err != nil {
 		t.Fatalf("glob: %v", err)
 	}
@@ -70,17 +68,38 @@ func TestGlobNative_WorktreeRootStillSearchable(t *testing.T) {
 	}
 }
 
+// TestPreferNativeWalk_DetectsLinkedWorktree keeps the ripgrep dispatch
+// honest: a top-level linked worktree under an unknown name forces the
+// native walker, which can skip it structurally.
+func TestPreferNativeWalk_DetectsLinkedWorktree(t *testing.T) {
+	tmp := dispatchSearchFixture(t)
+	if !preferNativeWalk(context.Background(), workspaceOf(nil, nil), tmp) {
+		t.Fatal("top-level linked worktree should force the native walker")
+	}
+}
+
+func TestRipgrepIgnoreArgs_ExplicitRootWins(t *testing.T) {
+	inside := strings.Join(ripgrepIgnoreArgs(filepath.Join("repo", ".yaah")), " ")
+	if strings.Contains(inside, "!.yaah/**") || strings.Contains(inside, "!**/.yaah/**") {
+		t.Errorf("explicit root under .yaah must not be excluded:\n%s", inside)
+	}
+
+	normal := strings.Join(ripgrepIgnoreArgs("repo"), " ")
+	if !strings.Contains(normal, "!**/.yaah/**") {
+		t.Errorf("normal search should exclude .yaah:\n%s", normal)
+	}
+}
+
 func TestGrepNative_SkipsDispatchWorlds(t *testing.T) {
 	tmp := dispatchSearchFixture(t)
-	args, _ := json.Marshal(map[string]any{"pattern": "needle", "path": tmp})
-	out, err := (&GrepTool{}).Execute(context.Background(), string(args))
+	out, err := (&GrepTool{}).grepNative(context.Background(), "needle", tmp, "")
 	if err != nil {
 		t.Fatalf("grep: %v", err)
 	}
 	if got := strings.Count(out, "needle"); got != 1 {
 		t.Errorf("expected exactly the real hit, got %d:\n%s", got, out)
 	}
-	if !strings.Contains(out, "real/real.go") {
+	if !strings.Contains(out, filepath.Join("real", "real.go")) {
 		t.Errorf("real hit missing:\n%s", out)
 	}
 	for _, stale := range []string{".yaah", ".kilo", ".scratch", "custom-world"} {
@@ -105,6 +124,38 @@ func TestLs_SkipsDispatchWorlds(t *testing.T) {
 	for _, stale := range []string{".yaah", ".kilo", ".scratch", "custom-world"} {
 		if strings.Contains(out, stale) {
 			t.Errorf("ls listed %s:\n%s", stale, out)
+		}
+	}
+}
+
+// TestReplace_SkipsNestedWorktree pins the write-side counterpart of
+// yaah-8kub: replace must not mutate a stale linked worktree under a name
+// that is not in commonIgnoreDirs.
+func TestReplace_SkipsNestedWorktree(t *testing.T) {
+	tmp := dispatchSearchFixture(t)
+	args, _ := json.Marshal(map[string]any{
+		"pattern":     "package stale",
+		"replacement": "package changed",
+		"path":        tmp,
+		"include":     "*.go",
+	})
+	if _, err := (&ReplaceTool{}).Execute(context.Background(), string(args)); err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+
+	copies := [][]string{
+		{".yaah", "shepherd-worktrees", "proposal-1", "hit.go"},
+		{".kilo", "worktrees", "copy", "hit.go"},
+		{".scratch", "hit.go"},
+		{"custom-world", "hit.go"},
+	}
+	for _, rel := range copies {
+		data, err := os.ReadFile(filepath.Join(append([]string{tmp}, rel...)...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), "package changed") {
+			t.Errorf("replace mutated dispatch-world copy %s", filepath.Join(rel...))
 		}
 	}
 }
