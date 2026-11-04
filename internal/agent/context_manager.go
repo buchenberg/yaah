@@ -359,7 +359,12 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 
 	sysMsg := cm.State.Messages[0]
 
-	budget := int(float64(agentctx.PreserveBudget(cm.ContextWindow))*cm.State.CompactionBudgetMultiplier) / 4
+	// The preserved tail gets the full PreserveBudget (25% of the window,
+	// clamped to [2K, 8K]). SplitTail only ever keeps whole turns, so the
+	// clamp bounds the tail — no division here: the old /4 shrank the
+	// verbatim tail to ~500-2000 tokens and pushed everything else
+	// through the lossy summary.
+	budget := int(float64(agentctx.PreserveBudget(cm.ContextWindow)) * cm.State.CompactionBudgetMultiplier)
 	split := agentctx.SplitTail(cm.State.Messages, budget)
 	keepMsgs := cm.State.Messages[split.KeepStart:]
 	oldMsgs := cm.State.Messages[1:split.KeepStart]
@@ -391,7 +396,7 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 			}
 		}
 		for _, tc := range m.ToolCalls {
-			sb.WriteString(fmt.Sprintf("[tool:%s] %s\n", tc.Function.Name, tc.Function.Arguments))
+			sb.WriteString(fmt.Sprintf("[tool:%s] %s\n", tc.Function.Name, excerptArgs(tc.Function.Arguments)))
 		}
 	}
 	sb.WriteString("\n\n")
@@ -416,6 +421,15 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 	beforeEstimate := cm.estimatedTokens()
 	resp, err := compactProvider.Send(ctx, req)
 	summaryRejected := ""
+	if err == nil && resp != nil && len(resp.Choices) > 0 {
+		if resp.Choices[0].FinishReason == "length" {
+			// An output-cap-truncated summary silently drops its tail
+			// sections; reject it into the chunked fallback rather than
+			// install half a summary.
+			summaryRejected = "summary truncated by output cap (finish_reason=length)"
+			resp = nil
+		}
+	}
 	if err == nil && resp != nil && len(resp.Choices) > 0 {
 		if ok, vreason := agentctx.ValidateSummary(resp.Choices[0].Message.Content); !ok {
 			// yaah-v378.1: a summary that says nothing — the unfilled
@@ -640,7 +654,7 @@ func (cm *ContextManager) summarizeChunk(ctx context.Context, chunk []types.Mess
 			}
 		}
 		for _, tc := range m.ToolCalls {
-			sb.WriteString(fmt.Sprintf("[tool_call:%s] %s\n", tc.Function.Name, tc.Function.Arguments))
+			sb.WriteString(fmt.Sprintf("[tool_call:%s] %s\n", tc.Function.Name, excerptArgs(tc.Function.Arguments)))
 		}
 	}
 	sb.WriteString("</conversation>\n\n")
@@ -776,4 +790,14 @@ func (cm *ContextManager) reducePartialSummaries(ctx context.Context, partials [
 		return cm.reducePartialSummaries(ctx, []string{left, right}, depth+1, compactModel)
 	}
 	return merged, nil
+}
+
+// excerptArgsMaxLen caps tool-call arguments serialized into a compaction
+// summarizer excerpt; a single oversized dispatch must not dominate the
+// summarizer's input. The full arguments remain in State.Messages.
+const excerptArgsMaxLen = 200
+
+// excerptArgs bounds tool-call arguments for a compaction excerpt.
+func excerptArgs(args string) string {
+	return agentctx.TruncateRunes(args, excerptArgsMaxLen)
 }

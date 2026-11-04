@@ -58,9 +58,6 @@ var escalation string
 //go:embed chunk_summarizer.md
 var chunkSummarizerRaw string
 
-//go:embed conversation_summary_preamble.md
-var conversationSummaryPreamble string
-
 //go:embed steering_message.md
 var steeringMessageRaw string
 
@@ -397,14 +394,6 @@ func ChunkMergerPreamble() string {
 // (merging partial summaries).
 func ChunkMergerRole() string {
 	return chunkSection(3)
-}
-
-// --- Conversation summary ---
-
-// ConversationSummaryPreamble returns the preamble for the
-// conversation summarization prompt used during REPL compaction.
-func ConversationSummaryPreamble() string {
-	return conversationSummaryPreamble
 }
 
 // --- Steering message ---

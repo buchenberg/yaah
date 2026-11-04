@@ -515,7 +515,9 @@ func TestSplitTurn_findsEarliestFittingSuffix(t *testing.T) {
 func largeConversation(n int) []types.Message {
 	msgs := []types.Message{types.SystemMsg("sys")}
 	for i := 0; i < n; i++ {
-		msgs = append(msgs, types.UserMsg("msg "+strings.Repeat("x", 400)))
+		// ~2000 chars per message so n=30 exceeds the 8K-token preserve
+		// budget and SplitTail has older turns to summarize.
+		msgs = append(msgs, types.UserMsg("msg "+strings.Repeat("x", 2000)))
 	}
 	msgs = append(msgs, types.AssistantMsg("final response", nil))
 	return msgs
