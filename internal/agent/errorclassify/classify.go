@@ -84,7 +84,20 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 			c.Reason = ReasonThinkingModeRequired
 			c.Retryable = false
 			c.ShouldAbort = true
-			c.Message = fmt.Sprintf("model %q requires thinking mode but reasoning_content was omitted — set `thinking: true` for this model in config", meta.Model)
+			if meta.HistoryHasSignatureGaps {
+				// Case (b) of the two distinct failures this reason covers
+				// (yaah-31j): the replayed history originates from a
+				// non-thinking provider, so the thinking blocks a
+				// thinking-mode endpoint demands are absent and cannot be
+				// fabricated. No config fix applies — the mid-session
+				// fallback swap is the cause, and the advice must say so.
+				c.Message = fmt.Sprintf("model %q requires thinking blocks on replayed assistant turns, but the history originates from a non-thinking provider (mid-session fallback swap) — restart the session on this provider or disable thinking for it; the existing history cannot be replayed here", meta.Model)
+			} else {
+				// Case (a): the session has always run on this thinking
+				// model and the response omitted reasoning — the config
+				// fix applies.
+				c.Message = fmt.Sprintf("model %q requires thinking mode but reasoning_content was omitted — set `thinking: true` for this model in config", meta.Model)
+			}
 			return c
 		}
 		// A provider that does not understand the field at all is worth

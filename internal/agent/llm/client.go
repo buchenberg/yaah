@@ -267,6 +267,11 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 		meta := errorclassify.ErrorMeta{
 			NumMessages: len(req.Messages),
 			Model:       req.Model,
+			// yaah-31j: a thinking-mode provider that demands replayed
+			// thinking blocks cannot consume a history produced by a
+			// non-thinking provider — every foreign assistant turn lacks a
+			// signature. The classifier splits its advice on this.
+			HistoryHasSignatureGaps: historyHasSignatureGaps(req.Messages),
 		}
 		classified := errorclassify.Classify(err, meta)
 
@@ -434,6 +439,20 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 
 // heartbeatInterval returns the throttle interval for liveness heartbeats
 // (default 5s when unset).
+// historyHasSignatureGaps reports whether any assistant message in the
+// replayed history lacks a reasoning signature — the marker of history
+// produced by a non-thinking provider (yaah-31j). A thinking-mode endpoint
+// demands thinking blocks on every replayed assistant turn, which foreign
+// history cannot provide.
+func historyHasSignatureGaps(msgs []types.Message) bool {
+	for _, m := range msgs {
+		if m.Role == "assistant" && m.ReasoningSignature == "" {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Client) heartbeatInterval() time.Duration {
 	if c.HeartbeatInterval > 0 {
 		return c.HeartbeatInterval

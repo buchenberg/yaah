@@ -75,6 +75,13 @@ type ErrorMeta struct {
 	Provider    string // e.g. "openrouter", "anthropic"
 	Model       string // e.g. "claude-sonnet-4"
 	NumMessages int    // number of messages in the request
+
+	// HistoryHasSignatureGaps reports that at least one replayed assistant
+	// turn lacks a reasoning signature — the marker of history produced by
+	// a non-thinking provider. A thinking-mode endpoint demanding replayed
+	// thinking blocks cannot consume such history no matter how the request
+	// is retried (yaah-31j).
+	HistoryHasSignatureGaps bool
 }
 
 // ClassifiedError is the result of error classification with concrete
