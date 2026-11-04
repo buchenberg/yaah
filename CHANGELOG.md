@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.132.5](https://github.com/buchenberg/yaah/compare/v0.132.4...v0.132.5) (2026-11-04)
+
+
+### Bug Fixes
+
+* address CI and review feedback ([901a71a](https://github.com/buchenberg/yaah/commit/901a71a498a2540c4cb18138f17385cbbee65045))
+* discover nested worktree roots in one ripgrep pass ([6eb3f5b](https://github.com/buchenberg/yaah/commit/6eb3f5b4e8d36db8ef655b57c73c7bb8ca8299ca))
+* distinguish submodules, handle POSIX root, fail open to native ([bfb41db](https://github.com/buchenberg/yaah/commit/bfb41db9760fb00ece73d42a7bdb767c6a603737))
+* fail open for relocated git dirs ([155b3ff](https://github.com/buchenberg/yaah/commit/155b3ff732483ab0ac785530e9a757980fa581c9))
+* filter nested-worktree ripgrep results ([2577e7c](https://github.com/buchenberg/yaah/commit/2577e7c6f7d3f51d0dc5e07a61f1b7624f85f7c0))
+* handle relocated git dir and .git-suffixed worktree ids ([0ba51ba](https://github.com/buchenberg/yaah/commit/0ba51ba005b415ef9cc2ece9fc0cc6c39c5f5433))
+* informative pruning, search skips, actionable write refusals ([e8b4815](https://github.com/buchenberg/yaah/commit/e8b48151b5da3c7ed106790dce6461a3d08e6141))
+* informative pruning, search skips, actionable write refusals ([e311ff5](https://github.com/buchenberg/yaah/commit/e311ff5c0f6c6737163e59ce0cac81bf0aac3232))
+* locate gitdir admin dir under the .git component ([a8256a6](https://github.com/buchenberg/yaah/commit/a8256a6f58356b3ee169af34f79f3a262e54d50f))
+* parse gitdir component instead of substring match ([3ff6e49](https://github.com/buchenberg/yaah/commit/3ff6e499ba9df2bb9110c23172fdb6f5a8694917))
+* reject submodule gitdirs whose path contains worktrees ([f9323ef](https://github.com/buchenberg/yaah/commit/f9323ef0e91821e4174beb4b6ba30a675d65b0b8))
+
 ## [0.132.4](https://github.com/buchenberg/yaah/compare/v0.132.3...v0.132.4) (2026-11-04)
 
 
