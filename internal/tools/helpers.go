@@ -98,7 +98,23 @@ func isNestedWorktreeRoot(ctx context.Context, ws Workspace, path string) bool {
 	if err != nil {
 		return false
 	}
-	return strings.Contains(string(data), "worktrees")
+	return isWorktreeGitdir(string(data))
+}
+
+// isWorktreeGitdir reports whether a .git file's gitdir points at a linked
+// worktree (…/.git/worktrees/<id>) rather than a submodule
+// (…/.git/modules/<id>). Only the second-to-last path component is compared,
+// so a repository whose own path happens to contain "worktrees" is not
+// misclassified.
+func isWorktreeGitdir(content string) bool {
+	line := strings.TrimSpace(content)
+	if !strings.HasPrefix(line, "gitdir:") {
+		return false
+	}
+	p := strings.TrimSpace(strings.TrimPrefix(line, "gitdir:"))
+	p = strings.ReplaceAll(p, "\\", "/")
+	parts := strings.Split(strings.Trim(p, "/"), "/")
+	return len(parts) >= 2 && parts[len(parts)-2] == "worktrees"
 }
 
 // wsPath* helpers route path manipulation through the workspace's own path
@@ -205,14 +221,14 @@ func newNestedWorktreeFilter(ctx context.Context, ws Workspace, root string) (*n
 	if !rgAvailable() {
 		return f, nil
 	}
-	// -l -e worktrees lists only the .git files whose gitdir points under
-	// .git/worktrees; a submodule's .git points under .git/modules and is
-	// correctly left out. --hidden reveals the .git file itself (a dotfile);
+	// List every .git file under visible directories, then read each one and
+	// keep only the linked worktrees via isWorktreeGitdir — the same check the
+	// native walker uses. --hidden reveals the .git file itself (a dotfile);
 	// !**/.*/** keeps the pass from descending into hidden directories, which
 	// the search skips anyway.
 	res, err := ws.Exec(ctx, ExecRequest{Command: "rg", Args: []string{
-		"--hidden", "--no-messages", "-l", "-e", "worktrees",
-		"--glob", "**/.git", "--glob", "!**/.*/**", "--", root,
+		"--files", "--hidden", "--glob", "**/.git", "--glob", "!**/.*/**",
+		"--no-messages", "--", root,
 	}})
 	if res.ExitCode == 1 {
 		return f, nil
@@ -232,6 +248,10 @@ func newNestedWorktreeFilter(ctx context.Context, ws Workspace, root string) (*n
 			if resolved, rerr := ws.ResolvePath(p); rerr == nil {
 				p = resolved
 			}
+		}
+		data, rerr := ws.ReadFile(ctx, p)
+		if rerr != nil || !isWorktreeGitdir(string(data)) {
+			continue
 		}
 		parent := wsPathClean(ws, wsPathDir(ws, p))
 		if !wsPathWithin(ws, f.root, parent) || parent == f.root {

@@ -153,6 +153,29 @@ func TestPosixRel(t *testing.T) {
 	}
 }
 
+// TestIsWorktreeGitdir pins the gitdir parse: only a gitdir whose
+// second-to-last component is "worktrees" is a linked worktree, regardless of
+// whether the repository path elsewhere contains the word "worktrees".
+func TestIsWorktreeGitdir(t *testing.T) {
+	cases := []struct {
+		content string
+		want    bool
+	}{
+		{"gitdir: /x/.git/worktrees/wt\n", true},
+		{"gitdir: ../.git/modules/sub\n", false},
+		{"gitdir: /home/worktrees/proj/.git/modules/sub\n", false},
+		{"gitdir: /home/worktrees/proj/.git/worktrees/wt\n", true},
+		{"gitdir: C:/repo/.git/worktrees/wt\n", true},
+		{"gitdir: C:\\repo\\.git\\worktrees\\wt\n", true},
+		{"not a gitdir line\n", false},
+	}
+	for _, tc := range cases {
+		if got := isWorktreeGitdir(tc.content); got != tc.want {
+			t.Errorf("isWorktreeGitdir(%q) = %v, want %v", tc.content, got, tc.want)
+		}
+	}
+}
+
 func TestGlobNative_ExplicitIgnoredRootStillSearchable(t *testing.T) {
 	tmp := dispatchSearchFixture(t)
 	root := filepath.Join(tmp, ".yaah", "shepherd-worktrees", "proposal-1")
@@ -196,7 +219,7 @@ func installFakeRipgrep(t *testing.T, root string) {
 	dir := t.TempDir()
 	script := `#!/bin/sh
 case " $* " in
-  *" worktrees "*)
+  *" **/.git "*)
     printf '%s\n' "$FAKE_RG_ROOT/custom-world/.git" "$FAKE_RG_ROOT/sub/custom-world/.git"
     ;;
   *" --files "*)
