@@ -267,11 +267,10 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 		meta := errorclassify.ErrorMeta{
 			NumMessages: len(req.Messages),
 			Model:       req.Model,
-			// yaah-31j: a thinking-mode provider that demands replayed
-			// thinking blocks cannot consume a history produced by a
-			// non-thinking provider — every foreign assistant turn lacks a
-			// signature. The classifier splits its advice on this.
-			HistoryHasSignatureGaps: historyHasSignatureGaps(req.Messages),
+			// yaah-31j: a thinking-mode endpoint demanding replayed thinking
+			// blocks cannot consume history produced by the swapped-out
+			// primary. The classifier splits its advice on the swap state.
+			ProviderSwapped: providerSwapped,
 		}
 		classified := errorclassify.Classify(err, meta)
 

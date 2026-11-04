@@ -401,12 +401,12 @@ func TestClassify_providerCodeIsSearchable(t *testing.T) {
 }
 
 // The provider is in thinking mode and requires reasoning_content be replayed.
-// yaah-31j: the same replay demand with a history produced by a
-// non-thinking provider is a mid-session fallback swap — the advice must
-// not point at thinking: true config, which cannot fix foreign history.
+// yaah-31j: the same replay demand after a mid-session fallback swap —
+// the history originates from the swapped-out primary, so no config fix
+// applies and the advice must name the swap.
 func TestClassify_thinkingModeReplayWithForeignHistoryGetsSwapAdvice(t *testing.T) {
 	err := errors.New("The `content[].thinking` in the thinking mode must be passed back to the API.")
-	c := Classify(err, ErrorMeta{StatusCode: 400, Model: "deepseek-flash", NumMessages: 5, HistoryHasSignatureGaps: true})
+	c := Classify(err, ErrorMeta{StatusCode: 400, Model: "deepseek-flash", NumMessages: 5, ProviderSwapped: true})
 
 	if c.Reason != ReasonThinkingModeRequired {
 		t.Fatalf("reason = %v, want %v", c.Reason, ReasonThinkingModeRequired)

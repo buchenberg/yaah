@@ -76,12 +76,15 @@ type ErrorMeta struct {
 	Model       string // e.g. "claude-sonnet-4"
 	NumMessages int    // number of messages in the request
 
-	// HistoryHasSignatureGaps reports that at least one replayed assistant
-	// turn lacks a reasoning signature — the marker of history produced by
-	// a non-thinking provider. A thinking-mode endpoint demanding replayed
-	// thinking blocks cannot consume such history no matter how the request
-	// is retried (yaah-31j).
-	HistoryHasSignatureGaps bool
+	// ProviderSwapped reports that a fallback swap occurred earlier in
+	// this run. A thinking-mode endpoint demanding replayed thinking
+	// blocks cannot consume history produced by a different provider —
+	// reasoning_content-bearing turns from the primary are absent, and on
+	// the OpenAI-compatible path signatures are never captured at all —
+	// so the classifier must not hand out the config-fix advice for a
+	// failure that only a session restart on the swapped-in provider can
+	// fix (yaah-31j).
+	ProviderSwapped bool
 }
 
 // ClassifiedError is the result of error classification with concrete
