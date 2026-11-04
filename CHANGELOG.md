@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.132.2](https://github.com/buchenberg/yaah/compare/v0.132.1...v0.132.2) (2026-11-04)
+
+
+### Bug Fixes
+
+* **dispatch:** review fixes — in-flight entries keyed in kernel scope-ID form, worktree-lane mark balanced on every return path ([6c6fcb2](https://github.com/buchenberg/yaah/commit/6c6fcb2c097f4f32afff1a6c46fd4831894b83f8))
+* **dispatch:** review fixes for the scope-leak work (yaah-95ri.6) ([e56edea](https://github.com/buchenberg/yaah/commit/e56edeae5edb1a798fcd88a215d0874677d850c8))
+
+
+### Documentation
+
+* sweep stale gitsandbox references after the wrapper retirement ([ead34c2](https://github.com/buchenberg/yaah/commit/ead34c233a8040cb64240442ec68e31b7521bf49))
+
 ## [0.132.1](https://github.com/buchenberg/yaah/compare/v0.132.0...v0.132.1) (2026-11-04)
 
 
