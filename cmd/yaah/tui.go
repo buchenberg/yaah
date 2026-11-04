@@ -146,7 +146,7 @@ func runTUI() error {
 	app.OnSubmit = func(input string) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancelAgent = cancel
-		app.SetCurrentPrompt(input)
+		app.AddPrompt(input)
 		app.ShowThinking()
 		go sess.RunPrompt(ctx, input)
 	}

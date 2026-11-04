@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log"
+	"sort"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/observability"
@@ -76,6 +77,9 @@ func (t *App) buildItems(from, to, w int) []messages.Item {
 // canAppend reports whether the conversation view is eligible for the
 // incremental fast path: only new items at the tail, nothing mutated in
 // place, same width, no thinking-indicator line to reconcile.
+//
+// It says nothing about the chunk itself; refreshMessages additionally
+// refuses chunks that begin with "\n" (see there for why).
 func (t *App) canAppend(w, n int) bool {
 	return !t.needsFullRender.Load() &&
 		t.renderedWidth == w &&
@@ -99,7 +103,20 @@ func (t *App) refreshMessages() {
 	var formatDur, writeDur time.Duration
 	var msgLen int
 
-	if t.canAppend(w, n) {
+	// tview's TextView keeps an incremental line index: after a Draw it
+	// resumes parsing from the last indexed line when more bytes arrive
+	// via Write. A resumption whose very first cluster is a "\n" is
+	// mis-parsed at that boundary — the blank line between the previous
+	// item and the new text collapses into a single leading space on the
+	// response's first row. Newlines that are internal to the appended
+	// batch parse fine (verified against a simulated screen), so
+	// eligibility is decided from the first new item's kind: tool-line
+	// chunks start with content and keep the O(new) append path, while
+	// text and reasoning chunks begin with "\n" (messages.Format) and
+	// take the full-render path, which resets the index via SetText.
+	// Checking the kind before formatting also avoids formatting a tail
+	// batch only to discard it on fallback.
+	if t.canAppend(w, n) && t.conversationLog[t.renderedItems].toolBlock != nil {
 		formatStart := time.Now()
 		chunk := messages.Format(t.buildItems(t.renderedItems, n, w), messages.Content{
 			Width: w,
@@ -111,6 +128,7 @@ func (t *App) refreshMessages() {
 		io.WriteString(t.Messages, chunk)
 		writeDur = time.Since(writeStart)
 
+		t.extendPromptAnchors(t.renderedItems, n, w)
 		t.renderedItems = n
 		msgLen = len(chunk)
 		appended = true
@@ -128,10 +146,13 @@ func (t *App) refreshMessages() {
 		t.Messages.SetText(msg)
 		writeDur = time.Since(writeStart)
 
+		t.fullRenderCount++
 		t.renderedItems = n
 		t.renderedWidth = w
 		t.needsFullRender.Store(false)
 		msgLen = len(msg)
+
+		t.rebuildPromptAnchors(items, w)
 	}
 
 	t.charsRendered.Store(int64(msgLen))
@@ -168,4 +189,90 @@ func (t *App) refreshMessages() {
 		log.Printf("SLOW refreshMessages: %d items, %d bytes, appended=%v total=%v format=%v write=%v",
 			n, msgLen, appended, totalDur, formatDur, writeDur)
 	}
+}
+
+// itemRows returns the item's display-row count at width w, cached on
+// the convItem. In-place block mutations clear the cache; width changes
+// remeasure wholesale (rowsWidth mismatch). A non-positive width is
+// measured without storing: rowsWidth 0 doubles as the uncached
+// sentinel, and tightening the guard keeps w<=0 (only possible via the
+// 80 fallback in messageWidth, but cheap to make explicit) from
+// poisoning the cache key.
+func (t *App) itemRows(ci *convItem, it messages.Item, w int) int {
+	if w <= 0 {
+		return messages.ItemRows(it, messages.Content{Width: 80, Theme: t.Theme})
+	}
+	if ci.rowsWidth == w {
+		return ci.rowsCache
+	}
+	rows := messages.ItemRows(it, messages.Content{Width: w, Theme: t.Theme})
+	ci.rowsCache = rows
+	ci.rowsWidth = w
+	return rows
+}
+
+// rebuildPromptAnchors recomputes the anchor table from scratch during a
+// full render. Row estimates use the same measure Format's emissions are
+// checked against (itemRows), so counted and painted rows share one
+// code path; the per-item cache keeps the walk itself cheap.
+func (t *App) rebuildPromptAnchors(items []messages.Item, w int) {
+	t.promptAnchors = t.promptAnchors[:0]
+	rows := 0
+	for i := range t.conversationLog {
+		ci := &t.conversationLog[i]
+		if ci.isPrompt {
+			t.promptAnchors = append(t.promptAnchors, promptAnchor{
+				item:      i,
+				startLine: rows + 1, // the leading "\n" separator row
+				input:     ci.prompt,
+			})
+		}
+		rows += t.itemRows(ci, items[i], w)
+	}
+	t.renderedRows = rows
+}
+
+// extendPromptAnchors delta-appends anchors for newly rendered items on
+// the incremental path, continuing from the rows already accounted for.
+func (t *App) extendPromptAnchors(from, to, w int) {
+	for i := from; i < to; i++ {
+		ci := &t.conversationLog[i]
+		if ci.isPrompt {
+			t.promptAnchors = append(t.promptAnchors, promptAnchor{
+				item:      i,
+				startLine: t.renderedRows + 1,
+				input:     ci.prompt,
+			})
+		}
+		t.renderedRows += t.itemRows(ci, t.buildItems(i, i+1, w)[0], w)
+	}
+}
+
+// reconcilePromptPin re-derives the sticky header from the scroll
+// position: it shows the most recent prompt whose first row is at or
+// above the current viewport top. That single rule produces the whole
+// behavior — a submitted question does not take over the pin until
+// auto-scroll or scrolling carries it across the top seam, the previous
+// prompt stays pinned until then, and scrolling back up de-pins the
+// current question and re-pins the one above it. Runs after every app
+// draw; an unchanged pin costs one binary search.
+func (t *App) reconcilePromptPin() {
+	want := ""
+	if n := len(t.promptAnchors); n > 0 {
+		row, _ := t.Messages.GetScrollOffset()
+		i := sort.Search(n, func(i int) bool { return t.promptAnchors[i].startLine > row })
+		if i > 0 {
+			want = t.promptAnchors[i-1].input
+		}
+	}
+	if want == t.pinnedPrompt {
+		return
+	}
+	t.pinnedPrompt = want
+	if want == "" {
+		t.promptEcho.SetText("")
+		t.messagesCol.ResizeItem(t.promptEcho, 0, 0)
+		return
+	}
+	t.SetCurrentPrompt(want)
 }

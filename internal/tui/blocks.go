@@ -18,12 +18,20 @@ func (t *App) AddReasoningBlock(id, content string) {
 	t.markDirty()
 }
 
+// invalidateRows clears the cached display-row count of an item whose
+// block just mutated in place, so prompt-anchor bookkeeping remeasures.
+func invalidateRows(ci *convItem) {
+	ci.rowsCache = 0
+	ci.rowsWidth = 0
+}
+
 // AddToolError finds a tool block in conversationLog by ID and transitions it to Error.
 func (t *App) AddToolError(id, summary, err string) {
 	for i := range t.conversationLog {
 		ci := &t.conversationLog[i]
 		if ci.toolBlock != nil && ci.toolBlock.ID() == id {
 			ci.toolBlock.Fail(summary, err)
+			invalidateRows(ci)
 			t.needsFullRender.Store(true)
 			t.markDirty()
 			return
@@ -50,6 +58,7 @@ func (t *App) AddToolEnd(id, summary, result string) {
 		ci := &t.conversationLog[i]
 		if ci.toolBlock != nil && ci.toolBlock.ID() == id {
 			ci.toolBlock.Complete(summary, result)
+			invalidateRows(ci)
 			t.needsFullRender.Store(true)
 			t.markDirty()
 			return
@@ -139,41 +148,46 @@ func (t *App) advanceSubAgentSpinners() {
 
 // ToggleBlockByIndex finds the nth block (of any type) and toggles it.
 func (t *App) ToggleBlockByIndex(n int) {
-	type block interface {
-		Toggle()
-		IsExpanded() bool
-	}
-
-	blocks := []block{}
-	for _, ci := range t.conversationLog {
-		if ci.reasoningBlock != nil {
-			blocks = append(blocks, ci.reasoningBlock)
-		}
-		if ci.toolBlock != nil {
-			blocks = append(blocks, ci.toolBlock)
+	toggleable := []*convItem{}
+	for i := range t.conversationLog {
+		ci := &t.conversationLog[i]
+		if ci.reasoningBlock != nil || ci.toolBlock != nil {
+			toggleable = append(toggleable, ci)
 		}
 	}
 
-	if n >= 0 && n < len(blocks) {
-		blocks[n].Toggle()
+	if n >= 0 && n < len(toggleable) {
+		toggleOne(toggleable[n])
 		t.needsFullRender.Store(true)
 		t.refreshMessages()
 	}
 }
 
+func toggleOne(ci *convItem) {
+	if ci.reasoningBlock != nil {
+		ci.reasoningBlock.Toggle()
+	} else if ci.toolBlock != nil {
+		ci.toolBlock.Toggle()
+	}
+	invalidateRows(ci)
+}
+
 // CollapseAll collapses all expandable blocks.
 func (t *App) CollapseAll() {
 	t.needsFullRender.Store(true)
-	for _, ci := range t.conversationLog {
+	for i := range t.conversationLog {
+		ci := &t.conversationLog[i]
 		if ci.reasoningBlock != nil {
 			for ci.reasoningBlock.IsExpanded() {
 				ci.reasoningBlock.Toggle()
 			}
+			invalidateRows(ci)
 		}
 		if ci.toolBlock != nil {
 			for ci.toolBlock.IsExpanded() {
 				ci.toolBlock.Toggle()
 			}
+			invalidateRows(ci)
 		}
 	}
 	t.refreshMessages()
@@ -181,9 +195,11 @@ func (t *App) CollapseAll() {
 
 func (t *App) toggleAllReasoning() {
 	t.needsFullRender.Store(true)
-	for _, ci := range t.conversationLog {
+	for i := range t.conversationLog {
+		ci := &t.conversationLog[i]
 		if ci.reasoningBlock != nil {
 			ci.reasoningBlock.Toggle()
+			invalidateRows(ci)
 		}
 	}
 	t.refreshMessages()
@@ -191,9 +207,11 @@ func (t *App) toggleAllReasoning() {
 
 func (t *App) toggleAllTools() {
 	t.needsFullRender.Store(true)
-	for _, ci := range t.conversationLog {
+	for i := range t.conversationLog {
+		ci := &t.conversationLog[i]
 		if ci.toolBlock != nil {
 			ci.toolBlock.Toggle()
+			invalidateRows(ci)
 		}
 	}
 	t.refreshMessages()

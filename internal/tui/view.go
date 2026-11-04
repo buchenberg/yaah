@@ -89,9 +89,13 @@ func (t *App) buildUI() {
 
 	t.Header.AddItem(t.Banner, 0, 0, headerRows, 1, 0, 0, false)
 
+	// One blank row between the sticky prompt echo and the conversation
+	// buffer, so agent content never butts up against the question line
+	// as it scrolls beneath it.
 	messagesCol := tview.NewFlex().
 		SetDirection(tview.FlexRow).
 		AddItem(t.promptEcho, 1, 0, false).
+		AddItem(tview.NewBox(), 1, 0, false).
 		AddItem(t.Messages, 0, 1, false)
 	t.messagesCol = messagesCol
 
@@ -120,6 +124,12 @@ func (t *App) buildUI() {
 	t.Pages = tview.NewPages()
 	t.Pages.AddPage("main", t.Root, true, true)
 	t.App.SetRoot(t.Pages, true).EnableMouse(true)
+
+	// The sticky prompt header is scroll-derived: re-evaluate it after
+	// every draw so pin swaps track both auto-scroll and manual scrolling.
+	t.App.SetAfterDrawFunc(func(tcell.Screen) {
+		t.reconcilePromptPin()
+	})
 
 	t.App.SetInputCapture(t.globalInputCapture)
 
