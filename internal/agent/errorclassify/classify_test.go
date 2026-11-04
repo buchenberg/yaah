@@ -401,6 +401,27 @@ func TestClassify_providerCodeIsSearchable(t *testing.T) {
 }
 
 // The provider is in thinking mode and requires reasoning_content be replayed.
+// yaah-31j: the same replay demand after a mid-session fallback swap —
+// the history originates from the swapped-out primary, so no config fix
+// applies and the advice must name the swap.
+func TestClassify_thinkingModeReplayWithForeignHistoryGetsSwapAdvice(t *testing.T) {
+	err := errors.New("The `content[].thinking` in the thinking mode must be passed back to the API.")
+	c := Classify(err, ErrorMeta{StatusCode: 400, Model: "deepseek-flash", NumMessages: 5, ProviderSwapped: true})
+
+	if c.Reason != ReasonThinkingModeRequired {
+		t.Fatalf("reason = %v, want %v", c.Reason, ReasonThinkingModeRequired)
+	}
+	if !c.ShouldAbort {
+		t.Error("ShouldAbort must be true — foreign history cannot be replayed")
+	}
+	if strings.Contains(c.Message, "set `thinking: true`") {
+		t.Fatalf("config advice must not be given for foreign history: %s", c.Message)
+	}
+	if !strings.Contains(c.Message, "swapped-out primary") {
+		t.Fatalf("message should name the swap cause: %s", c.Message)
+	}
+}
+
 // Regression guard for the inverted rule that stripped it instead — which
 // guaranteed the identical 400 on every retry.
 func TestClassify_thinkingModeRequiredIsActionable(t *testing.T) {

@@ -75,6 +75,16 @@ type ErrorMeta struct {
 	Provider    string // e.g. "openrouter", "anthropic"
 	Model       string // e.g. "claude-sonnet-4"
 	NumMessages int    // number of messages in the request
+
+	// ProviderSwapped reports that a fallback swap occurred earlier in
+	// this run. A thinking-mode endpoint demanding replayed thinking
+	// blocks cannot consume history produced by a different provider —
+	// reasoning_content-bearing turns from the primary are absent, and on
+	// the OpenAI-compatible path signatures are never captured at all —
+	// so the classifier must not hand out the config-fix advice for a
+	// failure that only a session restart on the swapped-in provider can
+	// fix (yaah-31j).
+	ProviderSwapped bool
 }
 
 // ClassifiedError is the result of error classification with concrete

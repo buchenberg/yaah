@@ -19,6 +19,14 @@ import (
 type Client struct {
 	Provider         Provider
 	FallbackProvider Provider
+
+	// swappedFromPrimary records that a fallback swap happened in ANY
+	// earlier Call. Unlike the per-Call swap guard, this persists across
+	// turns: after the swap, c.Provider stays on the fallback for every
+	// later turn, so the replayed mixed history keeps failing on thinking-
+	// mode endpoints — and the classifier must keep naming the swap as the
+	// cause on every subsequent turn, not just the first (yaah-31j).
+	swappedFromPrimary bool
 	// ProviderName / FallbackProviderName label the two providers in
 	// error envelopes. They are swapped together with Provider and
 	// FallbackProvider so a failed attempt is attributed to the provider
@@ -267,6 +275,11 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 		meta := errorclassify.ErrorMeta{
 			NumMessages: len(req.Messages),
 			Model:       req.Model,
+			// yaah-31j: a thinking-mode endpoint demanding replayed thinking
+			// blocks cannot consume history produced by the swapped-out
+			// primary. The classifier splits its advice on the swap state,
+			// which persists across turns on the client.
+			ProviderSwapped: c.swappedFromPrimary,
 		}
 		classified := errorclassify.Classify(err, meta)
 
@@ -279,6 +292,7 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 		if isDegenerateStream(err) && c.FallbackProvider != nil && !providerSwapped {
 			c.swapToFallback(&req)
 			providerSwapped = true
+			c.swappedFromPrimary = true
 			attempt--
 			continue
 		}
@@ -297,6 +311,7 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 		if errors.Is(err, ErrPrematureStreamClose) && c.FallbackProvider != nil && !providerSwapped {
 			c.swapToFallback(&req)
 			providerSwapped = true
+			c.swappedFromPrimary = true
 			attempt--
 			continue
 		}
@@ -362,6 +377,7 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 		case classified.ShouldRotateCred && c.FallbackProvider != nil && !providerSwapped:
 			c.swapToFallback(&req)
 			providerSwapped = true
+			c.swappedFromPrimary = true
 			attempt--
 			continue
 
@@ -432,8 +448,6 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 	return attach(lastResult), lastErr
 }
 
-// heartbeatInterval returns the throttle interval for liveness heartbeats
-// (default 5s when unset).
 func (c *Client) heartbeatInterval() time.Duration {
 	if c.HeartbeatInterval > 0 {
 		return c.HeartbeatInterval
