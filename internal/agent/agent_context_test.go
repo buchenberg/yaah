@@ -510,12 +510,15 @@ func TestSplitTurn_findsEarliestFittingSuffix(t *testing.T) {
 
 // --- compactContext integration tests ---
 
-// largeConversation builds a system + N user turns of ~400 chars each, ending
-// with an assistant message so the conversation is not mid-tool-loop.
+// largeConversation builds a system + N user turns of ~2000 chars each
+// (enough that n=30 exceeds the 8K-token preserve budget), ending with an
+// assistant message so the conversation is not mid-tool-loop.
 func largeConversation(n int) []types.Message {
 	msgs := []types.Message{types.SystemMsg("sys")}
 	for i := 0; i < n; i++ {
-		msgs = append(msgs, types.UserMsg("msg "+strings.Repeat("x", 400)))
+		// ~2000 chars per message so n=30 exceeds the 8K-token preserve
+		// budget and SplitTail has older turns to summarize.
+		msgs = append(msgs, types.UserMsg("msg "+strings.Repeat("x", 2000)))
 	}
 	msgs = append(msgs, types.AssistantMsg("final response", nil))
 	return msgs
@@ -1208,5 +1211,50 @@ func TestForceCompact_ReportsSummaryAndMethod(t *testing.T) {
 	}
 	if len(loop.State.Messages) >= 41 {
 		t.Errorf("compaction did not reduce the conversation: %d messages", len(loop.State.Messages))
+	}
+}
+
+// TestCompactContext_emptyOldFitsTail: the whole conversation fits the
+// preserve tail while the message-count trigger forces the pass (token
+// estimates stay under target — window 4000, ~270 estimated tokens), so
+// this exercises the CompactMaxMessages path that motivated the guard. The
+// compact provider is still called, but the summary must NOT install over
+// unchanged history — that grew context (kilo review, yaah-pcd2). The pass
+// books as "skipped" and counts toward the anti-thrash guard.
+func TestCompactContext_emptyOldFitsTail(t *testing.T) {
+	p := summaryProvider()
+	msgs := []types.Message{types.SystemMsg("sys")}
+	for i := 0; i < 20; i++ {
+		msgs = append(msgs, types.UserMsg("msg "+strings.Repeat("x", 30)))
+	}
+	loop := &Loop{Config: LoopConfig{CompactModel: "test",
+		ContextWindow: 4000, CompactMaxMessages: 5},
+		State: LoopState{Messages: msgs}, Provider: p}
+
+	before := len(loop.State.Messages)
+	beforeContent := make([]string, before)
+	for i, m := range loop.State.Messages {
+		beforeContent[i] = m.Content
+	}
+
+	loop.compactContext(context.Background(), 0.25)
+
+	if got := len(loop.State.Messages); got != before {
+		t.Errorf("summary installed over unchanged history: before=%d after=%d", before, got)
+	}
+	for i, m := range loop.State.Messages {
+		if m.Content != beforeContent[i] {
+			t.Errorf("message %d changed during an empty-old compaction", i)
+			break
+		}
+	}
+	if len(p.requests) != 1 {
+		t.Errorf("compact provider call count = %d; want 1 (boundary-safe continuation contract)", len(p.requests))
+	}
+	if loop.State.LastCompactionMethod != "skipped" {
+		t.Errorf("LastCompactionMethod = %q; want %q", loop.State.LastCompactionMethod, "skipped")
+	}
+	if loop.State.IneffectiveCompactions != 1 {
+		t.Errorf("IneffectiveCompactions = %d; want 1 (no-op pass must book)", loop.State.IneffectiveCompactions)
 	}
 }

@@ -118,6 +118,14 @@ func (s *agentSession) compactContext() {
 		msg("no messages were compacted (context too small or compaction ineffective)")
 		return
 	}
+	if res.Method == "skipped" {
+		// The pass ran but the whole conversation fit the preserved tail:
+		// nothing was summarized and history is unchanged. Rendering the
+		// summary path here would claim "summarization failed", which the
+		// pass did not.
+		msg("nothing to compact — the conversation fits the preserved tail")
+		return
+	}
 
 	// Render the summary in the conversation stream (yaah-v378.5): the
 	// user should be able to read what just replaced their context. The

@@ -123,10 +123,14 @@ func TestLoop_compactDoesNotMutateStateFromCall(t *testing.T) {
 	loop.applyDefaults()
 
 	loop.State.Messages = []types.Message{types.SystemMsg("sys")}
+	// ~810 chars per msg/assistant pair so the conversation exceeds the
+	// preserved tail budget; with the old 120-char fixture the whole
+	// conversation fit inside PreserveBudget and there was nothing left
+	// to summarize.
 	for i := 0; i < 30; i++ {
 		loop.State.Messages = append(loop.State.Messages,
-			types.UserMsg("message "+strings.Repeat("x", 120)),
-			types.AssistantMsg("response "+strings.Repeat("y", 120), nil))
+			types.UserMsg("message "+strings.Repeat("x", 400)),
+			types.AssistantMsg("response "+strings.Repeat("y", 400), nil))
 	}
 	snapshot := make([]types.Message, len(loop.State.Messages))
 	copy(snapshot, loop.State.Messages)

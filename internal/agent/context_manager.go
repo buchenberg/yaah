@@ -359,7 +359,12 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 
 	sysMsg := cm.State.Messages[0]
 
-	budget := int(float64(agentctx.PreserveBudget(cm.ContextWindow))*cm.State.CompactionBudgetMultiplier) / 4
+	// The preserved tail gets the full PreserveBudget (25% of the window,
+	// clamped to [2K, 8K]). SplitTail only ever keeps whole turns, so the
+	// clamp bounds the tail — no division here: the old /4 shrank the
+	// verbatim tail to ~500-2000 tokens and pushed everything else
+	// through the lossy summary.
+	budget := int(float64(agentctx.PreserveBudget(cm.ContextWindow)) * cm.State.CompactionBudgetMultiplier)
 	split := agentctx.SplitTail(cm.State.Messages, budget)
 	keepMsgs := cm.State.Messages[split.KeepStart:]
 	oldMsgs := cm.State.Messages[1:split.KeepStart]
@@ -391,7 +396,7 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 			}
 		}
 		for _, tc := range m.ToolCalls {
-			sb.WriteString(fmt.Sprintf("[tool:%s] %s\n", tc.Function.Name, tc.Function.Arguments))
+			sb.WriteString(fmt.Sprintf("[tool:%s] %s\n", tc.Function.Name, excerptArgs(tc.Function.Arguments)))
 		}
 	}
 	sb.WriteString("\n\n")
@@ -416,6 +421,15 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 	beforeEstimate := cm.estimatedTokens()
 	resp, err := compactProvider.Send(ctx, req)
 	summaryRejected := ""
+	if err == nil && resp != nil && len(resp.Choices) > 0 {
+		if resp.Choices[0].FinishReason == "length" {
+			// An output-cap-truncated summary silently drops its tail
+			// sections; reject it into the chunked fallback rather than
+			// install half a summary.
+			summaryRejected = "summary truncated by output cap (finish_reason=length)"
+			resp = nil
+		}
+	}
 	if err == nil && resp != nil && len(resp.Choices) > 0 {
 		if ok, vreason := agentctx.ValidateSummary(resp.Choices[0].Message.Content); !ok {
 			// yaah-v378.1: a summary that says nothing — the unfilled
@@ -527,6 +541,51 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 	}
 
 	summary := resp.Choices[0].Message.Content
+
+	// The un-divided preserve budget (plus the message-count trigger, which
+	// fires regardless of token gates) means the whole conversation can fit
+	// in the tail: nothing was summarized, so installing would GROW the
+	// history. Do not install; rebase the estimate (small windows rely on
+	// it for the retry after overflow) and book the pass as ineffective so
+	// the anti-thrash guard sees the no-op.
+	if len(oldMsgs) == 0 {
+		est := cm.estimatedTokens()
+		cm.State.LastPromptTokens = est
+		cm.State.LastPromptTokensInclusive = est
+		cm.State.LastPromptIncludesCache = false
+		cm.State.LastCachedPromptTokens = 0
+		cm.State.LastCompactionTokens = est
+		cm.State.LastCompactionMethod = "skipped"
+		cm.State.IneffectiveCompactions++
+		// Deliberately NOT a trackCompactionSavings(0): the adaptive
+		// multiplier reads low savings as "tail budget too small" and
+		// widens it — but here the pass was structurally impossible (the
+		// tail already covers the conversation), so the multiplier must
+		// stay neutral. The IneffectiveCompactions counter above owns the
+		// anti-thrash story for no-op passes.
+		if cm.Broker != nil {
+			cm.Broker.Publish(&CompactionDoneEvent{
+				BeforeTokens:    est,
+				AfterTokens:     est,
+				SavingsPct:      0,
+				Method:          "skipped",
+				IneffectiveNote: "nothing to summarize — conversation fits the preserve budget",
+				OldMsgCount:     0,
+				KeepMsgCount:    len(keepMsgs),
+				Budget:          budget,
+			})
+		}
+		if db := cm.persisterDB(); cm.SessionID != "" && db != nil {
+			cooldown := int64(0)
+			if cm.State.IneffectiveCompactions >= 2 {
+				cooldown = time.Now().Unix() + 600
+			}
+			db.SetCompactionCooldown(cm.SessionID, cooldown, cm.State.IneffectiveCompactions)
+		}
+		observability.RecordCompaction(ctx, compactReason, time.Since(startTime), est, est, 0)
+		return
+	}
+
 	cm.applyCompactedSummary(summary, sysMsg, oldMsgs, keepMsgs, effectiveTokens)
 	cm.State.LastCompactionMethod = "single"
 	cm.State.LastCompactionSummary = summary
@@ -640,7 +699,7 @@ func (cm *ContextManager) summarizeChunk(ctx context.Context, chunk []types.Mess
 			}
 		}
 		for _, tc := range m.ToolCalls {
-			sb.WriteString(fmt.Sprintf("[tool_call:%s] %s\n", tc.Function.Name, tc.Function.Arguments))
+			sb.WriteString(fmt.Sprintf("[tool_call:%s] %s\n", tc.Function.Name, excerptArgs(tc.Function.Arguments)))
 		}
 	}
 	sb.WriteString("</conversation>\n\n")
@@ -655,10 +714,20 @@ func (cm *ContextManager) summarizeChunk(ctx context.Context, chunk []types.Mess
 	}
 
 	resp, err := provider.Send(ctx, req)
+	if err == nil && resp != nil && len(resp.Choices) > 0 && resp.Choices[0].FinishReason == "length" {
+		// A chunk cut off by the output cap carries partial information;
+		// returning it would install a half summary when the chunk is the
+		// only one. Drop to the failure path — other chunks still feed
+		// the merge, and the single-chunk case falls back to trim. The
+		// drop is auditable: the chunk's history is lost from the summary.
+		slog.Warn("chunk summarization truncated by output cap; dropping chunk from merge",
+			"chunk", chunkIdx+1, "total", total, "model", model)
+		return "", nil
+	}
 	if err != nil {
 		return "", fmt.Errorf("chunk %d/%d summarization failed: %w", chunkIdx+1, total, err)
 	}
-	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
+	if resp == nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
 		return "", nil
 	}
 	return resp.Choices[0].Message.Content, nil
@@ -751,10 +820,14 @@ func (cm *ContextManager) reducePartialSummaries(ctx context.Context, partials [
 	}
 
 	resp, err := provider.Send(ctx, req)
-	if err != nil {
+	if err != nil || resp == nil {
 		return strings.Join(partials, "\n###\n"), nil
 	}
-	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
+	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" ||
+		resp.Choices[0].FinishReason == "length" {
+		// Empty, failed, or output-cap-truncated merges install the raw
+		// partial summaries instead — each partial is complete, so the
+		// join is never the half-summary shape.
 		return strings.Join(partials, "\n###\n"), nil
 	}
 
@@ -776,4 +849,14 @@ func (cm *ContextManager) reducePartialSummaries(ctx context.Context, partials [
 		return cm.reducePartialSummaries(ctx, []string{left, right}, depth+1, compactModel)
 	}
 	return merged, nil
+}
+
+// excerptArgsMaxLen caps tool-call arguments serialized into a compaction
+// summarizer excerpt; a single oversized dispatch must not dominate the
+// summarizer's input. The full arguments remain in State.Messages.
+const excerptArgsMaxLen = 200
+
+// excerptArgs bounds tool-call arguments for a compaction excerpt.
+func excerptArgs(args string) string {
+	return agentctx.TruncateRunes(args, excerptArgsMaxLen)
 }
