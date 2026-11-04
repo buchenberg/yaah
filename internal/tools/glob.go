@@ -75,6 +75,7 @@ func (t *GlobTool) globRipgrep(ctx context.Context, pattern, path string) (strin
 	rgArgs := []string{"--files", "--glob", pattern, "--no-messages", "--", path}
 
 	ws := workspaceOf(t.WS, t.PV)
+	filter := newNestedWorktreeFilter(ctx, ws, path)
 	res, err := ws.Exec(ctx, ExecRequest{Command: "rg", Args: rgArgs})
 	// ripgrep uses exit 1 to mean "no files", which is not a failure.
 	if res.ExitCode == 1 {
@@ -93,7 +94,6 @@ func (t *GlobTool) globRipgrep(ctx context.Context, pattern, path string) (strin
 	}
 
 	lines := strings.Split(strings.TrimSpace(result), "\n")
-	filter := newNestedWorktreeFilter(ctx, ws, path)
 	kept := lines[:0]
 	for _, line := range lines {
 		if line == "" || filter.excluded(line) {

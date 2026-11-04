@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -80,80 +81,164 @@ var commonIgnoreDirs = map[string]bool{
 // file (not a directory) pointing at the main repository's gitdir. Skipping
 // it structurally covers dispatch worlds mounted under a name we do not
 // know, while still letting an explicit search of the worktree root work.
+//
+// The probe is one Lstat per directory. commonIgnoreDirs is checked before
+// this, so the heavy dependency trees are skipped without the probe. The
+// remaining cost is the price of catching a worktree under an arbitrary name.
 func isNestedWorktreeRoot(ctx context.Context, ws Workspace, path string) bool {
 	info, err := ws.Lstat(ctx, ws.Join(path, ".git"))
 	return err == nil && !info.IsDir()
 }
 
-// nestedWorktreeFilter drops ripgrep results that live under a linked
-// worktree nested below the search root. Ripgrep's glob language cannot
-// express "this directory contains a .git file", so filtering the results
-// keeps the rg path consistent with the native walker without a second tree
-// scan. Results are checked lazily and per-directory answers are cached.
-type nestedWorktreeFilter struct {
-	ctx  context.Context
-	ws   Workspace
-	root string
-	seen map[string]bool
-}
-
-func newNestedWorktreeFilter(ctx context.Context, ws Workspace, root string) *nestedWorktreeFilter {
-	return &nestedWorktreeFilter{
-		ctx:  ctx,
-		ws:   ws,
-		root: filepath.Clean(root),
-		seen: make(map[string]bool),
+// wsPath* helpers route path manipulation through the workspace's own path
+// semantics. A sandbox is POSIX regardless of the host OS (workspace.go:71),
+// so applying filepath.Clean/Dir/IsAbs/Rel to sandbox paths would rewrite
+// "/root/a" as "\root\a" on a Windows host and break the .git probe.
+func wsPathClean(ws Workspace, p string) string {
+	if ws.Local() {
+		return filepath.Clean(p)
 	}
+	return path.Clean(p)
 }
 
-func (f *nestedWorktreeFilter) excluded(file string) bool {
-	abs := file
-	if !filepath.IsAbs(abs) {
-		resolved, err := f.ws.ResolvePath(file)
-		if err != nil {
-			return false
-		}
-		abs = resolved
+func wsPathDir(ws Workspace, p string) string {
+	if ws.Local() {
+		return filepath.Dir(p)
 	}
-	dir := filepath.Dir(filepath.Clean(abs))
-	for {
-		if sameFilePath(dir, f.root) {
-			return false
-		}
-		if excluded, ok := f.seen[dir]; ok {
-			if excluded {
-				return true
-			}
-		} else {
-			if !pathWithin(f.root, dir) {
-				f.seen[dir] = false
-				return false
-			}
-			if isNestedWorktreeRoot(f.ctx, f.ws, dir) {
-				f.seen[dir] = true
-				return true
-			}
-			f.seen[dir] = false
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return false
-		}
-		dir = parent
+	return path.Dir(p)
+}
+
+func wsPathIsAbs(ws Workspace, p string) bool {
+	if ws.Local() {
+		return filepath.IsAbs(p)
 	}
+	return path.IsAbs(p)
 }
 
-func sameFilePath(a, b string) bool {
-	return filepath.Clean(a) == filepath.Clean(b)
+func wsPathRel(ws Workspace, base, target string) (string, error) {
+	if ws.Local() {
+		return filepath.Rel(base, target)
+	}
+	return posixRel(base, target)
 }
 
-// pathWithin reports whether child is inside root (or equal to it).
-func pathWithin(root, child string) bool {
-	rel, err := filepath.Rel(root, child)
+// posixRel is the POSIX-path analogue of filepath.Rel, for sandbox workspaces
+// (the path package has no Rel).
+func posixRel(base, target string) (string, error) {
+	base = path.Clean(base)
+	target = path.Clean(target)
+	if base == target {
+		return ".", nil
+	}
+	b := strings.Split(strings.Trim(base, "/"), "/")
+	t := strings.Split(strings.Trim(target, "/"), "/")
+	i := 0
+	for i < len(b) && i < len(t) && b[i] == t[i] {
+		i++
+	}
+	var parts []string
+	for j := i; j < len(b); j++ {
+		parts = append(parts, "..")
+	}
+	parts = append(parts, t[i:]...)
+	rel := strings.Join(parts, "/")
+	if rel == "" {
+		return ".", nil
+	}
+	return rel, nil
+}
+
+func wsPathWithin(ws Workspace, root, child string) bool {
+	rel, err := wsPathRel(ws, root, child)
 	if err != nil {
 		return false
 	}
-	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+	if rel == "." {
+		return true
+	}
+	sep := string(os.PathSeparator)
+	if !ws.Local() {
+		sep = "/"
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+sep)
+}
+
+// nestedWorktreeFilter drops ripgrep results that live under a linked
+// worktree nested below the search root. Ripgrep's glob language cannot
+// express "this directory contains a .git file", so newNestedWorktreeFilter
+// discovers the set of nested roots in one pass (ripgrep listing .git files)
+// and excluded() then checks a result's ancestors in memory against that set
+// without a per-directory Lstat.
+type nestedWorktreeFilter struct {
+	ws    Workspace
+	root  string
+	roots map[string]bool
+}
+
+func newNestedWorktreeFilter(ctx context.Context, ws Workspace, root string) *nestedWorktreeFilter {
+	f := &nestedWorktreeFilter{ws: ws, root: wsPathClean(ws, root), roots: make(map[string]bool)}
+	if !rgAvailable() {
+		return f
+	}
+	res, err := ws.Exec(ctx, ExecRequest{Command: "rg", Args: []string{
+		// --hidden reveals the .git file itself (a dotfile); !**/.*/** keeps
+		// the pass from descending into hidden directories, which the search
+		// skips anyway. Only visible nested-worktree roots matter here.
+		"--files", "--hidden", "--glob", "**/.git", "--glob", "!**/.*/**",
+		"--no-messages", "--", root,
+	}})
+	if err != nil {
+		return f
+	}
+	if res.ExitCode != 0 && res.ExitCode != 1 {
+		return f
+	}
+	for _, line := range strings.Split(strings.TrimSpace(res.Stdout), "\n") {
+		if line == "" {
+			continue
+		}
+		p := line
+		if !wsPathIsAbs(ws, p) {
+			if resolved, rerr := ws.ResolvePath(p); rerr == nil {
+				p = resolved
+			}
+		}
+		parent := wsPathClean(ws, wsPathDir(ws, p))
+		if !wsPathWithin(ws, f.root, parent) || parent == f.root {
+			continue
+		}
+		f.roots[parent] = true
+	}
+	return f
+}
+
+func (f *nestedWorktreeFilter) excluded(file string) bool {
+	if len(f.roots) == 0 {
+		return false
+	}
+	p := file
+	if !wsPathIsAbs(f.ws, p) {
+		if resolved, err := f.ws.ResolvePath(p); err == nil {
+			p = resolved
+		}
+	}
+	dir := wsPathClean(f.ws, wsPathDir(f.ws, p))
+	for {
+		if dir == f.root {
+			return false
+		}
+		if f.roots[dir] {
+			return true
+		}
+		if !wsPathWithin(f.ws, f.root, dir) {
+			return false
+		}
+		parent := wsPathDir(f.ws, dir)
+		if parent == dir {
+			return false
+		}
+		dir = wsPathClean(f.ws, parent)
+	}
 }
 
 // binaryExtensions is a rough set of extensions that should be skipped

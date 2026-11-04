@@ -33,6 +33,8 @@ func dispatchSearchFixture(t *testing.T) string {
 	write(".scratch/hit.go", "package stale\n\n// needle\n")
 	write("custom-world/hit.go", "package stale\n\n// needle\n")
 	write("custom-world/.git", "gitdir: /elsewhere/.git/worktrees/custom-world\n")
+	write("sub/custom-world/hit.go", "package stale\n\n// needle\n")
+	write("sub/custom-world/.git", "gitdir: /elsewhere/.git/worktrees/sub-custom-world\n")
 	// build/ is a legitimate package name and must remain searchable.
 	write("build/foo.go", "package build\n")
 	return tmp
@@ -69,16 +71,26 @@ func TestGlobNative_WorktreeRootStillSearchable(t *testing.T) {
 	}
 }
 
-// TestNestedWorktreeFilter_DropsNestedResults keeps the ripgrep path's
-// post-filter aligned with the native walker: a linked worktree under an
-// unknown name is excluded, while the real tree is kept.
+// TestNestedWorktreeFilter_DropsNestedResults exercises the in-memory
+// ancestor walk directly, including a deeper (two-level) nested worktree.
 func TestNestedWorktreeFilter_DropsNestedResults(t *testing.T) {
 	tmp := dispatchSearchFixture(t)
-	filter := newNestedWorktreeFilter(context.Background(), workspaceOf(nil, nil), tmp)
-	if !filter.excluded(filepath.Join(tmp, "custom-world", "hit.go")) {
-		t.Error("nested linked-worktree result should be excluded")
+	ws := workspaceOf(nil, nil)
+	f := &nestedWorktreeFilter{
+		ws:   ws,
+		root: filepath.Clean(tmp),
+		roots: map[string]bool{
+			filepath.Clean(filepath.Join(tmp, "custom-world")):        true,
+			filepath.Clean(filepath.Join(tmp, "sub", "custom-world")): true,
+		},
 	}
-	if filter.excluded(filepath.Join(tmp, "real", "real.go")) {
+	if !f.excluded(filepath.Join(tmp, "custom-world", "hit.go")) {
+		t.Error("top-level linked-worktree result should be excluded")
+	}
+	if !f.excluded(filepath.Join(tmp, "sub", "custom-world", "hit.go")) {
+		t.Error("deeply nested linked-worktree result should be excluded")
+	}
+	if f.excluded(filepath.Join(tmp, "real", "real.go")) {
 		t.Error("real result must be kept")
 	}
 }
@@ -86,8 +98,8 @@ func TestNestedWorktreeFilter_DropsNestedResults(t *testing.T) {
 func TestNestedWorktreeFilter_ExplicitRootSearchAllowed(t *testing.T) {
 	tmp := dispatchSearchFixture(t)
 	root := filepath.Join(tmp, "custom-world")
-	filter := newNestedWorktreeFilter(context.Background(), workspaceOf(nil, nil), root)
-	if filter.excluded(filepath.Join(root, "hit.go")) {
+	f := &nestedWorktreeFilter{ws: workspaceOf(nil, nil), root: filepath.Clean(root), roots: map[string]bool{}}
+	if f.excluded(filepath.Join(root, "hit.go")) {
 		t.Error("an explicit search rooted at a worktree must keep its results")
 	}
 }
@@ -123,25 +135,10 @@ func TestGrepNative_SkipsDispatchWorlds(t *testing.T) {
 	}
 }
 
-func TestGrepResultLineRe_ParsesWindowsPaths(t *testing.T) {
-	cases := []struct {
-		line string
-		file string
-	}{
-		{"real/real.go:3:// needle", "real/real.go"},
-		{`C:\repo\real.go:12:needle`, `C:\repo\real.go`},
-	}
-	for _, tc := range cases {
-		m := grepResultLineRe.FindStringSubmatch(tc.line)
-		if m == nil || m[1] != tc.file {
-			t.Errorf("grepResultLineRe(%q) = %v, want file %q", tc.line, m, tc.file)
-		}
-	}
-}
-
-// installFakeRipgrep puts a script named rg first on PATH. The script emits
-// one real result and one linked-worktree result, which lets the ripgrep path
-// be exercised deterministically on hosts without rg installed.
+// installFakeRipgrep puts a script named rg first on PATH. The script
+// mimics ripgrep's discovery pass (listing .git files) and its --files and
+// --null match output, so the ripgrep path is exercised deterministically on
+// hosts without rg installed.
 func installFakeRipgrep(t *testing.T, root string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -149,12 +146,17 @@ func installFakeRipgrep(t *testing.T, root string) {
 	}
 	dir := t.TempDir()
 	script := `#!/bin/sh
-case "$1" in
-  --files)
-    printf '%s\n' "$FAKE_RG_ROOT/real/real.go" "$FAKE_RG_ROOT/custom-world/hit.go"
+case " $* " in
+  *" **/.git "*)
+    printf '%s\n' "$FAKE_RG_ROOT/custom-world/.git" "$FAKE_RG_ROOT/sub/custom-world/.git"
     ;;
-  --no-heading)
-    printf '%s\n' "$FAKE_RG_ROOT/real/real.go:3:// needle" "$FAKE_RG_ROOT/custom-world/hit.go:3:// needle"
+  *" --files "*)
+    printf '%s\n' "$FAKE_RG_ROOT/real/real.go" "$FAKE_RG_ROOT/custom-world/hit.go" "$FAKE_RG_ROOT/sub/custom-world/hit.go"
+    ;;
+  *" --no-heading "*)
+    printf '%s\0%d:%s\n' "$FAKE_RG_ROOT/real/real.go" 3 "// needle"
+    printf '%s\0%d:%s\n' "$FAKE_RG_ROOT/custom-world/hit.go" 3 "// needle"
+    printf '%s\0%d:%s\n' "$FAKE_RG_ROOT/sub/custom-world/hit.go" 3 "// needle"
     ;;
   *)
     exit 2
@@ -239,6 +241,7 @@ func TestReplace_SkipsNestedWorktree(t *testing.T) {
 		{".kilo", "worktrees", "copy", "hit.go"},
 		{".scratch", "hit.go"},
 		{"custom-world", "hit.go"},
+		{"sub", "custom-world", "hit.go"},
 	}
 	for _, rel := range copies {
 		data, err := os.ReadFile(filepath.Join(append([]string{tmp}, rel...)...))

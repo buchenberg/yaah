@@ -71,16 +71,15 @@ func (t *GrepTool) Execute(ctx context.Context, args string) (string, error) {
 	return t.grepNative(ctx, params.Pattern, params.Path, params.Include)
 }
 
-var grepResultLineRe = regexp.MustCompile(`^(.+?):\d+:`)
-
 func (t *GrepTool) execRipgrep(ctx context.Context, pattern, path, include string) (string, error) {
-	rgArgs := []string{"--no-heading", "--line-number", "--color", "never", "--no-messages", "-e", pattern}
+	rgArgs := []string{"--no-heading", "--line-number", "--color", "never", "--no-messages", "--null", "-e", pattern}
 	if include != "" {
 		rgArgs = append(rgArgs, "--glob", include)
 	}
 	rgArgs = append(rgArgs, "--", path)
 
 	ws := workspaceOf(t.WS, t.PV)
+	filter := newNestedWorktreeFilter(ctx, ws, path)
 	res, err := ws.Exec(ctx, ExecRequest{Command: "rg", Args: rgArgs})
 	// ripgrep uses exit 1 to mean "no matches", which is not a failure. Check the
 	// code before the error: a local workspace reports both.
@@ -98,18 +97,26 @@ func (t *GrepTool) execRipgrep(ctx context.Context, pattern, path, include strin
 	if result == "" {
 		return "No matches found.", nil
 	}
-	filter := newNestedWorktreeFilter(ctx, ws, path)
 	lines := strings.Split(strings.TrimSpace(result), "\n")
 	kept := lines[:0]
 	for _, line := range lines {
 		if line == "" {
 			continue
 		}
-		if m := grepResultLineRe.FindStringSubmatch(line); m != nil && filter.excluded(m[1]) {
+		// With --null the path is NUL-terminated, so the file/rest split is
+		// unambiguous even when a file name contains a colon.
+		file, rest, ok := strings.Cut(line, "\x00")
+		if !ok {
+			// A line without a path separator (e.g. a binary-file note) is kept.
+			kept = append(kept, line)
 			continue
 		}
-		kept = append(kept, line)
+		if filter.excluded(file) {
+			continue
+		}
+		kept = append(kept, file+":"+rest)
 	}
+
 	if len(kept) == 0 {
 		return "No matches found.", nil
 	}
