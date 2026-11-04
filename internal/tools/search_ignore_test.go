@@ -167,6 +167,8 @@ func TestIsWorktreeGitdir(t *testing.T) {
 		{"gitdir: /home/worktrees/proj/.git/worktrees/wt\n", true},
 		{"gitdir: /x/.git/modules/worktrees/foo\n", false},
 		{"gitdir: /x/.git/modules/vendor/worktrees/browser\n", false},
+		{"gitdir: /srv/mygit/worktrees/wt\n", true},
+		{"gitdir: /x/.git/worktrees/wt.git\n", true},
 		{"gitdir: C:/repo/.git/worktrees/wt\n", true},
 		{"gitdir: C:\\repo\\.git\\worktrees\\wt\n", true},
 		{"not a gitdir line\n", false},
