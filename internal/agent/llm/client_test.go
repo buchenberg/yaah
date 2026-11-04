@@ -77,6 +77,37 @@ func TestCall_swapStatePersistsAcrossTurns(t *testing.T) {
 	}
 }
 
+// TestCall_swapStatePersistsAcrossCredentialRotations exercises the
+// credential-rotation swap path specifically: a typed 401 from the primary
+// triggers ShouldRotateCred → swapToFallback, and the attribution must
+// persist on the client exactly as it does for the degenerate-stream path
+// (yaah-31j review: reverting the flag on this path must fail this test).
+func TestCall_swapStatePersistsAcrossCredentialRotations(t *testing.T) {
+	primary := &healingProvider{
+		failErr:  errors.New("request failed with status 401: invalid api key"),
+		maxFails: 1000, // never heals
+	}
+	fallback := &swapStateProvider{}
+	c := &Client{
+		Provider:         primary,
+		FallbackProvider: fallback,
+		Model:            "primary-model",
+		FallbackModel:    "fallback-model",
+		MaxRetries:       2,
+		RetryBackoff:     time.Millisecond,
+	}
+
+	for turn := 1; turn <= 2; turn++ {
+		_, err := c.Call(context.Background(), types.ChatRequest{Model: "primary-model"})
+		if err == nil {
+			t.Fatalf("turn %d: expected the thinking-replay error to surface", turn)
+		}
+		if !strings.Contains(err.Error(), "swapped-out primary") {
+			t.Fatalf("turn %d: error must attribute the failure to the credential-rotation swap, got: %s", turn, err.Error())
+		}
+	}
+}
+
 func TestCall_stripReasoningRetryIsBounded(t *testing.T) {
 	p := &stripReasoningProvider{}
 	c := &Client{
