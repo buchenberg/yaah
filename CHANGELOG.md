@@ -1,6 +1,19 @@
 # Changelog
 
-## [0.134.1](https://github.com/buchenberg/yaah/compare/v0.134.0...v0.134.1) (2026-11-04)
+## [0.135.0](https://github.com/buchenberg/yaah/compare/v0.134.0...v0.135.0) (2026-11-04)
+
+
+### Features
+
+* **tui:** one-row spacer between the prompt echo and the conversation ([fb911cd](https://github.com/buchenberg/yaah/commit/fb911cda3e21ac20d4c20461b6ac88bd31201335))
+* **tui:** sticky per-question headers, scroll-derived pin ([1e4c0f1](https://github.com/buchenberg/yaah/commit/1e4c0f1129dd79db8254ac9adf3432c7142a2585))
+
+
+### Bug Fixes
+
+* **tui:** pin reconciliation deadlocked the app inside the draw ([6e278a7](https://github.com/buchenberg/yaah/commit/6e278a7fa630c4c62aa6799cc48bafe5fda7708e))
+* **tui:** response separator collapse + spacer + sticky per-question headers ([06b3358](https://github.com/buchenberg/yaah/commit/06b3358bf38d22c7a603534f6a2bed99648579e6))
+* **tui:** stop response chunks from collapsing their blank separator line ([7d02046](https://github.com/buchenberg/yaah/commit/7d02046053bdfb5950ab7b644c7dfb89207c10dd))
 
 
 ### Documentation
