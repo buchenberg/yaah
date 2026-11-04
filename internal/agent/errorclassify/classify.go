@@ -91,7 +91,7 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 				// thinking-mode endpoint demands are absent and cannot be
 				// fabricated. No config fix applies — the mid-session
 				// fallback swap is the cause, and the advice must say so.
-				c.Message = fmt.Sprintf("model %q requires thinking blocks on replayed assistant turns, but the history originates from a non-thinking provider (mid-session fallback swap) — restart the session on this provider or disable thinking for it; the existing history cannot be replayed here", meta.Model)
+				c.Message = fmt.Sprintf("model %q requires thinking blocks on replayed assistant turns, but the history originates from a provider that does not produce thinking signatures (mid-session provider swap or a non-thinking primary) — restart the session on this provider or disable thinking for it; the existing history cannot be replayed here", meta.Model)
 			} else {
 				// Case (a): the session has always run on this thinking
 				// model and the response omitted reasoning — the config

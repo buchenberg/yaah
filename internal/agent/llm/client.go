@@ -437,14 +437,25 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 	return attach(lastResult), lastErr
 }
 
+// historyHasSignatureGaps reports whether any assistant message in the
+// replayed history lacks a reasoning signature. Signatures are populated
+// only on the Anthropic-compatible client path (anthropic.go:596), which
+// is the only path whose endpoints demand replayed thinking blocks — so
+// gaps mean the history contains turns produced OUTSIDE that client: the
+// mid-session fallback-swap marker this predicate exists to detect
+// (yaah-31j).
+func historyHasSignatureGaps(msgs []types.Message) bool {
+	for _, m := range msgs {
+		if m.Role == "assistant" && m.ReasoningSignature == "" {
+			return true
+		}
+	}
+	return false
+}
+
 // heartbeatInterval returns the throttle interval for liveness heartbeats
 // (default 5s when unset).
-// historyHasSignatureGaps reports whether any assistant message in the
-// replayed history lacks a reasoning signature — the marker of history
-// produced by a non-thinking provider (yaah-31j). A thinking-mode endpoint
-// demands thinking blocks on every replayed assistant turn, which foreign
-// history cannot provide.
-func historyHasSignatureGaps(msgs []types.Message) bool {
+func (c *Client) heartbeatInterval() time.Duration {
 	for _, m := range msgs {
 		if m.Role == "assistant" && m.ReasoningSignature == "" {
 			return true
