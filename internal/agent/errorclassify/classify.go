@@ -100,6 +100,20 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 				return c
 			}
 		}
+		// Same rejection class for response_format itself (yaah-n7k, the
+		// #747 sibling): strict OpenAI-compatible endpoints reject
+		// {"type":"json_object"} with a 422 extra_forbidden naming
+		// ["body","response_format"] in loc. Both the field name and an
+		// explicit unsupported phrase are required — prose that merely
+		// mentions response_format does not strip (same rule as the
+		// reasoning_content block above).
+		if strings.Contains(msg, "response_format") && matchAny(msg, responseFormatUnsupportedPatterns) {
+			c.Reason = ReasonFormatError
+			c.Retryable = false
+			c.ShouldDropResponseFormat = true
+			c.Message = "response_format rejected — strip and retry"
+			return c
+		}
 	}
 
 	// ── 1. Status-code-driven classification ──────────────────────
@@ -567,6 +581,24 @@ var reasoningContentUnsupportedPatterns = []string{
 var responseFormatPatterns = []string{
 	"response_format",
 	"response format",
+}
+
+// responseFormatUnsupportedPatterns pair with the response_format field
+// name: BOTH must match before the classifier strips the parameter, so a
+// gateway merely echoing the request cannot trigger a format drop. The
+// 422 extra_forbidden entries are the pydantic/fastapi dialect strict
+// OpenAI-compatible endpoints return for {"type":"json_object"} — the
+// #747 sibling class (yaah-n7k).
+var responseFormatUnsupportedPatterns = []string{
+	"extra_forbidden",
+	"extra inputs are not permitted",
+	"not supported",
+	"unsupported",
+	"unknown field",
+	"unexpected field",
+	"unexpected reserved field",
+	"invalid type",
+	"not allowed",
 }
 
 var providerPolicyPatterns = []string{
