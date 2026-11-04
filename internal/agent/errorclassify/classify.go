@@ -110,14 +110,15 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 		// they are the more specific remedies, matching the 400 branch's
 		// precedence below.
 		fieldMentioned := strings.Contains(msg, "response_format") || strings.Contains(msg, "response format")
-		// On 400 the status branch below handles overflow/content-policy
-		// first — yield to it there. On every other status (422
-		// extra_forbidden, 0 streaming failures) that remedy is never
-		// reached, so yielding would swallow the drop for exactly the case
-		// this classifier exists for (yaah-95ri.6 review follow-up).
-		on400 := meta.StatusCode == http.StatusBadRequest
+		// The overflow/content-policy remedies outrank the drop wherever they
+		// can still be reached: the 400 branch applies them directly, and a
+		// status-0 streaming failure falls through to the status-agnostic
+		// section 2 which applies them too. Only 422 returns early — the
+		// default 4xx branch aborts before section 2 — so there, and only
+		// there, the drop must not yield (yaah-n7k review).
+		on422 := meta.StatusCode == http.StatusUnprocessableEntity
 		if fieldMentioned && matchAny(msg, responseFormatUnsupportedPatterns) &&
-			(!on400 || (!matchAny(msg, contextOverflowPatterns) && !matchAny(msg, contentPolicyPatterns))) {
+			(on422 || (!matchAny(msg, contextOverflowPatterns) && !matchAny(msg, contentPolicyPatterns))) {
 			c.Reason = ReasonFormatError
 			c.Retryable = false
 			c.ShouldDropResponseFormat = true
