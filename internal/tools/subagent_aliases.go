@@ -29,6 +29,10 @@ var ErrStuckChild = jobs.ErrStuckChild
 // never started rather than hanging mid-run.
 var ErrDispatchStartup = jobs.ErrDispatchStartup
 
+// ErrScopeExhausted is a variable alias of jobs.ErrScopeExhausted (same
+// rule as above: variable alias so errors.Is identity is preserved).
+var ErrScopeExhausted = jobs.ErrScopeExhausted
+
 func ParseSubAgentOutput(output string, runErr error) *jobs.SubAgentOutput {
 	return jobs.ParseSubAgentOutput(output, runErr)
 }

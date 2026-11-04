@@ -84,6 +84,16 @@ type DelegateTool struct {
 }
 
 func (t *DelegateTool) Name() string { return "delegate" }
+
+// PendingProposalScopeIDs lists the open retained proposals' scope IDs —
+// the scope reaper's live-set complement: an unsettled proposal keeps its
+// scope active on purpose (yaah-95ri.4).
+func (t *DelegateTool) PendingProposalScopeIDs() []string {
+	if t == nil || t.Retained == nil {
+		return nil
+	}
+	return t.Retained.PendingProposalScopeIDs()
+}
 func (t *DelegateTool) Description() string {
 	return prompts.ToolDescription("delegate")
 }

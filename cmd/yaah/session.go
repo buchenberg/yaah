@@ -180,6 +180,7 @@ type agentSession struct {
 	// Closed FIRST in teardown — a drain mid-delivery must finish
 	// before the registry it delivers through goes away.
 	supervisor *supervision.Service
+	reaper     *supervision.Reaper // stale dispatch-scope sweeper (yaah-95ri.4)
 
 	// egressBroker is the session's sub-agent egress broker (Plan 7 Phase 3),
 	// non-nil only when agents.subagent.network is "broker". close() stops it
@@ -290,6 +291,9 @@ func (s *agentSession) close() {
 	// when the registry entries it addresses start going away.
 	if s.supervisor != nil {
 		s.supervisor.Close()
+		if s.reaper != nil {
+			s.reaper.Close()
+		}
 	}
 	// The root's registry entry goes before its channel closes: the
 	// registry sends under its lock, so an unregister that returns
