@@ -76,8 +76,8 @@ func TestShepherdTurnCheckpointer_RestoreRevertsWorkspace(t *testing.T) {
 		t.Errorf("base after restore = %q, want %q", got, "v1")
 	}
 	// Production restores run through the untracked-preserving sandbox
-	// (gitsandbox): captured content is rewound, but files created after
-	// the checkpoint deliberately survive (#313).
+	// policy (kernel CleanPreserveUntracked): captured content is rewound,
+	// but files created after the checkpoint deliberately survive (#313).
 	if got, err := os.ReadFile(filepath.Join(repo, "untracked.txt")); err != nil || string(got) != "junk" {
 		t.Errorf("uncaptured untracked file should survive restore, got %q err %v", got, err)
 	}
