@@ -125,6 +125,12 @@ func (t *App) buildUI() {
 	t.Pages.AddPage("main", t.Root, true, true)
 	t.App.SetRoot(t.Pages, true).EnableMouse(true)
 
+	// The sticky prompt header is scroll-derived: re-evaluate it after
+	// every draw so pin swaps track both auto-scroll and manual scrolling.
+	t.App.SetAfterDrawFunc(func(tcell.Screen) {
+		t.reconcilePromptPin()
+	})
+
 	t.App.SetInputCapture(t.globalInputCapture)
 
 	tview.Styles.PrimitiveBackgroundColor = tcell.ColorDefault

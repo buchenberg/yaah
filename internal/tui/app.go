@@ -158,6 +158,15 @@ type App struct {
 	renderedItems int
 	renderedWidth int
 
+	// Sticky prompt-header state (QueueUpdateDraw ONLY). promptAnchors
+	// maps each user prompt item to its estimated first painted row in
+	// the Messages buffer; reconcilePromptPin derives the pinned header
+	// from the scroll position and pinnedPrompt caches what the echo
+	// last showed so unchanged pins cost one binary search per draw.
+	promptAnchors []promptAnchor
+	renderedRows  int
+	pinnedPrompt  string
+
 	version string
 
 	OnModelSelect func(model string)
@@ -166,11 +175,22 @@ type App struct {
 
 type convItem struct {
 	text           string
+	isPrompt       bool // user question; drives the sticky header pin
+	prompt         string
 	isMarkdown     bool
 	cached         string
 	cachedWidth    int
 	toolBlock      *toolblock.Block
 	reasoningBlock *reasoning.Block
+}
+
+// promptAnchor maps a user prompt convItem to its first painted row in
+// the Messages buffer, so scroll position can be translated into which
+// prompt the sticky header should show.
+type promptAnchor struct {
+	item      int
+	startLine int
+	input     string
 }
 
 func New(version string) *App {

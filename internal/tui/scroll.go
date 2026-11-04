@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log"
+	"sort"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/observability"
@@ -127,6 +128,7 @@ func (t *App) refreshMessages() {
 		io.WriteString(t.Messages, chunk)
 		writeDur = time.Since(writeStart)
 
+		t.extendPromptAnchors(t.renderedItems, n, w)
 		t.renderedItems = n
 		msgLen = len(chunk)
 		appended = true
@@ -148,6 +150,8 @@ func (t *App) refreshMessages() {
 		t.renderedWidth = w
 		t.needsFullRender.Store(false)
 		msgLen = len(msg)
+
+		t.rebuildPromptAnchors(items, w)
 	}
 
 	t.charsRendered.Store(int64(msgLen))
@@ -184,4 +188,72 @@ func (t *App) refreshMessages() {
 		log.Printf("SLOW refreshMessages: %d items, %d bytes, appended=%v total=%v format=%v write=%v",
 			n, msgLen, appended, totalDur, formatDur, writeDur)
 	}
+}
+
+// rebuildPromptAnchors recomputes the anchor table from scratch during a
+// full render. Row estimates are built by the same ItemRows measure
+// Format uses to emit items, so row attribution cannot drift between
+// what is counted and what is painted; any residual estimator error is
+// bounded by the items rendered since the previous full render.
+func (t *App) rebuildPromptAnchors(items []messages.Item, w int) {
+	t.promptAnchors = t.promptAnchors[:0]
+	rows := 0
+	for i := range t.conversationLog {
+		ci := &t.conversationLog[i]
+		if ci.isPrompt {
+			t.promptAnchors = append(t.promptAnchors, promptAnchor{
+				item:      i,
+				startLine: rows + 1, // the leading "\n" separator row
+				input:     ci.prompt,
+			})
+		}
+		rows += messages.ItemRows(items[i], messages.Content{Width: w, Theme: t.Theme})
+	}
+	t.renderedRows = rows
+}
+
+// extendPromptAnchors delta-appends anchors for newly rendered items on
+// the incremental path, continuing from the rows already accounted for.
+func (t *App) extendPromptAnchors(from, to, w int) {
+	ctx := messages.Content{Width: w, Theme: t.Theme}
+	for i := from; i < to; i++ {
+		ci := &t.conversationLog[i]
+		if ci.isPrompt {
+			t.promptAnchors = append(t.promptAnchors, promptAnchor{
+				item:      i,
+				startLine: t.renderedRows + 1,
+				input:     ci.prompt,
+			})
+		}
+		t.renderedRows += messages.ItemRows(t.buildItems(i, i+1, w)[0], ctx)
+	}
+}
+
+// reconcilePromptPin re-derives the sticky header from the scroll
+// position: it shows the most recent prompt whose first row is at or
+// above the current viewport top. That single rule produces the whole
+// behavior — a submitted question does not take over the pin until
+// auto-scroll or scrolling carries it across the top seam, the previous
+// prompt stays pinned until then, and scrolling back up de-pins the
+// current question and re-pins the one above it. Runs after every app
+// draw; an unchanged pin costs one binary search.
+func (t *App) reconcilePromptPin() {
+	want := ""
+	if n := len(t.promptAnchors); n > 0 {
+		row, _ := t.Messages.GetScrollOffset()
+		i := sort.Search(n, func(i int) bool { return t.promptAnchors[i].startLine > row })
+		if i > 0 {
+			want = t.promptAnchors[i-1].input
+		}
+	}
+	if want == t.pinnedPrompt {
+		return
+	}
+	t.pinnedPrompt = want
+	if want == "" {
+		t.promptEcho.SetText("")
+		t.messagesCol.ResizeItem(t.promptEcho, 0, 0)
+		return
+	}
+	t.SetCurrentPrompt(want)
 }

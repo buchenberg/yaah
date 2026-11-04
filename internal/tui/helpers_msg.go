@@ -86,6 +86,28 @@ func (t *App) promptVisualLines() int {
 	return total
 }
 
+// promptDisplay renders the shared user-prompt display text: the sticky
+// header and the in-stream prompt item both use it.
+const promptEchoPrefix = "🍖 "
+
+func promptDisplay(input string) string {
+	return promptEchoPrefix + strings.ReplaceAll(input, "\n\n", " ")
+}
+
+// AddPrompt renders a submitted user prompt into the conversation
+// stream. The sticky header pin is derived from scroll position by
+// reconcilePromptPin — this deliberately does not pin the prompt: it
+// takes over the header only once it crosses the top seam.
+func (t *App) AddPrompt(input string) {
+	t.conversationLog = append(t.conversationLog, convItem{
+		text:     t.Theme.Tag(t.Theme.User, promptDisplay(input)),
+		isPrompt: true,
+		prompt:   input,
+	})
+	t.markDirty()
+	t.App.SetFocus(t.Input)
+}
+
 // addAssistantResponse stores raw markdown in the conversation log.
 // Markdown is rendered at display time via renderMarkdown, which produces
 // valid tview tags — no raw brackets survive to confuse SetDynamicColors.
