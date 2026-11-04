@@ -1214,8 +1214,10 @@ func TestForceCompact_ReportsSummaryAndMethod(t *testing.T) {
 	}
 }
 
-// TestCompactContext_emptyOldFitsTail: when the whole conversation fits the
-// preserve tail (message-count trigger with the un-divided budget), the
+// TestCompactContext_emptyOldFitsTail: the whole conversation fits the
+// preserve tail while the message-count trigger forces the pass (token
+// estimates stay under target — window 4000, ~340 estimated tokens), so
+// this exercises the CompactMaxMessages path that motivated the guard. The
 // compact provider is still called, but the summary must NOT install over
 // unchanged history — that grew context (kilo review, yaah-pcd2). The pass
 // books as "skipped" and counts toward the anti-thrash guard.
@@ -1223,10 +1225,11 @@ func TestCompactContext_emptyOldFitsTail(t *testing.T) {
 	p := summaryProvider()
 	msgs := []types.Message{types.SystemMsg("sys")}
 	for i := 0; i < 20; i++ {
-		msgs = append(msgs, types.UserMsg("msg "+strings.Repeat("x", 50)))
+		msgs = append(msgs, types.UserMsg("msg "+strings.Repeat("x", 30)))
 	}
 	loop := &Loop{Config: LoopConfig{CompactModel: "test",
-		ContextWindow: 1000}, State: LoopState{Messages: msgs}, Provider: p}
+		ContextWindow: 4000, CompactMaxMessages: 5},
+		State: LoopState{Messages: msgs}, Provider: p}
 
 	before := len(loop.State.Messages)
 	beforeContent := make([]string, before)

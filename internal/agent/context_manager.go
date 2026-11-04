@@ -557,7 +557,12 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 		cm.State.LastCompactionTokens = est
 		cm.State.LastCompactionMethod = "skipped"
 		cm.State.IneffectiveCompactions++
-		cm.trackCompactionSavings(0)
+		// Deliberately NOT a trackCompactionSavings(0): the adaptive
+		// multiplier reads low savings as "tail budget too small" and
+		// widens it — but here the pass was structurally impossible (the
+		// tail already covers the conversation), so the multiplier must
+		// stay neutral. The IneffectiveCompactions counter above owns the
+		// anti-thrash story for no-op passes.
 		if cm.Broker != nil {
 			cm.Broker.Publish(&CompactionDoneEvent{
 				BeforeTokens:    est,
@@ -713,7 +718,10 @@ func (cm *ContextManager) summarizeChunk(ctx context.Context, chunk []types.Mess
 		// A chunk cut off by the output cap carries partial information;
 		// returning it would install a half summary when the chunk is the
 		// only one. Drop to the failure path — other chunks still feed
-		// the merge, and the single-chunk case falls back to trim.
+		// the merge, and the single-chunk case falls back to trim. The
+		// drop is auditable: the chunk's history is lost from the summary.
+		slog.Warn("chunk summarization truncated by output cap; dropping chunk from merge",
+			"chunk", chunkIdx+1, "total", total, "model", model)
 		return "", nil
 	}
 	if err != nil {
@@ -812,7 +820,7 @@ func (cm *ContextManager) reducePartialSummaries(ctx context.Context, partials [
 	}
 
 	resp, err := provider.Send(ctx, req)
-	if err != nil {
+	if err != nil || resp == nil {
 		return strings.Join(partials, "\n###\n"), nil
 	}
 	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" ||
