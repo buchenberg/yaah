@@ -456,6 +456,47 @@ func TestClassify_reasoningContentRejectedWith422(t *testing.T) {
 	}
 }
 
+func TestClassify_responseFormatRejectedWith422(t *testing.T) {
+	err := errors.New(`provider returned 422: {"detail":[{"type":"extra_forbidden","loc":["body","response_format","type"],"msg":"Extra inputs are not permitted"}]}`)
+	c := Classify(err, ErrorMeta{StatusCode: 422, Model: "mistral-large", NumMessages: 4})
+
+	if c.Reason != ReasonFormatError {
+		t.Fatalf("reason = %v, want %v", c.Reason, ReasonFormatError)
+	}
+	if !c.ShouldDropResponseFormat {
+		t.Error("ShouldDropResponseFormat should be set for a 422 extra_forbidden rejection naming response_format")
+	}
+	if c.ShouldAbort {
+		t.Error("ShouldAbort must be false - dropping and replaying is a recovery")
+	}
+}
+
+// A 422 message that merely MENTIONS response_format without an
+// unsupported phrase must not strip — the both-conditions rule keeps a
+// gateway echo from triggering a format drop on the semantic path (the
+// broad 400 substring match is pre-existing deliberate behavior).
+func TestClassify_responseFormatProseOnlyDoesNotDrop(t *testing.T) {
+	err := errors.New(`provider returned 422: request echoed — response_format was accepted by the upstream queue`)
+	c := Classify(err, ErrorMeta{StatusCode: 422, Model: "m", NumMessages: 4})
+
+	if c.ShouldDropResponseFormat {
+		t.Fatalf("prose mentioning response_format must not drop the parameter: %+v", c)
+	}
+}
+
+// On 422 the overflow/content-policy remedies are never reached (they live
+// in the 400 branch), so a body mixing an overflow phrase with the
+// response_format extra_forbidden rejection must still drop — the yield
+// only applies on 400 (yaah-n7k review follow-up).
+func TestClassify_responseFormat422OverridesOverflowPhrase(t *testing.T) {
+	err := errors.New(`provider returned 422: {"detail":[{"type":"extra_forbidden","loc":["body","response_format","type"],"msg":"Extra inputs are not permitted"},{"type":"value_error","msg":"the model context length is 8192 tokens"}]}`)
+	c := Classify(err, ErrorMeta{StatusCode: 422, Model: "m", NumMessages: 4})
+
+	if !c.ShouldDropResponseFormat {
+		t.Fatalf("422 mixed overflow+response_format must still drop (no 400-branch remedy exists): %+v", c)
+	}
+}
+
 // A message carrying BOTH signals must resolve to replay, not strip. The two
 // remedies are opposites, so the ordering is load-bearing: "thinking is not
 // supported" (a genuine strip case) must still classify as strip while a
