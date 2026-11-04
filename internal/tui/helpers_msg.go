@@ -100,7 +100,7 @@ func promptDisplay(input string) string {
 // takes over the header only once it crosses the top seam.
 func (t *App) AddPrompt(input string) {
 	t.conversationLog = append(t.conversationLog, convItem{
-		text:     t.Theme.Tag(t.Theme.User, promptDisplay(input)),
+		text:     t.Theme.Tag(t.Theme.User, tview.Escape(promptDisplay(input))),
 		isPrompt: true,
 		prompt:   input,
 	})

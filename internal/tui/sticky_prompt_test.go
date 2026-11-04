@@ -116,9 +116,11 @@ func TestReconcilePromptPin_Rules(t *testing.T) {
 	}
 }
 
-// TestPromptAnchors_AppendMatchesFull pins anchor-table integrity: the
-// table delta-maintained during incremental appends must equal the one a
-// full rebuild computes for the same log.
+// TestPromptAnchors_AppendMatchesFull pins anchor-table integrity: after
+// a stretch of incremental renders (fast-path tool appends, in-place
+// block mutations with their cache invalidations, full-rendered text
+// flushes), the delta-maintained table must equal what a full recompute
+// produces for the same log.
 func TestPromptAnchors_AppendMatchesFull(t *testing.T) {
 	ui := New("test")
 	ui.AddPrompt("a reasonably long question that might wrap on narrower panes")
@@ -126,7 +128,26 @@ func TestPromptAnchors_AppendMatchesFull(t *testing.T) {
 
 	ui.AddToolStart("1", "bash", "ls")
 	ui.refreshMessages()
-	// The tool chunk took the append path; the table is its delta result.
+
+	// In-place expand toggle of the completed tool block: the row count
+	// changes with the block, so the cache must remeasure.
+	ui.AddToolEnd("1", "bash · ls", strings.Repeat("line\n", 8))
+	ui.refreshMessages()
+
+	ui.AddPrompt("second question after the tool output")
+	fullRendersBefore := ui.fullRenderCount
+	ui.refreshMessages()
+	if ui.fullRenderCount == fullRendersBefore {
+		t.Fatalf("text flush must take the full-render path")
+	}
+	ui.AddToolStart("2", "grep", "pattern")
+	ui.refreshMessages()
+
+	// The completed tool block is the first toggleable block.
+	ui.ToggleBlockByIndex(0)
+	ui.refreshMessages()
+
+	// All incremental paths exercised; capture the delta-maintained table.
 	appended := append([]promptAnchor(nil), ui.promptAnchors...)
 
 	ui.needsFullRender.Store(true)
@@ -138,7 +159,7 @@ func TestPromptAnchors_AppendMatchesFull(t *testing.T) {
 	}
 	for i := range full {
 		if appended[i] != full[i] {
-			t.Fatalf("anchor %d drifted between append and full: %+v vs %+v",
+			t.Fatalf("anchor %d drifted between incremental and full: %+v vs %+v",
 				i, appended[i], full[i])
 		}
 	}
@@ -191,5 +212,36 @@ func TestReconcilePromptPin_DeadlockSafety(t *testing.T) {
 	}
 	if ui.App.GetFocus() != focusBefore {
 		t.Fatalf("pin reconciliation stole focus")
+	}
+
+	// Painted-row validation: a second question past the wrapped response
+	// gives an anchor whose startLine depends on the wrap estimate; it
+	// must match the row tview actually painted (offset math: painted =
+	// innerTop + startLine - scrollOffset).
+	ui.AddPrompt("question two")
+	ui.refreshMessages()
+	ui.App.ForceDraw()
+
+	ro, _ := ui.Messages.GetScrollOffset()
+	_, innerTop, _, innerH := ui.Messages.GetInnerRect()
+	expected := innerTop + ui.promptAnchors[1].startLine - ro
+	if expected < innerTop || expected >= innerTop+innerH {
+		t.Fatalf("anchored row outside viewport: expected=%d innerTop=%d innerH=%d offset=%d",
+			expected, innerTop, innerH, ro)
+	}
+
+	cells, w, _ := sim.GetContents()
+	var b strings.Builder
+	for x := 0; x < w; x++ {
+		i := expected*w + x
+		if i >= len(cells) || len(cells[i].Runes) == 0 {
+			b.WriteRune(' ')
+			continue
+		}
+		b.WriteRune(cells[i].Runes[0])
+	}
+	if !strings.Contains(strings.TrimRight(b.String(), " "), "question two") {
+		t.Fatalf("anchor startLine %d does not match the painted row %d (%q)",
+			ui.promptAnchors[1].startLine, expected, b.String())
 	}
 }

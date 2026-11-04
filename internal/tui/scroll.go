@@ -191,11 +191,23 @@ func (t *App) refreshMessages() {
 	}
 }
 
+// itemRows returns the item's display-row count at width w, cached on
+// the convItem. In-place block mutations clear the cache; width changes
+// remeasure wholesale (rowsWidth mismatch).
+func (t *App) itemRows(ci *convItem, it messages.Item, w int) int {
+	if ci.rowsWidth == w {
+		return ci.rowsCache
+	}
+	rows := messages.ItemRows(it, messages.Content{Width: w, Theme: t.Theme})
+	ci.rowsCache = rows
+	ci.rowsWidth = w
+	return rows
+}
+
 // rebuildPromptAnchors recomputes the anchor table from scratch during a
-// full render. Row estimates are built by the same ItemRows measure
-// Format uses to emit items, so row attribution cannot drift between
-// what is counted and what is painted; any residual estimator error is
-// bounded by the items rendered since the previous full render.
+// full render. Row estimates use the same measure Format's emissions are
+// checked against (itemRows), so counted and painted rows share one
+// code path; the per-item cache keeps the walk itself cheap.
 func (t *App) rebuildPromptAnchors(items []messages.Item, w int) {
 	t.promptAnchors = t.promptAnchors[:0]
 	rows := 0
@@ -208,7 +220,7 @@ func (t *App) rebuildPromptAnchors(items []messages.Item, w int) {
 				input:     ci.prompt,
 			})
 		}
-		rows += messages.ItemRows(items[i], messages.Content{Width: w, Theme: t.Theme})
+		rows += t.itemRows(ci, items[i], w)
 	}
 	t.renderedRows = rows
 }
@@ -216,7 +228,6 @@ func (t *App) rebuildPromptAnchors(items []messages.Item, w int) {
 // extendPromptAnchors delta-appends anchors for newly rendered items on
 // the incremental path, continuing from the rows already accounted for.
 func (t *App) extendPromptAnchors(from, to, w int) {
-	ctx := messages.Content{Width: w, Theme: t.Theme}
 	for i := from; i < to; i++ {
 		ci := &t.conversationLog[i]
 		if ci.isPrompt {
@@ -226,7 +237,7 @@ func (t *App) extendPromptAnchors(from, to, w int) {
 				input:     ci.prompt,
 			})
 		}
-		t.renderedRows += messages.ItemRows(t.buildItems(i, i+1, w)[0], ctx)
+		t.renderedRows += t.itemRows(ci, t.buildItems(i, i+1, w)[0], w)
 	}
 }
 

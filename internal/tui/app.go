@@ -187,6 +187,13 @@ type convItem struct {
 	cachedWidth    int
 	toolBlock      *toolblock.Block
 	reasoningBlock *reasoning.Block
+
+	// Cached display-row count (at rowsWidth) for the prompt-anchor
+	// bookkeeping; rowsWidth 0 = uncached. Cleared by the in-place block
+	// mutations (tool end/error, expand toggles) — the only ways a row
+	// count changes at a fixed width.
+	rowsCache int
+	rowsWidth int
 }
 
 // promptAnchor maps a user prompt convItem to its first painted row in

@@ -66,10 +66,14 @@ func (t *App) SetCurrentPrompt(text string) {
 	}
 	full := promptDisplay(text)
 
+	// Literal brackets in user input must not parse as tview color
+	// directives (the echo is dynamic-colors enabled).
+	full = tview.Escape(full)
+
 	w := t.echoWidth()
 	lines := tview.WordWrap(full, w)
 	if len(lines) > promptEchoMaxLines {
-		full = t.truncateEcho(promptEchoPrefix, strings.ReplaceAll(text, "\n\n", " "), w)
+		full = t.truncateEcho(promptEchoPrefix, tview.Escape(strings.ReplaceAll(text, "\n\n", " ")), w)
 	}
 
 	t.promptEcho.SetText(t.Theme.Tag(t.Theme.User, full))

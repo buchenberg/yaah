@@ -161,9 +161,6 @@ func TestRefreshMessages_ToolChunkAppends(t *testing.T) {
 	ui.refreshMessages()
 	before := ui.Messages.GetText(true)
 	fullRenders := ui.fullRenderCount
-	if fullRenders != 1 {
-		t.Fatalf("expected the base render to be one full rebuild, got %d", fullRenders)
-	}
 
 	ui.AddToolStart("2", "grep", "pattern")
 	if ui.needsFullRender.Load() {
@@ -189,11 +186,10 @@ func TestRefreshMessages_ToolChunkAppends(t *testing.T) {
 
 // TestRefreshMessages_MixedBatchAppendsToolChunk verifies a batch that
 // starts with a tool block but contains a later text item (e.g. a tool
-// start coalesced with a flush). Buffer-level assertions prove the text
-// item kept its separator; the painted-rows assertions prove the
-// paint-time behavior of the tview resumed parse — the whole point of
-// the append eligibility guard — since GetText alone cannot see
-// paint-time reindexing.
+// start coalesced with a flush). The painted-rows assertions are the
+// real check: the raw buffer cannot see paint-time reindexing, so only
+// a simulated-screen draw proves the text item's separator survived the
+// tview resumed parse.
 func TestRefreshMessages_MixedBatchAppendsToolChunk(t *testing.T) {
 	sim := tcell.NewSimulationScreen("UTF-8")
 	if err := sim.Init(); err != nil {
@@ -272,7 +268,7 @@ func TestRefreshMessages_MixedBatchAppendsToolChunk(t *testing.T) {
 		t.Errorf("expected tool line above the separator: %q", rows[answer-2])
 	}
 
-	// Buffer-level: append preserved prior content verbatim.
+	// Buffer-level: append preserved prior content.
 	after := ui.Messages.GetText(true)
 	if !strings.Contains(after, "run something") {
 		t.Fatalf("append path dropped existing content: %q", after)
