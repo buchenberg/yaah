@@ -878,7 +878,7 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 	// the dispatch cap; started with the session, stopped in the session
 	// close.
 	st.reaper = supervision.NewReaper(st.scopeMgr, st.runs, st.rootScopeID, 0)
-	st.reaper.SetPendingSource(st.taskTool.PendingProposalScopeIDs)
+	st.reaper.SetPendingSource(st.taskTool.LiveDispatchScopeIDs)
 	st.reaper.Start()
 
 	// LaneForRole routes each dispatch by the role's declared output

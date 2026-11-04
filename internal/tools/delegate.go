@@ -94,6 +94,16 @@ func (t *DelegateTool) PendingProposalScopeIDs() []string {
 	}
 	return t.Retained.PendingProposalScopeIDs()
 }
+
+// LiveDispatchScopeIDs lists every scope the reaper must spare that the
+// Registry cannot see: in-flight container/worktree dispatch scopes plus
+// pending retained proposals (yaah-95ri.6).
+func (t *DelegateTool) LiveDispatchScopeIDs() []string {
+	if t == nil || t.Retained == nil {
+		return nil
+	}
+	return t.Retained.InFlightDispatchScopeIDs()
+}
 func (t *DelegateTool) Description() string {
 	return prompts.ToolDescription("delegate")
 }

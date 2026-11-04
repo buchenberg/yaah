@@ -75,6 +75,16 @@ type RetainedRuntime struct {
 	// provisioning into a saturated scope tree (yaah-95ri.4).
 	MaxDispatchScopes int
 
+	// inFlight tracks container/worktree dispatch scopes between fork and
+	// teardown/seal. The scope reaper's live-set includes them: an
+	// in-flight dispatch may legitimately run longer than the reaper's
+	// grace period, and its scope is never bridged in the Registry
+	// (yaah-95ri.6). It lives behind a pointer because RetainedRuntime is
+	// passed by value throughout the dispatch paths — every copy must
+	// share the same live set, and a mutex field would both break that
+	// convention and trip go vet's lock copying.
+	inFlight *inFlightScopes
+
 	// World is the configured dispatch world (agents.subagent.world:
 	// auto | worktree | container). Empty means auto. WorldForRole supplies a
 	// per-role override; nil means no override.
@@ -601,6 +611,12 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 			}
 			basisDigest = digest
 		}
+		// Dispatch-scope cap (yaah-95ri.6): refuse BEFORE the dispatch world is
+		// provisioned — openDispatchWorld below is the expensive, stateful
+		// step, and a cap refusal after it would leave a world to tear down.
+		if capErr := dispatchScopeCapExceeded(rt); capErr != nil {
+			return "", capErr
+		}
 		authority, aerr := resolveDispatchAuthority(rt, subParams.Role)
 		if aerr != nil {
 			return "", fmt.Errorf("delegate: %w", aerr)
@@ -651,6 +667,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	}
 
 	id := fmt.Sprintf("proposal:%d:%d", time.Now().UnixNano(), proposalSeq.Add(1))
+	rt.BeginDispatchScope(id)
 	wt := retainedWorktreePath(rt, id)
 
 	scopeID, provErr := provisionRetainedBranch(ctx, rt, id, wt, forkPoint)
@@ -788,6 +805,8 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 			if derr := parent.Discard(scope); derr != nil {
 				notes = append(notes, "scope discard: "+derr.Error())
 			}
+		} else {
+			rt.EndDispatchScope(scopeID)
 		}
 		env.Status = "error"
 		env.Result = trimResult(result)
@@ -1228,6 +1247,13 @@ func provisionRetainedBranch(
 	// the scratch dirs as untracked; the worktree itself is unaffected.
 	_ = ensureWorktreeRootExcluded(ctx, rt)
 
+	// Dispatch-scope cap (yaah-95ri.6): refuse BEFORE the worktree is
+	// created — a refusal after sb.Create would leave a worktree to clean
+	// up.
+	if capErr := dispatchScopeCapExceeded(rt); capErr != nil {
+		return "", capErr
+	}
+
 	sb := goatherdgit.NewWorktreeSandbox(rt.RepoPath, wtPath)
 	if err := sb.Create(ctx, goatherdsandbox.SandboxSpec{}); err != nil {
 		// A worktree left behind by a killed run can occupy the path. Only
@@ -1240,10 +1266,6 @@ func provisionRetainedBranch(
 		}
 	}
 
-	if capErr := dispatchScopeCapExceeded(rt); capErr != nil {
-		_ = sb.Destroy(context.WithoutCancel(ctx))
-		return "", capErr
-	}
 	mgr := rt.ScopeManager
 	scope, err := mgr.ForkIsolated(rt.RootScopeID, ownerID, nil, sb)
 	if err != nil {
@@ -1286,6 +1308,79 @@ func (rt *RetainedRuntime) PendingProposalScopeIDs() []string {
 		return nil
 	}
 	return rt.Proposals.PendingScopeIDs()
+}
+
+// inFlightScopes is the shared live set of container/worktree dispatch
+// scopes currently between fork and teardown/seal. RetainedRuntime holds
+// it behind a pointer so its pass-by-value copies share one set.
+type inFlightScopes struct {
+	mu  sync.Mutex
+	ids map[string]struct{}
+}
+
+func newInFlightScopes() *inFlightScopes {
+	return &inFlightScopes{ids: make(map[string]struct{})}
+}
+
+func (f *inFlightScopes) begin(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ids[id] = struct{}{}
+}
+
+func (f *inFlightScopes) end(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.ids, id)
+}
+
+func (f *inFlightScopes) list() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ids := make([]string, 0, len(f.ids))
+	for id := range f.ids {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// EnsureInFlight initializes the shared in-flight live set. Call once at
+// construction, before the runtime is copied into the dispatch paths
+// (yaah-95ri.6).
+func (rt *RetainedRuntime) EnsureInFlight() {
+	if rt.inFlight == nil {
+		rt.inFlight = newInFlightScopes()
+	}
+}
+
+// BeginDispatchScope marks a container or worktree dispatch scope as in
+// flight so the scope reaper spares it for as long as the dispatch runs
+// (yaah-95ri.6).
+func (rt *RetainedRuntime) BeginDispatchScope(id string) {
+	if rt.inFlight == nil {
+		return
+	}
+	rt.inFlight.begin(id)
+}
+
+// EndDispatchScope clears a dispatch scope's in-flight mark.
+func (rt *RetainedRuntime) EndDispatchScope(id string) {
+	if rt.inFlight == nil {
+		return
+	}
+	rt.inFlight.end(id)
+}
+
+// InFlightDispatchScopeIDs returns the in-flight dispatch scope IDs
+// unioned with pending retained-proposal scope IDs — the scope reaper's
+// live-set complement: these scopes are mid-dispatch or awaiting
+// settlement and must never be reaped, however long the dispatch runs
+// (yaah-95ri.6).
+func (rt *RetainedRuntime) InFlightDispatchScopeIDs() []string {
+	if rt.inFlight == nil {
+		return nil
+	}
+	return append(rt.inFlight.list(), rt.PendingProposalScopeIDs()...)
 }
 
 // recordRetainedReview writes the proposal half of the review provenance pair.

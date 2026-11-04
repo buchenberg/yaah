@@ -157,9 +157,13 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		}
 		if loopStage != nil && loopStage.supervisorSvc != nil {
 			loopStage.supervisorSvc.Close()
-			if loopStage.reaper != nil {
-				loopStage.reaper.Close()
-			}
+		}
+		// The reaper closes unconditionally (yaah-95ri.6): it runs whether
+		// or not the supervisor engine started, so nesting its shutdown
+		// under the service guard leaked the goroutine on engine-less
+		// sessions.
+		if loopStage != nil && loopStage.reaper != nil {
+			loopStage.reaper.Close()
 		}
 		if loopStage != nil && loopStage.egressBroker != nil {
 			loopStage.egressBroker.Stop()

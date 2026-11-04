@@ -253,6 +253,9 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 			ContainerWorlds: opts.DispatchWorlds != nil,
 			DispatchWorlds:  opts.DispatchWorlds,
 		}
+		// Before the runtime is copied into the dispatch paths: every copy
+		// must share one in-flight live set (yaah-95ri.6).
+		tool.Retained.EnsureInFlight()
 	}
 	return tool
 }
@@ -1218,12 +1221,23 @@ func createSubAgentScope(mgr *goatherd.ScopeManager, opts taskRunnerOpts, subTra
 			repoPath, _ = os.Getwd()
 		}
 		if repoPath != "" {
-			child, ferr := mgr.ForkIsolated(opts.rootScopeID, subTraceID, nil, goatherdgit.NewWorktreeSandbox(repoPath, workdir))
+			sb := goatherdgit.NewWorktreeSandbox(repoPath, workdir)
+			child, ferr := mgr.ForkIsolated(opts.rootScopeID, subTraceID, nil, sb)
 			if ferr == nil {
 				// No yaah-side worktree record is needed (plan 06,
 				// kernel v0.14.0): the kernel's fork record carries
 				// the sandbox address itself, so recovery finds the
 				// worktree from the trace alone.
+				//
+				// The scope must NOT own the sandbox (yaah-95ri.6):
+				// WithSandbox(sb, false) keeps the sandbox address on
+				// the fork record (recovery) and on the scope handle
+				// (turn checkpoints read subScope.Sandbox()), while
+				// the run-end Discard never destroys the worktree —
+				// it must outlive the run for recovery and, on the
+				// retained lane, for the proposal's seal. Destroying
+				// it is teardown's job, never run-end completion's.
+				child.WithSandbox(sb, false)
 				return child, nil
 			}
 			// A halt that landed between the pre-check and this fork
