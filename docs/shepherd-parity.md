@@ -464,6 +464,7 @@ Pinned inputs (drift guard: `internal/parity`):
 Remaining useful framework work is owned by `yaah-hxk3`. Open
 containment-adjacent work stays in `yaah-1tkp`: `yaah-kit` (live container
 verification), `yaah-1tkp.1` (powershell read-only command policy), and
-`yaah-bp4` (retire the gitsandbox decorator). `yaah-ihfh` is the closed
+`yaah-bp4` (retire the gitsandbox decorator — CLOSED: landed as
+goatherd-runtime #28 / v0.22.0 plus yaah PR #763). `yaah-ihfh` is the closed
 parity-closure epic and is historical; a divergence not named in an active
 owner is a bug in this ledger.

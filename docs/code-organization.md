@@ -37,7 +37,6 @@ yaah/
 │   ├── control/                # control-plane message types
 │   ├── cwdpath/                # cwd canonicalization
 │   ├── doctor/                 # diagnostics
-│   ├── gitsandbox/             # untracked-file-preserving git sandbox wrapper
 │   ├── instructions/           # AGENTS.md/CLAUDE.md discovery
 │   ├── jail/                   # per-platform containment selection
 │   ├── jobs/                   # background sub-agent jobs + I/O contract

@@ -1498,7 +1498,8 @@ func retainedWorktreePath(rt RetainedRuntime, id string) string {
 // target repo's git status. The .yaah/ entry in yaah's own .gitignore only
 // protects yaah's checkout; when retained_repo_path points at a different repo,
 // that repo would otherwise see the worktrees as untracked content (and could
-// sweep them into a commit, or gitsandbox could evacuate them). We append the
+// sweep them into a commit — the kernel's CleanPreserveUntracked policy would
+// evacuate them). We append the
 // root — relative to that repo — to its .git/info/exclude, a local, uncommitted
 // exclusion.
 func ensureWorktreeRootExcluded(ctx context.Context, rt RetainedRuntime) error {

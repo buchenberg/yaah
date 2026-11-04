@@ -58,7 +58,6 @@ yaah/
 │   ├── control/                 # typed control-plane messages (todos, questions, approvals)
 │   ├── cwdpath/                 # cwd canonicalization shared by store + filters
 │   ├── doctor/                  # `yaah doctor` checks
-│   ├── gitsandbox/              # untracked-file-preserving git sandbox wrapper
 │   ├── instructions/            # AGENTS.md/CLAUDE.md discovery
 │   ├── jail/                    # per-platform containment backend selection
 │   ├── jobs/                    # background jobs + sub-agent I/O contract
