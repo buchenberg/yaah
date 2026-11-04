@@ -253,6 +253,9 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 			ContainerWorlds: opts.DispatchWorlds != nil,
 			DispatchWorlds:  opts.DispatchWorlds,
 		}
+		// Before the runtime is copied into the dispatch paths: every copy
+		// must share one in-flight live set (yaah-95ri.6).
+		tool.Retained.EnsureInFlight()
 	}
 	return tool
 }
@@ -1166,11 +1169,17 @@ func CreateRootScope(mgr *goatherd.ScopeManager, sessionID, repoPath string, iso
 // createSubAgentScope creates the sub-agent's execution scope (adoption
 // plan D1): a fork of the session's root scope, so the scope tree mirrors
 // the dispatch tree and recovery can rebuild it. A workdir dispatch forks
-// in isolation with its own worktree sandbox (destroyed on halt/discard by
-// the kernel, exactly as the pre-plan Create+WorktreeSandbox path was);
-// every other dispatch shares the root's sandbox. The fork snapshot is nil
-// (D1): seed messages live in the loop config, not the trace. An empty
-// root scope ID — tracing came up without a root — falls back to the
+// in isolation with its own worktree sandbox attached NON-owned
+// (WithSandbox(sb, false), yaah-95ri.6): the fork record still carries
+// the sandbox address for recovery and turn checkpoints still read it,
+// but run-end Discard never destroys the worktree — it must outlive the
+// run for recovery and, on the retained lane, for the proposal's seal.
+// Destroying it is the teardown paths' job (container teardown,
+// teardownReportScratch, retained settlement), never run-end
+// completion's. Every other dispatch shares the root's sandbox. The fork
+// snapshot is nil (D1): seed messages live in the loop config, not the
+// trace. An empty root scope ID — tracing came up without a root — falls
+// back to the
 // legacy flat Create so the sub-agent still gets a superviseable scope.
 func createSubAgentScope(mgr *goatherd.ScopeManager, opts taskRunnerOpts, subTraceID, workdir string) (*goatherd.Scope, error) {
 	if mgr != nil {
@@ -1218,12 +1227,23 @@ func createSubAgentScope(mgr *goatherd.ScopeManager, opts taskRunnerOpts, subTra
 			repoPath, _ = os.Getwd()
 		}
 		if repoPath != "" {
-			child, ferr := mgr.ForkIsolated(opts.rootScopeID, subTraceID, nil, goatherdgit.NewWorktreeSandbox(repoPath, workdir))
+			sb := goatherdgit.NewWorktreeSandbox(repoPath, workdir)
+			child, ferr := mgr.ForkIsolated(opts.rootScopeID, subTraceID, nil, sb)
 			if ferr == nil {
 				// No yaah-side worktree record is needed (plan 06,
 				// kernel v0.14.0): the kernel's fork record carries
 				// the sandbox address itself, so recovery finds the
 				// worktree from the trace alone.
+				//
+				// The scope must NOT own the sandbox (yaah-95ri.6):
+				// WithSandbox(sb, false) keeps the sandbox address on
+				// the fork record (recovery) and on the scope handle
+				// (turn checkpoints read subScope.Sandbox()), while
+				// the run-end Discard never destroys the worktree —
+				// it must outlive the run for recovery and, on the
+				// retained lane, for the proposal's seal. Destroying
+				// it is teardown's job, never run-end completion's.
+				child.WithSandbox(sb, false)
 				return child, nil
 			}
 			// A halt that landed between the pre-check and this fork

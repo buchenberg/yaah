@@ -37,12 +37,9 @@ type Reaper struct {
 	grace    time.Duration
 	interval time.Duration
 
-	// pending, when set, returns scope IDs that are legitimately alive
-	// outside the registry bridge — retained proposals awaiting
-	// settlement keep their scopes active on purpose.
-	pending func() []string
-
 	mu        sync.Mutex
+	pendingMu sync.RWMutex // guards pending; separate from mu — ReapOnce holds mu
+	pending   func() []string
 	unbridged map[string]time.Time // scope ID → first pass seen unbridged
 	started   bool
 	stop      chan struct{}
@@ -68,8 +65,13 @@ func NewReaper(mgr *goatherd.ScopeManager, runs *Registry, rootScopeID string, g
 
 // SetPendingSource registers a callback listing scope IDs that are
 // alive for reasons the Registry cannot see (retained proposals
-// awaiting settlement). Called on every sweep.
-func (r *Reaper) SetPendingSource(src func() []string) { r.pending = src }
+// awaiting settlement, in-flight dispatch scopes). Called on every
+// sweep; safe to call concurrently with sweeps.
+func (r *Reaper) SetPendingSource(src func() []string) {
+	r.pendingMu.Lock()
+	defer r.pendingMu.Unlock()
+	r.pending = src
+}
 
 // Start runs the sweep loop in its own goroutine. Stop with Close.
 func (r *Reaper) Start() {
@@ -163,6 +165,15 @@ func (r *Reaper) ReapOnce(now time.Time) (reaped, stale, pruned int) {
 		reaped++
 	}
 	pruned = r.mgr.PruneTerminal()
+
+	// Ledger hygiene: scopes discarded by their own teardown paths never
+	// come back live, so their entries would linger forever. Drop any
+	// ledger entry whose scope no longer exists in the manager.
+	for id := range r.unbridged {
+		if _, ok := r.mgr.Get(id); !ok {
+			delete(r.unbridged, id)
+		}
+	}
 	return reaped, stale, pruned
 }
 
@@ -174,8 +185,11 @@ func (r *Reaper) liveSet() []string {
 	if r.rootScopeID != "" {
 		out = append(out, r.rootScopeID)
 	}
-	if r.pending != nil {
-		out = append(out, r.pending()...)
+	r.pendingMu.RLock()
+	pending := r.pending
+	r.pendingMu.RUnlock()
+	if pending != nil {
+		out = append(out, pending()...)
 	}
 	return out
 }

@@ -257,17 +257,13 @@ func runDispatchContainer(
 	sandbox *SessionSandbox,
 ) (result string, runErr error) {
 	recordDispatchWorld(ctx, res)
-	if capErr := dispatchScopeCapExceeded(rt); capErr != nil {
-		if note := teardownDispatchWorld(ctx, rt.ScopeManager, nil, nil, sandbox); note != "" {
-			return "", fmt.Errorf("%w; %s", capErr, note)
-		}
-		return "", capErr
-	}
 	id := fmt.Sprintf("proposal:%d:%d", time.Now().UnixNano(), proposalSeq.Add(1))
+	rt.BeginDispatchScope(id)
 	scope, err := rt.ScopeManager.Fork(rt.RootScopeID, id, nil)
 	if err != nil {
+		rt.EndDispatchScope(id)
 		ferr := fmt.Errorf("delegate: fork container dispatch scope: %w", err)
-		if note := teardownDispatchWorld(ctx, rt.ScopeManager, nil, nil, sandbox); note != "" {
+		if note := teardownDispatchWorld(ctx, rt, nil, nil, sandbox); note != "" {
 			ferr = fmt.Errorf("%w; %s", ferr, note)
 		}
 		return "", ferr
@@ -279,7 +275,7 @@ func runDispatchContainer(
 	// the dispatch's context is usually over by the time this runs, and a
 	// teardown that honoured it would leak the very thing it exists to remove.
 	defer func() {
-		note := teardownDispatchWorld(ctx, rt.ScopeManager, parent, scope, sandbox)
+		note := teardownDispatchWorld(ctx, rt, parent, scope, sandbox)
 		if note == "" {
 			return
 		}
@@ -333,26 +329,18 @@ func runDispatchContainerProposal(
 		session = rt.DispatchWorlds.SessionSandbox
 	}
 	id := fmt.Sprintf("proposal:%d:%d", time.Now().UnixNano(), proposalSeq.Add(1))
+	rt.BeginDispatchScope(id)
 	env := proposalEnvelope{ProposalID: id, Next: proposalVerbs(), World: string(res.Resolved), Target: target}
 	if res.Degraded {
 		env.Warning = "dispatch world degraded: " + res.Reason
 	}
-	if capErr := dispatchScopeCapExceeded(rt); capErr != nil {
-		env.Status = "error"
-		env.Error = capErr.Error()
-		if note := teardownDispatchWorld(ctx, rt.ScopeManager, nil, nil, sandbox); note != "" {
-			env.Notes = appendSettleNote(env.Notes, note)
-		}
-		return marshalProposalEnvelope(env), nil
-	}
-
 	var scope *goatherd.Scope
 	// The container must be gone by the time the envelope is returned. Both
 	// teardown steps are bounded and cancel-free: the dispatch's context is
 	// usually over by now, and a teardown that honoured it would leak the very
 	// thing it exists to remove.
 	defer func() {
-		if note := teardownDispatchWorld(ctx, rt.ScopeManager, parent, scope, sandbox); note != "" {
+		if note := teardownDispatchWorld(ctx, rt, parent, scope, sandbox); note != "" {
 			env.Notes = appendSettleNote(env.Notes, note)
 		}
 		out = marshalProposalEnvelope(env)
@@ -360,6 +348,7 @@ func runDispatchContainerProposal(
 
 	scope, err := rt.ScopeManager.Fork(rt.RootScopeID, id, nil)
 	if err != nil {
+		rt.EndDispatchScope(id)
 		env.Status = "error"
 		env.Error = "fork container dispatch scope: " + err.Error()
 		return "", nil
@@ -481,18 +470,22 @@ func dispatchScopeCapExceeded(rt RetainedRuntime) error {
 
 // teardownDispatchWorld discards the dispatch's pure-causal scope and destroys
 // its container. It returns a caveat naming what it could not remove, or "".
-func teardownDispatchWorld(ctx context.Context, mgr *goatherd.ScopeManager, parent, scope *goatherd.Scope, sandbox *SessionSandbox) string {
+func teardownDispatchWorld(ctx context.Context, rt RetainedRuntime, parent, scope *goatherd.Scope, sandbox *SessionSandbox) string {
 	var notes []string
 	if scope != nil {
+		// In-flight bookkeeping ends with the scope, whichever lane owned it
+		// (yaah-95ri.6): the reaper's live-set must forget it exactly when
+		// the scope dies.
+		rt.EndDispatchScope(scope.ID())
 		var err error
 		switch {
 		case parent != nil:
 			err = parent.Discard(scope)
-		case mgr != nil:
+		case rt.ScopeManager != nil:
 			// Parent-handle fallback (yaah-95ri.4): a nil parent must not
 			// silently strand a forked scope — the manager-level discard
 			// reaches the same child by ID.
-			err = mgr.Discard(scope.ID())
+			err = rt.ScopeManager.Discard(scope.ID())
 		}
 		if err != nil {
 			notes = append(notes, "dispatch scope discard failed: "+err.Error())

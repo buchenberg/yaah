@@ -291,9 +291,12 @@ func (s *agentSession) close() {
 	// when the registry entries it addresses start going away.
 	if s.supervisor != nil {
 		s.supervisor.Close()
-		if s.reaper != nil {
-			s.reaper.Close()
-		}
+	}
+	// The reaper closes unconditionally (yaah-95ri.6): it runs whether or
+	// not the supervisor engine is enabled, so nesting its shutdown under
+	// the supervisor guard leaked the goroutine on engine-less sessions.
+	if s.reaper != nil {
+		s.reaper.Close()
 	}
 	// The root's registry entry goes before its channel closes: the
 	// registry sends under its lock, so an unregister that returns
