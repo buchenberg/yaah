@@ -24,8 +24,6 @@ import (
 	goatherd "github.com/buchenberg/goatherd-runtime"
 	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
-
-	"github.com/buchenberg/yaah/internal/gitsandbox"
 )
 
 // SchemaWorktreeProvisioned is yaah's pre-kernel-v0.14 worktree record,
@@ -146,7 +144,7 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 			if !adoptRoots {
 				return nil, nil
 			}
-			return gitsandbox.NewLocalSandbox(repoPath), nil
+			return goatherdgit.NewLocalGitSandbox(repoPath, goatherdgit.WithCleanPolicy(goatherdgit.CleanPreserveUntracked)), nil
 		case backend == "containerd":
 			// Deliberate non-adoption (D5): no re-adoptable identity.
 			return nil, nil

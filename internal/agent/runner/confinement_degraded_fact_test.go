@@ -6,7 +6,7 @@ import (
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 
-	"github.com/buchenberg/yaah/internal/gitsandbox"
+	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
 	"github.com/buchenberg/yaah/internal/tools"
 )
 
@@ -32,7 +32,7 @@ const degradedReason = "containment: fail-closed, confinement not established: w
 // jailed one.
 func TestRecordConfinementDegradedFact(t *testing.T) {
 	mgr, store := newScopeManagerForTest(t)
-	root, err := mgr.Create("root", gitsandbox.NewLocalSandbox(newRunnerTestGitRepo(t)))
+	root, err := mgr.Create("root", goatherdgit.NewLocalGitSandbox(newRunnerTestGitRepo(t), goatherdgit.WithCleanPolicy(goatherdgit.CleanPreserveUntracked)))
 	if err != nil {
 		t.Fatalf("create root scope: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestRecordConfinementDegradedFact(t *testing.T) {
 // an advisory dispatch with no workspace, and a nil scope must all stay silent.
 func TestRecordConfinementDegradedFact_SilentWhenJailHeldOrAbsent(t *testing.T) {
 	mgr, store := newScopeManagerForTest(t)
-	root, err := mgr.Create("root", gitsandbox.NewLocalSandbox(newRunnerTestGitRepo(t)))
+	root, err := mgr.Create("root", goatherdgit.NewLocalGitSandbox(newRunnerTestGitRepo(t), goatherdgit.WithCleanPolicy(goatherdgit.CleanPreserveUntracked)))
 	if err != nil {
 		t.Fatalf("create root scope: %v", err)
 	}

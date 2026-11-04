@@ -456,7 +456,7 @@ Pinned inputs (drift guard: `internal/parity`):
 | reference | Shepherd (Python) `v0.3.1` |
 | trace ABI | `shepherd2` abi.v0, golden vectors |
 | kernel | `goatherd-kernel v0.18.0` |
-| runtime | `goatherd-runtime v0.21.0` |
+| runtime | `goatherd-runtime v0.22.0` |
 | container world | `goatherd-runtime/sandbox/croft v0.2.1-0.20261031192038-da4e06c59318` / `goatherd-croft v0.9.2-0.20261031191238-a6d5f72a9b04` |
 | containment | landlock v0.1.2, winacl v0.1.1, seatbelt v0.1.0 |
 | grants | world-relative RW/RO roots, disjoint (config, not tools) |
