@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/observability"
@@ -105,23 +104,25 @@ func (t *App) refreshMessages() {
 
 	// tview's TextView keeps an incremental line index: after a Draw it
 	// resumes parsing from the last indexed line when more bytes arrive
-	// via Write. A chunk that begins with "\n" is mis-parsed at that
-	// continuation boundary — the blank line between the previous item
-	// and the new text collapses into a single leading space on the
-	// response's first row. Every text item's chunk starts with "\n"
-	// (messages.Format), so those take the full-render path, which
-	// resets the index via SetText. Tool-line chunks start with content
-	// and keep the O(new) append path.
-	var chunk string
-	if t.canAppend(w, n) {
+	// via Write. A resumption whose very first cluster is a "\n" is
+	// mis-parsed at that boundary — the blank line between the previous
+	// item and the new text collapses into a single leading space on the
+	// response's first row. Newlines that are internal to the appended
+	// batch parse fine (verified against a simulated screen), so
+	// eligibility is decided from the first new item's kind: tool-line
+	// chunks start with content and keep the O(new) append path, while
+	// text and reasoning chunks begin with "\n" (messages.Format) and
+	// take the full-render path, which resets the index via SetText.
+	// Checking the kind before formatting also avoids formatting a tail
+	// batch only to discard it on fallback.
+	if t.canAppend(w, n) && t.conversationLog[t.renderedItems].toolBlock != nil {
 		formatStart := time.Now()
-		chunk = messages.Format(t.buildItems(t.renderedItems, n, w), messages.Content{
+		chunk := messages.Format(t.buildItems(t.renderedItems, n, w), messages.Content{
 			Width: w,
 			Theme: t.Theme,
 		})
 		formatDur = time.Since(formatStart)
-	}
-	if chunk != "" && !strings.HasPrefix(chunk, "\n") {
+
 		writeStart := time.Now()
 		io.WriteString(t.Messages, chunk)
 		writeDur = time.Since(writeStart)

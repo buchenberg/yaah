@@ -8,9 +8,12 @@ import (
 	"github.com/gdamore/tcell/v2"
 )
 
-// TestRefreshMessages_AppendsNewTailOnly verifies the incremental fast
-// path: appending items renders only the new chunk onto the existing
-// buffer without forcing a full rebuild.
+// TestRefreshMessages_AppendsNewTailOnly verifies tail-only rendering:
+// appending items renders just the new content without disturbing what
+// is already painted, and advances the rendered cursor to the whole log.
+// A text item's chunk begins with "\n" so it takes the full-render path
+// (see refreshMessages); the incremental append branch is covered by
+// TestRefreshMessages_ToolChunkAppends and MixedBatch below.
 func TestRefreshMessages_AppendsNewTailOnly(t *testing.T) {
 	ui := New("test")
 
@@ -142,6 +145,73 @@ func TestRefreshMessages_ResponseChunkHasSeparator(t *testing.T) {
 	}
 	if posted2 >= 0 && strings.HasPrefix(msgColumn(rows2[posted2]), " ") {
 		t.Errorf("full render indented the response: %q", rows2[posted2])
+	}
+}
+
+// TestRefreshMessages_ToolChunkAppends verifies the tool-line fast path:
+// a batch whose first new item is a tool block is appended onto the
+// existing buffer (append branch taken, existing text preserved as a
+// prefix) rather than rebuilt via SetText.
+func TestRefreshMessages_ToolChunkAppends(t *testing.T) {
+	ui := New("test")
+
+	ui.appendMessage("run something")
+	ui.AddToolStart("1", "bash", "ls")
+	ui.refreshMessages()
+	before := ui.Messages.GetText(true)
+
+	ui.AddToolStart("2", "grep", "pattern")
+	if ui.needsFullRender.Load() {
+		t.Fatalf("adding a new tool block must not force a full rebuild")
+	}
+	ui.refreshMessages()
+
+	after := ui.Messages.GetText(true)
+	if !strings.HasPrefix(after, before) {
+		t.Fatalf("append path rewrote existing content:\nbefore=%q\nafter=%q", before, after)
+	}
+	if !strings.Contains(after, "grep") {
+		t.Fatalf("append path dropped new tool chunk; got %q", after)
+	}
+	if ui.renderedItems != len(ui.conversationLog) {
+		t.Fatalf("expected renderedItems to cover the whole log, got %d of %d",
+			ui.renderedItems, len(ui.conversationLog))
+	}
+}
+
+// TestRefreshMessages_MixedBatchAppendsToolChunk verifies a batch that
+// starts with a tool block but contains a later text item (e.g. a tool
+// start coalesced with a flush): the batch is appended and the text
+// item's blank-line separator survives, since only the batch's very
+// first cluster matters to tview's resumed parse.
+func TestRefreshMessages_MixedBatchAppendsToolChunk(t *testing.T) {
+	ui := New("test")
+
+	ui.appendMessage("run something")
+	ui.refreshMessages()
+	before := ui.Messages.GetText(true)
+
+	// Tool added first, then a streamed response flushed, with no
+	// refresh in between — one mixed tail batch.
+	ui.AddToolStart("1", "bash", "ls")
+	ui.tokenMu.Lock()
+	ui.pendingTokens.WriteString("the streamed answer")
+	ui.isStreaming.Store(true)
+	ui.tokenMu.Unlock()
+	if !ui.flushPendingTokens() {
+		t.Fatalf("flush did not consume pending tokens")
+	}
+	if ui.needsFullRender.Load() {
+		t.Fatalf("mixed batch must not force a full rebuild")
+	}
+	ui.refreshMessages()
+
+	after := ui.Messages.GetText(true)
+	if !strings.HasPrefix(after, before) {
+		t.Fatalf("append path rewrote existing content:\nbefore=%q\nafter=%q", before, after)
+	}
+	if !strings.Contains(after, "\n\nthe streamed answer") {
+		t.Fatalf("text item lost its blank-line separator; got %q", after)
 	}
 }
 
