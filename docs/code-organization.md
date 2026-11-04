@@ -50,6 +50,7 @@ yaah/
 │   ├── providers/              # OpenAI-compatible + Anthropic clients
 │   ├── pubsub/                 # typed event broker
 │   ├── repl/                   # REPL history and slash commands
+│   ├── retention/              # kernel-first session eviction + GC sweep
 │   ├── rolefile/               # role frontmatter parsing/validation
 │   ├── sandboxfake/            # in-memory sandbox test double
 │   ├── sessions/               # engine-level session registry

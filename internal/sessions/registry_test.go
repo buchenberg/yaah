@@ -486,9 +486,103 @@ func TestRegistryDelete(t *testing.T) {
 		t.Fatalf("Delete unknown = %v, want it to match memory.ErrSessionNotFound", err)
 	}
 
+	// Infra errors pass through for a id the store still knows: membership
+	// is checked first (so an unknown id never reaches the store), after
+	// which a store failure is real and must not be masked as ErrNotFound.
+	store.sessions["sess-2"] = memory.Session{ID: "sess-2"}
 	store.deleteErr = errors.New("disk on fire")
-	if err := reg.Delete("sess-1"); err == nil || errors.Is(err, ErrNotFound) {
+	if err := reg.Delete("sess-2"); err == nil || errors.Is(err, ErrNotFound) {
 		t.Fatalf("infra error = %v, want it passed through", err)
+	}
+}
+
+// hookEvictor records the Delete wiring order: eviction must precede the
+// state cascade, and the sweep hook must only fire after the cascade
+// committed.
+type hookEvictor struct {
+	steps  []string
+	failOn string
+}
+
+func (h *hookEvictor) EvictSession(db *memory.DB, sessionID string) error {
+	if h.failOn == "evict" {
+		return errors.New("eviction gate: refused")
+	}
+	h.steps = append(h.steps, "evict")
+	return nil
+}
+
+func (h *hookEvictor) AfterDelete() {
+	h.steps = append(h.steps, "sweep")
+}
+
+func TestRegistryDeleteRunsEvictionBeforeCascade(t *testing.T) {
+	store := &fakeStore{sessions: map[string]memory.Session{"sess-1": {ID: "sess-1"}}}
+	hook := &hookEvictor{}
+	reg := New(store).WithEvictor(hook)
+
+	if err := reg.Delete("sess-1"); err != nil {
+		t.Fatalf("Delete with evictor: %v", err)
+	}
+	if len(hook.steps) != 2 || hook.steps[0] != "evict" || hook.steps[1] != "sweep" {
+		t.Fatalf("hook steps = %v, want [evict sweep]; the sweep must wait for the cascade", hook.steps)
+	}
+	if _, ok := store.sessions["sess-1"]; ok {
+		t.Fatal("Delete left the row in place")
+	}
+}
+
+func TestRegistryDeleteUnknownIdSkipsEviction(t *testing.T) {
+	store := &fakeStore{sessions: map[string]memory.Session{"sess-1": {ID: "sess-1"}}}
+	hook := &hookEvictor{failOn: "evict"}
+	reg := New(store).WithEvictor(hook)
+
+	// Deleting an unknown id must take the silent-success path without
+	// consulting the trace store: a broken trace.db must not turn
+	// "unknown session" into an infrastructure failure for a caller
+	// deleting a session that never existed.
+	err := reg.Delete("sess-missing")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Delete unknown with evictor = %v, want ErrNotFound", err)
+	}
+	if len(hook.steps) != 0 {
+		t.Fatalf("evictor ran for an unknown id: %v", hook.steps)
+	}
+}
+
+// The unknown-id contract holds for a raw *memory.DB too: only the dbStore
+// adapter used to normalize the driver's sql.ErrNoRows, so Delete's
+// membership check (which goes through Resolve) lost the mapping on that
+// construction — the one web.go's sessions.New(sess.db) uses.
+func TestRegistryDeleteUnknownIdNormalizedOnRawMemoryDB(t *testing.T) {
+	dir := t.TempDir()
+	db, err := memory.Open(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatalf("memory.Open: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	reg := New(db).WithEvictor(&hookEvictor{})
+	err = reg.Delete("sess-missing")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Delete unknown on raw *memory.DB = %v, want ErrNotFound", err)
+	}
+	if !errors.Is(err, memory.ErrSessionNotFound) {
+		t.Fatalf("Delete unknown on raw *memory.DB = %v, want it to match memory.ErrSessionNotFound", err)
+	}
+}
+
+func TestRegistryDeleteEvictionRefusalBlocksCascade(t *testing.T) {
+	store := &fakeStore{sessions: map[string]memory.Session{"sess-1": {ID: "sess-1"}}}
+	hook := &hookEvictor{failOn: "evict"}
+	reg := New(store).WithEvictor(hook)
+
+	err := reg.Delete("sess-1")
+	if err == nil {
+		t.Fatal("refused eviction must block Delete")
+	}
+	if _, ok := store.sessions["sess-1"]; !ok {
+		t.Fatal("a refused eviction must leave the state model untouched (kernel-first order)")
 	}
 }
 
