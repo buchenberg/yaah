@@ -7,17 +7,21 @@ import (
 	"github.com/buchenberg/yaah/internal/types"
 )
 
-// Measured (Intel Ultra 7 265H, Go 1.25.8):
-//   Mark               ~3-5 µs/op   (target < 50 µs)   ✓
-//   Filter (no prune)  ~15 ns/op    (target < 50 ns)   ✓  zero-alloc fast path
-//   Filter (50 pruned) ~6-8 µs/op   (target < 5 µs)
+// Measured (AMD Ryzen 7 3700X, Go 1.26):
+//   Mark               ~66 µs/op    (committing 50 excerpts; see below)
+//   Filter (no prune)  ~15 ns/op    (target < 50 ns)   ✓ zero-alloc fast path
+//   Filter (50 pruned) ~7-8 µs/op   (target < 5 µs)
 //
-// Filter-50 runs nominally ~40% above its rough target. The cost is
-// dominated by copying the 200-message value slice (≈24 KB, near the memory
-// bandwidth floor) — avoiding it would require a copy-on-write message
-// representation, out of scope. At once per provider turn this is < 0.01%
-// of a 100 ms+ turn, so the operational goal ("well under per-turn budget")
-// is comfortably met.
+// Filter-50 runs nominally ~50% above its rough target. The cost is dominated
+// by copying the 200-message value slice (≈24 KB, near the memory bandwidth
+// floor) — avoiding it would require a copy-on-write message representation,
+// out of scope. The bounded excerpts are built once at Mark/commit time and
+// cached, so Filter does not rescan pruned payloads on every provider turn.
+// Mark's committing path is higher than its old <50 µs target because it does
+// that one-time slicing (≈45 KB of excerpts for 50 results); a prune event is
+// still well under 0.1 ms and runs far less often than Filter. At once per
+// provider turn this is < 0.01% of a 100 ms+ turn, so the operational goal
+// ("well under per-turn budget") is comfortably met.
 
 // benchMessages builds a 200-message history with 50 large tool results
 // spread across turns, matching the B5 "Complex" session shape.

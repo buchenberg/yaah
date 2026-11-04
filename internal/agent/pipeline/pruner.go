@@ -11,8 +11,11 @@
 package pipeline
 
 import (
+	"encoding/json"
 	"strconv"
+	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -21,6 +24,19 @@ const (
 	defaultPruneProtectTokens = 2000
 	defaultPruneMinReclaim    = 200
 	defaultPruneMinTurns      = 1
+
+	// pruneMinResultTokens is the smallest tool result worth pruning. Below
+	// this a notice plus an excerpt costs nearly as much as the original, and
+	// stubbing it only forces a refetch for a small file or grep hit.
+	pruneMinResultTokens = 300
+
+	// Excerpt bounds for a shrunk result: whole head/tail lines when the
+	// result has enough lines, capped in bytes so one giant line cannot
+	// defeat the bound.
+	pruneHeadLines = 20
+	pruneTailLines = 10
+	pruneHeadBytes = 600
+	pruneTailBytes = 300
 )
 
 // PruneConfig tunes soft-prune behaviour. Defaults are tuned for yaah's
@@ -68,10 +84,11 @@ type PruneStats struct {
 type Pruner struct {
 	mu           sync.Mutex
 	cfg          PruneConfig
-	pruned       map[string]bool // keyed by tool-call ID
-	last         PruneStats      // most recent Mark snapshot
-	cumMarked    int             // survives Reset
-	cumReclaimed int             // survives Reset
+	pruned       map[string]bool   // keyed by tool-call ID
+	previews     map[string]string // cached replacement text, keyed by tool-call ID
+	last         PruneStats        // most recent Mark snapshot
+	cumMarked    int               // survives Reset
+	cumReclaimed int               // survives Reset
 }
 
 // NewPruner constructs a Pruner, applying defaults for any zero/negative
@@ -90,8 +107,9 @@ func NewPruner(cfg PruneConfig) *Pruner {
 		cfg.ProtectedTools = map[string]bool{"skill": true, "delegate": true}
 	}
 	return &Pruner{
-		cfg:    cfg,
-		pruned: make(map[string]bool),
+		cfg:      cfg,
+		pruned:   make(map[string]bool),
+		previews: make(map[string]string),
 	}
 }
 
@@ -107,8 +125,10 @@ func estimateToolTokens(m types.Message) int {
 }
 
 type pruneCandidate struct {
-	id     string
-	tokens int
+	id      string
+	name    string
+	content string
+	tokens  int
 }
 
 // Mark walks messages backwards from the most recent, deciding which stale
@@ -145,6 +165,29 @@ func (p *Pruner) Mark(messages []types.Message, reason string) PruneStats {
 	turns := 0
 	var candidates []pruneCandidate
 
+	// Protect the newest completed tool-call batch unconditionally when it is
+	// still the tail of the conversation. Without this floor the batch that
+	// was just fetched can be reaped before the model has read it, which is
+	// exactly the refetch loop yaah-e3qs reports. A user message after the
+	// batch means the model already consumed it: the next turn has started,
+	// so the batch is eligible again.
+	lastBatch, lastUser := -1, -1
+	for i := len(messages) - 1; i >= 0; i-- {
+		if lastUser == -1 && messages[i].Role == "user" {
+			lastUser = i
+		}
+		if lastBatch == -1 && messages[i].Role == "assistant" && len(messages[i].ToolCalls) > 0 {
+			lastBatch = i
+		}
+		if lastUser != -1 && lastBatch != -1 {
+			break
+		}
+	}
+	protectFrom := -1
+	if lastBatch > lastUser {
+		protectFrom = lastBatch
+	}
+
 	for i := len(messages) - 1; i >= 0; i-- {
 		m := messages[i]
 		if m.Role == "user" || (m.Role == "assistant" && len(m.ToolCalls) > 0) {
@@ -159,6 +202,9 @@ func (p *Pruner) Mark(messages []types.Message, reason string) PruneStats {
 		if m.Role != "tool" {
 			continue
 		}
+		if protectFrom >= 0 && i > protectFrom {
+			continue
+		}
 		if m.ToolCallID == "" {
 			continue
 		}
@@ -170,6 +216,9 @@ func (p *Pruner) Mark(messages []types.Message, reason string) PruneStats {
 			continue
 		}
 		est := estimateToolTokens(m)
+		if est < pruneMinResultTokens {
+			continue
+		}
 		prevTotal := total
 		total += est
 		if total <= p.cfg.ProtectTokens {
@@ -185,7 +234,12 @@ func (p *Pruner) Mark(messages []types.Message, reason string) PruneStats {
 			reclaimable = total - p.cfg.ProtectTokens
 		}
 		reclaim += reclaimable
-		candidates = append(candidates, pruneCandidate{id: m.ToolCallID, tokens: est})
+		candidates = append(candidates, pruneCandidate{
+			id:      m.ToolCallID,
+			name:    m.Name,
+			content: m.Content,
+			tokens:  est,
+		})
 	}
 
 	stats.Candidates = len(candidates)
@@ -200,8 +254,18 @@ func (p *Pruner) Mark(messages []types.Message, reason string) PruneStats {
 		return stats
 	}
 
+	calls := toolCallIndex(messages)
 	for _, c := range candidates {
 		p.pruned[c.id] = true
+		call := calls[c.id]
+		name := c.name
+		if name == "" {
+			name = call.Function.Name
+		}
+		// Build the excerpt once, at commit time. Filter runs on every
+		// provider request; regenerating the same preview there would turn a
+		// one-off slice into a per-request scan of every pruned payload.
+		p.previews[c.id] = shrinkToolResult(c.content, name, call.Function.Arguments)
 	}
 	stats.Marked = len(candidates)
 	stats.Committed = true
@@ -231,28 +295,151 @@ func (p *Pruner) Filter(messages []types.Message) []types.Message {
 		return messages
 	}
 	out := make([]types.Message, len(messages))
+	var calls map[string]types.ToolCall
 	for i, m := range messages {
 		out[i] = m
-		if m.Role == "tool" && m.ToolCallID != "" && p.pruned[m.ToolCallID] {
-			out[i].Content = pruneStub(len(m.Content))
+		if m.Role != "tool" || m.ToolCallID == "" || !p.pruned[m.ToolCallID] {
+			continue
 		}
+		if preview, ok := p.previews[m.ToolCallID]; ok {
+			out[i].Content = preview
+			continue
+		}
+		// Defensive fallback for state created before previews were cached
+		// (or a zero-value Pruner). The hot path above never indexes calls.
+		if calls == nil {
+			calls = toolCallIndex(messages)
+		}
+		call := calls[m.ToolCallID]
+		name := m.Name
+		if name == "" {
+			name = call.Function.Name
+		}
+		out[i].Content = shrinkToolResult(m.Content, name, call.Function.Arguments)
 	}
 	return out
 }
 
-const (
-	pruneStubPrefix = "[output pruned — "
-	pruneStubSuffix = " chars omitted to save context; re-run the tool if you need it again]"
-)
+// toolCallIndex maps tool-call ID to the assistant call that issued it, so a
+// pruned result can name its tool and primary argument.
+func toolCallIndex(messages []types.Message) map[string]types.ToolCall {
+	calls := make(map[string]types.ToolCall)
+	for _, m := range messages {
+		for _, tc := range m.ToolCalls {
+			calls[tc.ID] = tc
+		}
+	}
+	return calls
+}
 
-// pruneStub is the compact replacement shown to the model in place of a
-// pruned tool result. Plain ASCII so it is provider-agnostic. Built with
-// strconv + concatenation (not fmt.Sprintf) to keep the per-message cost
-// minimal on the hot Filter path.
-func pruneStub(omittedChars int) string {
-	// The Go compiler folds this 3-way concatenation into a single
-	// allocation (runtime.concatstrings), keeping the hot Filter path lean.
-	return pruneStubPrefix + strconv.Itoa(omittedChars) + pruneStubSuffix
+const pruneNoticePrefix = "[output pruned — "
+
+// shrinkToolResult replaces a pruned tool result with a bounded excerpt plus
+// enough identity (tool name, primary argument, original size) for the model
+// to decide whether it needs the full result again. Keeping a head/tail
+// excerpt avoids the old all-or-nothing stub, which discarded the very
+// fragment most reads and greps are answered from.
+func shrinkToolResult(content, toolName, rawArgs string) string {
+	notice := pruneNotice(len(content), toolName, primaryArgument(rawArgs))
+	if content == "" {
+		return notice + "\n(empty result)"
+	}
+	var b strings.Builder
+	b.Grow(len(notice) + 1 + pruneHeadBytes + pruneTailBytes + 32)
+	b.WriteString(notice)
+	b.WriteByte('\n')
+	b.WriteString(excerpt(content))
+	return b.String()
+}
+
+func pruneNotice(size int, toolName, primary string) string {
+	label := strings.TrimSpace(toolName)
+	if label == "" {
+		label = "tool"
+	}
+	if primary != "" {
+		label += " " + primary
+	}
+	return pruneNoticePrefix + strconv.Itoa(size) + " chars; " + label + "]"
+}
+
+// primaryArgument extracts the argument that best identifies a tool call for
+// the stub. It prefers the common path/pattern/command keys and falls back to
+// a compact rendering of the raw arguments.
+func primaryArgument(rawArgs string) string {
+	trimmed := strings.TrimSpace(rawArgs)
+	if trimmed == "" || trimmed == "{}" || trimmed == "null" {
+		return ""
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(trimmed), &args); err == nil {
+		for _, key := range []string{
+			"filePath", "path", "pattern", "command", "query", "url", "name", "description",
+		} {
+			if v, ok := args[key].(string); ok && strings.TrimSpace(v) != "" {
+				return truncateArgument(v)
+			}
+		}
+	}
+	return truncateArgument(strings.Join(strings.Fields(trimmed), " "))
+}
+
+func truncateArgument(s string) string {
+	const max = 100
+	if len(s) <= max {
+		return s
+	}
+	return strings.ToValidUTF8(s[:max], "") + "…"
+}
+
+// excerpt keeps the first pruneHeadLines and last pruneTailLines when the
+// content has enough lines, otherwise a bounded head and tail slice. The
+// byte caps keep a single huge line from defeating the bound.
+func excerpt(content string) string {
+	// Count newlines before splitting: a single huge line is common for
+	// minified JSON and should not allocate a one-element line slice.
+	if strings.Count(content, "\n") < pruneHeadLines+pruneTailLines+1 {
+		return byteExcerpt(content)
+	}
+	lines := strings.Split(content, "\n")
+	omitted := len(lines) - pruneHeadLines - pruneTailLines
+	head := truncateAtRune(strings.Join(lines[:pruneHeadLines], "\n"), pruneHeadBytes)
+	tail := tailAtRune(strings.Join(lines[len(lines)-pruneTailLines:], "\n"), pruneTailBytes)
+	return head + "\n[... " + strconv.Itoa(omitted) + " lines omitted ...]\n" + tail
+}
+
+func byteExcerpt(content string) string {
+	headLen, tailLen := pruneHeadBytes, pruneTailBytes
+	if len(content) <= pruneHeadBytes+pruneTailBytes {
+		// Few lines but still worth reclaiming: keep the first half and a
+		// quarter from the end rather than paying for the whole result.
+		headLen, tailLen = len(content)/2, len(content)/4
+	}
+	head := truncateAtRune(content, headLen)
+	tail := tailAtRune(content, tailLen)
+	return head + "\n[... bytes omitted ...]\n" + tail
+}
+
+func truncateAtRune(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
+}
+
+func tailAtRune(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	start := len(s) - max
+	for start < len(s) && !utf8.RuneStart(s[start]) {
+		start++
+	}
+	return s[start:]
 }
 
 // Reset clears the pruned set so the fresh tail is re-evaluated from
@@ -262,6 +449,7 @@ func (p *Pruner) Reset() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.pruned = make(map[string]bool)
+	p.previews = make(map[string]string)
 }
 
 // Stats returns a snapshot of the most recent Mark outcome with the live

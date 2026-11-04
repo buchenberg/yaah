@@ -14,6 +14,18 @@ type clientResponse struct {
 	result json.RawMessage
 }
 
+// clientRequestError preserves the JSON-RPC code so callers can distinguish a
+// semantic refusal (for example -32603 from a client that will not write a
+// path) from transport failure and render an actionable message.
+type clientRequestError struct {
+	Code    int
+	Message string
+}
+
+func (e *clientRequestError) Error() string {
+	return fmt.Sprintf("client error %d: %s", e.Code, e.Message)
+}
+
 // permissionID canonicalizes a numeric request id for the routing map.
 func permissionID(n int) string { return fmt.Sprintf("%d", n) }
 
@@ -31,7 +43,7 @@ func (s *Server) resolvePending(msg Message) {
 	}
 	out := clientResponse{}
 	if msg.Error != nil {
-		out.err = fmt.Errorf("client error %d: %s", msg.Error.Code, msg.Error.Message)
+		out.err = &clientRequestError{Code: msg.Error.Code, Message: msg.Error.Message}
 	} else {
 		out.result = msg.Result
 	}

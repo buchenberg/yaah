@@ -97,6 +97,9 @@ func listDir(ctx context.Context, ws Workspace, w io.Writer, root, prefix string
 		if commonIgnoreDirs[e.Name()] {
 			continue
 		}
+		if e.IsDir() && isNestedWorktreeRoot(ctx, ws, ws.Join(root, e.Name())) {
+			continue
+		}
 		isLast := i == len(entries)-1
 		connector := "├── "
 		if isLast {

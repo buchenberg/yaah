@@ -48,6 +48,31 @@ type PathValidator struct {
 	approved map[string]bool
 }
 
+// PathRefusalError reports a path that the PathValidator refused. It carries
+// the rejected path and, for containment refusals, the allowed workspace root
+// so callers can render an actionable message instead of an opaque transport
+// failure.
+type PathRefusalError struct {
+	// Path is the resolved path that was refused (or the raw input for
+	// home-directory refusals that never resolved).
+	Path string
+	// Root is the workspace root the path had to stay within. Empty for
+	// non-containment refusals such as deny patterns.
+	Root string
+	// Reason is a short human-readable explanation.
+	Reason string
+}
+
+func (e *PathRefusalError) Error() string {
+	if e.Root != "" {
+		return fmt.Sprintf("path %q is outside the workspace root %q; choose a path inside the workspace", e.Path, e.Root)
+	}
+	if e.Reason != "" {
+		return fmt.Sprintf("path %q is refused: %s", e.Path, e.Reason)
+	}
+	return fmt.Sprintf("path %q is refused", e.Path)
+}
+
 // NewPathValidator returns a PathValidator ready for use.
 func NewPathValidator(workspaceRoot string, allowHome bool, denyPatterns []string) *PathValidator {
 	// Resolve the workspace root up-front so every ResolvePath call is fast.
@@ -105,7 +130,10 @@ func (pv *PathValidator) ResolvePath(input string) (string, error) {
 	// ── 1. Home-directory expansion ──
 	if input == "~" || strings.HasPrefix(input, "~/") {
 		if !pv.AllowHomeAccess && !pv.ask("home:"+input, "home-directory access is not allowed in this session") {
-			return "", fmt.Errorf("home-directory access is not allowed in this session (use an absolute or relative path inside the workspace)")
+			return "", &PathRefusalError{
+				Path:   input,
+				Reason: "home-directory access is not allowed in this session",
+			}
 		}
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -158,7 +186,7 @@ func (pv *PathValidator) ResolvePath(input string) (string, error) {
 		}
 		if strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
 			if !pv.ask(realPath, fmt.Sprintf("outside the workspace (%s)", root)) {
-				return "", fmt.Errorf("path %q is outside the workspace (%s)", realPath, root)
+				return "", &PathRefusalError{Path: realPath, Root: root, Reason: "outside the workspace"}
 			}
 		} else {
 			relInWorkspace = filepath.ToSlash(rel)
@@ -188,7 +216,10 @@ func (pv *PathValidator) ResolvePath(input string) (string, error) {
 		if pv.ask("deny:"+realPath, reason) {
 			continue
 		}
-		return "", fmt.Errorf("access to %q is forbidden (deny pattern %q)", base, pattern)
+		return "", &PathRefusalError{
+			Path:   realPath,
+			Reason: fmt.Sprintf("access is forbidden by deny pattern %q", pattern),
+		}
 	}
 
 	return realPath, nil

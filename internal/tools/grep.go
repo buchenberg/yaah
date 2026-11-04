@@ -127,6 +127,9 @@ func (t *GrepTool) grepNative(ctx context.Context, pattern, path, include string
 			if commonIgnoreDirs[d.Name()] {
 				return filepath.SkipDir
 			}
+			if p != path && isNestedWorktreeRoot(ctx, ws, p) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if d.Type()&fs.ModeSymlink != 0 {

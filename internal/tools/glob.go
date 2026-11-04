@@ -119,6 +119,9 @@ func (t *GlobTool) globNative(ctx context.Context, pattern, path string) (string
 			if commonIgnoreDirs[d.Name()] {
 				return filepath.SkipDir
 			}
+			if p != path && isNestedWorktreeRoot(ctx, ws, p) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if d.Type()&fs.ModeSymlink != 0 {

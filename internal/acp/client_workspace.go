@@ -142,7 +142,7 @@ func (w *clientWorkspace) WriteFile(ctx context.Context, path string, data []byt
 		Content:   string(data),
 	})
 	if err != nil {
-		return fmt.Errorf("client write %s: %w", abs, err)
+		return clientWriteError(abs, err)
 	}
 	_ = raw
 	if hadMode {
@@ -151,6 +151,18 @@ func (w *clientWorkspace) WriteFile(ctx context.Context, path string, data []byt
 		_ = os.Chmod(abs, mode)
 	}
 	return nil
+}
+
+// clientWriteError turns an ACP client refusal into a message that names the
+// path and the likely remedy. Some clients answer an out-of-workspace write
+// with a bare JSON-RPC -32603 "Internal error"; passing that through tells the
+// model nothing and invites an identical retry (yaah-c688).
+func clientWriteError(path string, err error) error {
+	var reqErr *clientRequestError
+	if errors.As(err, &reqErr) && reqErr.Code == codeInternal {
+		return fmt.Errorf("client write %s: the ACP client refused the write (JSON-RPC %d: %s); the target may be outside the client's workspace — keep writes inside the workspace or use .scratch/", path, reqErr.Code, reqErr.Message)
+	}
+	return fmt.Errorf("client write %s: %w", path, err)
 }
 
 func (w *clientWorkspace) Exec(ctx context.Context, req tools.ExecRequest) (tools.ExecResult, error) {

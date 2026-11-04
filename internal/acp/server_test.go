@@ -1368,6 +1368,20 @@ func (h *acpHarness) reply(id json.RawMessage, result any) error {
 	return err
 }
 
+// replyError sends a client error response for a server-initiated request.
+func (h *acpHarness) replyError(id json.RawMessage, code int, message string) error {
+	out, err := json.Marshal(Message{
+		JSONRPC: "2.0",
+		ID:      id,
+		Error:   &RPCError{Code: code, Message: message},
+	})
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(h.inW, string(out)+"\n")
+	return err
+}
+
 // TestServer_permissionAllow drives the request_permission bridge: the
 // approval callback suspends the run, the request reaches the client,
 // and the routed response decides.

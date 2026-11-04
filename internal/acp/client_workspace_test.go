@@ -113,6 +113,37 @@ func TestClientWorkspace_WriteUsesClient(t *testing.T) {
 	}
 }
 
+// TestClientWorkspace_WriteInternalErrorIsActionable pins yaah-c688 on the
+// ACP delegation path: a client that answers fs/write_text_file with a bare
+// -32603 must produce a message naming the path and the likely cause, not an
+// opaque "client error -32603: Internal error".
+func TestClientWorkspace_WriteInternalErrorIsActionable(t *testing.T) {
+	h, _, reg, cwd := clientWorkspaceHarness(t)
+	path := filepath.Join(cwd, "new.txt")
+	done := make(chan error, 1)
+	ctx := testContext(t)
+	go func() {
+		_, err := reg.Execute(ctx, "write", fmt.Sprintf(`{"filePath":%q,"content":"editor buffer"}`, path))
+		done <- err
+	}()
+	req := h.recvRequest(t, "fs/write_text_file")
+	if err := h.replyError(req.ID, codeInternal, "Internal error"); err != nil {
+		t.Fatal(err)
+	}
+	err := <-done
+	if err == nil {
+		t.Fatal("expected the write to fail")
+	}
+	for _, want := range []string{path, "refused the write", "-32603", ".scratch/"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+	if err.Error() == "client write "+path+": client error -32603: Internal error" {
+		t.Errorf("client error was not translated: %q", err.Error())
+	}
+}
+
 func TestClientWorkspace_TerminalExecAndRelease(t *testing.T) {
 	h, _, reg, cwd := clientWorkspaceHarness(t)
 	updates := make(chan any, 2)

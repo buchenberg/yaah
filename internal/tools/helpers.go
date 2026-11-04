@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,14 +54,35 @@ func rgAvailable() bool {
 
 // commonIgnoreDirs lists directories that are nearly always safe to skip
 // during filesystem walks (glob, grep, ls).
+//
+// Harness-owned state and retained dispatch worlds are included: they hold
+// stale copies of the repository, so searching them returns duplicate hits
+// with wrong line numbers. dist/build/bin/obj are deliberately NOT listed —
+// they are valid Go package names and a project may keep source there.
 var commonIgnoreDirs = map[string]bool{
 	".git": true, "node_modules": true, ".venv": true, "venv": true,
 	"__pycache__": true, ".mypy_cache": true, ".pytest_cache": true,
-	".tox": true, ".eggs": true, "dist": true, "build": true,
+	".tox": true, ".eggs": true,
 	".next": true, ".nuxt": true, ".output": true,
 	"vendor": true, ".idea": true, ".vscode": true,
 	"target": true, ".dart_tool": true, ".turbo": true,
-	"bin": true, "obj": true,
+
+	// yaah state and dispatch worlds (retained worktrees, proposals, scratch).
+	".yaah": true, ".kilo": true, ".scratch": true,
+	// Other coding-tool state directories observed in the wild.
+	".entire": true, ".serena": true, ".qwen": true, ".runtime": true,
+	".sandbox": true, ".playwright-mcp": true, ".release": true,
+	".codex": true, ".claude": true, ".ghost": true, ".hermes": true,
+}
+
+// isNestedWorktreeRoot reports whether path is the root of a git worktree
+// nested inside the directory being walked. A linked worktree has a .git
+// file (not a directory) pointing at the main repository's gitdir. Skipping
+// it structurally covers dispatch worlds mounted under a name we do not
+// know, while still letting an explicit search of the worktree root work.
+func isNestedWorktreeRoot(ctx context.Context, ws Workspace, path string) bool {
+	info, err := ws.Lstat(ctx, ws.Join(path, ".git"))
+	return err == nil && !info.IsDir()
 }
 
 // binaryExtensions is a rough set of extensions that should be skipped

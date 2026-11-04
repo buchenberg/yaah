@@ -55,7 +55,7 @@ func (t *WriteTool) Execute(ctx context.Context, args string) (string, error) {
 	ws := workspaceOf(t.WS, t.PV)
 	resolved, err := ws.ResolvePath(params.FilePath)
 	if err != nil {
-		return "", err
+		return "", writePathError(err)
 	}
 	params.FilePath = resolved
 
@@ -74,4 +74,16 @@ func (t *WriteTool) Execute(ctx context.Context, args string) (string, error) {
 		return "", fmt.Errorf("write: %w", err)
 	}
 	return fmt.Sprintf("Wrote %d bytes to %s", len(params.Content), params.FilePath), nil
+}
+
+// writePathError adds the write-specific remedy to a containment refusal.
+// The PathRefusalError already names both the target and the workspace root;
+// this tells the model where disposable files belong so it does not retry the
+// same out-of-workspace path.
+func writePathError(err error) error {
+	var refusal *PathRefusalError
+	if errors.As(err, &refusal) && refusal.Root != "" {
+		return fmt.Errorf("write: %w; use .scratch/ for disposable files inside the workspace", err)
+	}
+	return err
 }
