@@ -19,6 +19,14 @@ import (
 type Client struct {
 	Provider         Provider
 	FallbackProvider Provider
+
+	// swappedFromPrimary records that a fallback swap happened in ANY
+	// earlier Call. Unlike the per-Call swap guard, this persists across
+	// turns: after the swap, c.Provider stays on the fallback for every
+	// later turn, so the replayed mixed history keeps failing on thinking-
+	// mode endpoints — and the classifier must keep naming the swap as the
+	// cause on every subsequent turn, not just the first (yaah-31j).
+	swappedFromPrimary bool
 	// ProviderName / FallbackProviderName label the two providers in
 	// error envelopes. They are swapped together with Provider and
 	// FallbackProvider so a failed attempt is attributed to the provider
@@ -269,8 +277,9 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 			Model:       req.Model,
 			// yaah-31j: a thinking-mode endpoint demanding replayed thinking
 			// blocks cannot consume history produced by the swapped-out
-			// primary. The classifier splits its advice on the swap state.
-			ProviderSwapped: providerSwapped,
+			// primary. The classifier splits its advice on the swap state,
+			// which persists across turns on the client.
+			ProviderSwapped: c.swappedFromPrimary,
 		}
 		classified := errorclassify.Classify(err, meta)
 
@@ -283,6 +292,7 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 		if isDegenerateStream(err) && c.FallbackProvider != nil && !providerSwapped {
 			c.swapToFallback(&req)
 			providerSwapped = true
+			c.swappedFromPrimary = true
 			attempt--
 			continue
 		}
@@ -301,6 +311,7 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 		if errors.Is(err, ErrPrematureStreamClose) && c.FallbackProvider != nil && !providerSwapped {
 			c.swapToFallback(&req)
 			providerSwapped = true
+			c.swappedFromPrimary = true
 			attempt--
 			continue
 		}
@@ -434,22 +445,6 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 		return attach(lastResult), recoveryFailure("", outputBudgetErr, req.MaxTokens, lastErr)
 	}
 	return attach(lastResult), lastErr
-}
-
-// historyHasSignatureGaps reports whether any assistant message in the
-// replayed history lacks a reasoning signature. Signatures are populated
-// only on the Anthropic-compatible client path (anthropic.go:596), which
-// is the only path whose endpoints demand replayed thinking blocks — so
-// gaps mean the history contains turns produced OUTSIDE that client: the
-// mid-session fallback-swap marker this predicate exists to detect
-// (yaah-31j).
-func historyHasSignatureGaps(msgs []types.Message) bool {
-	for _, m := range msgs {
-		if m.Role == "assistant" && m.ReasoningSignature == "" {
-			return true
-		}
-	}
-	return false
 }
 
 func (c *Client) heartbeatInterval() time.Duration {
