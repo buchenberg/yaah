@@ -65,17 +65,20 @@ func (t *GlobTool) Execute(ctx context.Context, args string) (string, error) {
 	params.Path = resolved
 
 	if rgAvailable() {
-		return t.globRipgrep(ctx, params.Pattern, params.Path)
+		if filter, derr := newNestedWorktreeFilter(ctx, ws, params.Path); derr == nil {
+			return t.globRipgrep(ctx, params.Pattern, params.Path, filter)
+		}
+		// Worktree discovery failed; the native walker remains the structural
+		// fallback and still skips nested worktrees.
 	}
 	return t.globNative(ctx, params.Pattern, params.Path)
 }
 
-func (t *GlobTool) globRipgrep(ctx context.Context, pattern, path string) (string, error) {
+func (t *GlobTool) globRipgrep(ctx context.Context, pattern, path string, filter *nestedWorktreeFilter) (string, error) {
 	pattern = filepath.ToSlash(pattern)
 	rgArgs := []string{"--files", "--glob", pattern, "--no-messages", "--", path}
 
 	ws := workspaceOf(t.WS, t.PV)
-	filter := newNestedWorktreeFilter(ctx, ws, path)
 	res, err := ws.Exec(ctx, ExecRequest{Command: "rg", Args: rgArgs})
 	// ripgrep uses exit 1 to mean "no files", which is not a failure.
 	if res.ExitCode == 1 {

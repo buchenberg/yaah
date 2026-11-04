@@ -66,12 +66,16 @@ func (t *GrepTool) Execute(ctx context.Context, args string) (string, error) {
 	params.Path = resolved
 
 	if rgAvailable() {
-		return t.execRipgrep(ctx, params.Pattern, params.Path, params.Include)
+		if filter, derr := newNestedWorktreeFilter(ctx, ws, params.Path); derr == nil {
+			return t.execRipgrep(ctx, params.Pattern, params.Path, params.Include, filter)
+		}
+		// Worktree discovery failed; the native walker remains the structural
+		// fallback and still skips nested worktrees.
 	}
 	return t.grepNative(ctx, params.Pattern, params.Path, params.Include)
 }
 
-func (t *GrepTool) execRipgrep(ctx context.Context, pattern, path, include string) (string, error) {
+func (t *GrepTool) execRipgrep(ctx context.Context, pattern, path, include string, filter *nestedWorktreeFilter) (string, error) {
 	rgArgs := []string{"--no-heading", "--line-number", "--color", "never", "--no-messages", "--null", "-e", pattern}
 	if include != "" {
 		rgArgs = append(rgArgs, "--glob", include)
@@ -79,7 +83,6 @@ func (t *GrepTool) execRipgrep(ctx context.Context, pattern, path, include strin
 	rgArgs = append(rgArgs, "--", path)
 
 	ws := workspaceOf(t.WS, t.PV)
-	filter := newNestedWorktreeFilter(ctx, ws, path)
 	res, err := ws.Exec(ctx, ExecRequest{Command: "rg", Args: rgArgs})
 	// ripgrep uses exit 1 to mean "no matches", which is not a failure. Check the
 	// code before the error: a local workspace reports both.

@@ -104,6 +104,55 @@ func TestNestedWorktreeFilter_ExplicitRootSearchAllowed(t *testing.T) {
 	}
 }
 
+// TestIsNestedWorktreeRoot_DistinguishesSubmodule pins the .git file
+// distinction: a linked worktree's gitdir points under .git/worktrees, a
+// submodule's under .git/modules. Only the former is a stale dispatch copy.
+func TestIsNestedWorktreeRoot_DistinguishesSubmodule(t *testing.T) {
+	tmp := t.TempDir()
+	wt := filepath.Join(tmp, "wt")
+	sub := filepath.Join(tmp, "sub")
+	for _, d := range []string{wt, sub} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: /x/.git/worktrees/wt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, ".git"), []byte("gitdir: ../.git/modules/sub\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ws := workspaceOf(nil, nil)
+	if !isNestedWorktreeRoot(context.Background(), ws, wt) {
+		t.Error("linked worktree should be detected")
+	}
+	if isNestedWorktreeRoot(context.Background(), ws, sub) {
+		t.Error("submodule must not be treated as a nested worktree")
+	}
+}
+
+// TestPosixRel pins the POSIX relative-path helper, including the root "/"
+// case where filepath.Rel-style splitting would otherwise emit a stray "..".
+func TestPosixRel(t *testing.T) {
+	cases := []struct{ base, target, want string }{
+		{"/", "/a", "a"},
+		{"/", "/a/b", "a/b"},
+		{"/a", "/a/b", "b"},
+		{"/a", "/b", "../b"},
+		{"/a", "/a", "."},
+		{"/a/b", "/a/b/c", "c"},
+	}
+	for _, tc := range cases {
+		got, err := posixRel(tc.base, tc.target)
+		if err != nil {
+			t.Fatalf("posixRel(%q, %q): %v", tc.base, tc.target, err)
+		}
+		if got != tc.want {
+			t.Errorf("posixRel(%q, %q) = %q, want %q", tc.base, tc.target, got, tc.want)
+		}
+	}
+}
+
 func TestGlobNative_ExplicitIgnoredRootStillSearchable(t *testing.T) {
 	tmp := dispatchSearchFixture(t)
 	root := filepath.Join(tmp, ".yaah", "shepherd-worktrees", "proposal-1")
@@ -147,7 +196,7 @@ func installFakeRipgrep(t *testing.T, root string) {
 	dir := t.TempDir()
 	script := `#!/bin/sh
 case " $* " in
-  *" **/.git "*)
+  *" worktrees "*)
     printf '%s\n' "$FAKE_RG_ROOT/custom-world/.git" "$FAKE_RG_ROOT/sub/custom-world/.git"
     ;;
   *" --files "*)
