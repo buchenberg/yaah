@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.132.4](https://github.com/buchenberg/yaah/compare/v0.132.3...v0.132.4) (2026-11-04)
+
+
+### Bug Fixes
+
+* **agent:** persist swap state on the client; drop the dead signature predicate ([5f49b8d](https://github.com/buchenberg/yaah/commit/5f49b8dfe97ad16a33aaf5b6ad2fa68a82227abb))
+* **agent:** repair the duplicated heartbeatInterval from the helper insertion ([49f81b3](https://github.com/buchenberg/yaah/commit/49f81b36c44c3116e2feb8e31b22fc1bc2b9e0e2))
+* **agent:** review fixes — doc-comment attachment, signature-provenance doc, softened attribution ([2c376c6](https://github.com/buchenberg/yaah/commit/2c376c687a6b9059968b7197d194c5344f7bdd37))
+* **agent:** swap provenance on the credential-rotation path too; persistence test ([8b615c8](https://github.com/buchenberg/yaah/commit/8b615c84cfbe2996fbf4b86488f571465e80a546))
+* **errorclassify:** accurate advice for thinking-replay on swapped-in providers (yaah-31j) ([49f5482](https://github.com/buchenberg/yaah/commit/49f5482b9a5dbce5aa77141fcf5aa0471016bfe0))
+* **errorclassify:** accurate advice for thinking-replay on swapped-in providers (yaah-31j) ([10b7cc8](https://github.com/buchenberg/yaah/commit/10b7cc894907d4b81a68cb2753d59cc1de27db6d))
+* **errorclassify:** discriminate the replay cases by swap state, not signatures ([41f7dfa](https://github.com/buchenberg/yaah/commit/41f7dfa76ce02a408f8604458d282b1ed3b33f7b))
+
+
+### Tests
+
+* **agent:** cover the credential-rotation swap path for persisted attribution ([17f411c](https://github.com/buchenberg/yaah/commit/17f411c319f24f8913e52b798f8e9521b962c6c8))
+* **agent:** make the rotation fixture's 401 typed ([c4a6fd3](https://github.com/buchenberg/yaah/commit/c4a6fd3cedd5750640ce4b488cab4b8b2a36e276))
+* **errorclassify:** assert the swap attribution in the foreign-history case ([e57e67c](https://github.com/buchenberg/yaah/commit/e57e67ca71a5325a11e4172c01fabfb0b1045cea))
+
 ## [0.132.3](https://github.com/buchenberg/yaah/compare/v0.132.2...v0.132.3) (2026-11-04)
 
 
