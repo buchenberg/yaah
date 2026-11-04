@@ -103,9 +103,12 @@ func isNestedWorktreeRoot(ctx context.Context, ws Workspace, path string) bool {
 
 // isWorktreeGitdir reports whether a .git file's gitdir points at a linked
 // worktree (…/.git/worktrees/<id>) rather than a submodule
-// (…/.git/modules/<id>). Only the second-to-last path component is compared,
-// so a repository whose own path happens to contain "worktrees" is not
-// misclassified.
+// (…/.git/modules/<path>). The admin directory — worktrees for a worktree,
+// modules for a submodule — sits directly under the repository's git
+// directory, so the check locates the last ".git" component and inspects the
+// component after it. A submodule path that itself contains a "worktrees"
+// segment (e.g. vendor/worktrees/browser → .git/modules/vendor/worktrees/browser)
+// therefore stays a submodule.
 func isWorktreeGitdir(content string) bool {
 	line := strings.TrimSpace(content)
 	if !strings.HasPrefix(line, "gitdir:") {
@@ -114,13 +117,12 @@ func isWorktreeGitdir(content string) bool {
 	p := strings.TrimSpace(strings.TrimPrefix(line, "gitdir:"))
 	p = strings.ReplaceAll(p, "\\", "/")
 	parts := strings.Split(strings.Trim(p, "/"), "/")
-	if len(parts) < 2 || parts[len(parts)-2] != "worktrees" {
-		return false
+	for i := len(parts) - 1; i >= 0; i-- {
+		if parts[i] == ".git" || strings.HasSuffix(parts[i], ".git") {
+			return i+1 < len(parts) && parts[i+1] == "worktrees"
+		}
 	}
-	// A submodule's gitdir lives under .../modules/<name>. If a submodule path
-	// itself contains a "worktrees" segment (modules/worktrees/<id>), the
-	// trailing component still names a submodule, not a linked worktree.
-	return len(parts) < 3 || parts[len(parts)-3] != "modules"
+	return false
 }
 
 // wsPath* helpers route path manipulation through the workspace's own path
