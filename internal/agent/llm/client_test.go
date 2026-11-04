@@ -84,7 +84,7 @@ func TestCall_swapStatePersistsAcrossTurns(t *testing.T) {
 // (yaah-31j review: reverting the flag on this path must fail this test).
 func TestCall_swapStatePersistsAcrossCredentialRotations(t *testing.T) {
 	primary := &healingProvider{
-		failErr:  errors.New("request failed with status 401: invalid api key"),
+		failErr:  statusError{msg: "request failed with status 401: invalid api key", status: 401},
 		maxFails: 1000, // never heals
 	}
 	fallback := &swapStateProvider{}
