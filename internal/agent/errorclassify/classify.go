@@ -110,8 +110,14 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 		// they are the more specific remedies, matching the 400 branch's
 		// precedence below.
 		fieldMentioned := strings.Contains(msg, "response_format") || strings.Contains(msg, "response format")
+		// On 400 the status branch below handles overflow/content-policy
+		// first — yield to it there. On every other status (422
+		// extra_forbidden, 0 streaming failures) that remedy is never
+		// reached, so yielding would swallow the drop for exactly the case
+		// this classifier exists for (yaah-95ri.6 review follow-up).
+		on400 := meta.StatusCode == http.StatusBadRequest
 		if fieldMentioned && matchAny(msg, responseFormatUnsupportedPatterns) &&
-			!matchAny(msg, contextOverflowPatterns) && !matchAny(msg, contentPolicyPatterns) {
+			(!on400 || (!matchAny(msg, contextOverflowPatterns) && !matchAny(msg, contentPolicyPatterns))) {
 			c.Reason = ReasonFormatError
 			c.Retryable = false
 			c.ShouldDropResponseFormat = true
