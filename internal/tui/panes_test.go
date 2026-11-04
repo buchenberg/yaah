@@ -84,3 +84,20 @@ func TestSetEphemeral_ClearsAfterTTL(t *testing.T) {
 		t.Fatalf("ephemeralMsg = %q, want empty after TTL", got)
 	}
 }
+
+// TestPromptEchoSeamSpacer pins the one-row gap between the sticky prompt
+// echo and the messages buffer: scrolled conversation content must never
+// butt up against the user's question line.
+func TestPromptEchoSeamSpacer(t *testing.T) {
+	ui := New("test")
+	ui.SetCurrentPrompt("q")
+	sim := newPaneSim(t, 120, 30)
+	ui.Root.SetRect(0, 0, 120, 30)
+	ui.Root.Draw(sim)
+
+	_, ey, _, eh := ui.promptEcho.GetRect()
+	_, my, _, _ := ui.Messages.GetInnerRect()
+	if gap := my - (ey + eh); gap != 1 {
+		t.Errorf("expected exactly 1 spacer row between prompt echo and messages pane, got %d", gap)
+	}
+}

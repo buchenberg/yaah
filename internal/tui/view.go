@@ -89,9 +89,13 @@ func (t *App) buildUI() {
 
 	t.Header.AddItem(t.Banner, 0, 0, headerRows, 1, 0, 0, false)
 
+	// One blank row between the sticky prompt echo and the conversation
+	// buffer, so agent content never butts up against the question line
+	// as it scrolls beneath it.
 	messagesCol := tview.NewFlex().
 		SetDirection(tview.FlexRow).
 		AddItem(t.promptEcho, 1, 0, false).
+		AddItem(tview.NewBox(), 1, 0, false).
 		AddItem(t.Messages, 0, 1, false)
 	t.messagesCol = messagesCol
 
