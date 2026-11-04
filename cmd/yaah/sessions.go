@@ -103,14 +103,21 @@ var sessionsDeleteCmd = &cobra.Command{
 		}
 		defer reg.Close()
 		// Kernel-first deletion: the trace paths are evicted before the
-		// state cascade (docs/retention-gc.md §5), and the garbage sweep
-		// is scheduled after it.
-		reg.WithEvictor(retention.NewEvictor(cfg.Agent.Default.TracePath()))
+		// state cascade (docs/retention-gc.md §5). One short-lived CLI
+		// process cannot wait for the sweep scheduler's debounce window,
+		// so reclaim synchronously while this process is still alive.
+		evictor := retention.NewEvictor(cfg.Agent.Default.TracePath())
+		reg.WithEvictor(evictor)
 		if err := reg.Delete(id); err != nil {
 			if errors.Is(err, sessions.ErrNotFound) {
 				return fmt.Errorf("no session %q in the store", id)
 			}
 			return fmt.Errorf("delete session: %w", err)
+		}
+		if err := evictor.SweepNow(); err != nil {
+			// Reclamation is best-effort: the content is already
+			// unreachable; the next sweep claims it.
+			cmd.Printf("note: garbage sweep deferred (%v)\n", err)
 		}
 		cmd.Printf("Deleted session: %s\n", id)
 		return nil

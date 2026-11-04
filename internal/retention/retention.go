@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"math"
 	"os"
 	"sync"
 	"time"
@@ -87,14 +86,20 @@ func (e *Evictor) EvictSession(db *memory.DB, sessionID string) error {
 		// Evict only paths with retained content: an unknown path must not
 		// gain a tombstone because of a spelling mismatch, and an empty
 		// path has nothing of the session's to make unreachable.
-		prefix, err := store.ReadOwnerPrefix(ctx, shepherdtrace.TrustedReadContext, owner, math.MaxInt, shepherdtrace.ModeBoth)
+		//
+		// through=0 answers existence with one row: whole-path eviction is
+		// the only v1 eviction (no partial-ordinal windows), so every
+		// non-empty path retains its ordinal-0 entry — and the tombstone
+		// check inside the read still fires ErrOwnerEvicted before the
+		// entries query runs.
+		prefix, err := store.ReadOwnerPrefix(ctx, shepherdtrace.TrustedReadContext, owner, 0, shepherdtrace.ModeBoth)
 		if err != nil {
 			if errors.Is(err, shepherdtrace.ErrOwnerEvicted) {
 				continue // a prior delete attempt already evicted this path
 			}
 			return fmt.Errorf("probe trace path: %w", err)
 		}
-		if prefix.FactIDs() == nil {
+		if len(prefix.FactIDs()) == 0 {
 			continue
 		}
 
@@ -147,33 +152,52 @@ func (e *Evictor) SweepNow() error {
 const sweepDelay = 5 * time.Second
 
 // sweepTimers holds one pending debounce timer per trace store, guarded by
-// sweepMu: while a sweep is pending more deletes are absorbed, and a sweep
-// is never scheduled twice concurrently.
+// sweepMu. sweepRunning marks a sweep in flight for a path, and sweepRerun
+// latches delete requests that arrived during it — a running sweep drains
+// the latch when it completes, so a burst of deletes yields at most one
+// follow-up sweep and two `CollectGarbage` calls never run concurrently
+// against the same store.
 var (
-	sweepMu     sync.Mutex
-	sweepTimers = map[string]*time.Timer{}
+	sweepMu      sync.Mutex
+	sweepTimers  = map[string]*time.Timer{}
+	sweepRunning = map[string]bool{}
+	sweepRerun   = map[string]bool{}
 )
 
 // scheduleSweep coalesces deletes into one sweep per trace store: while a
-// sweep for a path is pending, more deletes are absorbed; a request during
-// a running sweep flags a re-run instead of starting a second one. The
-// sweep is global (§6), so per-delete sweeps would waste the write lock.
+// sweep for a path is pending or running, more deletes are absorbed (a
+// running sweep drains its latch and re-runs at most once). The sweep is
+// global (§6), so per-delete sweeps would waste the store's write lock.
 // Best-effort by design: eviction already made the content unreachable, so
 // a sweep that never runs (a CLI exiting first) only defers reclamation.
 func scheduleSweep(tracePath string) {
 	sweepMu.Lock()
 	defer sweepMu.Unlock()
+	if sweepRunning[tracePath] {
+		sweepRerun[tracePath] = true
+		return
+	}
 	if _, pending := sweepTimers[tracePath]; pending {
 		return
 	}
 	sweepTimers[tracePath] = time.AfterFunc(sweepDelay, func() {
 		sweepMu.Lock()
 		delete(sweepTimers, tracePath)
+		sweepRunning[tracePath] = true
 		sweepMu.Unlock()
 
 		e := &Evictor{tracePath: tracePath}
 		if err := e.SweepNow(); err != nil {
 			slog.Warn("retention sweep failed; records stay unreachable until the next sweep", "trace", tracePath, "err", err)
+		}
+
+		sweepMu.Lock()
+		sweepRunning[tracePath] = false
+		reRun := sweepRerun[tracePath]
+		sweepRerun[tracePath] = false
+		sweepMu.Unlock()
+		if reRun {
+			scheduleSweep(tracePath)
 		}
 	})
 }

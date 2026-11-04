@@ -486,8 +486,12 @@ func TestRegistryDelete(t *testing.T) {
 		t.Fatalf("Delete unknown = %v, want it to match memory.ErrSessionNotFound", err)
 	}
 
+	// Infra errors pass through for a id the store still knows: membership
+	// is checked first (so an unknown id never reaches the store), after
+	// which a store failure is real and must not be masked as ErrNotFound.
+	store.sessions["sess-2"] = memory.Session{ID: "sess-2"}
 	store.deleteErr = errors.New("disk on fire")
-	if err := reg.Delete("sess-1"); err == nil || errors.Is(err, ErrNotFound) {
+	if err := reg.Delete("sess-2"); err == nil || errors.Is(err, ErrNotFound) {
 		t.Fatalf("infra error = %v, want it passed through", err)
 	}
 }
@@ -525,6 +529,24 @@ func TestRegistryDeleteRunsEvictionBeforeCascade(t *testing.T) {
 	}
 	if _, ok := store.sessions["sess-1"]; ok {
 		t.Fatal("Delete left the row in place")
+	}
+}
+
+func TestRegistryDeleteUnknownIdSkipsEviction(t *testing.T) {
+	store := &fakeStore{sessions: map[string]memory.Session{"sess-1": {ID: "sess-1"}}}
+	hook := &hookEvictor{failOn: "evict"}
+	reg := New(store).WithEvictor(hook)
+
+	// Deleting an unknown id must take the silent-success path without
+	// consulting the trace store: a broken trace.db must not turn
+	// "unknown session" into an infrastructure failure for a caller
+	// deleting a session that never existed.
+	err := reg.Delete("sess-missing")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Delete unknown with evictor = %v, want ErrNotFound", err)
+	}
+	if len(hook.steps) != 0 {
+		t.Fatalf("evictor ran for an unknown id: %v", hook.steps)
 	}
 }
 

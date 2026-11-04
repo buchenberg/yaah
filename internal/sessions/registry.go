@@ -92,7 +92,8 @@ type Registry struct {
 }
 
 // Evictor evicts a session's trace paths before the state-model cascade.
-// It receives the registry's database to read the trace_owners mapping.
+// It receives the registry's database (nil for view fakes) to read the
+// trace_owners mapping.
 type Evictor interface {
 	EvictSession(db *memory.DB, sessionID string) error
 }
@@ -271,6 +272,13 @@ func (r *Registry) stateDB() *memory.DB {
 // between them leaves content evicted and the session model intact (the
 // safe direction), and the retry completes the cascade.
 func (r *Registry) Delete(id string) error {
+	// Membership first: an unknown id maps to ErrNotFound (the ACP
+	// delete contract's silent-success path) without touching the trace
+	// store — a corrupt or unavailable trace.db must not turn "unknown
+	// session" into an infrastructure failure.
+	if _, err := r.Resolve(id); err != nil {
+		return err
+	}
 	if r.evictor != nil {
 		if err := r.evictor.EvictSession(r.stateDB(), id); err != nil {
 			return fmt.Errorf("kernel trace eviction: %w", err)
