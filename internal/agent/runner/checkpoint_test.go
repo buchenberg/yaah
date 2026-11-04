@@ -9,7 +9,7 @@ import (
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	goatherd "github.com/buchenberg/goatherd-runtime"
-	"github.com/buchenberg/yaah/internal/gitsandbox"
+	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
 )
 
 // TestShepherdTurnCheckpointer_RestoreRevertsWorkspace verifies the adapter's
@@ -26,7 +26,7 @@ func TestShepherdTurnCheckpointer_RestoreRevertsWorkspace(t *testing.T) {
 	mgr := goatherd.NewScopeManager(store)
 
 	repo := newRunnerTestGitRepo(t)
-	sb := gitsandbox.NewLocalSandbox(repo)
+	sb := goatherdgit.NewLocalGitSandbox(repo, goatherdgit.WithCleanPolicy(goatherdgit.CleanPreserveUntracked))
 	scope, err := mgr.Create("turn-checkpoint-test", sb)
 	if err != nil {
 		t.Fatalf("create scope: %v", err)

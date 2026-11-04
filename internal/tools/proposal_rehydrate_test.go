@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	"github.com/buchenberg/yaah/internal/gitsandbox"
+	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
 )
 
 func rehydrateDelta() *GitDelta {
@@ -150,7 +150,7 @@ func TestLoadProposalRegistry_RestartRootRebinds(t *testing.T) {
 
 	// A restart gives the session a new root scope id; the durable session id
 	// must still find the artifact, and settlement must use the current root.
-	root, err := f.fx.mgr.Create("restarted-root", gitsandbox.NewLocalSandbox(f.repo))
+	root, err := f.fx.mgr.Create("restarted-root", goatherdgit.NewLocalGitSandbox(f.repo, goatherdgit.WithCleanPolicy(goatherdgit.CleanPreserveUntracked)))
 	if err != nil {
 		t.Fatalf("create restarted root: %v", err)
 	}

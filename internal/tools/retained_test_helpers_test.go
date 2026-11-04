@@ -16,7 +16,7 @@ import (
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	goatherd "github.com/buchenberg/goatherd-runtime"
 
-	"github.com/buchenberg/yaah/internal/gitsandbox"
+	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
 )
 
 type sessionFixtures struct {
@@ -39,7 +39,7 @@ func newSessionFixtures(t *testing.T) (*sessionFixtures, string, string) {
 
 	repo := newTestGitRepo(t)
 
-	root, err := fx.mgr.Create("test-session-root", gitsandbox.NewLocalSandbox(repo))
+	root, err := fx.mgr.Create("test-session-root", goatherdgit.NewLocalGitSandbox(repo, goatherdgit.WithCleanPolicy(goatherdgit.CleanPreserveUntracked)))
 	if err != nil {
 		t.Fatalf("create root scope: %v", err)
 	}

@@ -40,7 +40,6 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/gitsandbox"
 	"github.com/buchenberg/yaah/internal/jail"
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/memory"
@@ -1108,7 +1107,7 @@ func subAgentSandbox(opts taskRunnerOpts, workdir string) goatherdsandbox.Sandbo
 	if workdir != "" {
 		return goatherdgit.NewWorktreeSandbox(repoPath, workdir)
 	}
-	return gitsandbox.NewLocalSandbox(repoPath)
+	return goatherdgit.NewLocalGitSandbox(repoPath, goatherdgit.WithCleanPolicy(goatherdgit.CleanPreserveUntracked))
 }
 
 // ErrRootTerminal reports a recovered root that cannot be reattached
@@ -1155,7 +1154,7 @@ func CreateRootScope(mgr *goatherd.ScopeManager, sessionID, repoPath string, iso
 			repoPath, _ = os.Getwd()
 		}
 		if repoPath != "" {
-			candidate := gitsandbox.NewLocalSandbox(repoPath)
+			candidate := goatherdgit.NewLocalGitSandbox(repoPath, goatherdgit.WithCleanPolicy(goatherdgit.CleanPreserveUntracked))
 			if _, cerr := candidate.Capture(context.Background()); cerr == nil {
 				sb = candidate
 			}

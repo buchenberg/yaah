@@ -27,7 +27,8 @@ import (
 //
 // It is not parity with the git-worktree lane, and claiming that would be
 // wrong: that lane constructs its backend directly and never touches the
-// registry — goatherdgit.NewLocalGitSandbox in internal/gitsandbox, and
+// registry — goatherdgit.NewLocalGitSandbox (with the kernel's
+// CleanPreserveUntracked policy where lossless rewinds matter), and
 // goatherdgit.NewWorktreeSandbox in internal/tools/retained.go,
 // internal/agent/runner, internal/agent/recovery and cmd/yaah/shepherd.go.
 // This is currently the only OpenSandbox call in yaah. Importing croftadapter

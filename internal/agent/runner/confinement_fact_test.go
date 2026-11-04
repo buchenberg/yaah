@@ -8,7 +8,7 @@ import (
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 
-	"github.com/buchenberg/yaah/internal/gitsandbox"
+	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
 )
 
 // toInt reads a payload number whichever way it survived the round trip.
@@ -39,7 +39,7 @@ func toInt(v any) int {
 // an advisory run is never read as jailed and the writable root is legible.
 func TestRecordConfinementFact(t *testing.T) {
 	mgr, store := newScopeManagerForTest(t)
-	root, err := mgr.Create("root", gitsandbox.NewLocalSandbox(newRunnerTestGitRepo(t)))
+	root, err := mgr.Create("root", goatherdgit.NewLocalGitSandbox(newRunnerTestGitRepo(t), goatherdgit.WithCleanPolicy(goatherdgit.CleanPreserveUntracked)))
 	if err != nil {
 		t.Fatalf("create root scope: %v", err)
 	}
