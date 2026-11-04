@@ -541,6 +541,46 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 	}
 
 	summary := resp.Choices[0].Message.Content
+
+	// The un-divided preserve budget (plus the message-count trigger, which
+	// fires regardless of token gates) means the whole conversation can fit
+	// in the tail: nothing was summarized, so installing would GROW the
+	// history. Do not install; rebase the estimate (small windows rely on
+	// it for the retry after overflow) and book the pass as ineffective so
+	// the anti-thrash guard sees the no-op.
+	if len(oldMsgs) == 0 {
+		est := cm.estimatedTokens()
+		cm.State.LastPromptTokens = est
+		cm.State.LastPromptTokensInclusive = est
+		cm.State.LastPromptIncludesCache = false
+		cm.State.LastCachedPromptTokens = 0
+		cm.State.LastCompactionTokens = est
+		cm.State.LastCompactionMethod = "skipped"
+		cm.State.IneffectiveCompactions++
+		cm.trackCompactionSavings(0)
+		if cm.Broker != nil {
+			cm.Broker.Publish(&CompactionDoneEvent{
+				BeforeTokens:    est,
+				AfterTokens:     est,
+				SavingsPct:      0,
+				Method:          "skipped",
+				IneffectiveNote: "nothing to summarize — conversation fits the preserve budget",
+				OldMsgCount:     0,
+				KeepMsgCount:    len(keepMsgs),
+				Budget:          budget,
+			})
+		}
+		if db := cm.persisterDB(); cm.SessionID != "" && db != nil {
+			cooldown := int64(0)
+			if cm.State.IneffectiveCompactions >= 2 {
+				cooldown = time.Now().Unix() + 600
+			}
+			db.SetCompactionCooldown(cm.SessionID, cooldown, cm.State.IneffectiveCompactions)
+		}
+		observability.RecordCompaction(ctx, compactReason, time.Since(startTime), est, est, 0)
+		return
+	}
+
 	cm.applyCompactedSummary(summary, sysMsg, oldMsgs, keepMsgs, effectiveTokens)
 	cm.State.LastCompactionMethod = "single"
 	cm.State.LastCompactionSummary = summary
@@ -669,10 +709,17 @@ func (cm *ContextManager) summarizeChunk(ctx context.Context, chunk []types.Mess
 	}
 
 	resp, err := provider.Send(ctx, req)
+	if err == nil && resp != nil && len(resp.Choices) > 0 && resp.Choices[0].FinishReason == "length" {
+		// A chunk cut off by the output cap carries partial information;
+		// returning it would install a half summary when the chunk is the
+		// only one. Drop to the failure path — other chunks still feed
+		// the merge, and the single-chunk case falls back to trim.
+		return "", nil
+	}
 	if err != nil {
 		return "", fmt.Errorf("chunk %d/%d summarization failed: %w", chunkIdx+1, total, err)
 	}
-	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
+	if resp == nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
 		return "", nil
 	}
 	return resp.Choices[0].Message.Content, nil
@@ -768,7 +815,11 @@ func (cm *ContextManager) reducePartialSummaries(ctx context.Context, partials [
 	if err != nil {
 		return strings.Join(partials, "\n###\n"), nil
 	}
-	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
+	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" ||
+		resp.Choices[0].FinishReason == "length" {
+		// Empty, failed, or output-cap-truncated merges install the raw
+		// partial summaries instead — each partial is complete, so the
+		// join is never the half-summary shape.
 		return strings.Join(partials, "\n###\n"), nil
 	}
 
