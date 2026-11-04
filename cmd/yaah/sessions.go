@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/cwdpath"
+	"github.com/buchenberg/yaah/internal/retention"
 	"github.com/buchenberg/yaah/internal/sessions"
 	"github.com/spf13/cobra"
 )
@@ -91,11 +93,19 @@ var sessionsDeleteCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id := args[0]
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("load config: %w", err)
+		}
 		reg, err := sessions.OpenDefault()
 		if err != nil {
 			return fmt.Errorf("open database: %w", err)
 		}
 		defer reg.Close()
+		// Kernel-first deletion: the trace paths are evicted before the
+		// state cascade (docs/retention-gc.md §5), and the garbage sweep
+		// is scheduled after it.
+		reg.WithEvictor(retention.NewEvictor(cfg.Agent.Default.TracePath()))
 		if err := reg.Delete(id); err != nil {
 			if errors.Is(err, sessions.ErrNotFound) {
 				return fmt.Errorf("no session %q in the store", id)

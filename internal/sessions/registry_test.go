@@ -492,6 +492,56 @@ func TestRegistryDelete(t *testing.T) {
 	}
 }
 
+// hookEvictor records the Delete wiring order: eviction must precede the
+// state cascade, and the sweep hook must only fire after the cascade
+// committed.
+type hookEvictor struct {
+	steps  []string
+	failOn string
+}
+
+func (h *hookEvictor) EvictSession(db *memory.DB, sessionID string) error {
+	if h.failOn == "evict" {
+		return errors.New("eviction gate: refused")
+	}
+	h.steps = append(h.steps, "evict")
+	return nil
+}
+
+func (h *hookEvictor) AfterDelete() {
+	h.steps = append(h.steps, "sweep")
+}
+
+func TestRegistryDeleteRunsEvictionBeforeCascade(t *testing.T) {
+	store := &fakeStore{sessions: map[string]memory.Session{"sess-1": {ID: "sess-1"}}}
+	hook := &hookEvictor{}
+	reg := New(store).WithEvictor(hook)
+
+	if err := reg.Delete("sess-1"); err != nil {
+		t.Fatalf("Delete with evictor: %v", err)
+	}
+	if len(hook.steps) != 2 || hook.steps[0] != "evict" || hook.steps[1] != "sweep" {
+		t.Fatalf("hook steps = %v, want [evict sweep]; the sweep must wait for the cascade", hook.steps)
+	}
+	if _, ok := store.sessions["sess-1"]; ok {
+		t.Fatal("Delete left the row in place")
+	}
+}
+
+func TestRegistryDeleteEvictionRefusalBlocksCascade(t *testing.T) {
+	store := &fakeStore{sessions: map[string]memory.Session{"sess-1": {ID: "sess-1"}}}
+	hook := &hookEvictor{failOn: "evict"}
+	reg := New(store).WithEvictor(hook)
+
+	err := reg.Delete("sess-1")
+	if err == nil {
+		t.Fatal("refused eviction must block Delete")
+	}
+	if _, ok := store.sessions["sess-1"]; !ok {
+		t.Fatal("a refused eviction must leave the state model untouched (kernel-first order)")
+	}
+}
+
 // TestRegistryResolve pins membership: a known id returns its row, an unknown
 // id wraps ErrNotFound, and no store error type leaks to the caller.
 func TestRegistryResolve(t *testing.T) {

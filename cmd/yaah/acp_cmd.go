@@ -9,6 +9,7 @@ import (
 	"github.com/buchenberg/yaah/internal/acp"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/mcp"
+	"github.com/buchenberg/yaah/internal/retention"
 	"github.com/buchenberg/yaah/internal/sessions"
 	"github.com/buchenberg/yaah/internal/skills"
 	"github.com/spf13/cobra"
@@ -247,11 +248,18 @@ func runACPServe(cmd *cobra.Command, args []string) error {
 	// yaah sessions CLI, the web session picker, and the interactive
 	// resume picker. Per-conversation agent sessions open their own store
 	// handles inside the factory, so this one is used read-and-delete only.
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
 	reg, err := sessions.OpenDefault()
 	if err != nil {
 		return fmt.Errorf("open session store: %w", err)
 	}
 	defer reg.Close()
+	// Kernel-first deletion: session/delete evicts the session's trace
+	// paths before the state cascade (docs/retention-gc.md §5).
+	reg.WithEvictor(retention.NewEvictor(cfg.Agent.Default.TracePath()))
 
 	srv := acp.NewServer(
 		newACPAgentSession,

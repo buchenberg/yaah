@@ -3,6 +3,7 @@ package memory
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/url"
 	"os"
@@ -23,6 +24,30 @@ func (d *DB) RecordTraceOwner(ownerID, parentSession, role string) error {
 		ownerID, parentSession, role, time.Now().Unix(),
 	)
 	return err
+}
+
+// TraceOwnersForSession returns every trace owner id recorded for a parent
+// session. The mapping is the only record of the sub-* synthetic owner ids,
+// so the kernel-first session delete reads it before the cascade removes the
+// rows (docs/retention-gc.md §5) — collect first, evict second, cascade last.
+func (d *DB) TraceOwnersForSession(sessionID string) ([]string, error) {
+	rows, err := d.sql.Query(
+		`SELECT owner_id FROM trace_owners WHERE parent_session = ? ORDER BY created_at, owner_id`,
+		sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("list trace owners: %w", err)
+	}
+	defer rows.Close()
+
+	var owners []string
+	for rows.Next() {
+		var owner string
+		if err := rows.Scan(&owner); err != nil {
+			return nil, fmt.Errorf("scan trace owner: %w", err)
+		}
+		owners = append(owners, owner)
+	}
+	return owners, rows.Err()
 }
 
 // TraceOwnerParent returns the parent session recorded for a trace owner,

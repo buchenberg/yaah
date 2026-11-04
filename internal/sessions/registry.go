@@ -82,8 +82,26 @@ type Registry struct {
 	store  Store
 	closer func() error
 
+	// evictor, when set, is the kernel-first eviction half of Delete
+	// (docs/retention-gc.md §5). Entry points that know the trace store
+	// path wire it via WithEvictor; the default is plain state cascade.
+	evictor Evictor
+
 	closeOnce sync.Once
 	closeErr  error
+}
+
+// Evictor evicts a session's trace paths before the state-model cascade.
+// It receives the registry's database to read the trace_owners mapping.
+type Evictor interface {
+	EvictSession(db *memory.DB, sessionID string) error
+}
+
+// WithEvictor wires the kernel-first eviction step on delete and returns
+// the registry for chaining.
+func (r *Registry) WithEvictor(e Evictor) *Registry {
+	r.evictor = e
+	return r
 }
 
 // New returns a registry over a caller-owned store. Close on the result is a
@@ -230,15 +248,45 @@ func (r *Registry) Transcript(id string) (memory.Session, []memory.Message, erro
 	return sess, msgs, nil
 }
 
+// stateDB returns the registry's *memory.DB when the store backs one:
+// *memory.DB directly (New over a real store) or the dbStore adapter
+// (OpenDefault). A view fake has none and returns nil.
+func (r *Registry) stateDB() *memory.DB {
+	switch ds := r.store.(type) {
+	case *memory.DB:
+		return ds
+	case dbStore:
+		return ds.db
+	}
+	return nil
+}
+
 // Delete removes a session and its messages. Deleting an unknown id wraps
 // ErrNotFound so a protocol surface can succeed silently (per the ACP delete
 // contract) instead of reporting an internal failure.
+//
+// When an evictor is wired, Delete is the kernel-first ordering the
+// retention design pins: all trace paths are evicted before the state
+// cascade, so the two halves can never both survive a crash — a crash
+// between them leaves content evicted and the session model intact (the
+// safe direction), and the retry completes the cascade.
 func (r *Registry) Delete(id string) error {
+	if r.evictor != nil {
+		if err := r.evictor.EvictSession(r.stateDB(), id); err != nil {
+			return fmt.Errorf("kernel trace eviction: %w", err)
+		}
+	}
 	if err := r.store.DeleteSession(id); err != nil {
 		if errors.Is(err, memory.ErrSessionNotFound) {
 			return fmt.Errorf("%w: %w", ErrNotFound, err)
 		}
 		return err
+	}
+	if r.evictor != nil {
+		// The cascade committed; the sweep can start reclaiming.
+		if a, ok := r.evictor.(interface{ AfterDelete() }); ok {
+			a.AfterDelete()
+		}
 	}
 	return nil
 }
