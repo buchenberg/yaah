@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.132.1](https://github.com/buchenberg/yaah/compare/v0.132.0...v0.132.1) (2026-11-04)
+
+
+### Bug Fixes
+
+* **dispatch:** reap stale dispatch scopes, cap active dispatches (yaah-95ri.4) ([6176686](https://github.com/buchenberg/yaah/commit/6176686cfcbd9315b52c03a870a084762b6598ae))
+* **dispatch:** reap stale dispatch scopes, cap active dispatches (yaah-95ri.4) ([d0cff89](https://github.com/buchenberg/yaah/commit/d0cff89086bb14a4d72027536592a7df13c01004))
+
 ## [0.132.0](https://github.com/buchenberg/yaah/compare/v0.131.2...v0.132.0) (2026-11-03)
 
 
