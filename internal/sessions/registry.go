@@ -14,6 +14,7 @@
 package sessions
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"sync"
@@ -209,8 +210,13 @@ func (r *Registry) chase(cwd, cursor string, limit int) ([]memory.SessionSummary
 func (r *Registry) Resolve(id string) (memory.Session, error) {
 	sess, err := r.store.GetSession(id)
 	if err != nil {
-		if errors.Is(err, memory.ErrSessionNotFound) {
-			return memory.Session{}, fmt.Errorf("%w: %w", ErrNotFound, err)
+		// The dbStore adapter normalizes the driver's sql.ErrNoRows into
+		// memory.ErrSessionNotFound; a raw *memory.DB (and any Store fake
+		// copying the driver) does not. Normalize here so the documented
+		// wrapping — ErrNotFound around memory.ErrSessionNotFound — holds
+		// for every Store construction.
+		if errors.Is(err, memory.ErrSessionNotFound) || errors.Is(err, sql.ErrNoRows) {
+			return memory.Session{}, fmt.Errorf("%w: %w", ErrNotFound, memory.ErrSessionNotFound)
 		}
 		return memory.Session{}, err
 	}

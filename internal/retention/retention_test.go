@@ -150,6 +150,39 @@ func TestDeleterIsRetryableAcrossCrashWindows(t *testing.T) {
 	}
 }
 
+// TestSweepNowDefersToInflightSweep pins the single-flight participation:
+// a synchronous sweep requested while another is running must latch the
+// re-run and start nothing concurrent — the exact overlap a slow CLI sweep
+// versus the armed scheduler timer could otherwise produce.
+func TestSweepNowDefersToInflightSweep(t *testing.T) {
+	dir := t.TempDir()
+	tracePath := filepath.Join(dir, "trace.db")
+	store, err := shepherdtrace.NewSQLiteTraceStore(tracePath)
+	if err != nil {
+		t.Fatalf("NewSQLiteTraceStore: %v", err)
+	}
+	t.Cleanup(func() { store.Close(context.Background()) })
+
+	sweepMu.Lock()
+	sweepRunning[tracePath] = true
+	sweepMu.Unlock()
+	t.Cleanup(func() {
+		sweepMu.Lock()
+		sweepRunning[tracePath] = false
+		sweepMu.Unlock()
+	})
+
+	if err := NewEvictor(tracePath).SweepNow(); err != nil {
+		t.Fatalf("SweepNow must defer to the in-flight sweep, not fail: %v", err)
+	}
+
+	sweepMu.Lock()
+	defer sweepMu.Unlock()
+	if !sweepRerun[tracePath] {
+		t.Fatal("deferred sweep work was not latched onto the in-flight sweep's re-run")
+	}
+}
+
 func TestMissingTraceStoreEvictsNothingAndStillDeletes(t *testing.T) {
 	dir := t.TempDir()
 	db, err := memory.Open(filepath.Join(dir, "state.db"))

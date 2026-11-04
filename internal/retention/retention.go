@@ -120,10 +120,20 @@ func (e *Evictor) AfterDelete() {
 	scheduleSweep(e.tracePath)
 }
 
-// SweepNow runs one CollectGarbage synchronously. Scheduling coalesces
-// bursts of deletes into one of these; it is exported so tests (and a
-// future retention-policy janitor) can sweep on demand.
+// SweepNow runs one CollectGarbage synchronously, under the same
+// single-flight guard the scheduler uses: if another sweep of this store is
+// in flight, this call defers to it (the guard's re-run latch covers the
+// work) instead of opening a concurrent `CollectGarbage` against the same
+// SQLite file. Exported so a short-lived CLI can reclaim before exit and a
+// future retention-policy janitor can sweep on demand.
 func (e *Evictor) SweepNow() error {
+	claimed, done := markSweepRunning(e.tracePath)
+	if !claimed {
+		// Another sweep is in flight; its re-run latch covers this work.
+		return nil
+	}
+	defer done()
+
 	if _, err := os.Stat(e.tracePath); errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
@@ -152,9 +162,10 @@ func (e *Evictor) SweepNow() error {
 const sweepDelay = 5 * time.Second
 
 // sweepTimers holds one pending debounce timer per trace store, guarded by
-// sweepMu. sweepRunning marks a sweep in flight for a path, and sweepRerun
-// latches delete requests that arrived during it — a running sweep drains
-// the latch when it completes, so a burst of deletes yields at most one
+// sweepMu. sweepRunning marks a sweep in flight for a path — scheduled or
+// synchronous, both go through markSweepRunning — and sweepRerun latches
+// delete requests that arrived during one: the in-flight sweep drains the
+// latch when it completes, so a burst of deletes yields at most one
 // follow-up sweep and two `CollectGarbage` calls never run concurrently
 // against the same store.
 var (
@@ -163,6 +174,30 @@ var (
 	sweepRunning = map[string]bool{}
 	sweepRerun   = map[string]bool{}
 )
+
+// markSweepRunning claims a store's sweep slot. ok=false means a sweep is
+// already in flight and this request was latched onto its re-run; ok=true
+// comes with a done func that releases the slot and, if requests arrived
+// meanwhile, schedules the follow-up sweep.
+func markSweepRunning(tracePath string) (claimed bool, done func()) {
+	sweepMu.Lock()
+	defer sweepMu.Unlock()
+	if sweepRunning[tracePath] {
+		sweepRerun[tracePath] = true
+		return false, func() {}
+	}
+	sweepRunning[tracePath] = true
+	return true, func() {
+		sweepMu.Lock()
+		sweepRunning[tracePath] = false
+		reRun := sweepRerun[tracePath]
+		sweepRerun[tracePath] = false
+		sweepMu.Unlock()
+		if reRun {
+			scheduleSweep(tracePath)
+		}
+	}
+}
 
 // scheduleSweep coalesces deletes into one sweep per trace store: while a
 // sweep for a path is pending or running, more deletes are absorbed (a
@@ -183,21 +218,11 @@ func scheduleSweep(tracePath string) {
 	sweepTimers[tracePath] = time.AfterFunc(sweepDelay, func() {
 		sweepMu.Lock()
 		delete(sweepTimers, tracePath)
-		sweepRunning[tracePath] = true
 		sweepMu.Unlock()
 
 		e := &Evictor{tracePath: tracePath}
 		if err := e.SweepNow(); err != nil {
 			slog.Warn("retention sweep failed; records stay unreachable until the next sweep", "trace", tracePath, "err", err)
-		}
-
-		sweepMu.Lock()
-		sweepRunning[tracePath] = false
-		reRun := sweepRerun[tracePath]
-		sweepRerun[tracePath] = false
-		sweepMu.Unlock()
-		if reRun {
-			scheduleSweep(tracePath)
 		}
 	})
 }

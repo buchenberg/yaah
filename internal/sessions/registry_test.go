@@ -550,6 +550,28 @@ func TestRegistryDeleteUnknownIdSkipsEviction(t *testing.T) {
 	}
 }
 
+// The unknown-id contract holds for a raw *memory.DB too: only the dbStore
+// adapter used to normalize the driver's sql.ErrNoRows, so Delete's
+// membership check (which goes through Resolve) lost the mapping on that
+// construction — the one web.go's sessions.New(sess.db) uses.
+func TestRegistryDeleteUnknownIdNormalizedOnRawMemoryDB(t *testing.T) {
+	dir := t.TempDir()
+	db, err := memory.Open(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatalf("memory.Open: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	reg := New(db).WithEvictor(&hookEvictor{})
+	err = reg.Delete("sess-missing")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Delete unknown on raw *memory.DB = %v, want ErrNotFound", err)
+	}
+	if !errors.Is(err, memory.ErrSessionNotFound) {
+		t.Fatalf("Delete unknown on raw *memory.DB = %v, want it to match memory.ErrSessionNotFound", err)
+	}
+}
+
 func TestRegistryDeleteEvictionRefusalBlocksCascade(t *testing.T) {
 	store := &fakeStore{sessions: map[string]memory.Session{"sess-1": {ID: "sess-1"}}}
 	hook := &hookEvictor{failOn: "evict"}
