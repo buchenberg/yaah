@@ -234,6 +234,26 @@ func executeStatus(mgr *goatherd.ScopeManager, runs *supervision.Registry, svc *
 	out := fmt.Sprintf("Supervision status:\n  Scopes: %d active, %d total\n", len(active), len(all))
 	if runs != nil {
 		ids := runs.ScopeIDs()
+		bridged := make(map[string]bool, len(ids))
+		for _, id := range ids {
+			bridged[id] = true
+		}
+		var unbridged []string
+		for _, sc := range active {
+			if id := sc.ID(); !bridged[id] {
+				unbridged = append(unbridged, id)
+			}
+		}
+		if len(unbridged) > 0 {
+			out += fmt.Sprintf("  Active unbridged scopes: %d (no bridged run — leak candidates; the reaper discards them after its grace period)\n", len(unbridged))
+			for i, id := range unbridged {
+				if i == 5 {
+					out += fmt.Sprintf("    … and %d more\n", len(unbridged)-5)
+					break
+				}
+				out += fmt.Sprintf("    %s\n", id)
+			}
+		}
 		out += fmt.Sprintf("  Bridged runs: %d\n", len(ids))
 		for _, id := range ids {
 			out += fmt.Sprintf("    %s (injectable)\n", id)

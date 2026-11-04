@@ -554,6 +554,7 @@ type loopInfraStage struct {
 	rootScopeID   string
 	runs          *supervision.Registry
 	supervisorSvc *supervision.Service
+	reaper        *supervision.Reaper
 	egressBroker  *egress.Broker
 
 	worldStatus worldinfo.Status
@@ -871,6 +872,15 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 	// tool sees roles created via the role tool without a restart.
 	st.taskTool.RoleResolver = func() []string { return subagent.DefaultRegistry().Names() }
 
+	// Scope reaper (yaah-95ri.4): sweeps active dispatch scopes that no
+	// longer have a bridged run or a pending retained proposal past the
+	// grace period. Defense in depth behind the fork-site teardowns and
+	// the dispatch cap; started with the session, stopped in the session
+	// close.
+	st.reaper = supervision.NewReaper(st.scopeMgr, st.runs, st.rootScopeID, 0)
+	st.reaper.SetPendingSource(st.taskTool.PendingProposalScopeIDs)
+	st.reaper.Start()
+
 	// LaneForRole routes each dispatch by the role's declared output
 	// contract (yaah-7yf): report roles get their text back with the
 	// worktree torn down (or run shared when they cannot mutate), proposal
@@ -1182,6 +1192,7 @@ func assemble(lc *sessionConfig, opts SessionOptions, ws *workspaceStage, tr *to
 		traceStore:     loop.traceStore,
 		traceBus:       loop.traceBus,
 		supervisor:     loop.supervisorSvc,
+		reaper:         loop.reaper,
 		egressBroker:   loop.egressBroker,
 		followupCh:     loop.followupCh,
 	}

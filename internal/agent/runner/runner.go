@@ -42,6 +42,7 @@ import (
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/gitsandbox"
 	"github.com/buchenberg/yaah/internal/jail"
+	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -105,6 +106,10 @@ type DelegateToolOpts struct {
 	// ScopeManager is the session's scope registry (plan 07, H4):
 	// sub-agent scopes fork through it. Nil when tracing is off.
 	ScopeManager *goatherd.ScopeManager
+
+	// MaxDispatchScopes caps concurrently ACTIVE dispatch scopes; 0 =
+	// jobs.DefaultMaxDispatchScopes (yaah-95ri.4).
+	MaxDispatchScopes int
 
 	// TraceStore is the session's Shepherd trace store (plan 07, H4):
 	// the sub-agent loops' shepherd_trace middleware writes through it.
@@ -181,6 +186,7 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 		rootScopeID:           opts.RootScopeID,
 		runs:                  opts.Runs,
 		scopeManager:          opts.ScopeManager,
+		maxDispatchScopes:     opts.MaxDispatchScopes,
 		traceStore:            opts.TraceStore,
 		guardCheck:            opts.GuardCheck,
 		resolveProviderByName: opts.ResolveProviderByName,
@@ -219,6 +225,7 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 			Runner:            runnerFn,
 			RepoPath:          repoPath,
 			ScopeManager:      opts.ScopeManager,
+			MaxDispatchScopes: opts.MaxDispatchScopes,
 			RootScopeID:       opts.RootScopeID,
 			SessionID:         opts.SessionID,
 			WorktreeRoot:      opts.RetainedWorktreeRoot,
@@ -411,6 +418,10 @@ type taskRunnerOpts struct {
 	// fork through it without reaching through package globals. Nil
 	// when tracing is off: dispatches then run without scopes.
 	scopeManager *goatherd.ScopeManager
+
+	// maxDispatchScopes caps concurrently active dispatch scopes; 0 =
+	// jobs.DefaultMaxDispatchScopes (yaah-95ri.4).
+	maxDispatchScopes int
 
 	// traceStore is the session's Shepherd trace store (plan 07, H4),
 	// injected alongside the manager: the sub-agent loops' shepherd_trace
@@ -617,6 +628,16 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 				// find is exactly the orphan this exists to prevent.
 				return "", fmt.Errorf("sub-agent scope: %w", cerr)
 			}
+			// The run's scope dies with the run (yaah-95ri.4): every
+			// dispatch body — report or proposal, container, worktree or
+			// direct — leaves its runner-side supervision scope discarded.
+			// The retained proposal's own scope is a separate fork that
+			// survives until settlement; this one bridges THIS body only.
+			defer func() {
+				if derr := mgr.Discard(subScope.ID()); derr != nil {
+					slog.Debug("dispatch scope discard at run end", "scope", subScope.ID(), "err", derr)
+				}
+			}()
 		}
 
 		// Record the resolved jail placement on the sub-agent's trace (Plan 7
@@ -1153,6 +1174,16 @@ func CreateRootScope(mgr *goatherd.ScopeManager, sessionID, repoPath string, iso
 // root scope ID — tracing came up without a root — falls back to the
 // legacy flat Create so the sub-agent still gets a superviseable scope.
 func createSubAgentScope(mgr *goatherd.ScopeManager, opts taskRunnerOpts, subTraceID, workdir string) (*goatherd.Scope, error) {
+	if mgr != nil {
+		// Dispatch-scope cap (yaah-95ri.4): refuse before any fork — flat,
+		// isolated or shared — so a saturated substrate fails the dispatch
+		// fast with ErrScopeExhausted instead of provisioning a world that
+		// will contend with (or hang behind) the scopes already present.
+		cap := jobs.ResolveDispatchScopeCap(opts.maxDispatchScopes)
+		if active := mgr.ActiveScopes(); len(active) >= cap {
+			return nil, fmt.Errorf("%w: %d active scopes at cap %d", jobs.ErrScopeExhausted, len(active), cap)
+		}
+	}
 	if opts.rootScopeID == "" {
 		return mgr.Create(subTraceID, subAgentSandbox(opts, workdir))
 	}

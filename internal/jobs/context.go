@@ -219,3 +219,13 @@ var ErrStuckChild = errors.New("sub-agent stuck: no heartbeat received within de
 // that was stood up; only a child that was beating and then went silent is
 // stuck (yaah-95ri.3).
 var ErrDispatchStartup = errors.New("sub-agent dispatch failed to start: the child never produced a heartbeat after its dispatch world became ready")
+
+// ErrScopeExhausted reports a dispatch refused because the session's
+// dispatch-scope budget is spent (yaah-95ri.4): the substrate refuses
+// the new dispatch instead of provisioning a world into a scope tree
+// already holding the maximum of concurrently active scopes, where
+// exhaustion would otherwise hang into the watchdog. Unlike
+// ErrStuckChild/ErrDispatchStartup this fires before any world is
+// provisioned and before the watchdog arms, so it is never a
+// reclassification of a hang.
+var ErrScopeExhausted = errors.New("dispatch scope capacity exceeded: too many concurrently active dispatch scopes")

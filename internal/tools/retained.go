@@ -69,6 +69,12 @@ type RetainedRuntime struct {
 	// property of building the runtime rather than of a later wiring step.
 	Proposals *ProposalRegistry
 
+	// MaxDispatchScopes caps concurrently ACTIVE dispatch scopes (0 =
+	// jobs.DefaultMaxDispatchScopes). A container or worktree fork refused
+	// at the cap fails fast with jobs.ErrScopeExhausted instead of
+	// provisioning into a saturated scope tree (yaah-95ri.4).
+	MaxDispatchScopes int
+
 	// World is the configured dispatch world (agents.subagent.world:
 	// auto | worktree | container). Empty means auto. WorldForRole supplies a
 	// per-role override; nil means no override.
@@ -779,7 +785,9 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 			notes = append(notes, "review decision: "+derr.Error())
 		}
 		if scope, gok := mgr.Get(scopeID); gok {
-			_ = parent.Discard(scope)
+			if derr := parent.Discard(scope); derr != nil {
+				notes = append(notes, "scope discard: "+derr.Error())
+			}
 		}
 		env.Status = "error"
 		env.Result = trimResult(result)
@@ -1232,6 +1240,10 @@ func provisionRetainedBranch(
 		}
 	}
 
+	if capErr := dispatchScopeCapExceeded(rt); capErr != nil {
+		_ = sb.Destroy(context.WithoutCancel(ctx))
+		return "", capErr
+	}
 	mgr := rt.ScopeManager
 	scope, err := mgr.ForkIsolated(rt.RootScopeID, ownerID, nil, sb)
 	if err != nil {
@@ -1251,6 +1263,29 @@ func provisionRetainedBranch(
 		}
 	}
 	return scope.ID(), nil
+}
+
+// PendingScopeIDs lists the scope IDs of open proposals awaiting
+// settlement. The scope reaper's live set includes them: an open proposal
+// keeps its scope active on purpose, so the reaper must not treat it as
+// an orphan (yaah-95ri.4).
+func (r *ProposalRegistry) PendingScopeIDs() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ids := make([]string, 0, len(r.byID))
+	for _, p := range r.byID {
+		ids = append(ids, p.scopeID)
+	}
+	return ids
+}
+
+// PendingProposalScopeIDs exposes the open proposals' scope IDs for the
+// scope reaper's live set (yaah-95ri.4).
+func (rt *RetainedRuntime) PendingProposalScopeIDs() []string {
+	if rt.Proposals == nil {
+		return nil
+	}
+	return rt.Proposals.PendingScopeIDs()
 }
 
 // recordRetainedReview writes the proposal half of the review provenance pair.

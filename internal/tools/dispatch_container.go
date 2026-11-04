@@ -257,11 +257,17 @@ func runDispatchContainer(
 	sandbox *SessionSandbox,
 ) (result string, runErr error) {
 	recordDispatchWorld(ctx, res)
+	if capErr := dispatchScopeCapExceeded(rt); capErr != nil {
+		if note := teardownDispatchWorld(ctx, rt.ScopeManager, nil, nil, sandbox); note != "" {
+			return "", fmt.Errorf("%w; %s", capErr, note)
+		}
+		return "", capErr
+	}
 	id := fmt.Sprintf("proposal:%d:%d", time.Now().UnixNano(), proposalSeq.Add(1))
 	scope, err := rt.ScopeManager.Fork(rt.RootScopeID, id, nil)
 	if err != nil {
 		ferr := fmt.Errorf("delegate: fork container dispatch scope: %w", err)
-		if note := teardownDispatchWorld(ctx, nil, nil, sandbox); note != "" {
+		if note := teardownDispatchWorld(ctx, rt.ScopeManager, nil, nil, sandbox); note != "" {
 			ferr = fmt.Errorf("%w; %s", ferr, note)
 		}
 		return "", ferr
@@ -273,7 +279,7 @@ func runDispatchContainer(
 	// the dispatch's context is usually over by the time this runs, and a
 	// teardown that honoured it would leak the very thing it exists to remove.
 	defer func() {
-		note := teardownDispatchWorld(ctx, parent, scope, sandbox)
+		note := teardownDispatchWorld(ctx, rt.ScopeManager, parent, scope, sandbox)
 		if note == "" {
 			return
 		}
@@ -331,6 +337,14 @@ func runDispatchContainerProposal(
 	if res.Degraded {
 		env.Warning = "dispatch world degraded: " + res.Reason
 	}
+	if capErr := dispatchScopeCapExceeded(rt); capErr != nil {
+		env.Status = "error"
+		env.Error = capErr.Error()
+		if note := teardownDispatchWorld(ctx, rt.ScopeManager, nil, nil, sandbox); note != "" {
+			env.Notes = appendSettleNote(env.Notes, note)
+		}
+		return marshalProposalEnvelope(env), nil
+	}
 
 	var scope *goatherd.Scope
 	// The container must be gone by the time the envelope is returned. Both
@@ -338,7 +352,7 @@ func runDispatchContainerProposal(
 	// usually over by now, and a teardown that honoured it would leak the very
 	// thing it exists to remove.
 	defer func() {
-		if note := teardownDispatchWorld(ctx, parent, scope, sandbox); note != "" {
+		if note := teardownDispatchWorld(ctx, rt.ScopeManager, parent, scope, sandbox); note != "" {
 			env.Notes = appendSettleNote(env.Notes, note)
 		}
 		out = marshalProposalEnvelope(env)
@@ -448,12 +462,39 @@ func runDispatchContainerProposal(
 	return "", nil
 }
 
+// dispatchScopeCapExceeded reports whether the runtime's scope tree is at
+// its active-dispatch cap (yaah-95ri.4). Checked before every container or
+// worktree fork so a saturated substrate refuses the dispatch fast with
+// ErrScopeExhausted — before any world is provisioned and before the
+// watchdog arms — instead of hanging into a watchdog kill later.
+func dispatchScopeCapExceeded(rt RetainedRuntime) error {
+	if rt.ScopeManager == nil {
+		return nil
+	}
+	active := rt.ScopeManager.ActiveScopes()
+	cap := jobs.ResolveDispatchScopeCap(rt.MaxDispatchScopes)
+	if len(active) < cap {
+		return nil
+	}
+	return fmt.Errorf("%w: %d active scopes at cap %d", jobs.ErrScopeExhausted, len(active), cap)
+}
+
 // teardownDispatchWorld discards the dispatch's pure-causal scope and destroys
 // its container. It returns a caveat naming what it could not remove, or "".
-func teardownDispatchWorld(ctx context.Context, parent, scope *goatherd.Scope, sandbox *SessionSandbox) string {
+func teardownDispatchWorld(ctx context.Context, mgr *goatherd.ScopeManager, parent, scope *goatherd.Scope, sandbox *SessionSandbox) string {
 	var notes []string
-	if parent != nil && scope != nil {
-		if err := parent.Discard(scope); err != nil {
+	if scope != nil {
+		var err error
+		switch {
+		case parent != nil:
+			err = parent.Discard(scope)
+		case mgr != nil:
+			// Parent-handle fallback (yaah-95ri.4): a nil parent must not
+			// silently strand a forked scope — the manager-level discard
+			// reaches the same child by ID.
+			err = mgr.Discard(scope.ID())
+		}
+		if err != nil {
 			notes = append(notes, "dispatch scope discard failed: "+err.Error())
 		}
 	}
