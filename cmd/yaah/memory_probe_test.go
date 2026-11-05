@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/buchenberg/yaah/internal/config"
 )
@@ -62,7 +63,7 @@ func TestCheckEmbedderAtStartup_UnreachableWarnsAndProceeds(t *testing.T) {
 	url := srv.URL
 	srv.Close() // nothing is listening: connection refused
 
-	if reachable := checkEmbedderAtStartup(probeCfg(url)); reachable {
+	if reachable := probeAttached(probeCfg(url)); reachable {
 		t.Error("checkEmbedderAtStartup reported an unreachable embedder as reachable")
 	}
 
@@ -95,7 +96,7 @@ func TestCheckEmbedderAtStartup_ReachableSilent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if reachable := checkEmbedderAtStartup(probeCfg(srv.URL)); !reachable {
+	if reachable := probeAttached(probeCfg(srv.URL)); !reachable {
 		t.Error("checkEmbedderAtStartup reported a reachable embedder as unreachable")
 	}
 	if out := logs.String(); out != "" {
@@ -116,7 +117,7 @@ func TestCheckEmbedderAtStartup_NoEmbedderConfigured(t *testing.T) {
 	}
 	for name, cfg := range cases {
 		t.Run(name, func(t *testing.T) {
-			if reachable := checkEmbedderAtStartup(cfg); reachable {
+			if reachable := probeAttached(cfg); reachable {
 				t.Error("checkEmbedderAtStartup reported reachable with no embedder configured")
 			}
 		})
@@ -130,5 +131,47 @@ func TestCheckEmbedderAtStartup_NoEmbedderConfigured(t *testing.T) {
 func TestProbeEmbedder_NilEmbedder(t *testing.T) {
 	if err := probeEmbedder(t.Context(), nil); err != nil {
 		t.Errorf("probeEmbedder(nil) = %v, want nil", err)
+	}
+}
+
+// probeAttached mimics the wiring path (yaah-ka6 review): the embedder is
+// built once and the startup probe runs against that same attached instance,
+// so a gguf embedder cannot load its model twice or leak a probe-only copy.
+func probeAttached(cfg *config.Config) bool {
+	e, _ := embedderFor(cfg)
+	return checkEmbedderAtStartup(e, cfg)
+}
+
+// TestCheckEmbedderAtStartup_SlowServerIsNotUnreachable covers the ka6
+// review's cold-start case: a server that answers after the sync wait must
+// not be reported unreachable at startup.
+func TestCheckEmbedderAtStartup_SlowServerIsNotUnreachable(t *testing.T) {
+	logs := captureProbeLogs(t)
+	oldWait := embedProbeSyncWait
+	embedProbeSyncWait = 10 * time.Millisecond
+	t.Cleanup(func() { embedProbeSyncWait = oldWait })
+
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"embedding": []float64{0.1, 0.2, -0.3}}},
+		})
+	}))
+	defer srv.Close()
+
+	if reachable := probeAttached(probeCfg(srv.URL)); !reachable {
+		t.Error("a slow-but-alive embedder must not be reported unreachable")
+	}
+	if out := logs.String(); strings.Contains(out, "unreachable") {
+		t.Errorf("startup must not label a slow server unreachable: %q", out)
+	}
+	unblock()                          // the server answers late
+	time.Sleep(200 * time.Millisecond) // let the background probe observe it
+	if out := logs.String(); out != "" {
+		t.Errorf("late successful probe must not warn: %q", out)
 	}
 }

@@ -91,7 +91,29 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 	if attemptVector {
 		vecResults, vecErr = t.DB.SearchMemoryVectorScopedDiag(ctx, params.Query, params.TopK, scope)
 		if vecErr == nil && len(vecResults) > 0 {
-			return formatVectorResults(vecResults), nil
+			if len(vecResults) >= params.TopK {
+				return formatVectorResults(vecResults), nil
+			}
+			// Partial semantic page: union with FTS so rows the vector path
+			// paged out are not silently dropped (shq review). Vector hits
+			// lead, deduped by id, capped at TopK, labeled per row.
+			lines := []string{RetrievalHybrid}
+			seen := make(map[string]bool, len(vecResults))
+			for _, r := range vecResults {
+				seen[r.ID] = true
+				score := r.Score
+				lines = append(lines, entryLine(r.ID, r.Tags, r.Scope, r.Text, r.CreatedAt, &score, "semantic"))
+			}
+			if fts, err := t.DB.SearchMemoryScoped(params.Query, params.TopK, params.Tag, scope); err == nil {
+				for _, e := range fts {
+					if seen[e.ID] || len(seen) >= params.TopK {
+						continue
+					}
+					seen[e.ID] = true
+					lines = append(lines, entryLine(e.ID, e.Tags, e.Scope, e.Text, e.CreatedAt, nil, "keyword"))
+				}
+			}
+			return strings.Join(lines, "\n"), nil
 		}
 	}
 	path := RetrievalLabel(params.Query, params.Tag, hasEmbedder, vecErr, len(vecResults))
@@ -114,6 +136,9 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 const (
 	RetrievalSemantic = "Retrieval: semantic (vector)"
 	RetrievalKeyword  = "Retrieval: keyword (FTS5)"
+	// RetrievalHybrid is the merged path: a partial vector page unioned
+	// with FTS hits so neither path's rows are silently dropped.
+	RetrievalHybrid = "Retrieval: semantic (vector) + keyword (FTS5)"
 	// RetrievalListing is the no-query branch: SearchMemoryScoped orders by
 	// created_at and runs no FTS match, so calling it (FTS5) would be a lie.
 	RetrievalListing = "Retrieval: listing (newest first)"

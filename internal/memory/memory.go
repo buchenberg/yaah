@@ -888,35 +888,6 @@ func IsEmbedFailure(err error) bool {
 	return errors.As(err, &e) && e.err != nil
 }
 
-// keywordTokens lowercases a query and splits it into the words the
-// stale-embedding fallback matches against. Short words are kept on purpose:
-// a token here is only a hint that an uncomparable row is worth surfacing,
-// not an FTS term.
-func keywordTokens(query string) []string {
-	return strings.Fields(strings.ToLower(query))
-}
-
-// keywordScore scores text by the fraction of query tokens it contains,
-// scaled into (0, 1]. It reports false when no token matches, so a row that
-// cannot be compared semantically and shares no word with the query is left
-// out rather than padding the result list.
-func keywordScore(text string, tokens []string) (float32, bool) {
-	if len(tokens) == 0 {
-		return 0, false
-	}
-	lower := strings.ToLower(text)
-	hits := 0
-	for _, t := range tokens {
-		if strings.Contains(lower, t) {
-			hits++
-		}
-	}
-	if hits == 0 {
-		return 0, false
-	}
-	return float32(hits) / float32(len(tokens)), true
-}
-
 // ReembedStaleEmbeddings rewrites memory rows whose stored vector has a
 // different dimensionality than the configured embedder produces (yaah-shq).
 // Swapping the model (say 384-dim all-MiniLM for 768-dim nomic) leaves every
@@ -934,7 +905,10 @@ func (d *DB) ReembedStaleEmbeddings(ctx context.Context) (int, error) {
 	probe, err := embedder.Embed(ctx, "dimension probe")
 	if err != nil {
 		d.recordEmbedFailure("reconcile_embeddings", err)
-		return 0, nil
+		// Make the failure visible to the caller instead of returning a
+		// clean (0, nil): stale rows would otherwise stay stale with no
+		// indication the heal never ran (m3pk/shq review).
+		return 0, fmt.Errorf("reembed stale: probe embedder: %w", err)
 	}
 	rows, err := d.sql.Query(
 		`SELECT id, text FROM memory WHERE embedding IS NOT NULL AND length(embedding) != ?`, 4*len(probe))
@@ -1062,17 +1036,23 @@ func (d *DB) SearchMemoryVectorScopedDiag(ctx context.Context, query string, lim
 	// about so it can be repaired.
 	tokens := keywordTokens(query)
 	var results, keywordResults []VectorResult
-	var staleRows, staleDim int
+	// Collect every stale width: a store can hold rows from several past
+	// models (384 and 512 and 768), and reporting only the first masked
+	// the others (m3pk/shq review).
+	staleByDim := map[int]int{}
 	for _, c := range candidates {
 		if len(c.blob) == 0 {
+			// An unembedded row is as findable as this search can make it:
+			// score it on words, like a stale-width row, instead of letting
+			// the vector path drop it silently (shq review).
+			if score, ok := keywordScore(c.e.Text, tokens); ok {
+				keywordResults = append(keywordResults, VectorResult{Entry: c.e, Score: score})
+			}
 			continue
 		}
 		emb := DecodeEmbedding(c.blob)
 		if len(emb) != len(qEmb) {
-			if staleRows == 0 {
-				staleDim = len(emb)
-			}
-			staleRows++
+			staleByDim[len(emb)]++
 			if score, ok := keywordScore(c.e.Text, tokens); ok {
 				keywordResults = append(keywordResults, VectorResult{Entry: c.e, Score: score})
 			}
@@ -1081,8 +1061,15 @@ func (d *DB) SearchMemoryVectorScopedDiag(ctx context.Context, query string, lim
 		score := CosineSimilarity(qEmb, emb)
 		results = append(results, VectorResult{Entry: c.e, Score: score})
 	}
-	if staleRows > 0 {
-		d.warnEmbedDimMismatch(staleDim, len(qEmb), staleRows)
+	if len(staleByDim) > 0 {
+		dims := make([]int, 0, len(staleByDim))
+		for dim := range staleByDim {
+			dims = append(dims, dim)
+		}
+		sort.Ints(dims)
+		for _, dim := range dims {
+			d.warnEmbedDimMismatch(dim, len(qEmb), staleByDim[dim])
+		}
 	}
 
 	// Sort descending by score (sort.Slice — the hand-rolled bubble
@@ -1091,11 +1078,30 @@ func (d *DB) SearchMemoryVectorScopedDiag(ctx context.Context, query string, lim
 	sort.Slice(keywordResults, func(i, j int) bool { return keywordResults[i].Score > keywordResults[j].Score })
 	// A cosine score and a keyword-overlap score are not on the same
 	// scale, so the two lists are concatenated rather than merged: every
-	// vector hit outranks every keyword-fallback hit.
-	results = append(results, keywordResults...)
-
-	if limit > 0 && len(results) > limit {
-		results = results[:limit]
+	// vector hit outranks every keyword-fallback hit. But the limit must
+	// not silently starve the fallback rows (shq review) — when stale rows
+	// exist they reserve up to a third of the limit, so a page full of
+	// comparable hits cannot hide them. For limit < 3 vector-first ordering
+	// is preserved; the dim-mismatch warning still names the hidden rows.
+	if limit > 0 && len(results)+len(keywordResults) > limit {
+		reserve := limit / 3
+		if reserve > len(keywordResults) {
+			reserve = len(keywordResults)
+		}
+		vecKeep := limit - reserve
+		if vecKeep > len(results) {
+			vecKeep = len(results)
+		}
+		out := make([]VectorResult, 0, limit)
+		out = append(out, results[:vecKeep]...)
+		kwTake := limit - len(out)
+		if kwTake > len(keywordResults) {
+			kwTake = len(keywordResults)
+		}
+		out = append(out, keywordResults[:kwTake]...)
+		results = out
+	} else {
+		results = append(results, keywordResults...)
 	}
 
 	now := time.Now().Unix()

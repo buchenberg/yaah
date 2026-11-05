@@ -10,6 +10,11 @@ import (
 	"github.com/hybridgroup/yzma/pkg/llama"
 )
 
+// ggufNCtx is the context window reserved for embedding one input, and the
+// decode batch size. Embedding models need no conversation history, so the
+// whole window is input room.
+const ggufNCtx = 2048
+
 // GGUFEmbedder embeds text in-process from a local GGUF model using yzma's
 // prebuilt llama.cpp bindings (purego FFI — CGO_ENABLED=0 stays intact).
 // It exists so semantic memory works with no LM Studio or Ollama running
@@ -72,10 +77,12 @@ func (g *GGUFEmbedder) Dims() int {
 func (g *GGUFEmbedder) embedPrefixed(ctx context.Context, prefix, text string) (Embedding, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if err := g.ensureLocked(); err != nil {
+	// Honor cancellation before paying the lazy model load (m3pk review):
+	// a probe that already timed out must not kick off a full load.
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := ctx.Err(); err != nil {
+	if err := g.ensureLocked(ctx); err != nil {
 		return nil, err
 	}
 	emb, err := g.embedFn(ctx, prefix+text)
@@ -92,14 +99,14 @@ func (g *GGUFEmbedder) embedPrefixed(ctx context.Context, prefix, text string) (
 }
 
 // ensureLocked lazily loads the model. Callers hold mu.
-func (g *GGUFEmbedder) ensureLocked() error {
+func (g *GGUFEmbedder) ensureLocked(ctx context.Context) error {
 	if g.embedFn != nil {
 		return nil
 	}
 	if g.initErr != nil {
 		return g.initErr
 	}
-	fn, dims, err := loadGGUF(g.LibPath, g.ModelPath)
+	fn, dims, err := loadGGUF(ctx, g.LibPath, g.ModelPath)
 	if err != nil {
 		g.initErr = err
 		return err
@@ -114,8 +121,10 @@ func (g *GGUFEmbedder) ensureLocked() error {
 var llamaOnce sync.Once
 
 // loadGGUF loads the llama.cpp library and GGUF model once per process and
-// returns a pooling closure plus the model's embedding width.
-func loadGGUF(libPath, modelPath string) (func(context.Context, string) (Embedding, error), int, error) {
+// returns a pooling closure plus the model's embedding width. Context is
+// checked between the load stages (the FFI calls themselves are not
+// interruptible), so a cancelled request stops before the next one.
+func loadGGUF(ctx context.Context, libPath, modelPath string) (func(context.Context, string) (Embedding, error), int, error) {
 	if modelPath == "" {
 		return nil, 0, fmt.Errorf("gguf embed: model_path is required")
 	}
@@ -124,18 +133,25 @@ func loadGGUF(libPath, modelPath string) (func(context.Context, string) (Embeddi
 		llama.Init()
 		llama.LogSet(llama.LogSilent())
 	})
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
 
 	model, err := llama.ModelLoadFromFile(modelPath, llama.ModelDefaultParams())
 	if err != nil {
 		return nil, 0, fmt.Errorf("gguf embed: load model %s: %w", modelPath, err)
+	}
+	if err := ctx.Err(); err != nil {
+		llama.ModelFree(model)
+		return nil, 0, err
 	}
 	threads := int32(runtime.NumCPU())
 	if threads > 8 {
 		threads = 8
 	}
 	params := llama.ContextDefaultParams()
-	params.NCtx = 2048
-	params.NBatch = 512
+	params.NCtx = ggufNCtx
+	params.NBatch = ggufNCtx
 	params.Embeddings = 1
 	params.NThreads = threads
 	params.NThreadsBatch = threads
@@ -155,10 +171,20 @@ func loadGGUF(libPath, modelPath string) (func(context.Context, string) (Embeddi
 		return nil, 0, fmt.Errorf("gguf embed: model %s reports %d embedding dims", modelPath, dims)
 	}
 
-	fn := func(_ context.Context, text string) (Embedding, error) {
+	fn := func(ctx context.Context, text string) (Embedding, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		tokens := llama.Tokenize(vocab, text, true, true)
 		if len(tokens) == 0 {
 			return nil, fmt.Errorf("gguf embed: input produced no tokens")
+		}
+		// Truncate to the context window instead of failing (m3pk review):
+		// llama.Decode rejects batches longer than n_ctx, and a long memory
+		// body would otherwise error on every embed. Leading tokens (BOS +
+		// opening text) are kept, the usual truncation side.
+		if len(tokens) > ggufNCtx {
+			tokens = tokens[:ggufNCtx]
 		}
 		if _, err := llama.Decode(lctx, llama.BatchGetOne(tokens)); err != nil {
 			return nil, fmt.Errorf("gguf embed: decode: %w", err)

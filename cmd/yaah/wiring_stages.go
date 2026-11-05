@@ -353,7 +353,7 @@ func buildToolRegistry(cfg *config.Config, opts SessionOptions, ws *workspaceSta
 		// warns once here rather than degrading recall to keyword matching
 		// silently. It never refuses the session.
 		if st.embedderAttached {
-			checkEmbedderAtStartup(cfg)
+			checkEmbedderAtStartup(db.Embedder(), cfg)
 		}
 	}
 
