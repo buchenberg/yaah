@@ -437,6 +437,9 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 	if ws.view == nil {
 		ws.sess.SetView(agent.NoopView{})
 		ws.sess.SetCtrlCh(nil)
+		// No client can see a wake turn now. Leave the digest on the
+		// follow-up channel instead of running a turn against NoopView.
+		ws.sess.SetWakeTurnRequester(nil)
 	}
 	ws.mu.Unlock()
 }

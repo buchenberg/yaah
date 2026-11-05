@@ -141,6 +141,14 @@ func TestParseCondition(t *testing.T) {
 	}
 }
 
+func TestParseSpecRejectsNonPositiveTime(t *testing.T) {
+	for _, on := range []string{"time:0s", "time:-5s"} {
+		if _, _, _, err := parseSpec(Spec{On: on}); err == nil {
+			t.Errorf("parseSpec(%q) accepted a non-positive duration", on)
+		}
+	}
+}
+
 func TestHandleRoundTrip(t *testing.T) {
 	spec := Spec{On: "file:ci/green", Until: "exists"}
 	start := time.Unix(1700000000, 123)
@@ -234,6 +242,29 @@ func TestEngineFile(t *testing.T) {
 	}
 }
 
+func TestEngineFileUsesBoundedReader(t *testing.T) {
+	d := Deps{
+		Now: time.Now,
+		Glob: func(ctx context.Context, pattern string) ([]string, error) {
+			return []string{"/w/ci-green"}, nil
+		},
+		ReadFileLimit: func(ctx context.Context, path string, max int) ([]byte, error) {
+			if max != fileReadCap {
+				t.Errorf("bounded read cap = %d, want %d", max, fileReadCap)
+			}
+			return []byte("state: green\n"), nil
+		},
+		ReadFile: func(ctx context.Context, path string) ([]byte, error) {
+			t.Fatal("file predicate used the unbounded reader despite a bounded one")
+			return nil, nil
+		},
+	}
+	fired, _, err := d.evaluate(context.Background(), Spec{On: "file:*", Until: "contains:green"}, time.Now())
+	if err != nil || !fired {
+		t.Fatalf("contains: fired=%v err=%v", fired, err)
+	}
+}
+
 func TestEngineJobIncludesResult(t *testing.T) {
 	now := time.Now()
 	d := Deps{
@@ -296,6 +327,9 @@ func TestManagerWaitTimeoutThenResume(t *testing.T) {
 	}
 	if !res.TimedOut || res.Fired || res.Handle == "" {
 		t.Fatalf("Wait = %+v, want a timeout with a handle", res)
+	}
+	if res.Evidence == "" {
+		t.Fatal("timed-out wait lost the last attempt's evidence")
 	}
 
 	files["/w/late"] = ""
@@ -565,6 +599,37 @@ func TestManagerRehydrateRearmsTimeWatch(t *testing.T) {
 	_ = waitForDigest(t, digests)
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Fatalf("re-armed elapsed time watch took %v to fire", elapsed)
+	}
+}
+
+// TestManagerCloseDropsPendingDigest pins the Close contract: a fired watch
+// whose digest window has not elapsed is not delivered after Close returns.
+func TestManagerCloseDropsPendingDigest(t *testing.T) {
+	wakes := make(chan string, 4)
+	m := NewManager(Options{
+		Deps:         Deps{Now: time.Now},
+		DigestWindow: time.Hour,
+		OnWake:       func(s string) { wakes <- s },
+	})
+	if _, err := m.Arm(ArmRequest{On: "time:10ms", ExpiresIn: time.Second}); err != nil {
+		t.Fatalf("Arm: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		list := m.List()
+		if len(list) == 1 && list[0].State == StateFired {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("watch did not fire into the pending digest: %+v", list)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	m.Close()
+	select {
+	case s := <-wakes:
+		t.Fatalf("digest delivered after Close: %q", s)
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 

@@ -48,6 +48,30 @@ func NewWakeDeps(ws Workspace, j *jobs.BackgroundJobs, procs *process.Manager) w
 			}
 			return ws.ReadFile(ctx, resolved)
 		},
+		ReadFileLimit: func(ctx context.Context, path string, max int) ([]byte, error) {
+			if ws == nil {
+				return nil, fmt.Errorf("no workspace")
+			}
+			resolved, err := ws.ResolvePath(path)
+			if err != nil {
+				return nil, err
+			}
+			if lr, ok := ws.(interface {
+				ReadFileLimit(context.Context, string, int) ([]byte, error)
+			}); ok {
+				return lr.ReadFileLimit(ctx, resolved, max)
+			}
+			// A substrate without a bounded reader still gets the cap;
+			// only the host path avoids materializing the whole file.
+			data, err := ws.ReadFile(ctx, resolved)
+			if err != nil {
+				return nil, err
+			}
+			if len(data) > max {
+				data = data[:max]
+			}
+			return data, nil
+		},
 	}
 }
 
@@ -104,40 +128,22 @@ func wakeGlob(ctx context.Context, ws Workspace, pattern string) ([]string, erro
 		return []string{resolved}, nil
 	}
 
-	re, err := patternToRegex(pattern)
-	if err != nil {
-		return nil, fmt.Errorf("invalid pattern: %w", err)
-	}
-	root := globRoot(pattern)
-	resolvedRoot, err := ws.ResolvePath(root)
+	// Match the magic part relative to the *resolved* walk root. Matching
+	// the full pattern against a base-relative path breaks when the root
+	// contains a symlink or a ".." segment: ResolvePath canonicalizes the
+	// walk root, so the paths the walker yields no longer carry the
+	// lexical spelling the pattern used.
+	root, magic, err := splitGlob(pattern)
 	if err != nil {
 		return nil, err
 	}
-	absPattern := isAbsolutePattern(pattern)
-	base := ws.WorkDir()
-	resolvedBase := ""
-	if base != "" {
-		if r, rerr := ws.ResolvePath(base); rerr == nil {
-			resolvedBase = r
-		}
+	re, err := patternToRegex(magic)
+	if err != nil {
+		return nil, fmt.Errorf("invalid pattern: %w", err)
 	}
-	// When the workspace has no working directory, match the magic part
-	// relative to the walk root instead of the full pattern.
-	matchPattern := pattern
-	useRootRelative := false
-	if !absPattern && resolvedBase == "" {
-		useRootRelative = true
-		matchPattern = strings.TrimPrefix(pattern, root)
-		matchPattern = strings.TrimPrefix(matchPattern, "/")
-		if matchPattern == "" {
-			matchPattern = pattern
-			useRootRelative = false
-		} else {
-			re, err = patternToRegex(matchPattern)
-			if err != nil {
-				return nil, fmt.Errorf("invalid pattern: %w", err)
-			}
-		}
+	resolvedRoot, err := ws.ResolvePath(root)
+	if err != nil {
+		return nil, err
 	}
 
 	const maxMatches = 1000
@@ -158,18 +164,11 @@ func wakeGlob(ctx context.Context, ws Workspace, pattern string) ([]string, erro
 		if d.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
-		target := filepath.ToSlash(p)
-		switch {
-		case !absPattern && resolvedBase != "":
-			if rel, rerr := filepath.Rel(resolvedBase, p); rerr == nil && rel != "." {
-				target = filepath.ToSlash(rel)
-			}
-		case useRootRelative:
-			if rel, rerr := filepath.Rel(resolvedRoot, p); rerr == nil && rel != "." {
-				target = filepath.ToSlash(rel)
-			}
+		rel, rerr := filepath.Rel(resolvedRoot, p)
+		if rerr != nil {
+			return nil
 		}
-		if re.MatchString(target) {
+		if re.MatchString(filepath.ToSlash(rel)) {
 			matches = append(matches, p)
 			if len(matches) >= maxMatches {
 				return filepath.SkipAll
@@ -190,24 +189,23 @@ func hasGlobMeta(pattern string) bool {
 
 // globRoot returns the non-magic prefix of a pattern, i.e. the directory a
 // walk may start from. For "src/**/*.ts" it is "src"; for "*.log" it is ".".
-func globRoot(pattern string) string {
+// splitGlob returns the non-magic prefix to walk from and the magic suffix
+// to match against a root-relative path. Splitting on segments (not a string
+// prefix) keeps dotfile patterns intact: ".*" has no literal root, so its
+// magic part is ".*", not "*".
+func splitGlob(pattern string) (root, magic string, err error) {
 	parts := strings.Split(pattern, "/")
-	var root []string
-	for _, seg := range parts {
-		if strings.ContainsAny(seg, "*?[{") {
-			break
-		}
-		root = append(root, seg)
+	i := 0
+	for i < len(parts) && !hasGlobMeta(parts[i]) {
+		i++
 	}
-	if len(root) == len(parts) {
-		return filepath.Dir(pattern)
+	if i == len(parts) {
+		return "", "", fmt.Errorf("pattern %q has no wildcard", pattern)
 	}
-	if len(root) == 0 {
-		return "."
+	magic = strings.Join(parts[i:], "/")
+	root = strings.Join(parts[:i], "/")
+	if root == "" {
+		root = "."
 	}
-	joined := strings.Join(root, "/")
-	if joined == "" {
-		return "/" // a root-anchored pattern such as /*.log
-	}
-	return joined
+	return root, magic, nil
 }

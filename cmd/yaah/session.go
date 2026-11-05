@@ -279,11 +279,17 @@ type agentSession struct {
 	// closed is set at the start of teardown so a wake goroutine spawned just
 	// before it cannot start a new turn while the workspace is destroyed.
 	closed atomic.Bool
-	// closeCh unblocks wake delivery during teardown. followupCh closes
-	// only after the background-job drain, so a wake must not wait on that
-	// close to notice the session is gone.
-	closeCh    chan struct{}
-	closeOnce  sync.Once
+	// closeCh unblocks wake delivery during teardown. followupCh is never
+	// closed: senders race teardown (background deliveries and wake
+	// digests), and a send on a closed channel panics. closeCh is the
+	// session-is-gone signal every sender selects on.
+	closeCh   chan struct{}
+	closeOnce sync.Once
+	// wakeCtx scopes harness-initiated turns. close() cancels it before
+	// joining the run gate, so a wake turn is cancellable even in the window
+	// before runPromptLocked publishes runCancel.
+	wakeCtx    context.Context
+	wakeCancel context.CancelFunc
 	totalUsage types.Usage
 	// flushIn/flushOut/flushCached/flushSubIn/flushSubOut are the last
 	// values written to the session row by the incremental usage flush.
@@ -329,13 +335,16 @@ func (s *agentSession) close() {
 	s.closed.Store(true)
 	// Signal wake delivery that the session is going away before anything
 	// blocks in teardown. A watch poller may be mid-delivery on followupCh;
-	// closeCh is what unblocks that send without waiting for the channel
-	// itself to close (which happens only after the background-job drain).
+	// closeCh is what unblocks that send, and wakeCancel stops a turn that
+	// already started, even before it publishes runCancel.
 	s.closeOnce.Do(func() {
 		if s.closeCh != nil {
 			close(s.closeCh)
 		}
 	})
+	if s.wakeCancel != nil {
+		s.wakeCancel()
+	}
 	// Stop the watch pollers before the follow-up channel and workspace go
 	// away: a still-armed command or file predicate would otherwise touch a
 	// destroyed sandbox.
@@ -413,15 +422,10 @@ func (s *agentSession) close() {
 	if s.scopes != nil {
 		s.scopes.PruneTerminal()
 	}
-	// followupCh closes only AFTER the drain. A finishing job delivers
-	// through it, and Deliver's select still has a send case on this
-	// channel — sending on a closed channel panics, so closing it while
-	// the drain deliberately keeps job goroutines alive would crash
-	// shutdown. (A job that outlives the drain bound entirely retains the
-	// pre-existing exposure; the drain is what shrinks it.)
-	if s.followupCh != nil {
-		close(s.followupCh)
-	}
+	// followupCh stays open permanently: a finishing job and a wake digest
+	// both race teardown with a send, and closeCh (closed above) is the
+	// signal that unblocks them. Closing the channel would make that race a
+	// panic for no benefit — the channel is freed with the session.
 	// Destroy the isolated workspace sandbox only after the sub-agents are
 	// cancelled and can no longer dispatch tools into it. Bounded, so a
 	// wedged daemon cannot hang close(); a teardown failure warns rather
@@ -758,9 +762,13 @@ func (s *agentSession) StartWakeTurn(text string) bool {
 	if !s.runMu.TryLock() {
 		return false
 	}
+	ctx := s.wakeCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	go func() {
 		defer s.runMu.Unlock()
-		_, _, _ = s.runPromptLocked(context.Background(), text)
+		_, _, _ = s.runPromptLocked(ctx, text)
 	}()
 	return true
 }
@@ -788,19 +796,19 @@ func (s *agentSession) deliverWake(text string) {
 // acquires and immediately releases the gate; the caller only needs to know
 // that the in-flight turn has finished.
 func (s *agentSession) waitForRunGate(timeout time.Duration) bool {
-	acquired := make(chan struct{})
-	go func() {
-		s.runMu.Lock()
-		defer s.runMu.Unlock()
-		close(acquired)
-	}()
-	select {
-	case <-acquired:
-		return true
-	case <-time.After(timeout):
-		// The waiter is left blocked but releases the gate when the turn
-		// finally ends, so a timed-out close cannot wedge later runs.
-		return false
+	// Poll TryLock instead of parking a goroutine in Lock: a timed-out close
+	// must not leak a waiter that holds the session alive until a wedged
+	// turn finally ends.
+	deadline := time.Now().Add(timeout)
+	for {
+		if s.runMu.TryLock() {
+			s.runMu.Unlock()
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

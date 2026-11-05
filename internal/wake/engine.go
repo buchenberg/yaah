@@ -47,10 +47,11 @@ type Deps struct {
 	Exec func(ctx context.Context, command string) (ExecResult, error)
 	HTTP func(ctx context.Context, url string) (HTTPResult, error)
 	Glob func(ctx context.Context, pattern string) ([]string, error)
-	// ReadFile is used by file contains/regex conditions. When nil, paths
-	// returned by Glob are read through Glob's own implementation? No:
-	// conditions that need content require ReadFile.
+	// ReadFile is used by file contains/regex conditions.
 	ReadFile func(ctx context.Context, path string) ([]byte, error)
+	// ReadFileLimit, when non-nil, returns at most max bytes. It keeps a
+	// content predicate from materializing a large file on every poll.
+	ReadFileLimit func(ctx context.Context, path string, max int) ([]byte, error)
 
 	Now func() time.Time
 }
@@ -176,10 +177,16 @@ func (d Deps) evalCommand(ctx context.Context, command string, cond condition) (
 	attempt, cancel := context.WithTimeout(ctx, commandAttemptTimeout)
 	defer cancel()
 	res, err := d.Exec(attempt, command)
+	ev := fmt.Sprintf("exit=%d\n%s", res.ExitCode, tail(res.Output, evidenceCap))
+	if attempt.Err() != nil {
+		// This attempt hit its own bound (or the caller's). That is not a
+		// reason to abort the whole wait: keep polling until the caller's
+		// timeout, and say why this attempt was killed.
+		return false, "command attempt interrupted (" + attempt.Err().Error() + ")\n" + ev, nil
+	}
 	if err != nil && res.ExitCode < 0 {
 		return false, "", fmt.Errorf("command could not run: %w", err)
 	}
-	ev := fmt.Sprintf("exit=%d\n%s", res.ExitCode, tail(res.Output, evidenceCap))
 	switch cond.kind {
 	case condExitZero:
 		return res.ExitCode == 0, ev, nil
@@ -237,20 +244,19 @@ func (d Deps) evalFile(ctx context.Context, pattern string, cond condition) (boo
 	case condExists:
 		return true, summary, nil
 	case condFileContains, condFileRegex:
-		if d.ReadFile == nil {
+		if d.ReadFile == nil && d.ReadFileLimit == nil {
 			return false, "", fmt.Errorf("file content conditions need a workspace reader")
 		}
 		sampled := paths
+		truncated := false
 		if len(sampled) > fileSampleCap {
 			sampled = sampled[:fileSampleCap]
+			truncated = true
 		}
 		for _, p := range sampled {
-			data, rerr := d.ReadFile(ctx, p)
+			data, rerr := d.readFileCapped(ctx, p, fileReadCap)
 			if rerr != nil {
 				continue
-			}
-			if len(data) > fileReadCap {
-				data = data[:fileReadCap]
 			}
 			text := string(data)
 			matched := strings.Contains(text, cond.text)
@@ -261,10 +267,29 @@ func (d Deps) evalFile(ctx context.Context, pattern string, cond condition) (boo
 				return true, fmt.Sprintf("%s matched %q:\n%s", p, condLabel(cond), clip(text, evidenceCap)), nil
 			}
 		}
+		if truncated {
+			summary += fmt.Sprintf(" (inspected the first %d of %d files)", fileSampleCap, len(paths))
+		}
 		return false, summary + "; none matched " + condLabel(cond), nil
 	default:
 		return false, "", fmt.Errorf("unsupported file condition")
 	}
+}
+
+// readFileCapped prefers the bounded reader so a large file is never fully
+// materialized; a Deps without one still gets the cap, just after the read.
+func (d Deps) readFileCapped(ctx context.Context, path string, max int) ([]byte, error) {
+	if d.ReadFileLimit != nil {
+		return d.ReadFileLimit(ctx, path, max)
+	}
+	data, err := d.ReadFile(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > max {
+		data = data[:max]
+	}
+	return data, nil
 }
 
 func condLabel(c condition) string {

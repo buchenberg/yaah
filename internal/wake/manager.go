@@ -92,7 +92,11 @@ func (m *Manager) Close() {
 		m.mu.Lock()
 		m.closed = true
 		if m.timer != nil {
-			m.timer.Stop()
+			// Stop returns true only when the callback was prevented. If
+			// it already started, the callback owns the Done.
+			if m.timer.Stop() {
+				m.flushWG.Done()
+			}
 			m.timer = nil
 		}
 		m.pending = nil
@@ -102,6 +106,10 @@ func (m *Manager) Close() {
 		m.watches = make(map[string]*armedWatch)
 		m.mu.Unlock()
 		m.wg.Wait()
+		// Join an in-flight digest callback so no onWake call can outlive
+		// Close (the session closes closeCh before calling us, so a blocked
+		// sink unblocks).
+		m.flushWG.Wait()
 	})
 }
 
@@ -334,8 +342,10 @@ func (m *Manager) startWatch(w *armedWatch) {
 		return
 	}
 	w.cancel = cancel
-	m.mu.Unlock()
+	// Add under the same lock as the closed check: Close sets closed and
+	// then waits, so an Add cannot land after Wait has observed zero.
 	m.wg.Add(1)
+	m.mu.Unlock()
 	go func() {
 		defer m.wg.Done()
 		defer cancel()
@@ -397,12 +407,14 @@ func (m *Manager) runWatch(ctx context.Context, w *armedWatch) {
 			m.fire(w, evidence, false)
 			return
 		}
-		if terminal != nil {
-			m.fire(w, "watch dropped: "+terminal.Error(), false)
+		if ctx.Err() != nil {
+			// An evaluation that observed the deadline can surface it as a
+			// terminal error; expiry is the honest label, not "dropped".
+			m.fire(w, "watch expired before its predicate fired", false)
 			return
 		}
-		if ctx.Err() != nil {
-			m.fire(w, "watch expired before its predicate fired", false)
+		if terminal != nil {
+			m.fire(w, "watch dropped: "+terminal.Error(), false)
 			return
 		}
 		delay := interval
@@ -463,6 +475,7 @@ func (m *Manager) enqueue(ws ...firedWatch) {
 	}
 	m.pending = append(m.pending, ws...)
 	if m.timer == nil {
+		m.flushWG.Add(1)
 		m.timer = time.AfterFunc(m.digestWindow, m.flushIfOpen)
 	}
 	m.mu.Unlock()
@@ -470,7 +483,9 @@ func (m *Manager) enqueue(ws ...firedWatch) {
 
 // flushIfOpen runs on the digest timer. It re-checks closed so a timer that
 // fires during Close leaves the fired records durable for the next resume.
+// The callback is tracked by flushWG so Close can join it.
 func (m *Manager) flushIfOpen() {
+	defer m.flushWG.Done()
 	m.mu.Lock()
 	m.timer = nil
 	if m.closed {
@@ -488,16 +503,43 @@ func (m *Manager) flushIfOpen() {
 		onWake(digestText(pending))
 	}
 	m.mu.Lock()
+	if m.closed {
+		// Close won the race: keep the fired rows so the next resume
+		// reports them as missed wakes instead of dropping a digest whose
+		// delivery may have been cut off by teardown.
+		m.mu.Unlock()
+		return
+	}
 	for _, p := range pending {
 		if p.w != nil && m.watches[p.id] == p.w {
 			delete(m.watches, p.id)
 		}
 	}
 	m.mu.Unlock()
-	if m.store != nil {
-		for _, p := range pending {
-			_ = m.store.DeleteWatch(m.sessionID, p.id)
+	if m.store == nil {
+		return
+	}
+	for _, p := range pending {
+		// Never delete a same-id row that a newer watch now owns. A fired
+		// watch is matched by pointer; a missed-wake entry (p.w == nil) has
+		// no in-memory record, so an id that reappeared belongs to a new
+		// arm and its row must survive.
+		if p.w != nil {
+			m.mu.Lock()
+			current := m.watches[p.id]
+			m.mu.Unlock()
+			if current != nil && current != p.w {
+				continue
+			}
+		} else {
+			m.mu.Lock()
+			_, reused := m.watches[p.id]
+			m.mu.Unlock()
+			if reused {
+				continue
+			}
 		}
+		_ = m.store.DeleteWatch(m.sessionID, p.id)
 	}
 }
 

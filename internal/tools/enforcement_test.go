@@ -66,6 +66,8 @@ var filesystemOps = map[string]bool{
 var fsExempt = map[string]string{
 	"workspace.go": "the local Workspace implementation — the single place in this package that is allowed to turn a resolved path into a host syscall",
 
+	"workspace_read_limit.go": "the bounded-read primitive beside the local Workspace implementation; it opens a path the Workspace already resolved, so it is the host syscall layer one level below the interface",
+
 	"atomic_write.go": "the temp-file+rename primitive that localWorkspace.WriteFile is built on: it is the host syscall layer one level *below* the Workspace interface, so it cannot route through it",
 
 	"workspace_bootstrap.go": "bootstrapping a workspace: it copies the host tree into a substrate and rolls that back before any workspace exists to route through",

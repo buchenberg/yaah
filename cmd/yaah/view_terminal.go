@@ -135,7 +135,7 @@ func firstLine(s string) string {
 			continue
 		}
 		if len(line) > 160 {
-			line = line[:157] + "..."
+			line = strings.ToValidUTF8(line[:157], "") + "..."
 		}
 		return line
 	}

@@ -414,7 +414,12 @@ func (d *DB) migrate() error {
 		PRIMARY KEY (session_id, id)
 	);
 
-	CREATE INDEX IF NOT EXISTS idx_session_watches_session ON session_watches(session_id);
+	-- The read is WHERE session_id = ? ORDER BY armed_at, id. The PK's
+	-- (session_id, id) prefix already serves the equality; this index adds
+	-- the ordering instead of duplicating the prefix alone.
+	DROP INDEX IF EXISTS idx_session_watches_session;
+	CREATE INDEX IF NOT EXISTS idx_session_watches_session_armed
+		ON session_watches(session_id, armed_at, id);
 	`
 
 	if _, err := d.sql.Exec(schema); err != nil {

@@ -134,7 +134,7 @@ func parseCondition(src Source, target, until string) (condition, error) {
 	switch src {
 	case SourceJob, SourceProcess, SourceTime:
 		if until != "" {
-			return condition{}, fmt.Errorf("until is not supported for %s predicates: they fire when the %s reaches a terminal state", src, strings.TrimSuffix(string(src), "e"))
+			return condition{}, fmt.Errorf("until is not supported for %s predicates: they fire on their own terminal state", src)
 		}
 		return condition{kind: condTerminal}, nil
 
@@ -278,8 +278,12 @@ func parseSpec(s Spec) (Source, string, condition, error) {
 		return "", "", condition{}, err
 	}
 	if src == SourceTime {
-		if _, err := time.ParseDuration(target); err != nil {
+		dur, err := time.ParseDuration(target)
+		if err != nil {
 			return "", "", condition{}, fmt.Errorf("time predicate %q: %w", target, err)
+		}
+		if dur <= 0 {
+			return "", "", condition{}, fmt.Errorf("time predicate %q must be a positive duration", target)
 		}
 	}
 	if src == SourceHTTP {

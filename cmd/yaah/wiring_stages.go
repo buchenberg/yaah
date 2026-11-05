@@ -1328,7 +1328,10 @@ func assemble(lc *sessionConfig, opts SessionOptions, ws *workspaceStage, tr *to
 	// Wrap the provider with OTel instrumentation if enabled.
 	provider := wrapProviderWithOtel(lc.provider, lc.otelActive, cfg.Observability.Otel.Verbose)
 
+	wakeCtx, wakeCancel := context.WithCancel(context.Background())
 	sess := &agentSession{
+		wakeCtx:        wakeCtx,
+		wakeCancel:     wakeCancel,
 		cfg:            cfg,
 		opts:           opts,
 		provider:       provider,

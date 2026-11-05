@@ -62,6 +62,57 @@ func TestWakeGlobRelativeAndExact(t *testing.T) {
 	}
 }
 
+func TestWakeGlobDotfiles(t *testing.T) {
+	dir, ws := wakeTestWorkspace(t)
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	matches, err := wakeGlob(context.Background(), ws, ".*")
+	if err != nil {
+		t.Fatalf("wakeGlob(.*): %v", err)
+	}
+	if len(matches) != 1 || filepath.Base(matches[0]) != ".env" {
+		t.Fatalf("wakeGlob(.*) = %v, want [.env]", matches)
+	}
+}
+
+func TestWakeGlobThroughSymlinkRoot(t *testing.T) {
+	dir, ws := wakeTestWorkspace(t)
+	if err := os.MkdirAll(filepath.Join(dir, "real"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "real", "ci.log"), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real", filepath.Join(dir, "link")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	matches, err := wakeGlob(context.Background(), ws, "link/*.log")
+	if err != nil {
+		t.Fatalf("wakeGlob(link/*.log): %v", err)
+	}
+	if len(matches) != 1 || filepath.Base(matches[0]) != "ci.log" {
+		t.Fatalf("wakeGlob(link/*.log) = %v, want [ci.log]", matches)
+	}
+}
+
+func TestWakeGlobDotDotRoot(t *testing.T) {
+	dir, ws := wakeTestWorkspace(t)
+	if err := os.MkdirAll(filepath.Join(dir, "logs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "logs", "ci.log"), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	matches, err := wakeGlob(context.Background(), ws, "missing/../logs/*.log")
+	if err != nil {
+		t.Fatalf("wakeGlob(missing/../logs/*.log): %v", err)
+	}
+	if len(matches) != 1 || filepath.Base(matches[0]) != "ci.log" {
+		t.Fatalf("wakeGlob(missing/../logs/*.log) = %v, want [ci.log]", matches)
+	}
+}
+
 func TestWakeDepsReadFileAndExec(t *testing.T) {
 	dir, ws := wakeTestWorkspace(t)
 	path := filepath.Join(dir, "note.txt")
