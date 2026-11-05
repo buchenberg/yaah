@@ -26,7 +26,7 @@ import (
 //	base64 -d "$t.b64" >> "$t"            # base64 decode, append redirection
 //	chmod "$2" "$t" || exit 1
 //	mv -f -- "$t" "$1"
-//	cp -f -p -- "$1" "$2"                # workspace Move/Copy
+//	cp -f -- "$1" "$2" && chmod --reference="$1" -- "$2"  # workspace Copy
 //	[ -e "$1" ] || [ -L "$1" ] || exit 42  # test, || chains
 //	stat -c "$2" -- "$1"                   # GNU stat with a format string
 //	stat -L -c "$2" -- "$1"
@@ -588,7 +588,32 @@ func (sh *shSession) cmdCat(words []string) (string, int) {
 }
 
 func (sh *shSession) cmdChmod(words []string) (string, int) {
-	_, ops := operands(words[1:])
+	flags, ops := operands(words[1:])
+	var ref *entry
+	for _, f := range flags {
+		if !strings.HasPrefix(f, "--reference=") {
+			return "", sh.errf("sandboxfake: chmod: unsupported flag %s\n", f)
+		}
+		refPath := strings.TrimPrefix(f, "--reference=")
+		e, err := sh.sb.lookup(sh.ctx, refPath, true)
+		if err != nil {
+			return "", sh.errf("chmod: cannot access '%s': No such file or directory\n", refPath)
+		}
+		ref = e
+	}
+	if ref != nil {
+		// chmod --reference=<file> -- <dest> carries the source's mode to the
+		// destination, the form sandboxWorkspace.Copy emits after cp.
+		for _, p := range ops {
+			e, err := sh.sb.lookup(sh.ctx, p, true)
+			if err != nil {
+				return "", sh.errf("chmod: cannot access '%s': No such file or directory\n", p)
+			}
+			e.mode = ref.mode
+			e.modTime = time.Now()
+		}
+		return "", 0
+	}
 	if len(ops) < 2 {
 		return "", sh.errf("chmod: missing operand\n")
 	}
@@ -649,9 +674,10 @@ func (sh *shSession) cmdMv(words []string) (string, int) {
 	return "", 0
 }
 
-// cmdCp copies a file, matching `cp -f -- src dst`: the form sandboxWorkspace.Copy
-// emits. A directory is refused the way a real cp without -r refuses it, so the
-// fake cannot accept a copy the substrate would reject.
+// cmdCp copies a file, matching `cp -f -- src dst`: the form
+// sandboxWorkspace.Copy emits before its chmod --reference. A directory is
+// refused the way a real cp without -r refuses it, so the fake cannot accept a
+// copy the substrate would reject.
 func (sh *shSession) cmdCp(words []string) (string, int) {
 	flags, ops := operands(words[1:])
 	for _, f := range flags {

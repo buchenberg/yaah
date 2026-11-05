@@ -821,6 +821,65 @@ func TestSandboxWorkspace_StatReportsNotExistAndTypes(t *testing.T) {
 	}
 }
 
+// TestSandboxMode_TypeBits pins every non-regular `stat -c %F` spelling to its
+// fs.FileMode type bits. Move/copy gate on IsRegular(); if a FIFO, socket, or
+// device came back as plain permission bits that gate would let it through and
+// cp could block forever on a FIFO or stream a device without end.
+func TestSandboxMode_TypeBits(t *testing.T) {
+	cases := []struct {
+		fileType string
+		typed    func(fs.FileMode) bool
+		desc     string
+	}{
+		{"regular file", func(m fs.FileMode) bool { return m == 0o644 }, "regular"},
+		{"regular empty file", func(m fs.FileMode) bool { return m == 0o644 }, "regular"},
+		{"directory", func(m fs.FileMode) bool { return m.IsDir() }, "directory"},
+		{"symbolic link", func(m fs.FileMode) bool { return m&fs.ModeSymlink != 0 }, "symlink"},
+		{"fifo", func(m fs.FileMode) bool { return m&fs.ModeNamedPipe != 0 }, "FIFO"},
+		{"socket", func(m fs.FileMode) bool { return m&fs.ModeSocket != 0 }, "socket"},
+		{"character special file", func(m fs.FileMode) bool {
+			return m&fs.ModeDevice != 0 && m&fs.ModeCharDevice != 0
+		}, "character device"},
+		{"block special file", func(m fs.FileMode) bool {
+			return m&fs.ModeDevice != 0 && m&fs.ModeCharDevice == 0
+		}, "block device"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			mode := sandboxMode(0o644, tc.fileType)
+			if !tc.typed(mode) {
+				t.Errorf("sandboxMode(%q) = %v, missing the %s type bits", tc.fileType, mode, tc.desc)
+			}
+			wantRegular := tc.desc == "regular"
+			if got := mode.IsRegular(); got != wantRegular {
+				t.Errorf("sandboxMode(%q).IsRegular() = %v, want %v", tc.fileType, got, wantRegular)
+			}
+		})
+	}
+}
+
+// TestSandboxEntryMode_TypeChars pins find's %y letters to the same type bits,
+// so a directory walk sees a FIFO or device as non-regular too.
+func TestSandboxEntryMode_TypeChars(t *testing.T) {
+	cases := []struct {
+		typ  string
+		want fs.FileMode
+	}{
+		{"f", 0},
+		{"d", fs.ModeDir},
+		{"l", fs.ModeSymlink},
+		{"p", fs.ModeNamedPipe},
+		{"s", fs.ModeSocket},
+		{"c", fs.ModeDevice | fs.ModeCharDevice},
+		{"b", fs.ModeDevice},
+	}
+	for _, tc := range cases {
+		if got := sandboxEntryMode(tc.typ); got != tc.want {
+			t.Errorf("sandboxEntryMode(%q) = %v, want %v", tc.typ, got, tc.want)
+		}
+	}
+}
+
 // TestSandboxWorkspace_LstatDoesNotFollowLinks pins the Lstat/Stat split: a
 // symlink entry is reported as ModeSymlink without dereferencing, the two
 // calls run different stat invocations, and only Lstat's presence test accepts

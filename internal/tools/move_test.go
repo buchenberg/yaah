@@ -7,7 +7,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/buchenberg/yaah/internal/sandboxfake"
 )
 
 // transferContent is deliberately not plain ASCII. A byte-fidelity test over
@@ -133,10 +136,12 @@ func TestMoveTool_refusesDirectories(t *testing.T) {
 		}
 	})
 	t.Run("non-regular source", func(t *testing.T) {
-		// A dangling symlink is the portable stand-in for the rule that also
-		// refuses FIFOs and devices: the path layer resolves a valid symlink to
-		// its target (as for every file tool) but leaves a dangling link
-		// untouched, so the transfer sees the link itself and refuses it.
+		// On the host the path validator resolves a valid symlink (as for every
+		// file tool) and rejects a dangling one before prepareTransfer runs, so
+		// this pins the end-to-end refusal a host user sees. The IsRegular and
+		// ModeSymlink branches themselves are exercised over the lexical sandbox
+		// in TestMoveTool_sandboxRefusesNonRegular, which does not need host
+		// symlink support.
 		link := filepath.Join(dir, "dangling-src")
 		if err := os.Symlink(filepath.Join(dir, "no-such-file"), link); err != nil {
 			t.Skipf("symlinks unavailable: %v", err)
@@ -147,8 +152,9 @@ func TestMoveTool_refusesDirectories(t *testing.T) {
 		}
 	})
 	t.Run("symlink destination", func(t *testing.T) {
-		// Same mechanics on the destination side: a dangling link resolves to
-		// itself and is refused outright, even with force.
+		// Same mechanics on the destination side: a dangling link is refused in
+		// the path layer, even with force. TestMoveTool_sandboxRefusesNonRegular
+		// covers the prepareTransfer destination branch.
 		link := filepath.Join(dir, "dangling-dst")
 		if err := os.Symlink(filepath.Join(dir, "no-such-file"), link); err != nil {
 			t.Skipf("symlinks unavailable: %v", err)
@@ -212,6 +218,42 @@ func TestMoveTool_sandboxParity(t *testing.T) {
 	if _, err := tool.Execute(ctx,
 		transferArgs(t, map[string]any{"path": "/workspace/to.bin", "to": "/workspace/to.bin"})); err == nil {
 		t.Error("moving onto an existing destination must be refused in a sandbox too")
+	}
+}
+
+func TestMoveTool_sandboxRefusesNonRegular(t *testing.T) {
+	sb := sandboxfake.New()
+	ws := newSandboxWS(t, sb)
+	ctx := context.Background()
+	if err := ws.WriteFile(ctx, "/workspace/real.txt", []byte("payload"), 0o644); err != nil {
+		t.Fatalf("seed sandbox: %v", err)
+	}
+	if err := sb.Symlink("/workspace/real.txt", "/workspace/link.txt"); err != nil {
+		t.Fatalf("seed symlink: %v", err)
+	}
+	tool := &MoveTool{WS: ws}
+
+	// The sandbox path layer is lexical: even a link that resolves to a regular
+	// file reaches prepareTransfer as a link and must be refused rather than
+	// moved (mv would relocate the link, not the target).
+	_, err := tool.Execute(ctx,
+		transferArgs(t, map[string]any{"path": "/workspace/link.txt", "to": "/workspace/out.txt"}))
+	if err == nil {
+		t.Fatal("a symlink source must be refused on the sandbox")
+	}
+	if !strings.Contains(err.Error(), "not a regular file") {
+		t.Errorf("symlink source error = %q, want a regular-file refusal", err)
+	}
+
+	// A symlink destination must be refused too, so cp cannot write through it
+	// or mv silently replace the link.
+	_, err = tool.Execute(ctx,
+		transferArgs(t, map[string]any{"path": "/workspace/real.txt", "to": "/workspace/link.txt", "force": true}))
+	if err == nil {
+		t.Fatal("a symlink destination must be refused on the sandbox")
+	}
+	if !strings.Contains(err.Error(), "is a symlink") {
+		t.Errorf("symlink destination error = %q, want a symlink refusal", err)
 	}
 }
 

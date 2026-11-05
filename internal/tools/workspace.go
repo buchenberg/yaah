@@ -346,6 +346,22 @@ func (w *localWorkspace) MkdirAll(_ context.Context, path string, perm fs.FileMo
 	return os.MkdirAll(path, perm)
 }
 
+// partialMoveError reports a cross-filesystem move that copied the file but
+// could not remove the source. The destination exists, so callers that track
+// changes must record it even though Move returned an error; the message says
+// so, because a plain retry without force will be refused as a clobber.
+type partialMoveError struct {
+	Src string
+	Dst string
+	Err error
+}
+
+func (e *partialMoveError) Error() string {
+	return fmt.Sprintf("destination %s was created, but the source %s could not be removed: %v; remove one of the two files before retrying", e.Dst, e.Src, e.Err)
+}
+
+func (e *partialMoveError) Unwrap() error { return e.Err }
+
 // Move renames a file on the host. os.Rename moves the directory entry, so the
 // content, the mode, and (within one filesystem) ownership survive without the
 // bytes ever being read — the cheapest exact move available. Across filesystems
@@ -360,7 +376,7 @@ func (w *localWorkspace) Move(ctx context.Context, src, dst string) error {
 		return fmt.Errorf("move: cross-filesystem fallback: %w", cerr)
 	}
 	if rerr := os.Remove(src); rerr != nil {
-		return fmt.Errorf("move: copied across filesystems but could not remove the source: %w", rerr)
+		return &partialMoveError{Src: src, Dst: dst, Err: rerr}
 	}
 	return nil
 }
@@ -368,7 +384,9 @@ func (w *localWorkspace) Move(ctx context.Context, src, dst string) error {
 // Copy streams src into a temp file beside dst and renames it into place, so a
 // crash mid-copy leaves the previous dst intact instead of a truncated one —
 // the same crash-safety WriteFile has. The content is never buffered whole: a
-// large file copies in fixed-size chunks.
+// large file copies in fixed-size chunks. The source's mode, including
+// setuid/setgid/sticky, is applied to the temp before the rename. Ownership and
+// extended attributes are not portable across filesystems and are not carried.
 func (w *localWorkspace) Copy(_ context.Context, src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -392,7 +410,7 @@ func (w *localWorkspace) Copy(_ context.Context, src, dst string) error {
 		cleanup()
 		return fmt.Errorf("copy: %w", err)
 	}
-	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+	if err := tmp.Chmod(info.Mode()); err != nil {
 		tmp.Close()
 		cleanup()
 		return fmt.Errorf("copy: chmod: %w", err)

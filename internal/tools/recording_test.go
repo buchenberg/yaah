@@ -58,6 +58,44 @@ func TestRecordingTool_FailedWriteNotRecorded(t *testing.T) {
 	}
 }
 
+// TestRecordingTool_PartialMoveRecordsDestination pins the cross-filesystem
+// move edge: Copy created dst but Remove of src failed. The call errors, yet the
+// destination change is real and must be recorded — otherwise a parallel writer
+// sees no evidence and a retry without force is refused because dst now exists.
+func TestRecordingTool_PartialMoveRecordsDestination(t *testing.T) {
+	dir := t.TempDir()
+	tracker := &ConflictTracker{}
+	pv := NewPathValidator(dir, false, nil)
+	pv.WorkDir = pv.WorkspaceRoot
+	src := filepath.Join(dir, "src.txt")
+	dst := filepath.Join(dir, "dst.txt")
+	writeFile(t, src, []byte("payload"))
+
+	inner := &recordingTestTool{name: "move", fn: func(_ context.Context, _ string) (string, error) {
+		// The fallback copied src to dst, then failed to unlink src.
+		writeFile(t, dst, []byte("payload"))
+		return "", &partialMoveError{Src: src, Dst: dst, Err: errors.New("permission denied")}
+	}}
+	rt := NewRecordingTool(inner, tracker)
+	rt.SetPathValidator(pv)
+	rt.SetWorkspace(newLocalWorkspace(pv))
+
+	if _, err := rt.Execute(WithConflictDispatch(context.Background(), "worker", ConflictLaneShared),
+		`{"path":"src.txt","to":"dst.txt"}`); err == nil {
+		t.Fatal("expected the partial move to report an error")
+	}
+
+	tracker.mu.Lock()
+	records := append([]FileRecord(nil), tracker.records...)
+	tracker.mu.Unlock()
+	if len(records) != 1 {
+		t.Fatalf("records = %d, want only the created destination: %+v", len(records), records)
+	}
+	if records[0].FilePath != "dst.txt" || !records[0].AfterExists {
+		t.Errorf("record = %+v, want the created destination dst.txt", records[0])
+	}
+}
+
 func TestRecordingTool_ForwardsDangerClassifier(t *testing.T) {
 	rt := NewRecordingTool(&BashTool{}, nil)
 	if !rt.IsDangerous(`{"command":"echo hi"}`) {

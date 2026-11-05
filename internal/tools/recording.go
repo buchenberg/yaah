@@ -236,6 +236,14 @@ func (rt *RecordingTool) recordTransfer(ctx context.Context, dispatch ConflictDi
 	beforeDst := captureConflictSnapshot(ctx, ws, absDst)
 	result, err := rt.inner.Execute(ctx, args)
 	if err != nil {
+		// A cross-filesystem move can create the destination and then fail to
+		// remove the source. The destination change is real, so record it even
+		// though the call reports an error; otherwise the next writer sees no
+		// evidence, and a retry without force is refused as a clobber.
+		var partial *partialMoveError
+		if toolName == "move" && errors.As(err, &partial) {
+			rt.recordSnapshot(ctx, dispatch, toolName, ws, absDst, beforeDst)
+		}
 		return result, err
 	}
 	// A copy leaves the source untouched: recording it would report a change

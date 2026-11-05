@@ -152,6 +152,27 @@ func TestCopyTool_sandboxParity(t *testing.T) {
 	if perm := info.Mode().Perm(); perm != 0o640 {
 		t.Errorf("copied mode = %o, want 640 (the source's mode)", perm)
 	}
+
+	// Force overwrite must also take the source's mode rather than keeping the
+	// destination's old one; the sandbox applies it with chmod --reference after
+	// cp, since plain cp would leave an existing destination's mode in place.
+	if err := ws.WriteFile(ctx, "/workspace/private.bin", []byte("secret"), 0o600); err != nil {
+		t.Fatalf("seed private source: %v", err)
+	}
+	if err := ws.WriteFile(ctx, "/workspace/shared.bin", []byte("old"), 0o644); err != nil {
+		t.Fatalf("seed shared destination: %v", err)
+	}
+	if _, err := tool.Execute(ctx,
+		transferArgs(t, map[string]any{"path": "/workspace/private.bin", "to": "/workspace/shared.bin", "force": true})); err != nil {
+		t.Fatalf("force copy: %v", err)
+	}
+	overwritten, err := ws.Stat(ctx, "/workspace/shared.bin")
+	if err != nil {
+		t.Fatalf("stat overwritten destination: %v", err)
+	}
+	if perm := overwritten.Mode().Perm(); perm != 0o600 {
+		t.Errorf("overwritten mode = %o, want 600 (the source's mode)", perm)
+	}
 }
 
 func TestCopyTool_isDangerous(t *testing.T) {

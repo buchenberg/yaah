@@ -284,6 +284,10 @@ stat -L -c "$2" -- "$1"`
 // an fs.FileMode. The high octal digit carries setuid/setgid/sticky and the type
 // lives in bits above the permission bits, so a plain cast would both report a
 // directory as a regular file and turn "4755" into a meaningless low bit.
+//
+// Every non-regular type `%F` can report gets its type bits: without them a
+// FIFO, socket, or device node looks like a plain file to Mode().IsRegular(),
+// and a tool that gates on regular files would then open, copy, or block on it.
 func sandboxMode(perm uint64, fileType string) fs.FileMode {
 	mode := fs.FileMode(perm & 0o777)
 	if perm&0o4000 != 0 {
@@ -300,6 +304,14 @@ func sandboxMode(perm uint64, fileType string) fs.FileMode {
 		mode |= fs.ModeDir
 	case strings.Contains(fileType, "symbolic link"):
 		mode |= fs.ModeSymlink
+	case strings.Contains(fileType, "fifo"):
+		mode |= fs.ModeNamedPipe
+	case strings.Contains(fileType, "socket"):
+		mode |= fs.ModeSocket
+	case strings.Contains(fileType, "character special"):
+		mode |= fs.ModeDevice | fs.ModeCharDevice
+	case strings.Contains(fileType, "block special"):
+		mode |= fs.ModeDevice
 	}
 	return mode
 }
@@ -344,6 +356,14 @@ func sandboxEntryMode(typ string) fs.FileMode {
 		return fs.ModeDir
 	case "l":
 		return fs.ModeSymlink
+	case "p":
+		return fs.ModeNamedPipe
+	case "s":
+		return fs.ModeSocket
+	case "c":
+		return fs.ModeDevice | fs.ModeCharDevice
+	case "b":
+		return fs.ModeDevice
 	default:
 		return 0
 	}
@@ -356,14 +376,18 @@ func (w *sandboxWorkspace) Move(ctx context.Context, src, dst string) error {
 	return w.run(ctx, `mv -f -- "$1" "$2"`, src, dst)
 }
 
-// Copy duplicates a file inside the sandbox with cp -p: the bytes stay in the
-// substrate, so a large copy costs neither context nor a read/write round trip,
-// and -p carries the source's mode to the destination. Without -p, cp would
-// apply the sandbox umask on create (0666 becoming 0644) and leave an
-// overwritten destination's old mode in place — the host path sets the source
-// mode exactly and the docs promise it.
+// Copy duplicates a file inside the sandbox with cp, then sets the source's
+// mode on the destination with chmod --reference: the bytes stay in the
+// substrate, so a large copy costs neither context nor a read/write round trip.
+//
+// chmod --reference rather than cp -p: -p also asks cp to preserve ownership
+// and timestamps, and preserving ownership can fail on a bind-mounted source
+// owned by another uid. GNU cp writes the destination and *then* exits non-zero
+// on the failed preservation, so the tool would report a failed copy even
+// though dst was created or truncated. A separate chmod keeps exactly the
+// documented guarantee — the source's permission mode — and nothing more.
 func (w *sandboxWorkspace) Copy(ctx context.Context, src, dst string) error {
-	return w.run(ctx, `cp -f -p -- "$1" "$2"`, src, dst)
+	return w.run(ctx, `cp -f -- "$1" "$2" && chmod --reference="$1" -- "$2"`, src, dst)
 }
 
 func (w *sandboxWorkspace) MkdirAll(ctx context.Context, p string, perm fs.FileMode) error {

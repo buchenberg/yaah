@@ -88,10 +88,15 @@ type transferRequest struct {
 // substrate's replace semantics (host rename, sandbox mv/cp, and the in-memory
 // double all disagree on clobbering, so the rule is applied once, above them):
 //
-//   - the source must exist and be a regular file — a directory, symlink,
-//     FIFO, or device is refused with a clear error, which keeps the tool's
-//     semantics bounded and the host copy from blocking on a special file;
-//   - the destination must not be a directory or a symlink;
+//   - the source must exist and be a regular file as the path layer leaves it —
+//     a directory, FIFO, socket, or device is refused with a clear error, which
+//     keeps the tool's semantics bounded and the host copy from blocking on a
+//     special file. A symlink follows the substrate: the host path validator
+//     resolves it first (like every other file tool, transferring the target),
+//     while a lexical-path substrate such as the container sandbox refuses it;
+//   - the destination must not be a directory; a symlink destination is refused
+//     on a lexical-path substrate, while the host resolves a valid link first
+//     and applies the clobber rule to its target;
 //   - an existing destination is refused unless force is set.
 //
 // The no-clobber rule is check-then-act: a writer that creates dst between the
@@ -131,11 +136,15 @@ func prepareTransfer(ctx context.Context, tool string, ws Workspace, args string
 	req.Path, req.To = src, dst
 
 	// Lstat, not Stat: the entry at the path is what a rename moves and a copy
-	// reads. The source must be a regular file as the path layer leaves it: a
-	// directory, FIFO, or device — and, on a lexical substrate where symlink
-	// resolution does not run, a symlink — would make the substrates diverge
-	// (mv moves the link, cp dereferences it) and a FIFO would block the host
-	// copy forever, so all of them are refused with a clear error instead.
+	// reads. The source must be a regular file as the path layer leaves it, so
+	// directories are out of scope, a FIFO, socket, or device would block or
+	// stream forever, and a symlink would diverge between the substrates (mv
+	// moves the link, cp dereferences it). All are refused with a clear error.
+	//
+	// On the host, ResolvePath has already followed a final symlink, so this
+	// sees the link's target and a valid link is transferred like any other
+	// file tool. On the lexical sandbox path it sees the link itself, and the
+	// IsRegular check refuses it — the documented substrate difference.
 	info, err := ws.Lstat(ctx, src)
 	if err != nil {
 		return transferRequest{}, fmt.Errorf("%s: %s: %w", tool, src, err)
@@ -151,11 +160,15 @@ func prepareTransfer(ctx context.Context, tool string, ws Workspace, args string
 	case err != nil:
 		return transferRequest{}, fmt.Errorf("%s: %s: %w", tool, dst, err)
 	case dstInfo.Mode()&fs.ModeSymlink != 0:
-		// A symlink destination is refused outright: mv would replace the
-		// link while cp writes through it — and for a link to a directory the
-		// transfer would drop the file inside that directory on a substrate
-		// whose path resolution is lexical. Accepting one would make the
-		// tools' semantics depend on the substrate.
+		// A symlink destination is refused on a lexical-path substrate: mv
+		// would replace the link while cp writes through it — and for a link to
+		// a directory the transfer would drop the file inside that directory.
+		// Accepting one there would make the tools' semantics depend on which
+		// primitive runs. On the host this branch is unreachable for a valid
+		// link (ResolvePath already followed it, so the clobber rule applies to
+		// its target) and a dangling link fails in the path layer; it remains
+		// here so a substrate that stops resolving cannot silently accept a
+		// link.
 		return transferRequest{}, fmt.Errorf("%s: destination %s is a symlink; pass the real path or remove the link", tool, dst)
 	case dstInfo.IsDir():
 		return transferRequest{}, fmt.Errorf("%s: destination %s is a directory", tool, dst)
