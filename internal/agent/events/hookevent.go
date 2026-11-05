@@ -12,6 +12,13 @@ const (
 	ConflictCheck  HookEventType = "conflict.check"
 	ConflictDetect HookEventType = "conflict.detect"
 	ContextPrune   HookEventType = "context.prune"
+	// Event-driven wait/watch lifecycle (internal/wake). The target (a URL,
+	// command or path) is deliberately absent; only its kind is recorded.
+	WaitStart   HookEventType = "wait.start"
+	WaitEnd     HookEventType = "wait.end"
+	WatchArm    HookEventType = "watch.arm"
+	WatchFire   HookEventType = "watch.fire"
+	WatchCancel HookEventType = "watch.cancel"
 )
 
 // HookEvent is a structured event emitted to the hook directory as JSONL.
@@ -41,6 +48,12 @@ type HookEvent struct {
 
 	// conflict.check / conflict.detect
 	ConflictFiles int `json:"conflict_files,omitempty"`
+
+	// wait.* / watch.* — the predicate kind, never its target.
+	WakeKind   string `json:"wake_kind,omitempty"`
+	WakeState  string `json:"wake_state,omitempty"`
+	WakeID     string `json:"wake_id,omitempty"`
+	WakeMissed bool   `json:"wake_missed,omitempty"`
 
 	// context.prune — soft-prune outcome. Emitted on every PostTool mark,
 	// even when Committed is false (so "considered, decided not to" is visible).

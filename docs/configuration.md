@@ -838,8 +838,11 @@ hooks:
 ```
 
 Events: `session.start`, `session.end`, `turn.start`, `tool.start`,
-`tool.end`, `conflict.check`, `conflict.detect`, and `context.prune` — with
-timestamps, model, tool results, durations, and prune counters.
+`tool.end`, `conflict.check`, `conflict.detect`, `context.prune`,
+`wait.start`, `wait.end`, `watch.arm`, `watch.fire`, and `watch.cancel` —
+with timestamps, model, tool results, durations, and prune counters. Wait
+and watch events carry the predicate kind and state, never its target (a
+URL, command or file path).
 
 ## Embeddings reference
 

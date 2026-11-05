@@ -25,6 +25,7 @@ func NewManager(opts Options) *Manager {
 		defaultExpiry: opts.DefaultExpiry,
 		maxExpiry:     opts.MaxExpiry,
 		onWake:        opts.OnWake,
+		observer:      opts.Observer,
 		ctx:           ctx,
 		cancel:        cancel,
 		watches:       make(map[string]*armedWatch),
@@ -207,6 +208,7 @@ func (m *Manager) Arm(req ArmRequest) (WatchInfo, error) {
 		}
 	}
 	m.startWatch(w)
+	m.observeWatchArmed(info)
 	return info, nil
 }
 
@@ -248,6 +250,7 @@ func (m *Manager) Cancel(id string) bool {
 	if m.store != nil {
 		_ = m.store.DeleteWatch(m.sessionID, id)
 	}
+	m.observeWatchCancelled(id)
 	return true
 }
 
@@ -317,6 +320,7 @@ func (m *Manager) Rehydrate(ctx context.Context) error {
 				continue
 			}
 			m.startWatch(w)
+			m.observeWatchArmed(infoOf(w))
 		}
 	}
 	if len(missed) > 0 {
@@ -335,6 +339,16 @@ func (m *Manager) Rehydrate(ctx context.Context) error {
 			if m.store != nil {
 				_ = m.store.SaveWatch(m.sessionID, recordOf(w))
 			}
+		}
+		for i := range missed {
+			ev := missed[i].evidence
+			m.observeWatchFired(WatchInfo{
+				ID:       missed[i].id,
+				On:       missed[i].spec.On,
+				Until:    missed[i].spec.Until,
+				State:    StateFired,
+				Evidence: &ev,
+			}, true)
 		}
 		m.enqueue(missed...)
 	}
@@ -471,11 +485,13 @@ func (m *Manager) fire(w *armedWatch, evidence Evidence, missed bool) {
 	w.evidence = evidence
 	w.firedAt = m.deps.now()
 	rec := recordOf(w) // under m.mu
+	info := infoOf(w)
 	m.mu.Unlock()
 
 	if m.store != nil {
 		_ = m.store.SaveWatch(m.sessionID, rec)
 	}
+	m.observeWatchFired(info, missed)
 	m.enqueue(firedWatch{id: w.id, spec: w.spec, evidence: evidence, missed: missed, w: w})
 }
 

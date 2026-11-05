@@ -263,6 +263,96 @@ func TestWaitBackoffUsesTheSourceCeiling(t *testing.T) {
 	}
 }
 
+type recordingObserver struct {
+	mu         sync.Mutex
+	waitStarts int
+	waitEnds   int
+	lastFired  bool
+	armed      []WatchInfo
+	fired      []WatchInfo
+	cancelled  []string
+}
+
+func (o *recordingObserver) WaitStarted(ctx context.Context, spec Spec, timeout time.Duration) context.Context {
+	o.mu.Lock()
+	o.waitStarts++
+	o.mu.Unlock()
+	return ctx
+}
+
+func (o *recordingObserver) WaitFinished(ctx context.Context, spec Spec, fired, timedOut, interrupted, errored bool, elapsed time.Duration) {
+	o.mu.Lock()
+	o.waitEnds++
+	o.lastFired = fired
+	o.mu.Unlock()
+}
+
+func (o *recordingObserver) WatchArmed(info WatchInfo) {
+	o.mu.Lock()
+	o.armed = append(o.armed, info)
+	o.mu.Unlock()
+}
+
+func (o *recordingObserver) WatchFired(info WatchInfo, missed bool) {
+	o.mu.Lock()
+	o.fired = append(o.fired, info)
+	o.mu.Unlock()
+}
+
+func (o *recordingObserver) WatchCancelled(id string) {
+	o.mu.Lock()
+	o.cancelled = append(o.cancelled, id)
+	o.mu.Unlock()
+}
+
+func TestObserverReceivesLifecycle(t *testing.T) {
+	obs := &recordingObserver{}
+	digests := make(chan string, 1)
+	m := NewManager(Options{
+		Deps:         fileDeps(map[string]string{"/w/ci": ""}),
+		Observer:     obs,
+		DigestWindow: 20 * time.Millisecond,
+		OnWake:       func(s string) { digests <- s },
+	})
+	defer m.Close()
+
+	// A blocking wait reports start and finish.
+	if _, err := m.Wait(context.Background(), WaitRequest{On: "file:*", Timeout: time.Second}); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	obs.mu.Lock()
+	if obs.waitStarts != 1 || obs.waitEnds != 1 || !obs.lastFired {
+		t.Fatalf("wait lifecycle = starts %d ends %d fired %v", obs.waitStarts, obs.waitEnds, obs.lastFired)
+	}
+	obs.mu.Unlock()
+
+	// Arm, fire and cancel each report.
+	info, err := m.Arm(ArmRequest{On: "time:10ms", ExpiresIn: time.Second})
+	if err != nil {
+		t.Fatalf("Arm: %v", err)
+	}
+	_ = waitForDigest(t, digests)
+	obs.mu.Lock()
+	if len(obs.armed) != 1 || obs.armed[0].ID != info.ID {
+		t.Fatalf("armed = %+v, want %s", obs.armed, info.ID)
+	}
+	if len(obs.fired) != 1 || obs.fired[0].ID != info.ID {
+		t.Fatalf("fired = %+v, want %s", obs.fired, info.ID)
+	}
+	obs.mu.Unlock()
+
+	info, err = m.Arm(ArmRequest{On: "time:1h", ExpiresIn: time.Hour})
+	if err != nil {
+		t.Fatalf("Arm(cancel): %v", err)
+	}
+	m.Cancel(info.ID)
+	obs.mu.Lock()
+	if len(obs.cancelled) != 1 || obs.cancelled[0] != info.ID {
+		t.Fatalf("cancelled = %+v, want %s", obs.cancelled, info.ID)
+	}
+	obs.mu.Unlock()
+}
+
 func TestParseSpecRejectsNonPositiveTime(t *testing.T) {
 	for _, on := range []string{"time:0s", "time:-5s"} {
 		if _, _, _, err := parseSpec(Spec{On: on}); err == nil {

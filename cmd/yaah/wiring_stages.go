@@ -34,6 +34,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/budget"
+	"github.com/buchenberg/yaah/internal/agent/events"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/recovery"
 	"github.com/buchenberg/yaah/internal/agent/runner"
@@ -556,6 +557,7 @@ type loopInfraStage struct {
 	followupCh     chan string
 	steerCh        chan string
 	wakeMgr        *wake.Manager
+	wakeHooks      *events.HookEmitter
 
 	scopeMgr      *goatherd.ScopeManager
 	traceStore    *shepherdtrace.SQLiteTraceStore
@@ -598,7 +600,7 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 	// The wait/watch engine is session-wide: a watch outlives the turn that
 	// armed it, so it lives beside the background-job manager rather than
 	// inside a tool call.
-	buildWakeEngine(st, ws, tr, mcps)
+	buildWakeEngine(st, cfg, ws, tr, mcps)
 	// retainCapable reports whether the session root can capture workspace
 	// state, which decides the retained lane further down.
 	retainCapable := buildShepherdInfra(st, cfg, ws, tr)
@@ -696,7 +698,7 @@ func buildBackgroundLoop(st *loopInfraStage, cfg *config.Config, lc *sessionConf
 // isolated session, the host otherwise), and the process source is host-only
 // to match background_process. The manager starts no watches here; Rehydrate
 // runs once the session owns it.
-func buildWakeEngine(st *loopInfraStage, ws *workspaceStage, tr *toolRegistryStage, mcps *mcpSkillsStage) {
+func buildWakeEngine(st *loopInfraStage, cfg *config.Config, ws *workspaceStage, tr *toolRegistryStage, mcps *mcpSkillsStage) {
 	isolated := ws.sessionSandbox != nil
 	wsx := tools.NewLocalWorkspace(ws.pathValidator)
 	if isolated {
@@ -710,10 +712,14 @@ func buildWakeEngine(st *loopInfraStage, ws *workspaceStage, tr *toolRegistrySta
 	if !isolated && mcps != nil {
 		procs = mcps.procMgr
 	}
+	// The wake engine is session-scoped and outlives a run, so it owns its
+	// hook emitter; the session closes it during teardown.
+	st.wakeHooks = events.NewHookEmitter(cfg.Hooks.Dir, st.sessionID)
 	st.wakeMgr = wake.NewManager(wake.Options{
 		SessionID: st.sessionID,
 		Deps:      tools.NewWakeDeps(wsx, st.backgroundJobs, procs),
 		Store:     store,
+		Observer:  newWakeObserver(st.wakeHooks),
 	})
 }
 
@@ -1352,6 +1358,8 @@ func assemble(lc *sessionConfig, opts SessionOptions, ws *workspaceStage, tr *to
 		otelShutdown:   lc.otelShutdown,
 		tracker:        loop.tracker,
 		backgroundJobs: loop.backgroundJobs,
+		wakeMgr:        loop.wakeMgr,
+		wakeHooks:      loop.wakeHooks,
 		sessionSandbox: ws.sessionSandbox,
 		worldStatus:    loop.worldStatus,
 		cwd:            ws.cwd,

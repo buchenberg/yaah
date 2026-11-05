@@ -9,7 +9,7 @@ import (
 // Wait blocks until the predicate fires, the per-call timeout elapses, or the
 // caller's context ends. A timeout is a structured result with a resumable
 // handle, not an error; only an unusable predicate is an error.
-func (m *Manager) Wait(ctx context.Context, req WaitRequest) (Result, error) {
+func (m *Manager) Wait(ctx context.Context, req WaitRequest) (res Result, err error) {
 	spec := Spec{On: req.On, Until: req.Until}
 	start := m.deps.now()
 	if req.Handle != "" {
@@ -36,6 +36,15 @@ func (m *Manager) Wait(ctx context.Context, req WaitRequest) (Result, error) {
 	}
 	interval := intervalFor(src, req.Interval)
 
+	ctx = m.observeWaitStarted(ctx, spec, timeout)
+	defer func() {
+		m.observeWaitFinished(ctx, spec,
+			err == nil && res.Fired,
+			err == nil && res.TimedOut,
+			err == nil && res.Interrupted,
+			err != nil,
+			m.deps.now().Sub(start))
+	}()
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -104,7 +113,7 @@ loop:
 		interval = nextInterval(interval, MaxIntervalFor(src))
 	}
 
-	res := Result{
+	res = Result{
 		Source:    string(src),
 		On:        spec.On,
 		ElapsedMs: elapsed(),

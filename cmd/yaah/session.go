@@ -41,6 +41,7 @@ import (
 	goatherd "github.com/buchenberg/goatherd-runtime"
 	"github.com/buchenberg/goatherd-runtime/sandbox/egress"
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/agent/events"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/config"
@@ -269,6 +270,9 @@ type agentSession struct {
 	// created during wiring and closed first in close(): its pollers must
 	// stop before the follow-up channel they deliver through goes away.
 	wakeMgr *wake.Manager
+	// wakeHooks is the session-scoped JSONL emitter for wait/watch lifecycle
+	// events. It is closed in close, after the manager stops emitting.
+	wakeHooks *events.HookEmitter
 	// wakeTurnRequester is the driver's policy for a watch that fires while
 	// the session is idle. It is installed by interactive drivers after
 	// their view exists; nil means queue the digest as a follow-up. Guarded
@@ -350,6 +354,9 @@ func (s *agentSession) close() {
 	// destroyed sandbox.
 	if s.wakeMgr != nil {
 		s.wakeMgr.Close()
+	}
+	if s.wakeHooks != nil {
+		s.wakeHooks.Close()
 	}
 	// A watch can start its own turn. Cancel it (once it has published its
 	// cancel func) and join the run gate — bounded — before the workspace

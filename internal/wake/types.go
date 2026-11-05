@@ -49,12 +49,27 @@ type Store interface {
 	DeleteWatch(sessionID, id string) error
 }
 
+// Observer receives lifecycle notifications for tracing and hook emission.
+// Implementations must be cheap and must not block the poll path. The target
+// of a predicate is deliberately not part of these calls: a URL, command or
+// path must not leak into a hook log or span attribute.
+type Observer interface {
+	// WaitStarted starts observing a blocking wait and returns a context for
+	// WaitFinished (the implementation may attach a span).
+	WaitStarted(ctx context.Context, spec Spec, timeout time.Duration) context.Context
+	WaitFinished(ctx context.Context, spec Spec, fired, timedOut, interrupted, errored bool, elapsed time.Duration)
+	WatchArmed(info WatchInfo)
+	WatchFired(info WatchInfo, missed bool)
+	WatchCancelled(id string)
+}
+
 // Options configures a Manager. Zero values take the defaults above.
 type Options struct {
 	SessionID     string
 	Deps          Deps
 	Store         Store
 	OnWake        func(string)
+	Observer      Observer
 	DigestWindow  time.Duration
 	MaxWatches    int
 	DefaultExpiry time.Duration
@@ -118,7 +133,8 @@ type Manager struct {
 	defaultExpiry time.Duration
 	maxExpiry     time.Duration
 
-	onWake func(string)
+	onWake   func(string)
+	observer Observer
 
 	ctx       context.Context
 	cancel    context.CancelFunc
