@@ -213,6 +213,15 @@ func (l *Loop) applyDefaults() {
 		// captured by a previous Run reference a closed broker.
 		l.LLM.OnToken = l.publishTokenDelta
 		l.LLM.OnThinking = l.publishThinking
+		// A client supplied by a caller must still carry the two injected
+		// seams: a nil SessionIDFn silently drops provider session affinity
+		// and a nil Heartbeat drops liveness pings (yaah-9RCG review).
+		if l.LLM.SessionIDFn == nil {
+			l.LLM.SessionIDFn = providers.WithSessionID
+		}
+		if l.LLM.Heartbeat == nil {
+			l.LLM.Heartbeat = jobs.SendHeartbeat
+		}
 	}
 }
 

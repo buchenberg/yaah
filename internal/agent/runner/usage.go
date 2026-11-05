@@ -17,7 +17,7 @@ import (
 // only the aggregate sub-agent share. This fact keeps the per-dispatch and
 // per-role split available to benchmark metrics and trace readers.
 func recordSubAgentUsage(ctx context.Context, store pipeline.TraceSink, sessionID, parentSession, role, model, lane string, usage types.Usage) {
-	if store == nil || sessionID == "" {
+	if pipeline.SinkIsNil(store) || sessionID == "" {
 		return
 	}
 	payload := map[string]any{

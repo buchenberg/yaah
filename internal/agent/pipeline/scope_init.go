@@ -122,18 +122,22 @@ func ScopeSourceOf(mgr *goatherd.ScopeManager) ScopeSource {
 	return kernelScopeSource{mgr: mgr}
 }
 
-// sinkIsNil reports whether the seam carries no store at all. It exists
+// SinkIsNil reports whether the seam carries no store at all. It exists
 // because the composition root still holds the concrete handle: a tracing-off
 // session can hand the seam an interface value whose dynamic type is a nil
-// *SQLiteTraceStore. `sink == nil` alone would call that "configured" and build
-// a live middleware over a nil handle, which is the one way a pure seam swap
-// could change behaviour.
-func sinkIsNil(sink TraceSink) bool {
+// *SQLiteTraceStore — either wrapped by TraceSinkOf's adapter or assigned
+// raw. `sink == nil` alone would call that "configured" and build a live
+// middleware over a nil handle, which is one way a pure seam swap could
+// change behaviour.
+func SinkIsNil(sink TraceSink) bool {
 	if sink == nil {
 		return true
 	}
-	if k, ok := sink.(kernelTraceSink); ok {
-		return k.store == nil
+	switch s := sink.(type) {
+	case kernelTraceSink:
+		return s.store == nil
+	case *shepherdtrace.SQLiteTraceStore:
+		return s == nil
 	}
 	return false
 }
@@ -190,7 +194,7 @@ func InitShepherdInfrastructure(tracePath string, busBuffer int) (*shepherdtrace
 // way the workspace sandbox destroy does, and its callers have no error
 // contract to join into.
 func CloseShepherdInfrastructure(store TraceSink, bus *shepherdtrace.EffectBus) {
-	if !sinkIsNil(store) {
+	if !SinkIsNil(store) {
 		if err := store.Close(context.Background()); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: shepherd trace store close: %v\n", err)
 		}

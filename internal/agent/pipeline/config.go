@@ -186,7 +186,7 @@ func buildShepherdTrace(cfg PipelineConfig) Middleware {
 	// (the composition root still holds the concrete handle), so the nil test
 	// goes through the seam's own predicate: a typed-nil sink must resolve to
 	// the noop slot, exactly as it did when the field held the bare pointer.
-	if sinkIsNil(store) || cfg.SessionID == "" {
+	if SinkIsNil(store) || cfg.SessionID == "" {
 		return &noopShepherdTraceMiddleware{}
 	}
 	return &ShepherdTraceMiddleware{
