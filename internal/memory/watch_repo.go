@@ -125,6 +125,25 @@ func (d *DB) ClaimSessionWatchFire(sessionID, id, owner string, armedAt, firedAt
 	return n > 0, nil
 }
 
+// ReleaseSessionWatchLease clears the lease on a fired row still owned by
+// owner. A row that was already delivered and deleted, or re-armed by a
+// newer owner, is untouched.
+func (d *DB) ReleaseSessionWatchLease(sessionID, id, owner string) (bool, error) {
+	res, err := d.sql.Exec(`
+		UPDATE session_watches
+		SET lease_until = 0
+		WHERE session_id = ? AND id = ? AND owner = ? AND state = 'fired'`,
+		sessionID, id, owner)
+	if err != nil {
+		return false, fmt.Errorf("release watch lease %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("release watch lease %s: %w", id, err)
+	}
+	return n > 0, nil
+}
+
 // DeleteSessionWatch removes one watch row. An unknown id is a no-op.
 func (d *DB) DeleteSessionWatch(sessionID, id string) error {
 	if _, err := d.sql.Exec(

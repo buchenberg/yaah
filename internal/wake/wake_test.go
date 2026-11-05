@@ -750,6 +750,18 @@ func (s *fakeStore) ClaimFire(sessionID, id, owner string, armedAt, firedAt, lea
 	return claimed, nil
 }
 
+func (s *fakeStore) ReleaseWatchLease(sessionID, id, owner string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.rows[id]
+	if !ok || r.Owner != owner || r.State != StateFired {
+		return false, nil
+	}
+	r.LeaseUntil = 0
+	s.rows[id] = r
+	return true, nil
+}
+
 func (s *fakeStore) DeleteWatch(sessionID, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -766,6 +778,13 @@ func TestManagerDropsFireItNoLongerOwns(t *testing.T) {
 	wakes := make(chan string, 1)
 	started := make(chan struct{})
 	release := make(chan struct{})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
 	var startedOnce sync.Once
 	m := NewManager(Options{
 		SessionID: "sess",
@@ -961,6 +980,47 @@ func TestManagerCloseDropsPendingDigest(t *testing.T) {
 	case s := <-wakes:
 		t.Fatalf("digest delivered after Close: %q", s)
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// TestManagerCloseReleasesUndeliveredFiredLease pins the Close contract: a
+// fired row whose digest was not delivered is left re-deliverable by the next
+// resume, not suppressed by a live lease.
+func TestManagerCloseReleasesUndeliveredFiredLease(t *testing.T) {
+	store := newFakeStore()
+	m := NewManager(Options{
+		SessionID:    "sess",
+		Deps:         Deps{Now: time.Now},
+		Store:        store,
+		OwnerID:      "process-a",
+		DigestWindow: time.Hour,
+	})
+	info, err := m.Arm(ArmRequest{On: "time:10ms", ExpiresIn: time.Second})
+	if err != nil {
+		t.Fatalf("Arm: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		store.mu.Lock()
+		row, ok := store.rows[info.ID]
+		store.mu.Unlock()
+		if ok && row.State == StateFired {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("watch did not fire: %+v", row)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	m.Close()
+	store.mu.Lock()
+	row, ok := store.rows[info.ID]
+	store.mu.Unlock()
+	if !ok {
+		t.Fatal("undelivered fired row was deleted on close")
+	}
+	if row.State != StateFired || row.LeaseUntil != 0 {
+		t.Fatalf("row after close = %+v, want fired with a released lease", row)
 	}
 }
 

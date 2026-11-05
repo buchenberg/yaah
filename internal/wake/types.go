@@ -25,6 +25,12 @@ const (
 	DefaultWatchExpiry   = 24 * time.Hour
 	MaxWatchExpiry       = 7 * 24 * time.Hour
 	DefaultLeaseDuration = 5 * time.Minute
+
+	// firedLeaseDuration reserves a fired row for its owner's in-flight
+	// digest. A graceful Close releases it; a crashed owner's row becomes
+	// re-deliverable after this short window rather than being suppressed
+	// for the full lease duration.
+	firedLeaseDuration = 30 * time.Second
 )
 
 // WatchRecord is the durable half of an armed watch. The manager owns the
@@ -58,6 +64,10 @@ type Store interface {
 	// reports whether this owner still owned it. armedAt scopes the claim
 	// to the watch generation, so a same-id replacement is never marked.
 	ClaimFire(sessionID, id, owner string, armedAt, firedAt, leaseUntil int64, evidence string) (bool, error)
+	// ReleaseWatchLease clears the lease on a fired row this owner still
+	// holds, so a graceful close makes an undelivered digest visible to the
+	// next resume. A deleted or re-owned row is a no-op.
+	ReleaseWatchLease(sessionID, id, owner string) (bool, error)
 }
 
 // Observer receives lifecycle notifications for tracing and hook emission.

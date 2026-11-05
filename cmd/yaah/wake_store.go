@@ -50,6 +50,10 @@ func (s wakeStore) ClaimFire(sessionID, id, owner string, armedAt, firedAt, leas
 	return s.db.ClaimSessionWatchFire(sessionID, id, owner, armedAt, firedAt, leaseUntil, evidence)
 }
 
+func (s wakeStore) ReleaseWatchLease(sessionID, id, owner string) (bool, error) {
+	return s.db.ReleaseSessionWatchLease(sessionID, id, owner)
+}
+
 func (s wakeStore) DeleteWatch(sessionID, id string) error {
 	return s.db.DeleteSessionWatch(sessionID, id)
 }

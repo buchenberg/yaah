@@ -1255,7 +1255,7 @@ yaah emits traces via OTLP HTTP to any OpenTelemetry-compatible backend. Tracing
 | `subagent: <role> — <description>` | `toolDispatch.run` in `agent_dispatch.go` | Role + task description in the operation name. `dispatched` event with role and task text. `completed` / `failed` event on finish. |
 | `llm.stream` / `llm.chat` | `observability/provider.go` and `observability/trace.go` | Streaming uses `llm.stream`; non-streaming uses `llm.chat`. `tokens` event with prompt/completion/total tokens, message count, and system length. `llm.duration_ms` on `llm.chat`. |
 | `prune` | `SoftPruneMiddleware` (`PrepareStep` / `PostTool`) → `observability/trace.go` | `prune.reason`, `prune.candidates`, `prune.marked`, `prune.reclaimed_tokens`, `prune.protected_skipped`, `prune.committed`, `prune.total_marked`. Emitted after each pass, including non-committed passes. |
-| `yaah.wait` | `wake.Observer` → `observability/trace.go` | `wake.kind`, `wake.fired`, `wake.timed_out`, `wake.interrupted`, `wake.elapsed_ms`. The predicate target is not recorded. |
+| `yaah.wait` | `wake.Observer` → `observability/trace.go` | `wake.kind`, `wake.fired`, `wake.timed_out`, `wake.interrupted`, `wake.errored`, `wake.elapsed_ms`. The predicate target is not recorded. |
 | `yaah.watch.arm` / `yaah.watch.fire` | `wake.Observer` → `observability/trace.go` | `wake.kind`, `wake.id`, and on fire `wake.state` and `wake.missed`. Short spans; the predicate target is not recorded. |
 
 `conflict.check` is a hook event, not a span; the turn span carries

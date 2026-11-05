@@ -98,13 +98,14 @@ func (m *Manager) SetOnWake(fn func(string)) {
 	m.mu.Unlock()
 }
 
-// Close stops every poller and drops undelivered digests. Fired watches stay
-// in the store: the next resume reports them as missed wakes rather than
-// losing them.
+// Close stops every poller and drops undelivered digests in this process.
+// Fired rows stay in the store and their short delivery lease is released, so
+// the next resume reports them as missed wakes rather than losing them.
 func (m *Manager) Close() {
 	m.closeOnce.Do(func() {
 		m.cancel()
 		var flushDone chan struct{}
+		var firedIDs []string
 		m.mu.Lock()
 		m.closed = true
 		if m.timer != nil {
@@ -122,6 +123,22 @@ func (m *Manager) Close() {
 				flushDone = m.flushDone
 			}
 		}
+		// Collect fired rows before dropping the map: their store leases
+		// must be released so a resume after this graceful close reports an
+		// undelivered digest instead of suppressing it.
+		seen := make(map[string]bool, len(m.watches)+len(m.pending))
+		for id, w := range m.watches {
+			if w.state == StateFired && !seen[id] {
+				firedIDs = append(firedIDs, id)
+				seen[id] = true
+			}
+		}
+		for _, p := range m.pending {
+			if !seen[p.id] {
+				firedIDs = append(firedIDs, p.id)
+				seen[p.id] = true
+			}
+		}
 		m.pending = nil
 		// Armed rows stay in the store: the next resume re-arms them. The
 		// in-memory map is dropped so a late List/Cancel cannot report a
@@ -137,6 +154,13 @@ func (m *Manager) Close() {
 			select {
 			case <-flushDone:
 			case <-time.After(digestCloseTimeout):
+			}
+		}
+		if m.store != nil {
+			for _, id := range firedIDs {
+				// A delivered row was deleted already (no-op); an
+				// undelivered one becomes visible to the next resume.
+				_, _ = m.store.ReleaseWatchLease(m.sessionID, id, m.ownerID)
 			}
 		}
 	})
@@ -367,11 +391,13 @@ func (m *Manager) Rehydrate(ctx context.Context) error {
 		// than silence.
 		for i := range missed {
 			w := &armedWatch{
-				id:       missed[i].id,
-				spec:     missed[i].spec,
-				start:    now,
-				owner:    m.ownerID,
-				lease:    now.Add(m.leaseDuration),
+				id:    missed[i].id,
+				spec:  missed[i].spec,
+				start: now,
+				owner: m.ownerID,
+				// No lease: if this process closes before the digest is
+				// delivered, the next resume must report the row again
+				// rather than suppress it.
 				state:    StateFired,
 				evidence: missed[i].evidence,
 				firedAt:  now,
@@ -530,7 +556,7 @@ func (m *Manager) fire(w *armedWatch, evidence Evidence, missed bool) {
 		now := m.deps.now()
 		claimed, err := m.store.ClaimFire(
 			m.sessionID, w.id, m.ownerID,
-			w.start.UnixNano(), now.UnixNano(), now.Add(m.leaseDuration).UnixNano(),
+			w.start.UnixNano(), now.UnixNano(), now.Add(firedLeaseDuration).UnixNano(),
 			MarshalEvidence(evidence))
 		if err == nil && !claimed {
 			m.removeIf(w)

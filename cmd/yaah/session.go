@@ -370,13 +370,15 @@ func (s *agentSession) close() {
 	if cancelRun != nil {
 		cancelRun()
 	}
-	if !s.waitForRunGate(backgroundJobDrainTimeout) {
+	joined := s.waitForRunGate(backgroundJobDrainTimeout)
+	if !joined {
 		fmt.Fprintf(os.Stderr, "warning: a wake-initiated turn is still running after %s; continuing session teardown\n", backgroundJobDrainTimeout)
 	}
 	// Close the hook emitter only after the manager and the run gate are
-	// quiescent: a late wait_for in the joined turn would otherwise re-open
-	// the file after Close (HookEmitter is reusable by design).
-	if s.wakeHooks != nil {
+	// quiescent. If the gate timed out, a late wait_for can still emit; the
+	// emitter is deliberately left open (the process exit reaps it) rather
+	// than re-opened after Close.
+	if joined && s.wakeHooks != nil {
 		s.wakeHooks.Close()
 	}
 	// The advisory rules service drains INTO the registry below: stop it
