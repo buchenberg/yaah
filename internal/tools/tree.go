@@ -2,10 +2,12 @@ package tools
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -37,12 +39,12 @@ func (t *CopyTreeTool) Execute(ctx context.Context, args string) (string, error)
 	if err != nil {
 		return "", err
 	}
+	var stats treeStats
 	if req.DestExists && req.Force {
-		if err := req.ws.RemoveAll(ctx, req.To); err != nil {
-			return "", fmt.Errorf("copy_tree: replace destination: %w", err)
-		}
+		stats, err = replaceTreeCopy(ctx, req.ws, req.Path, req.To)
+	} else {
+		stats, err = copyWorkspaceTree(ctx, req.ws, req.Path, req.To)
 	}
-	stats, err := copyWorkspaceTree(ctx, req.ws, req.Path, req.To)
 	if err != nil {
 		return "", fmt.Errorf("copy_tree: %w", err)
 	}
@@ -73,12 +75,12 @@ func (t *MoveTreeTool) Execute(ctx context.Context, args string) (string, error)
 	if err != nil {
 		return "", err
 	}
+	var stats treeStats
 	if req.DestExists && req.Force {
-		if err := req.ws.RemoveAll(ctx, req.To); err != nil {
-			return "", fmt.Errorf("move_tree: replace destination: %w", err)
-		}
+		stats, err = replaceTreeMove(ctx, req.ws, req.Path, req.To)
+	} else {
+		stats, err = moveWorkspaceTree(ctx, req.ws, req.Path, req.To)
 	}
-	stats, err := moveWorkspaceTree(ctx, req.ws, req.Path, req.To)
 	if err != nil {
 		return "", fmt.Errorf("move_tree: %w", err)
 	}
@@ -151,6 +153,12 @@ func prepareTreeTransfer(ctx context.Context, tool string, ws Workspace, args st
 	if pathWithin(ws, src, dst) {
 		return treeRequest{}, fmt.Errorf("%s: destination %s is inside the source %s", tool, dst, src)
 	}
+	if pathWithin(ws, dst, src) {
+		// force=true would otherwise remove the destination before the
+		// copy, and the destination is an ancestor of the source: the
+		// source would be deleted with it.
+		return treeRequest{}, fmt.Errorf("%s: destination %s is an ancestor of the source %s; tree operations require non-overlapping paths", tool, dst, src)
+	}
 
 	srcInfo, err := ws.Lstat(ctx, src)
 	if err != nil {
@@ -211,6 +219,40 @@ func pathWithin(ws Workspace, parent, child string) bool {
 		!strings.HasPrefix(rel, "../")
 }
 
+// refuseSymlinkComponents rejects an existing symlink in base or in any
+// component of rel below it. It stops at the first missing component: the
+// rest is created by MkdirAll and cannot already redirect through a link.
+func refuseSymlinkComponents(ctx context.Context, ws Workspace, base, rel string) error {
+	if info, err := ws.Lstat(ctx, base); err == nil {
+		if info.Mode()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("%s is a symlink; refusing to write through it", base)
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("%s: %w", base, err)
+	}
+	cur := base
+	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+		if part == "" || part == "." {
+			continue
+		}
+		cur = ws.Join(cur, part)
+		info, err := ws.Lstat(ctx, cur)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("%s: %w", cur, err)
+		}
+		if info.Mode()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("%s is a symlink; refusing to write through it", cur)
+		}
+		if !info.IsDir() {
+			return nil
+		}
+	}
+	return nil
+}
+
 type treeStats struct {
 	Files int
 	Dirs  int
@@ -262,23 +304,88 @@ func copyTreeDir(ctx context.Context, ws Workspace, src, dst string, perm fs.Fil
 	return stats, nil
 }
 
+// replaceTreeCopy stages a complete copy beside the destination and only
+// removes the old destination once the copy exists. A failure while reading
+// the source leaves the old destination untouched. The staging directory is
+// named in any promote error so a failed swap does not hide the copied data.
+func replaceTreeCopy(ctx context.Context, ws Workspace, src, dst string) (treeStats, error) {
+	staging, err := treeStagingPath(ctx, ws, dst)
+	if err != nil {
+		return treeStats{}, err
+	}
+	stats, err := copyWorkspaceTree(ctx, ws, src, staging)
+	if err != nil {
+		_ = ws.RemoveAll(ctx, staging)
+		return stats, err
+	}
+	if err := ws.RemoveAll(ctx, dst); err != nil {
+		_ = ws.RemoveAll(ctx, staging)
+		return stats, fmt.Errorf("staged copy is at %s; remove existing destination: %w", staging, err)
+	}
+	if err := ws.Move(ctx, staging, dst); err != nil {
+		return stats, fmt.Errorf("staged copy remains at %s; promote to %s: %w", staging, dst, err)
+	}
+	return stats, nil
+}
+
+func replaceTreeMove(ctx context.Context, ws Workspace, src, dst string) (treeStats, error) {
+	stats, err := replaceTreeCopy(ctx, ws, src, dst)
+	if err != nil {
+		return stats, err
+	}
+	if err := ws.RemoveAll(ctx, src); err != nil {
+		return stats, fmt.Errorf("moved %s to %s but could not remove the source: %w", src, dst, err)
+	}
+	return stats, nil
+}
+
+func treeStagingPath(ctx context.Context, ws Workspace, dst string) (string, error) {
+	parent := wsPathDir(ws, dst)
+	base := treePathBase(ws, dst)
+	for attempt := 0; attempt < 4; attempt++ {
+		var suffix [8]byte
+		if _, err := rand.Read(suffix[:]); err != nil {
+			return "", fmt.Errorf("staging name: %w", err)
+		}
+		candidate := ws.Join(parent, fmt.Sprintf(".%s.yaah-tmp-%x", base, suffix))
+		_, err := ws.Lstat(ctx, candidate)
+		if errors.Is(err, fs.ErrNotExist) {
+			return candidate, nil
+		}
+		if err != nil {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("could not allocate a staging path beside %s", dst)
+}
+
+func treePathBase(ws Workspace, p string) string {
+	if ws.Local() {
+		return filepath.Base(p)
+	}
+	return path.Base(p)
+}
+
 func moveWorkspaceTree(ctx context.Context, ws Workspace, src, dst string) (treeStats, error) {
 	// A same-filesystem rename moves the whole tree without reading bytes.
-	// If the substrate refuses (for example a local cross-device rename, or a
-	// sandbox whose mv cannot cross mounts), fall back to copy + remove.
-	if err := ws.Move(ctx, src, dst); err == nil {
+	// Only a genuine cross-device refusal falls back to copy + remove; any
+	// other rename error must not merge into a destination the pre-check
+	// refused.
+	err := ws.Move(ctx, src, dst)
+	if err == nil {
 		return countWorkspaceTree(ctx, ws, dst), nil
-	} else {
-		moveErr := err
-		stats, cerr := copyWorkspaceTree(ctx, ws, src, dst)
-		if cerr != nil {
-			return stats, fmt.Errorf("rename failed (%v); cross-device copy also failed: %w", moveErr, cerr)
-		}
-		if rerr := ws.RemoveAll(ctx, src); rerr != nil {
-			return stats, fmt.Errorf("copied %s to %s but could not remove the source: %w", src, dst, rerr)
-		}
-		return stats, nil
 	}
+	if !isCrossDeviceErr(err) {
+		return treeStats{}, err
+	}
+	stats, cerr := copyWorkspaceTree(ctx, ws, src, dst)
+	if cerr != nil {
+		return stats, fmt.Errorf("rename failed (%v); cross-device copy also failed: %w", err, cerr)
+	}
+	if rerr := ws.RemoveAll(ctx, src); rerr != nil {
+		return stats, fmt.Errorf("copied %s to %s but could not remove the source: %w", src, dst, rerr)
+	}
+	return stats, nil
 }
 
 // countWorkspaceTree reports the files/directories in a moved tree for the

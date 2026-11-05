@@ -77,6 +77,36 @@ func TestBulkFilesCopyPreservesRelativePath(t *testing.T) {
 	}
 }
 
+func TestBulkFilesRefusesSymlinkDestination(t *testing.T) {
+	dir, ws := bulkWorkspace(t)
+	src := filepath.Join(dir, "src")
+	seedBulk(t, src)
+	outside := filepath.Join(dir, "outside")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	to := filepath.Join(dir, "out")
+	if err := os.MkdirAll(to, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(to, "sub")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	tool := &BulkFilesTool{WS: ws}
+	out, err := tool.Execute(context.Background(), mustJSON(t, map[string]any{
+		"action": "copy", "pattern": "**/*.txt", "path": src, "to": to, "mkdir_p": true,
+	}))
+	if err == nil {
+		t.Fatalf("bulk copy wrote through a destination symlink: %s", out)
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("error does not name the symlink: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(outside, "c.txt")); !os.IsNotExist(statErr) {
+		t.Fatalf("bulk copy escaped to %s: %v", outside, statErr)
+	}
+}
+
 func TestBulkFilesDeleteAndFailureReporting(t *testing.T) {
 	dir, ws := bulkWorkspace(t)
 	src := filepath.Join(dir, "src")

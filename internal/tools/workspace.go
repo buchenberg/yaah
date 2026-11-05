@@ -448,13 +448,25 @@ func (e *partialMoveError) Unwrap() error { return e.Err }
 // bytes ever being read — the cheapest exact move available. Across filesystems
 // (EXDEV) it falls back to Copy plus Remove, matching the sandbox mv's
 // transparent behavior at the cost of actually reading the bytes.
+// isCrossDeviceErr recognises the platform's cross-filesystem rename error.
+// Windows reports ERROR_NOT_SAME_DEVICE (17) where Unix reports EXDEV (18).
+func isCrossDeviceErr(err error) bool {
+	if errors.Is(err, syscall.EXDEV) {
+		return true
+	}
+	return runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(17))
+}
+
 func (w *localWorkspace) Move(ctx context.Context, src, dst string) error {
 	err := os.Rename(src, dst)
-	if err == nil || !errors.Is(err, syscall.EXDEV) {
+	if err == nil || !isCrossDeviceErr(err) {
 		return err
 	}
 	if cerr := w.Copy(ctx, src, dst); cerr != nil {
-		return fmt.Errorf("move: cross-filesystem fallback: %w", cerr)
+		// Preserve the rename error too: callers such as move_tree need to
+		// distinguish a cross-device refusal from an arbitrary failure before
+		// deciding whether a copy fallback is safe.
+		return fmt.Errorf("move: cross-filesystem fallback: %v (rename: %w)", cerr, err)
 	}
 	if rerr := os.Remove(src); rerr != nil {
 		return &partialMoveError{Src: src, Dst: dst, Err: rerr}

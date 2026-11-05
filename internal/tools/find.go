@@ -152,9 +152,6 @@ func (t *FindTool) Execute(ctx context.Context, args string) (string, error) {
 			return nil
 		}
 		results = append(results, fmt.Sprintf("%s\t%d\t%s", p, info.Size(), info.ModTime().UTC().Format(time.RFC3339)))
-		if len(results) >= findMaxResults {
-			return filepath.SkipAll
-		}
 		return nil
 	})
 	if walkErr != nil && walkErr != filepath.SkipDir && walkErr != filepath.SkipAll {
@@ -164,9 +161,16 @@ func (t *FindTool) Execute(ctx context.Context, args string) (string, error) {
 		return "No matches.", nil
 	}
 	sort.Strings(results)
+	total := len(results)
+	if total > findMaxResults {
+		results = results[:findMaxResults]
+	}
 	out := strings.Join(results, "\n")
-	if len(results) >= findMaxResults {
-		out += fmt.Sprintf("\n...[truncated: first %d matches]...", findMaxResults)
+	if total > findMaxResults {
+		// Prefix the marker so truncateResult's head-preserving cap cannot
+		// remove it. Results are sorted before the cutoff, so the retained
+		// set is the lexicographically first page rather than traversal order.
+		out = fmt.Sprintf("...[truncated: showing %d of %d matches]...\n%s", findMaxResults, total, out)
 	}
 	return truncateResult(out), nil
 }

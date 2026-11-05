@@ -10,10 +10,14 @@ directories. `dry_run` lists the planned `copy`/`move`/`delete` operations
 without changing anything — use it first for a destructive action.
 
 The tool operates on regular files; directories and symlinks are not matched.
-Every per-file outcome is reported, and any failure makes the call return a
-non-nil error with the complete failure list ahead of the successes (a partial
-application is never reported as success). `delete` is destructive and
-approval-gated; `copy`/`move` are approval-gated too because they write.
+Destinations are checked component by component: an existing symlink anywhere
+under `to` (including `to` itself) is refused rather than followed, so a
+lexically contained path cannot write outside the workspace. Every per-file
+outcome is reported, and any failure makes the call return a non-nil error with
+the complete failure list ahead of the successes (a partial application is
+never reported as success). `delete` is destructive and approval-gated;
+`copy`/`move` are approval-gated too because they write, while `dry_run` is
+not.
 
 For a single file use `copy`, `move`, or `delete`; for a whole directory use
 `copy_tree`/`move_tree`; for a preview of names only use `glob`.

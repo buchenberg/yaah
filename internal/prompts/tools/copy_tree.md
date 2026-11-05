@@ -3,8 +3,12 @@ directory and `to` is the destination; the destination is created (directories
 and files) rather than requiring an empty target.
 
 `force` replaces an existing destination tree; without it an existing `to` is
-refused. `mkdir_p` creates missing parent directories of `to`; otherwise the
-parent must already exist (use `mkdir`).
+refused. A forced copy is staged beside the destination and the old tree is
+removed only after the new copy succeeds, so a source read failure leaves the
+old destination intact. The source and destination must not overlap: a
+destination inside the source (recursion) or an ancestor of the source (a
+forced replace would delete it) is refused. `mkdir_p` creates missing parent
+directories of `to`; otherwise the parent must already exist (use `mkdir`).
 
 Symlinks are refused at any depth: the tool copies regular files and
 directories only, so it cannot silently follow a link out of the workspace or

@@ -104,6 +104,9 @@ func TestTailToolByteWindowAndNoTrailingNewline(t *testing.T) {
 	if out != "abcdefghij" {
 		t.Fatalf("single-line tail = %q", out)
 	}
+	if _, err := tool.Execute(context.Background(), fmt.Sprintf(`{"filePath":%q,"offset":2}`, path)); err == nil {
+		t.Fatal("tail accepted offset without bytes")
+	}
 }
 
 func TestTailToolDirectory(t *testing.T) {

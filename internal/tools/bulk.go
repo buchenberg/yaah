@@ -198,6 +198,18 @@ func (t *BulkFilesTool) Execute(ctx context.Context, args string) (string, error
 				res.donef("deleted %s", src)
 			}
 		case "copy", "move":
+			// A symlinked directory under to would redirect the write outside
+			// the workspace even though the lexical path looks contained.
+			if err := refuseSymlinkComponents(ctx, ws, toRoot, rel); err != nil {
+				res.failf("%s %s: %v", params.Action, src, err)
+				continue
+			}
+			resolvedDst, rerr := ws.ResolvePath(dst)
+			if rerr != nil {
+				res.failf("%s %s: %v", params.Action, src, rerr)
+				continue
+			}
+			dst = resolvedDst
 			if params.MkdirP {
 				if err := ws.MkdirAll(ctx, wsPathDir(ws, dst), 0o755); err != nil {
 					res.failf("%s %s: create parent: %v", params.Action, src, err)

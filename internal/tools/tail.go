@@ -69,6 +69,9 @@ func (t *TailTool) Execute(ctx context.Context, args string) (string, error) {
 	if params.Bytes < 0 || params.Offset < 0 {
 		return "", fmt.Errorf("tail: bytes and offset must be non-negative")
 	}
+	if params.Offset > 0 && params.Bytes == 0 {
+		return "", fmt.Errorf("tail: offset is only valid with bytes")
+	}
 	ws := workspaceOf(t.WS, t.PV)
 	resolved, err := ws.ResolvePath(params.FilePath)
 	if err != nil {
@@ -78,8 +81,8 @@ func (t *TailTool) Execute(ctx context.Context, args string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("tail: %w", err)
 	}
-	if info.IsDir() {
-		return "", fmt.Errorf("tail: %s is a directory", resolved)
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("tail: %s is not a regular file", resolved)
 	}
 	if info.Size() == 0 {
 		return "", nil

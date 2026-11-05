@@ -225,7 +225,7 @@ func (w *sandboxWorkspace) WriteFile(ctx context.Context, p string, data []byte,
 // that loses a create race appends nothing rather than clearing the winner's
 // first chunk. Existing files skip this script entirely, so their mode is
 // preserved.
-const appendCreateScript = `cat >> "$1" || exit 1
+const appendCreateScript = `printf '%s' '' >> "$1" || exit 1
 chmod "$2" "$1" || exit 1`
 
 // appendChunkScript appends one decoded chunk. The scratch file avoids a

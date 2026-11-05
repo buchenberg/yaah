@@ -93,6 +93,9 @@ func (t *ChecksumTool) Execute(ctx context.Context, args string) (string, error)
 		if info.IsDir() {
 			return "", fmt.Errorf("checksum: %s is a directory", resolved)
 		}
+		if !info.Mode().IsRegular() {
+			return "", fmt.Errorf("checksum: %s is not a regular file", resolved)
+		}
 		hash, err := hashWorkspaceFile(ctx, ws, resolved, info.Size())
 		if err != nil {
 			return "", fmt.Errorf("checksum: %s: %w", resolved, err)
