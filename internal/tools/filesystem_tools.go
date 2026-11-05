@@ -14,19 +14,26 @@ package tools
 // Migrated: filesystem and process operations route through a Workspace.
 func (*ReadTool) filesystemTool()        {}
 func (*WriteTool) filesystemTool()       {}
+func (*AppendTool) filesystemTool()      {}
+func (*TailTool) filesystemTool()        {}
 func (*EditTool) filesystemTool()        {}
 func (*DeleteTool) filesystemTool()      {}
 func (*MkdirTool) filesystemTool()       {}
 func (*RmdirTool) filesystemTool()       {}
 func (*MoveTool) filesystemTool()        {}
+func (*MoveTreeTool) filesystemTool()    {}
 func (*CopyTool) filesystemTool()        {}
+func (*CopyTreeTool) filesystemTool()    {}
 func (*PatchTool) filesystemTool()       {}
 func (*BashTool) filesystemTool()        {}
 func (*PowerShellTool) filesystemTool()  {}
 func (*LsTool) filesystemTool()          {}
 func (*FileInfoTool) filesystemTool()    {}
+func (*ChecksumTool) filesystemTool()    {}
 func (*GrepTool) filesystemTool()        {}
 func (*GlobTool) filesystemTool()        {}
+func (*FindTool) filesystemTool()        {}
+func (*BulkFilesTool) filesystemTool()   {}
 func (*JSONQueryTool) filesystemTool()   {}
 func (*GoOutlineTool) filesystemTool()   {}
 func (*ReplaceTool) filesystemTool()     {}

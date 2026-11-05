@@ -51,6 +51,11 @@ func (t *MoveTool) Schema() json.RawMessage {
 				"type": "boolean",
 				"description": "Replace the destination when it already exists. Default false: an existing destination is refused.",
 				"default": false
+			},
+			"mkdir_p": {
+				"type": "boolean",
+				"description": "Create missing parent directories of the destination. Default false: the parent must already exist.",
+				"default": false
 			}
 		},
 		"required": ["path", "to"]
@@ -110,9 +115,10 @@ type transferRequest struct {
 // read/write/edit/delete.
 func prepareTransfer(ctx context.Context, tool string, ws Workspace, args string) (transferRequest, error) {
 	var params struct {
-		Path  string `json:"path"`
-		To    string `json:"to"`
-		Force bool   `json:"force"`
+		Path   string `json:"path"`
+		To     string `json:"to"`
+		Force  bool   `json:"force"`
+		MkdirP bool   `json:"mkdir_p"`
 	}
 	if err := json.Unmarshal([]byte(args), &params); err != nil {
 		return transferRequest{}, fmt.Errorf("%s: invalid arguments: %w", tool, err)
@@ -182,6 +188,11 @@ func prepareTransfer(ctx context.Context, tool string, ws Workspace, args string
 	// opaque "create temp: no such file or directory" into an actionable
 	// message.
 	parent := wsPathDir(ws, dst)
+	if params.MkdirP {
+		if err := ws.MkdirAll(ctx, parent, 0o755); err != nil {
+			return transferRequest{}, fmt.Errorf("%s: create destination parent %s: %w", tool, parent, err)
+		}
+	}
 	switch info, statErr := ws.Stat(ctx, parent); {
 	case errors.Is(statErr, fs.ErrNotExist):
 		return transferRequest{}, fmt.Errorf("%s: destination parent %s does not exist; create it first with mkdir", tool, parent)

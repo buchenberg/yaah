@@ -19,7 +19,7 @@ import (
 )
 
 // multiStepTools is the coverage list the conformance table must satisfy.
-var multiStepTools = []string{"bisect", "edit", "go_mod", "json_query", "patch", "replace"}
+var multiStepTools = []string{"bisect", "bulk_files", "edit", "go_mod", "json_query", "patch", "replace"}
 
 // faultWorkspace delegates to a real workspace but injects a read or write
 // failure for one file name. Tests use it instead of chmod, which is a no-op
@@ -205,6 +205,29 @@ func TestToolConformance_FailingScenarioReturnsError(t *testing.T) {
 				return &EditTool{}, string(args)
 			},
 			want: "all 1 edits failed",
+		},
+		{
+			toolName: "bulk_files",
+			name:     "an existing destination is a reported failure, not a silent skip",
+			setup: func(t *testing.T) (Tool, string) {
+				dir := t.TempDir()
+				src := filepath.Join(dir, "src")
+				dst := filepath.Join(dir, "dst")
+				if err := os.MkdirAll(src, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.MkdirAll(dst, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				writeFileAt(t, filepath.Join(src, "a.txt"), "new\n")
+				writeFileAt(t, filepath.Join(src, "b.txt"), "new\n")
+				writeFileAt(t, filepath.Join(dst, "a.txt"), "old\n")
+				args, _ := json.Marshal(map[string]any{
+					"action": "copy", "pattern": "*.txt", "path": src, "to": dst,
+				})
+				return &BulkFilesTool{WS: newLocalWorkspace(nil)}, string(args)
+			},
+			want: "already exists",
 		},
 	}
 

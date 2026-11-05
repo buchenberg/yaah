@@ -36,8 +36,10 @@ const (
 // the whitelist.
 var readOnlyWorkspaceTools = []string{
 	"calculate",
+	"checksum",
 	"diff",
 	"file_info",
+	"find",
 	"glob",
 	"go_outline",
 	"grep",
@@ -55,6 +57,7 @@ var readOnlyWorkspaceTools = []string{
 	"read",
 	"staticcheck",
 	"subagent_jobs",
+	"tail",
 	"todowrite",
 	"webfetch",
 }

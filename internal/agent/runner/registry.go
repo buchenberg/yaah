@@ -94,11 +94,15 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, ro
 
 	destructiveTools := map[string]bool{
 		"write":      true,
+		"append":     true,
 		"edit":       true,
 		"delete":     true,
 		"rmdir":      true,
 		"move":       true,
+		"move_tree":  true,
 		"copy":       true,
+		"copy_tree":  true,
+		"bulk_files": true,
 		"bash":       true,
 		"powershell": true,
 	}

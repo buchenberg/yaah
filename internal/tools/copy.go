@@ -47,6 +47,11 @@ func (t *CopyTool) Schema() json.RawMessage {
 				"type": "boolean",
 				"description": "Replace the destination when it already exists. Default false: an existing destination is refused.",
 				"default": false
+			},
+			"mkdir_p": {
+				"type": "boolean",
+				"description": "Create missing parent directories of the destination. Default false: the parent must already exist.",
+				"default": false
 			}
 		},
 		"required": ["path", "to"]
