@@ -566,6 +566,10 @@ Additional tools are registered by the CLI layer after `NewRegistry()`:
 - `memory_search`, `memory_add`, `memory_delete`, `memory_update`, `memory_promote`, `memory_search_sessions`
 - `skill`, `plan`, `todowrite`
 - `delegate`, `list_subagents`, `subagent_jobs`
+- `wait_for`, `watch` — one predicate engine (`internal/wake`) with two faces:
+  `wait_for` blocks inside the tool call (zero model turns); `watch` persists
+  an armed predicate and delivers a batched wake follow-up when it fires, so
+  a wait that outlives the turn needs no polling.
 - `role` (host mode), `supervisor` (when tracing/supervision is live), `proposal` (retained mode), `apply_out` (isolated workspace)
 - Any MCP tools from connected servers
 

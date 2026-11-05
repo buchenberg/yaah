@@ -117,6 +117,9 @@ func (st *serveState) ensureSession() error {
 	if st.sessErr != nil {
 		return st.sessErr
 	}
+	// MCP serve has no idle turn to run: Start re-arms durable watches and
+	// queues any fire as a follow-up for the next tool-driven prompt.
+	st.sess.Start()
 	fmt.Fprintf(os.Stderr, "  %s %s/%s\n", Dim("provider:"), st.sess.providerName, st.sess.modelName)
 	fmt.Fprintf(os.Stderr, "  %s %s\n", Dim("session:"), st.sess.sessionID)
 	return nil

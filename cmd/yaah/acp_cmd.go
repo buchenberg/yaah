@@ -118,6 +118,10 @@ func newACPAgentSession(build acp.BuildOptions) (acp.Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("session: %w", err)
 	}
+	// ACP has no client-initiated prompt for a harness wake, so no idle
+	// requester is installed: rehydration arms durable watches and any fire
+	// queues as a follow-up for the next session/prompt.
+	sess.Start()
 	return sess, nil
 }
 

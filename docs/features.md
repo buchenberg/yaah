@@ -233,7 +233,7 @@ Built-in tools include:
 | Web | `http`, `webfetch` |
 | Utility | `calculate`, `question` |
 | Memory | `memory_search`, `memory_add`, `memory_update`, `memory_delete`, `memory_promote`, `memory_search_sessions` |
-| Orchestration | `delegate`, `list_subagents`, `subagent_jobs`, `role`, `proposal`, `supervisor` |
+| Orchestration | `delegate`, `list_subagents`, `subagent_jobs`, `wait_for`, `watch`, `role`, `proposal`, `supervisor` |
 | Session | `plan`, `todowrite`, `skill`, `background_process` |
 | Isolated sessions | `apply_out` (only when a container-backed workspace is active) |
 

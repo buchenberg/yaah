@@ -62,6 +62,7 @@ yaah/
 │   ├── tui/                    # tview components
 │   ├── types/                  # message and chat request types
 │   ├── update/                 # release checking and self-update
+│   ├── wake/                   # wait_for/watch predicate engine + armed watches
 │   └── worldinfo/              # resolved dispatch-world reporting
 │
 ├── docs/                       # user and developer documentation

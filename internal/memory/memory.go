@@ -395,6 +395,31 @@ func (d *DB) migrate() error {
 		data       TEXT NOT NULL,
 		updated_at INTEGER NOT NULL
 	);
+
+	-- Armed watches (internal/wake) are durable: a watch that fired while
+	-- the process was down is reported as a missed wake on resume. The
+	-- table is additive and IF NOT EXISTS, so no schema-version bump is
+	-- needed.
+	CREATE TABLE IF NOT EXISTS session_watches (
+		session_id  TEXT NOT NULL,
+		id          TEXT NOT NULL,
+		on_spec     TEXT NOT NULL,
+		until_spec  TEXT NOT NULL DEFAULT '',
+		state       TEXT NOT NULL DEFAULT 'armed',
+		evidence    TEXT NOT NULL DEFAULT '',
+		armed_at    INTEGER NOT NULL DEFAULT 0,
+		expires_at  INTEGER NOT NULL DEFAULT 0,
+		fired_at    INTEGER NOT NULL DEFAULT 0,
+		interval_ms INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (session_id, id)
+	);
+
+	-- The read is WHERE session_id = ? ORDER BY armed_at, id. The PK's
+	-- (session_id, id) prefix already serves the equality; this index adds
+	-- the ordering instead of duplicating the prefix alone.
+	DROP INDEX IF EXISTS idx_session_watches_session;
+	CREATE INDEX IF NOT EXISTS idx_session_watches_session_armed
+		ON session_watches(session_id, armed_at, id);
 	`
 
 	if _, err := d.sql.Exec(schema); err != nil {

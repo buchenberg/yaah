@@ -9,13 +9,19 @@ package yaah
 //
 //  2. Implement agent.View (HandleEvent) and call sess.SetView(your view).
 //     Events: TokenDelta, Thinking, Flush, ToolStart, ToolEnd,
-//             SubAgentStart, SubAgentEnd, Done.
+//             SubAgentStart, SubAgentEnd, Wake, Done.
 //
 //  3. Read from the control channel in a goroutine and dispatch
 //     CtrlStatus, CtrlError, CtrlQuestion, CtrlApproval,
 //     CtrlModelList, CtrlTodos, CtrlContextInfo, CtrlDone.
 //
-//  4. Call sess.RunPrompt(ctx, text) for each turn.
+//  4. Call sess.Start() once the view and control channel are installed.
+//     It re-arms durable watches; an interactive driver may also call
+//     sess.SetWakeTurnRequester(sess.StartWakeTurn) to let a watch start a
+//     turn while the session is idle. Headless drivers leave the requester
+//     unset, so a wake queues as a follow-up.
+//
+//  5. Call sess.RunPrompt(ctx, text) for each turn.
 //     ctx cancellation aborts the in-flight agent loop.
 //
 // See: terminalView (REPL), agentViewFwd (Bubble Tea TUI).
@@ -28,6 +34,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
@@ -44,6 +51,7 @@ import (
 	processpkg "github.com/buchenberg/yaah/internal/process"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
+	"github.com/buchenberg/yaah/internal/wake"
 	"github.com/buchenberg/yaah/internal/worldinfo"
 )
 
@@ -59,6 +67,19 @@ type Session interface {
 	Steer(string)
 	FollowUp(string)
 	SetView(agent.View)
+	// Start completes construction after the driver has installed its
+	// view/control surface: it re-arms persisted watches. Safe to call more
+	// than once; every driver calls it exactly once.
+	Start()
+	// SetWakeTurnRequester installs the driver's policy for a watch that
+	// fires while the session is idle. Returning true means the driver
+	// started a turn for it; false queues the digest as a follow-up.
+	// Headless drivers leave it unset.
+	SetWakeTurnRequester(func(string) bool)
+	// StartWakeTurn is the session-backed requester interactive drivers
+	// install. It claims the run gate and runs the wake prompt on its own
+	// goroutine, reporting false when a turn already holds the gate.
+	StartWakeTurn(string) bool
 	SetCtrlCh(chan<- control.Msg)
 	SetApproveFn(func(name, args string) bool)
 	SetModel(providerName, modelName string)
@@ -244,6 +265,31 @@ type agentSession struct {
 
 	steerCh    chan string
 	followupCh chan string
+	// wakeMgr owns the session's armed watches (internal/wake). It is
+	// created during wiring and closed first in close(): its pollers must
+	// stop before the follow-up channel they deliver through goes away.
+	wakeMgr *wake.Manager
+	// wakeTurnRequester is the driver's policy for a watch that fires while
+	// the session is idle. It is installed by interactive drivers after
+	// their view exists; nil means queue the digest as a follow-up. Guarded
+	// by mu.
+	wakeTurnRequester func(string) bool
+	// startOnce runs the deferred start work (watch rehydration) once.
+	startOnce sync.Once
+	// closed is set at the start of teardown so a wake goroutine spawned just
+	// before it cannot start a new turn while the workspace is destroyed.
+	closed atomic.Bool
+	// closeCh unblocks wake delivery during teardown. followupCh is never
+	// closed: senders race teardown (background deliveries and wake
+	// digests), and a send on a closed channel panics. closeCh is the
+	// session-is-gone signal every sender selects on.
+	closeCh   chan struct{}
+	closeOnce sync.Once
+	// wakeCtx scopes harness-initiated turns. close() cancels it before
+	// joining the run gate, so a wake turn is cancellable even in the window
+	// before runPromptLocked publishes runCancel.
+	wakeCtx    context.Context
+	wakeCancel context.CancelFunc
 	totalUsage types.Usage
 	// flushIn/flushOut/flushCached/flushSubIn/flushSubOut are the last
 	// values written to the session row by the incremental usage flush.
@@ -286,6 +332,40 @@ const workspaceSandboxDestroyTimeout = 30 * time.Second
 
 func (s *agentSession) close() {
 	ctx := context.Background()
+	s.closed.Store(true)
+	// Signal wake delivery that the session is going away before anything
+	// blocks in teardown. A watch poller may be mid-delivery on followupCh;
+	// closeCh is what unblocks that send, and wakeCancel stops a turn that
+	// already started, even before it publishes runCancel.
+	s.closeOnce.Do(func() {
+		if s.closeCh != nil {
+			close(s.closeCh)
+		}
+	})
+	if s.wakeCancel != nil {
+		s.wakeCancel()
+	}
+	// Stop the watch pollers before the follow-up channel and workspace go
+	// away: a still-armed command or file predicate would otherwise touch a
+	// destroyed sandbox.
+	if s.wakeMgr != nil {
+		s.wakeMgr.Close()
+	}
+	// A watch can start its own turn. Cancel it (once it has published its
+	// cancel func) and join the run gate — bounded — before the workspace
+	// substrate below is destroyed: a wake mid-Exec must not still hold the
+	// sandbox its owner is tearing down. The join runs even when runInFlight
+	// is not visible yet, because StartWakeTurn claims the gate before its
+	// goroutine publishes the run state.
+	s.mu.RLock()
+	cancelRun := s.runCancel
+	s.mu.RUnlock()
+	if cancelRun != nil {
+		cancelRun()
+	}
+	if !s.waitForRunGate(backgroundJobDrainTimeout) {
+		fmt.Fprintf(os.Stderr, "warning: a wake-initiated turn is still running after %s; continuing session teardown\n", backgroundJobDrainTimeout)
+	}
 	// The advisory rules service drains INTO the registry below: stop it
 	// first and join its drain goroutine, so no delivery is mid-flight
 	// when the registry entries it addresses start going away.
@@ -342,15 +422,10 @@ func (s *agentSession) close() {
 	if s.scopes != nil {
 		s.scopes.PruneTerminal()
 	}
-	// followupCh closes only AFTER the drain. A finishing job delivers
-	// through it, and Deliver's select still has a send case on this
-	// channel — sending on a closed channel panics, so closing it while
-	// the drain deliberately keeps job goroutines alive would crash
-	// shutdown. (A job that outlives the drain bound entirely retains the
-	// pre-existing exposure; the drain is what shrinks it.)
-	if s.followupCh != nil {
-		close(s.followupCh)
-	}
+	// followupCh stays open permanently: a finishing job and a wake digest
+	// both race teardown with a send, and closeCh (closed above) is the
+	// signal that unblocks them. Closing the channel would make that race a
+	// panic for no benefit — the channel is freed with the session.
 	// Destroy the isolated workspace sandbox only after the sub-agents are
 	// cancelled and can no longer dispatch tools into it. Bounded, so a
 	// wedged daemon cannot hang close(); a teardown failure warns rather
@@ -627,23 +702,130 @@ func (s *agentSession) RunPrompt(ctx context.Context, prompt string) (string, bo
 	// and both runs would write the same message indices. Queuing here makes
 	// any stray concurrent submit start from the committed transcript.
 	s.serialize(func() {
-		runCtx, cancel := context.WithCancel(ctx)
-		s.mu.Lock()
-		s.runCancel = cancel
-		s.runCtx = runCtx
-		s.runInFlight = true
-		s.mu.Unlock()
-		defer func() {
-			s.mu.Lock()
-			s.runCancel = nil
-			s.runCtx = nil
-			s.runInFlight = false
-			s.mu.Unlock()
-			cancel()
-		}()
-		response, streamed, err = s.runPrompt(runCtx, prompt)
+		response, streamed, err = s.runPromptLocked(ctx, prompt)
 	})
 	return response, streamed, err
+}
+
+// runPromptLocked runs one turn. The caller must hold the run gate (runMu).
+func (s *agentSession) runPromptLocked(ctx context.Context, prompt string) (string, bool, error) {
+	runCtx, cancel := context.WithCancel(ctx)
+	s.mu.Lock()
+	s.runCancel = cancel
+	s.runCtx = runCtx
+	s.runInFlight = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.runCancel = nil
+		s.runCtx = nil
+		s.runInFlight = false
+		s.mu.Unlock()
+		cancel()
+	}()
+	return s.runPrompt(runCtx, prompt)
+}
+
+// Start completes session construction after the driver has installed its
+// view and control surface. It re-arms persisted watches. Idempotent; every
+// driver calls it once.
+func (s *agentSession) Start() {
+	s.startOnce.Do(func() {
+		if s.closed.Load() || s.wakeMgr == nil {
+			return
+		}
+		if err := s.wakeMgr.Rehydrate(context.Background()); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: re-arming watches: %v\n", err)
+		}
+	})
+}
+
+// SetWakeTurnRequester installs the driver's idle-wake policy. The requester
+// returns true when it started a turn for the digest, false when a turn
+// already holds the gate (the session then queues the digest as a follow-up).
+// A nil requester queues every wake.
+func (s *agentSession) SetWakeTurnRequester(fn func(string) bool) {
+	s.mu.Lock()
+	s.wakeTurnRequester = fn
+	s.mu.Unlock()
+}
+
+// StartWakeTurn is the session-backed requester interactive drivers install.
+// It claims the run gate without blocking and runs the wake prompt on its own
+// goroutine, so the wake manager's delivery path never blocks on a turn.
+// It reports false when a turn already holds the gate or the session is
+// closing; the caller then queues the digest as a follow-up.
+func (s *agentSession) StartWakeTurn(text string) bool {
+	if s.closed.Load() {
+		return false
+	}
+	if !s.runMu.TryLock() {
+		return false
+	}
+	ctx := s.wakeCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	go func() {
+		defer s.runMu.Unlock()
+		_, _, _ = s.runPromptLocked(ctx, text)
+	}()
+	return true
+}
+
+// deliverWake is the wake.Manager sink. It makes the wake visible to the
+// view, then offers it to the driver's requester. If the driver declines (or
+// none is installed), the digest is queued on the follow-up channel exactly
+// like a completed background job's result, so a live turn drains it at its
+// next boundary and a headless session delivers it with the next prompt.
+func (s *agentSession) deliverWake(text string) {
+	if s.closed.Load() {
+		return
+	}
+	s.dispatchEvent(&agent.WakeEvent{Text: text})
+	s.mu.RLock()
+	request := s.wakeTurnRequester
+	s.mu.RUnlock()
+	if request != nil && request(text) {
+		return
+	}
+	s.queueWakeFollowup(text)
+}
+
+// waitForRunGate waits — bounded — until no turn holds the run gate. It
+// acquires and immediately releases the gate; the caller only needs to know
+// that the in-flight turn has finished.
+func (s *agentSession) waitForRunGate(timeout time.Duration) bool {
+	// Poll TryLock instead of parking a goroutine in Lock: a timed-out close
+	// must not leak a waiter that holds the session alive until a wedged
+	// turn finally ends.
+	deadline := time.Now().Add(timeout)
+	for {
+		if s.runMu.TryLock() {
+			s.runMu.Unlock()
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// queueWakeFollowup blocks until the message is queued or the session
+// closes. A wake is never silently dropped: a full channel delays delivery
+// rather than losing it, and teardown unblocks the send through closeCh.
+func (s *agentSession) queueWakeFollowup(text string) {
+	if s.followupCh == nil {
+		return
+	}
+	if s.closeCh == nil {
+		return
+	}
+	select {
+	case s.followupCh <- text:
+	case <-s.closeCh:
+	}
 }
 
 // HaltCurrentRun cancels the currently running prompt, if one is

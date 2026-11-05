@@ -49,6 +49,7 @@ import (
 	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
+	"github.com/buchenberg/yaah/internal/wake"
 	"github.com/buchenberg/yaah/internal/worldinfo"
 )
 
@@ -554,6 +555,7 @@ type loopInfraStage struct {
 	backgroundJobs *jobs.BackgroundJobs
 	followupCh     chan string
 	steerCh        chan string
+	wakeMgr        *wake.Manager
 
 	scopeMgr      *goatherd.ScopeManager
 	traceStore    *shepherdtrace.SQLiteTraceStore
@@ -593,6 +595,10 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 	}
 
 	subs := buildBackgroundLoop(st, cfg, lc)
+	// The wait/watch engine is session-wide: a watch outlives the turn that
+	// armed it, so it lives beside the background-job manager rather than
+	// inside a tool call.
+	buildWakeEngine(st, ws, tr, mcps)
 	// retainCapable reports whether the session root can capture workspace
 	// state, which decides the retained lane further down.
 	retainCapable := buildShepherdInfra(st, cfg, ws, tr)
@@ -683,6 +689,32 @@ func buildBackgroundLoop(st *loopInfraStage, cfg *config.Config, lc *sessionConf
 	}
 
 	return subs
+}
+
+// buildWakeEngine creates the session's event-driven wait/watch engine. Its
+// predicates observe the same workspace the tools act on (the sandbox in an
+// isolated session, the host otherwise), and the process source is host-only
+// to match background_process. The manager starts no watches here; Rehydrate
+// runs once the session owns it.
+func buildWakeEngine(st *loopInfraStage, ws *workspaceStage, tr *toolRegistryStage, mcps *mcpSkillsStage) {
+	isolated := ws.sessionSandbox != nil
+	wsx := tools.NewLocalWorkspace(ws.pathValidator)
+	if isolated {
+		wsx = ws.sessionSandbox.Workspace()
+	}
+	var store wake.Store
+	if tr.db != nil {
+		store = wakeStore{db: tr.db}
+	}
+	var procs *processpkg.Manager
+	if !isolated && mcps != nil {
+		procs = mcps.procMgr
+	}
+	st.wakeMgr = wake.NewManager(wake.Options{
+		SessionID: st.sessionID,
+		Deps:      tools.NewWakeDeps(wsx, st.backgroundJobs, procs),
+		Store:     store,
+	})
 }
 
 // buildShepherdInfra brings up the session's supervision infrastructure: the
@@ -1062,6 +1094,10 @@ func wireBackgroundJobs(st *loopInfraStage, tr *toolRegistryStage) {
 	tr.reg.Register(st.taskTool)
 
 	tr.reg.Register(&tools.SubAgentJobsTool{Jobs: st.backgroundJobs})
+	// Event-driven waiting: wait_for blocks inside the turn; watch arms a
+	// predicate that outlives it and delivers a wake follow-up on fire.
+	tr.reg.Register(&tools.WaitForTool{Manager: st.wakeMgr})
+	tr.reg.Register(&tools.WatchTool{Manager: st.wakeMgr})
 }
 
 // registerSubAgentTools registers the tools that ride the infrastructure above:
@@ -1292,7 +1328,10 @@ func assemble(lc *sessionConfig, opts SessionOptions, ws *workspaceStage, tr *to
 	// Wrap the provider with OTel instrumentation if enabled.
 	provider := wrapProviderWithOtel(lc.provider, lc.otelActive, cfg.Observability.Otel.Verbose)
 
+	wakeCtx, wakeCancel := context.WithCancel(context.Background())
 	sess := &agentSession{
+		wakeCtx:        wakeCtx,
+		wakeCancel:     wakeCancel,
 		cfg:            cfg,
 		opts:           opts,
 		provider:       provider,
@@ -1326,6 +1365,14 @@ func assemble(lc *sessionConfig, opts SessionOptions, ws *workspaceStage, tr *to
 		reaper:         loop.reaper,
 		egressBroker:   loop.egressBroker,
 		followupCh:     loop.followupCh,
+		closeCh:        make(chan struct{}),
+	}
+	// Attach the wake engine, but do not rehydrate here: durable watches are
+	// resumed by Start, after the driver has installed its view and its
+	// idle-wake policy. Rehydrating during construction would race both.
+	if loop.wakeMgr != nil {
+		sess.wakeMgr = loop.wakeMgr
+		loop.wakeMgr.SetOnWake(sess.deliverWake)
 	}
 	sess.seedRestoredUsage(loop.usage)
 	// Root-scope bridge registration (adoption plan A2/A3): inject into

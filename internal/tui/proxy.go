@@ -114,6 +114,14 @@ func (t *App) HandleEvent(event agent.Event) {
 			t.conversationLog = append(t.conversationLog, convItem{text: msg})
 			t.markDirty()
 		})
+	case *agent.WakeEvent:
+		// A watch fired between turns: record the injected prompt exactly
+		// where a user turn would appear, so the transcript shows what woke
+		// the session and which evidence came with it.
+		t.queueUpdateCritical(func() {
+			t.flushPendingTokens()
+			t.addWakePrompt(e.Text)
+		})
 	case *agent.DoneEvent:
 		t.queueUpdateDrawCritical(func() {
 			flushed := t.flushPendingTokens()

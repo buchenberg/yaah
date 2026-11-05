@@ -177,10 +177,18 @@ func runTUI() error {
 
 	app.ControlCh = controlCh
 	sess.SetView(app)
+	// The TUI accepts harness-initiated turns: a watch that fires while the
+	// terminal is idle starts a turn through the session's run gate. The
+	// policy lives here, in the driver, so headless surfaces can differ.
+	sess.SetWakeTurnRequester(sess.StartWakeTurn)
 
 	// One shared bridge for questions and approvals (internal/control): the
 	// TUI's only job is to be the transport.
 	installControlBridges(sess, ctrlSurface{ch: controlCh})
+
+	// Resume durable watches only now that the view, control channel and
+	// wake policy are installed; a missed wake must render, not run unheard.
+	sess.Start()
 
 	// Suppress stderr while the TUI is on the alt screen. Anything written
 	// to stderr (slow-refresh logs, MCP warnings, tool output) would bleed

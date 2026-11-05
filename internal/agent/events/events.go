@@ -145,6 +145,16 @@ type ModeChangedEvent struct {
 
 func (*ModeChangedEvent) eventMarker() {}
 
+// WakeEvent announces a harness wake: an armed watch fired between turns and
+// the session is about to run the injected prompt. Text is that prompt,
+// including the predicate's evidence, so every view can show what woke the
+// session rather than only the model's response.
+type WakeEvent struct {
+	Text string
+}
+
+func (*WakeEvent) eventMarker() {}
+
 // DoneEvent is emitted when the agent loop completes (success or error).
 // It carries the final response text (if any), error information,
 // context window statistics for the status bar, finish reason from the last
@@ -221,6 +231,7 @@ var (
 	_ Event = (*SubAgentStartEvent)(nil)
 	_ Event = (*SubAgentEndEvent)(nil)
 	_ Event = (*ModeChangedEvent)(nil)
+	_ Event = (*WakeEvent)(nil)
 	_ Event = (*DoneEvent)(nil)
 	_ Event = (*CompactionStartedEvent)(nil)
 	_ Event = (*CompactionDoneEvent)(nil)
