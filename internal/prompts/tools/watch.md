@@ -41,3 +41,6 @@ reported as missed and must be re-armed if still needed.
 Guardrails: at most 32 armed watches per session, auto-expiry, and bounded
 evidence. Arming a `command` watch is dangerous and may require approval;
 that approval covers every later poll, so prefer a cheap status command.
+
+The `on`/`until` string form is deliberate; the rationale is recorded in
+`docs/wake-predicate-schema-decision.md`.

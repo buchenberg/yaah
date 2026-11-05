@@ -41,3 +41,6 @@ status probes, not long builds — use `background_process` plus a
 `process:` predicate for those. `wait_for` with a `command` predicate is
 treated as a dangerous call and may require approval. If the caller cancels
 the turn, the result is `interrupted: true`, which is not a timeout.
+
+The `on`/`until` string form is deliberate; the rationale is recorded in
+`docs/wake-predicate-schema-decision.md`.
