@@ -1,14 +1,19 @@
 package memory
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
+	"time"
+	"unsafe"
 
+	"github.com/ebitengine/purego"
 	"github.com/hybridgroup/yzma/pkg/llama"
 )
 
@@ -137,6 +142,82 @@ func isContextErr(err error) bool {
 // use, and process teardown reclaims it.
 var llamaOnce sync.Once
 
+// llamaLoadErr holds the once-guard's failure: the library stages run
+// exactly once per process, so a failure must be remembered on shared
+// state — later embed callers (a second embedder, the startup probe over
+// the live path) must see the same error instead of skipping into unbound
+// FFI. Reading it after llamaOnce.Do returns is safe: Do guarantees the
+// closure's memory effects are visible to every caller on return.
+var llamaLoadErr error
+
+// llamaLogMu/llamaLogFile back the level-aware log hook: ggml noise
+// (the backend-scan chatter) is dropped, but WARN/ERROR land in a file —
+// never the tty, and never lost: a silenced GGML abort is a crash with
+// no diagnosis (the SIGABRT-in-decode of yaah-x58j printed its assert
+// text into the silent callback).
+var llamaLogMu sync.Mutex
+var llamaLogFile *os.File
+
+// llamaLogHook installs the llama.cpp/ggml log callback. DEBUG/INFO noise
+// (e.g. "load_backend: loaded CPU backend from …" — the tty artifact's
+// original source) is dropped; WARN/ERROR append to ~/.yaah/llama.log so
+// field failures (a GGML_ASSERT abort among them) stay diagnosable.
+func llamaLogHook() {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "."
+	}
+	f, err := os.OpenFile(filepath.Join(home, ".yaah", "llama.log"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		// Nowhere to write the diagnostics — drop everything rather than
+		// print (printing is the tty artifact).
+		llama.LogSet(llama.LogSilent())
+		return
+	}
+	llamaLogFile = f
+	cb := purego.NewCallback(func(level int32, text unsafe.Pointer, data uintptr) uintptr {
+		// ggml_log_level: none=0 debug=1 info=2 warn=3 error=4 cont=5.
+		if level != 3 && level != 4 && level != 5 {
+			return 0
+		}
+		var b []byte
+		if text != nil {
+			buf := (*[8192]byte)(text)
+			if n := bytes.IndexByte(buf[:], 0); n > 0 {
+				b = buf[:n]
+			}
+		}
+		if len(b) == 0 {
+			return 0
+		}
+		llamaLogMu.Lock()
+		defer llamaLogMu.Unlock()
+		if llamaLogFile == nil {
+			return 0
+		}
+		if level == 5 { // cont: continue the previous line
+			llamaLogFile.Write(b)
+			return 0
+		}
+		llamaLogFile.Write([]byte(time.Now().Format("2006/01/02 15:04:05 ")))
+		llamaLogFile.Write([]byte(llamaLevelName(level) + " " + string(b) + "\n"))
+		return 0
+	})
+	llama.LogSet(cb)
+}
+
+func llamaLevelName(level int32) string {
+	switch level {
+	case 3:
+		return "WARN"
+	case 4:
+		return "ERROR"
+	default:
+		return "LOG"
+	}
+}
+
 // loadGGUF loads the llama.cpp library and GGUF model once per process and
 // returns a pooling closure plus the model's embedding width. Context is
 // checked between the load stages (the FFI calls themselves are not
@@ -145,10 +226,9 @@ func loadGGUF(ctx context.Context, libPath, modelPath string) (func(context.Cont
 	if modelPath == "" {
 		return nil, 0, fmt.Errorf("gguf embed: model_path is required")
 	}
-	// llamaRuntimeErr: the once-guard runs the library stages exactly once,
-	// so a failure must be remembered and re-surfaced to later callers —
-	// a swallowed init error is a backend gone dark with no signal at all.
-	var llamaRuntimeErr error
+	if llamaLoadErr != nil {
+		return nil, 0, llamaLoadErr
+	}
 	llamaOnce.Do(func() {
 		// llama.Load binds logSetFunc, so LogSet can only run after it —
 		// the library load itself must stay quiet by construction (yzma's
@@ -161,28 +241,29 @@ func loadGGUF(ctx context.Context, libPath, modelPath string) (func(context.Cont
 		}
 		if libPath != "" {
 			if _, err := os.Stat(libPath); err != nil {
-				llamaRuntimeErr = fmt.Errorf("gguf embed: lib_path %s: %w", libPath, err)
+				llamaLoadErr = fmt.Errorf("gguf embed: lib_path %s: %w", libPath, err)
 				return
 			}
 		}
 		if err := llama.Load(libPath); err != nil {
-			llamaRuntimeErr = fmt.Errorf("gguf embed: load llama libraries from %s: %w", libPath, err)
+			llamaLoadErr = fmt.Errorf("gguf embed: load llama libraries from %s: %w", libPath, err)
 			return
 		}
-		// Silence FIRST: Init()'s backend scan ("load_backend: loaded CPU
-		// backend from …") prints through the default log callback, which
-		// writes straight to this process's terminal — inside the TUI that
-		// is a raw write onto tcell's screen, and the interleaving with
-		// repaints garbles whatever partial row the cursor sat on.
-		llama.LogSet(llama.LogSilent())
+		// Install the level-aware hook BEFORE Init(): the backend scan
+		// ("load_backend: loaded CPU backend from …") prints through the
+		// default log callback, which writes straight to this process's
+		// terminal — inside the TUI that is a raw write onto tcell's
+		// screen, and the interleaving with repaints garbles whatever
+		// partial row the cursor sat on. The hook drops that noise but
+		// keeps WARN and ERROR: the assert text of a GGML abort is the
+		// only diagnosis a SIGABRT-in-decode leaves (yaah-x58j).
+		llamaLogHook()
 		if err := llama.Init(); err != nil {
-			// The tracker's own error is returned below; do not also print
-			// (a print here is the ancestor of the tty artifact).
-			llamaRuntimeErr = fmt.Errorf("gguf embed: init backends: %w", err)
+			llamaLoadErr = fmt.Errorf("gguf embed: init backends: %w", err)
 		}
 	})
-	if llamaRuntimeErr != nil {
-		return nil, 0, llamaRuntimeErr
+	if llamaLoadErr != nil {
+		return nil, 0, llamaLoadErr
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, 0, err
