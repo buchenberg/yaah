@@ -6,8 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/providers"
-	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -49,16 +48,16 @@ func (p *reasoningStreamProvider) Send(ctx context.Context, req types.ChatReques
 	return nil, errors.New("streaming only")
 }
 
-func (p *reasoningStreamProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan providers.StreamChunk, <-chan error) {
-	chunks := make(chan providers.StreamChunk)
+func (p *reasoningStreamProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan types.StreamChunk, <-chan error) {
+	chunks := make(chan types.StreamChunk)
 	errs := make(chan error, 1)
 	go func() {
 		defer close(chunks)
 		defer close(errs)
 		for i := 0; i < p.reasoningChunks; i++ {
 			select {
-			case chunks <- providers.StreamChunk{Choices: []providers.StreamChoice{{
-				Delta: providers.StreamDelta{ReasoningContent: "thinking..."},
+			case chunks <- types.StreamChunk{Choices: []types.StreamChoice{{
+				Delta: types.StreamDelta{ReasoningContent: "thinking..."},
 			}}}:
 			case <-ctx.Done():
 				return
@@ -66,8 +65,8 @@ func (p *reasoningStreamProvider) SendStream(ctx context.Context, req types.Chat
 			time.Sleep(p.delay)
 		}
 		select {
-		case chunks <- providers.StreamChunk{Choices: []providers.StreamChoice{{
-			Delta:        providers.StreamDelta{Content: "answer"},
+		case chunks <- types.StreamChunk{Choices: []types.StreamChoice{{
+			Delta:        types.StreamDelta{Content: "answer"},
 			FinishReason: strPtr("stop"),
 		}}}:
 		case <-ctx.Done():
@@ -78,11 +77,12 @@ func (p *reasoningStreamProvider) SendStream(ctx context.Context, req types.Chat
 
 func TestCall_reasoningStreamEmitsHeartbeats(t *testing.T) {
 	hb := make(chan struct{}, 1)
-	ctx := tools.WithSubAgentHeartbeat(context.Background(), hb)
+	ctx := jobs.WithSubAgentHeartbeat(context.Background(), hb)
 	getCount := startHeartbeatCounter(hb)
 
 	p := &reasoningStreamProvider{reasoningChunks: 60, delay: 5 * time.Millisecond}
 	c := &Client{
+		Heartbeat:         jobs.SendHeartbeat,
 		Provider:          p,
 		Model:             "test-model",
 		OnToken:           func(string) {},
@@ -117,8 +117,8 @@ func (p *toolCallStreamProvider) Send(ctx context.Context, req types.ChatRequest
 	return nil, errors.New("streaming only")
 }
 
-func (p *toolCallStreamProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan providers.StreamChunk, <-chan error) {
-	chunks := make(chan providers.StreamChunk)
+func (p *toolCallStreamProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan types.StreamChunk, <-chan error) {
+	chunks := make(chan types.StreamChunk)
 	errs := make(chan error, 1)
 	go func() {
 		defer close(chunks)
@@ -133,8 +133,8 @@ func (p *toolCallStreamProvider) SendStream(ctx context.Context, req types.ChatR
 			if i == p.chunks-1 {
 				frag = `"}`
 			}
-			chunk := providers.StreamChunk{Choices: []providers.StreamChoice{{
-				Delta: providers.StreamDelta{ToolCalls: []types.ToolCall{{
+			chunk := types.StreamChunk{Choices: []types.StreamChoice{{
+				Delta: types.StreamDelta{ToolCalls: []types.ToolCall{{
 					Index: 0,
 					Function: types.ToolCallFn{
 						Arguments: frag,
@@ -154,7 +154,7 @@ func (p *toolCallStreamProvider) SendStream(ctx context.Context, req types.ChatR
 			time.Sleep(p.delay)
 		}
 		select {
-		case chunks <- providers.StreamChunk{Choices: []providers.StreamChoice{{
+		case chunks <- types.StreamChunk{Choices: []types.StreamChoice{{
 			FinishReason: strPtr("tool_calls"),
 		}}}:
 		case <-ctx.Done():
@@ -165,11 +165,12 @@ func (p *toolCallStreamProvider) SendStream(ctx context.Context, req types.ChatR
 
 func TestCall_toolCallStreamEmitsHeartbeats(t *testing.T) {
 	hb := make(chan struct{}, 1)
-	ctx := tools.WithSubAgentHeartbeat(context.Background(), hb)
+	ctx := jobs.WithSubAgentHeartbeat(context.Background(), hb)
 	getCount := startHeartbeatCounter(hb)
 
 	p := &toolCallStreamProvider{chunks: 60, delay: 5 * time.Millisecond}
 	c := &Client{
+		Heartbeat:         jobs.SendHeartbeat,
 		Provider:          p,
 		Model:             "test-model",
 		OnToken:           func(string) {},
@@ -198,8 +199,8 @@ func (p *delayedFirstChunkProvider) Send(ctx context.Context, req types.ChatRequ
 	return nil, errors.New("streaming only")
 }
 
-func (p *delayedFirstChunkProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan providers.StreamChunk, <-chan error) {
-	chunks := make(chan providers.StreamChunk)
+func (p *delayedFirstChunkProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan types.StreamChunk, <-chan error) {
+	chunks := make(chan types.StreamChunk)
 	errs := make(chan error, 1)
 	go func() {
 		defer close(chunks)
@@ -210,8 +211,8 @@ func (p *delayedFirstChunkProvider) SendStream(ctx context.Context, req types.Ch
 			return
 		}
 		select {
-		case chunks <- providers.StreamChunk{Choices: []providers.StreamChoice{{
-			Delta:        providers.StreamDelta{Content: "late answer"},
+		case chunks <- types.StreamChunk{Choices: []types.StreamChoice{{
+			Delta:        types.StreamDelta{Content: "late answer"},
 			FinishReason: strPtr("stop"),
 		}}}:
 		case <-ctx.Done():
@@ -222,11 +223,12 @@ func (p *delayedFirstChunkProvider) SendStream(ctx context.Context, req types.Ch
 
 func TestCall_TTFTWaitEmitsHeartbeats(t *testing.T) {
 	hb := make(chan struct{}, 1)
-	ctx := tools.WithSubAgentHeartbeat(context.Background(), hb)
+	ctx := jobs.WithSubAgentHeartbeat(context.Background(), hb)
 	getCount := startHeartbeatCounter(hb)
 
 	p := &delayedFirstChunkProvider{delay: 200 * time.Millisecond}
 	c := &Client{
+		Heartbeat:         jobs.SendHeartbeat,
 		Provider:          p,
 		Model:             "test-model",
 		OnToken:           func(string) {},
@@ -268,10 +270,11 @@ func (p *slowSendProvider) Send(ctx context.Context, req types.ChatRequest) (*ty
 
 func TestCall_nonStreamingSendEmitsHeartbeats(t *testing.T) {
 	hb := make(chan struct{}, 1)
-	ctx := tools.WithSubAgentHeartbeat(context.Background(), hb)
+	ctx := jobs.WithSubAgentHeartbeat(context.Background(), hb)
 	getCount := startHeartbeatCounter(hb)
 
 	c := &Client{
+		Heartbeat:         jobs.SendHeartbeat,
 		Provider:          &slowSendProvider{delay: 150 * time.Millisecond},
 		Model:             "test-model",
 		HeartbeatInterval: 20 * time.Millisecond,
@@ -290,7 +293,7 @@ func TestCall_nonStreamingSendEmitsHeartbeats(t *testing.T) {
 
 func TestCall_retryBackoffEmitsHeartbeats(t *testing.T) {
 	hb := make(chan struct{}, 1)
-	ctx := tools.WithSubAgentHeartbeat(context.Background(), hb)
+	ctx := jobs.WithSubAgentHeartbeat(context.Background(), hb)
 	getCount := startHeartbeatCounter(hb)
 
 	// Unknown errors classify as retryable, so the first two attempts fail
@@ -301,6 +304,7 @@ func TestCall_retryBackoffEmitsHeartbeats(t *testing.T) {
 		response: okResponse,
 	}
 	c := &Client{
+		Heartbeat:         jobs.SendHeartbeat,
 		Provider:          p,
 		Model:             "test-model",
 		MaxRetries:        2,

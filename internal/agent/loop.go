@@ -11,6 +11,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent/events"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
+	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
@@ -287,7 +288,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 			default:
 			}
 
-			tools.SendHeartbeat(ctx)
+			jobs.SendHeartbeat(ctx)
 
 			// Snapshot workspace + conversation before the model turn so
 			// a failed turn can be rewound to this point.

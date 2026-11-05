@@ -32,7 +32,7 @@ func (p *outputBudgetProvider) Send(ctx context.Context, req types.ChatRequest) 
 	return okResponse, nil
 }
 
-func (p *outputBudgetProvider) SendStream(context.Context, types.ChatRequest) (<-chan providers.StreamChunk, <-chan error) {
+func (p *outputBudgetProvider) SendStream(context.Context, types.ChatRequest) (<-chan types.StreamChunk, <-chan error) {
 	return nil, nil
 }
 

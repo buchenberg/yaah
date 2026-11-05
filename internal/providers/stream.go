@@ -14,81 +14,15 @@ import (
 	"github.com/buchenberg/yaah/internal/types"
 )
 
-// StreamChunk represents a single SSE chunk from a streaming response.
-type StreamChunk struct {
-	ID      string         `json:"id"`
-	Model   string         `json:"model"`
-	Choices []StreamChoice `json:"choices"`
-	Usage   *types.Usage   `json:"usage,omitempty"`
-}
-
-// StreamChoice represents a choice within a stream chunk.
-type StreamChoice struct {
-	Index        int         `json:"index"`
-	Delta        StreamDelta `json:"delta"`
-	FinishReason *string     `json:"finish_reason"`
-}
-
-// StreamDelta contains the incremental content for a stream chunk.
-type StreamDelta struct {
-	Role               string           `json:"role,omitempty"`
-	Content            string           `json:"content,omitempty"`
-	ReasoningContent   string           `json:"reasoning_content,omitempty"`
-	ReasoningSignature string           `json:"reasoning_signature,omitempty"`
-	ToolCalls          []types.ToolCall `json:"tool_calls,omitempty"`
-
-	// contentShapeErr records an unreadable content shape so SendStream can
-	// report it once per stream; the delta degrades to empty content rather
-	// than failing the chunk, keeping its tool calls. Never serialized.
-	contentShapeErr error
-}
-
-// UnmarshalJSON decodes a delta that may carry content in either wire shape:
-// the OpenAI plain string, or an array of typed blocks as zai/GLM streams it.
-// Thinking blocks land in ReasoningContent and text blocks in Content;
-// tool_calls and the signature fields pass through unchanged. A content shape
-// that is neither degrades the delta to empty content — its tool calls
-// survive, matching the response path — and the shape is recorded for
-// SendStream's once-per-stream warning instead of dropped silently.
-//
-// reasoning_content goes through the same normalizer: some endpoints send
-// typed blocks there too, and a shape this decoder cannot read must cost the
-// delta only its reasoning, never its visible content or tool calls.
-func (d *StreamDelta) UnmarshalJSON(data []byte) error {
-	var w struct {
-		Role               string           `json:"role"`
-		Content            json.RawMessage  `json:"content"`
-		ReasoningContent   json.RawMessage  `json:"reasoning_content"`
-		ReasoningSignature string           `json:"reasoning_signature"`
-		ToolCalls          []types.ToolCall `json:"tool_calls"`
-	}
-	if err := json.Unmarshal(data, &w); err != nil {
-		return err
-	}
-	text, thinking, err := decodeContentValue(w.Content)
-	if err != nil {
-		// Degrade instead of failing the chunk: an unreadable content shape
-		// costs the delta its content and reasoning, never its tool calls —
-		// the same contract as the response path. The shape is recorded so
-		// SendStream can report it once per stream.
-		text, thinking = "", ""
-		d.contentShapeErr = err
-	}
-	reasoning, rThinking, rErr := decodeContentValue(w.ReasoningContent)
-	if rErr != nil {
-		// Degrade instead of failing the chunk: dropping the whole delta is
-		// how the visible content in the same chunk gets lost.
-		reasoning, rThinking = "", ""
-	}
-	d.Role = w.Role
-	d.Content = text
-	// reasoning_content and content-embedded thinking can carry the same
-	// reasoning twice; mergeReasoning drops the duplicate.
-	d.ReasoningContent = mergeReasoning(reasoning+rThinking, thinking)
-	d.ReasoningSignature = w.ReasoningSignature
-	d.ToolCalls = w.ToolCalls
-	return nil
-}
+// The streaming wire shapes are defined in internal/types (stream.go there):
+// the engine's LLM layer consumes a stream without importing this package, so
+// the type must not live here (yaah-9RCG). These aliases stay as the
+// provider-side spelling of the same types.
+type (
+	StreamChunk  = types.StreamChunk
+	StreamChoice = types.StreamChoice
+	StreamDelta  = types.StreamDelta
+)
 
 // SendStream sends a streaming chat request and returns a channel of chunks.
 // The channel is closed when the stream ends or an error occurs.
@@ -175,12 +109,12 @@ func (c *OpenAIClient) SendStream(ctx context.Context, req types.ChatRequest) (<
 				// silent: the same once-per-stream rule as undecodable chunks.
 				if !loggedContentShape {
 					for _, choice := range chunk.Choices {
-						if choice.Delta.contentShapeErr != nil {
+						if choice.Delta.ContentShapeErr() != nil {
 							loggedContentShape = true
 							// Only the error is logged: the payload is model
 							// output, which must not land in a log file.
 							slog.Warn("provider stream: unreadable delta content shape; the delta's content was dropped, its tool calls kept. further occurrences in this turn are silent",
-								"model", req.Model, "error", choice.Delta.contentShapeErr)
+								"model", req.Model, "error", choice.Delta.ContentShapeErr())
 							break
 						}
 					}

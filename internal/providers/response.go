@@ -53,7 +53,7 @@ func decodeChatResponse(body []byte) (*types.ChatResponse, error) {
 		out.Choices = make([]types.Choice, len(env.Choices))
 	}
 	for i, ch := range env.Choices {
-		text, thinking, err := decodeContentValue(ch.Msg.Content)
+		text, thinking, err := types.DecodeContentValue(ch.Msg.Content)
 		if err != nil {
 			// A content shape this decoder cannot read costs the message
 			// its content and reasoning, never its tool calls or the rest
@@ -70,8 +70,8 @@ func decodeChatResponse(body []byte) (*types.ChatResponse, error) {
 		// from content is kept either way. mergeReasoning drops the duplicate
 		// when both sources carry the same reasoning.
 		reasoning := thinking
-		if rText, rThinking, rErr := decodeContentValue(ch.Msg.ReasoningContent); rErr == nil {
-			reasoning = mergeReasoning(rText+rThinking, thinking)
+		if rText, rThinking, rErr := types.DecodeContentValue(ch.Msg.ReasoningContent); rErr == nil {
+			reasoning = types.MergeReasoning(rText+rThinking, thinking)
 		}
 		msg.ReasoningContent = reasoning
 		out.Choices[i] = types.Choice{
