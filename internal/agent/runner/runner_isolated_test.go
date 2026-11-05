@@ -50,6 +50,12 @@ func (fakeSandboxWorkspace) ReadFile(context.Context, string) ([]byte, error) {
 func (fakeSandboxWorkspace) WriteFile(context.Context, string, []byte, fs.FileMode) error {
 	return nil
 }
+func (fakeSandboxWorkspace) Append(context.Context, string, []byte, fs.FileMode) error {
+	return nil
+}
+func (fakeSandboxWorkspace) ReadRange(context.Context, string, int64, int64) ([]byte, error) {
+	return nil, fs.ErrNotExist
+}
 func (fakeSandboxWorkspace) Stat(context.Context, string) (fs.FileInfo, error) {
 	return nil, fs.ErrNotExist
 }

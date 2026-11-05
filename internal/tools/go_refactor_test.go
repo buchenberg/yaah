@@ -65,6 +65,27 @@ func (m *memFS) ReadFile(_ context.Context, p string) ([]byte, error) {
 	return []byte(c), nil
 }
 
+func (m *memFS) Append(_ context.Context, p string, data []byte, _ fs.FileMode) error {
+	m.files[p] += string(data)
+	m.dirs[path.Dir(p)] = true
+	return nil
+}
+
+func (m *memFS) ReadRange(_ context.Context, p string, offset, length int64) ([]byte, error) {
+	c, ok := m.files[p]
+	if !ok {
+		return nil, &fs.PathError{Op: "open", Path: p, Err: fs.ErrNotExist}
+	}
+	if offset < 0 || length <= 0 || offset >= int64(len(c)) {
+		return []byte{}, nil
+	}
+	end := offset + length
+	if end > int64(len(c)) {
+		end = int64(len(c))
+	}
+	return []byte(c[offset:end]), nil
+}
+
 func (m *memFS) WriteFile(_ context.Context, p string, data []byte, _ fs.FileMode) error {
 	if m.writeErr != nil {
 		return m.writeErr
