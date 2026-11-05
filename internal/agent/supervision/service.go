@@ -393,7 +393,18 @@ func (s *Service) Start(subscriberID string) {
 	s.wg.Add(1)
 	s.mu.Unlock()
 
-	s.sup.Start(subscriberID)
+	if err := s.sup.Start(subscriberID); err != nil {
+		// Unreachable with a non-nil bus (the natural refusal — a nil
+		// bus — is filtered above), but a refused start means the kernel
+		// subscribed nothing: launch no drain, drop the join count, and
+		// name the wiring damage.
+		slog.Warn("supervisor: kernel start failed; the advisory bridge is down", "err", err)
+		s.mu.Lock()
+		s.started = false
+		s.mu.Unlock()
+		s.wg.Done()
+		return
+	}
 	go s.drain()
 }
 
@@ -512,6 +523,13 @@ func (s *Service) deliverHalt(scopeID, reason string) {
 		return
 	}
 	if scope, ok := s.mgr.Get(scopeID); ok {
+		if scope.State() == goatherd.ScopeMerged {
+			// Merged is terminal: the kernel refuses a halt beside the
+			// merge record. Nothing is running under it; say so, not a
+			// failure.
+			slog.Info("supervisor: halt skipped — scope already merged (terminal)", "scope", scopeID)
+			return
+		}
 		if err := scope.Halt(); err != nil {
 			slog.Warn("supervisor: kernel halt failed", "scope", scopeID, "err", err)
 			return

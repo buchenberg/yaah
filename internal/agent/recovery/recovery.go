@@ -98,6 +98,11 @@ type Report struct {
 	Orphans   []Orphan
 	Missing   []Missing
 	Unadopted []Unadopted
+	// Quarantined lists owners recovery dropped entirely: the kernel
+	// found contradictory terminal records for them (e.g. a halt beside a
+	// merge) or they descend from such an owner. Their worktrees — if any
+	// — are handled like the other unadopted cases: listed, never deleted.
+	Quarantined []string
 }
 
 // Recover rebuilds the ScopeManager from the trace's durable records
@@ -189,10 +194,17 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 		}
 	}
 
+	// The kernel's scan stats ride the recovery. A caller that did not
+	// ask for them still gets the quarantine list: a dropped scope must
+	// be visible in the report even when nobody framed the stats.
+	if stats == nil {
+		stats = &goatherd.RecoveryStats{}
+	}
 	mgr, err := goatherd.RecoverScopes(store, goatherd.RecoverOptions{Resolver: resolver, Stats: stats})
 	if err != nil {
 		return nil, nil, err
 	}
+	quarantined := append([]string(nil), stats.Quarantined...)
 
 	// Orphans stay inert (warn-only means never deletable): a terminal
 	// scope's worktree must not carry an owned sandbox handle a later
@@ -209,7 +221,7 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 		}
 	}
 
-	report := &Report{}
+	report := &Report{Quarantined: quarantined}
 	for _, scope := range mgr.AllScopes() {
 		report.Scopes++
 		if scope.Parent() == nil {

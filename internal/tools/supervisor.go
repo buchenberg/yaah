@@ -215,6 +215,12 @@ func executeHalt(mgr *goatherd.ScopeManager, runs *supervision.Registry, scopeID
 			return "", fmt.Errorf("supervisor: halt delivery failed: %w", err)
 		}
 	}
+	if scope.State() == goatherd.ScopeMerged {
+		// Merged is terminal: the kernel refuses a halt beside the merge
+		// record. Report the ending instead of an error — nothing is
+		// running under the scope and its work is already integrated.
+		return fmt.Sprintf("%s is already merged (terminal); nothing to halt — its effects are integrated and no run is using it.", scopeID), nil
+	}
 	if err := scope.Halt(); err != nil {
 		return "", fmt.Errorf("supervisor: halt failed: %w", err)
 	}
