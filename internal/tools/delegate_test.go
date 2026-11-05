@@ -511,9 +511,9 @@ func TestExecute_ClampsNumericParams(t *testing.T) {
 		{"max_turns negative falls back to the role default", `"max_turns":-3`, 0, 0, 0, 0},
 		{"max_turns absent stays unset", ``, 0, 0, 0, 0},
 
-		// max_iterations: schema "minimum": 1, "maximum": 50.
-		{"max_iterations over the maximum is capped", `"max_iterations":1000000`, 50, 0, 0, 0},
-		{"max_iterations at the maximum is honoured", `"max_iterations":50`, 50, 0, 0, 0},
+		// max_iterations: schema "minimum": 1, "maximum": 100.
+		{"max_iterations over the maximum is capped", `"max_iterations":1000000`, 100, 0, 0, 0},
+		{"max_iterations at the maximum is honoured", `"max_iterations":100`, 100, 0, 0, 0},
 		{"max_iterations negative falls back to the role default", `"max_iterations":-2`, 0, 0, 0, 0},
 		{"max_iterations absent stays unset", ``, 0, 0, 0, 0},
 
@@ -627,7 +627,7 @@ func TestSchema_BoundsMatchClamp(t *testing.T) {
 		hasMax bool
 	}
 	want := map[string]bounds{
-		"max_iterations": {min: 1, max: 50, hasMax: true},
+		"max_iterations": {min: 1, max: 100, hasMax: true},
 		"max_turns":      {min: 1, max: 50, hasMax: true},
 		"output_limit":   {min: 1024, hasMax: false},
 	}

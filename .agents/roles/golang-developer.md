@@ -39,7 +39,7 @@ tools:
   - calculate
   - webfetch
   - http
-max_iterations: 150
+max_iterations: 100
 max_turns: 50
 min_turns: 6
 timeout: 1200

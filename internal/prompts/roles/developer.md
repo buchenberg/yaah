@@ -34,7 +34,7 @@ tools:
   - go_test
   - staticcheck
   - go_mod
-max_iterations: 150
+max_iterations: 100
 max_turns: 50
 min_turns: 6
 timeout: 900
