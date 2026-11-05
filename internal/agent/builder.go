@@ -4,8 +4,6 @@ import (
 	"context"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -35,10 +33,11 @@ type LoopBuilder struct {
 	Messages []types.Message
 	// SessionID is the session identifier.
 	SessionID string
-	// TraceStore is the session-shared Shepherd trace store. When set, the
+	// TraceStore is the session-shared Shepherd trace sink. When set, the
 	// orchestrator pipeline records turn, session-context, assistant, and
-	// tool-output facts through it (yaah-o86).
-	TraceStore *shepherdtrace.SQLiteTraceStore
+	// tool-output facts through it (yaah-o86). The seam, not the kernel's
+	// concrete store — see pipeline.TraceSink.
+	TraceStore TraceSink
 	// Persister writes messages to the database (nil = in-memory).
 	Persister *SessionPersister
 	// Hooks emits structured JSONL hook events.
@@ -123,7 +122,7 @@ func (b *LoopBuilder) Build(opts LoopBuildOptions) *Loop {
 		WithView(view),
 		WithMessages(b.Messages),
 		WithSessionID(b.SessionID),
-		WithTraceStore(b.TraceStore),
+		WithTraceSink(b.TraceStore),
 		WithPersister(b.Persister),
 		WithHooks(b.Hooks),
 		WithFallback(b.FallbackProvider, b.FallbackModel),

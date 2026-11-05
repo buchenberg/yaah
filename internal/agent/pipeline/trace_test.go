@@ -85,7 +85,7 @@ func TestTraceMiddleware_PostToolRecordsDeclaration(t *testing.T) {
 		t.Fatalf("ordinal = %d, want %d", m.ordinal, startOrdinal+1)
 	}
 
-	slice, err := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
+	slice, err := testStore(m).ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestTraceMiddleware_PostToolRecordsFailure(t *testing.T) {
 		t.Fatalf("PostTool error: %v", err)
 	}
 
-	slice, _ := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
+	slice, _ := testStore(m).ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
 	factIDs := slice.FactIDs()
 
 	rec, _ := slice.FactsByID[factIDs[1]].(shepherdtrace.Record)
@@ -149,7 +149,7 @@ func TestTraceMiddleware_CausalChaining(t *testing.T) {
 	_, _ = m.PostTool(context.Background(), []ToolResult{{Name: "ls", Args: `{}`}}, &Step{})
 	_, _ = m.PostTool(context.Background(), []ToolResult{{Name: "read", Args: `{"file":"x"}`}}, &Step{})
 
-	slice, _ := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
+	slice, _ := testStore(m).ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
 	factIDs := slice.FactIDs()
 
 	if len(factIDs) != 4 {
@@ -181,7 +181,7 @@ func TestTraceMiddleware_MultipleToolsPerCall(t *testing.T) {
 		t.Fatalf("ordinal = %d, want %d", m.ordinal, startOrdinal+3)
 	}
 
-	slice, _ := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
+	slice, _ := testStore(m).ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
 	if len(slice.FactIDs()) != 6 {
 		t.Fatalf("fact count = %d, want 6 (3 tools × 2 facts each)", len(slice.FactIDs()))
 	}
@@ -200,7 +200,7 @@ func TestTraceMiddleware_StartTurn(t *testing.T) {
 		t.Fatal("turnRootFactIDs should be set")
 	}
 
-	slice, _ := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
+	slice, _ := testStore(m).ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
 	factIDs := slice.FactIDs()
 	if len(factIDs) != 2 {
 		t.Fatalf("fact count = %d, want 2 (turn:created + turn:started)", len(factIDs))
@@ -224,7 +224,7 @@ func TestTraceMiddleware_EndTurnChainsFromTurnRoot(t *testing.T) {
 
 	m.EndTurn(context.Background(), 0, 5000, 200)
 
-	slice, _ := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
+	slice, _ := testStore(m).ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
 	factIDs := slice.FactIDs()
 
 	// Should be: turn:created, turn:started, ls, ls:result, turn:completed, frontier
@@ -274,7 +274,7 @@ func TestTraceMiddleware_FailTurn(t *testing.T) {
 	m.StartTurn(context.Background(), 0, "deepseek-v4", "hello")
 	m.FailTurn(context.Background(), 0, os.ErrNotExist)
 
-	slice, _ := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
+	slice, _ := testStore(m).ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
 	factIDs := slice.FactIDs()
 
 	// Should be: turn:created, turn:started, turn:failed, frontier
@@ -303,7 +303,7 @@ func TestTraceMiddleware_PublishFrontier(t *testing.T) {
 	m.EndTurn(context.Background(), 0, 1000, 100)
 
 	// Frontier should have been published by EndTurn
-	store := m.store
+	store := testStore(m)
 	factsCount, _ := store.FactCount(context.Background())
 	if factsCount < 2 {
 		t.Fatalf("fact count = %d, want >= 2", factsCount)
@@ -378,7 +378,7 @@ func TestTraceMiddleware_BashDeclarationCarriesCmd(t *testing.T) {
 		t.Fatalf("PostTool error: %v", err)
 	}
 
-	slice, err := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
+	slice, err := testStore(m).ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
@@ -411,7 +411,7 @@ func TestTraceMiddleware_PowerShellDeclarationCarriesCmd(t *testing.T) {
 		t.Fatalf("PostTool error: %v", err)
 	}
 
-	slice, err := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
+	slice, err := testStore(m).ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
@@ -437,7 +437,7 @@ func TestTraceMiddleware_MetaRidesDeclaration(t *testing.T) {
 		t.Fatalf("PostTool error: %v", err)
 	}
 
-	slice, err := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
+	slice, err := testStore(m).ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
@@ -571,7 +571,7 @@ func TestTraceMiddleware_ContentCaps(t *testing.T) {
 	big := strings.Repeat("x", tracePayloadMaxBytes+500)
 	m.RecordAssistant(context.Background(), &types.Message{Role: "assistant", Content: big}, 0)
 	m.RecordSessionContext(context.Background(), TraceSessionContext{SystemPrompt: big, CWD: "/tmp"})
-	slice, err := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
+	slice, err := testStore(m).ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -594,7 +594,7 @@ func TestTraceMiddleware_ToolOutputSpillReference(t *testing.T) {
 	if _, err := m.PostTool(context.Background(), []ToolResult{{Name: "read", Args: `{}`, Result: result, CallID: "c1"}}, &Step{}); err != nil {
 		t.Fatalf("PostTool: %v", err)
 	}
-	slice, err := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 99, shepherdtrace.ModeBoth)
+	slice, err := testStore(m).ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 99, shepherdtrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -618,7 +618,7 @@ func TestTraceMiddleware_StampsRetainedContext(t *testing.T) {
 	if _, err := m.PostTool(context.Background(), []ToolResult{{Name: "read", Args: `{}`, Result: "ok", CallID: "c1"}}, &Step{}); err != nil {
 		t.Fatalf("PostTool: %v", err)
 	}
-	slice, err := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 99, shepherdtrace.ModeBoth)
+	slice, err := testStore(m).ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 99, shepherdtrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -654,7 +654,7 @@ func TestRebuildTranscript_DedupesPromptAcrossIterations(t *testing.T) {
 	m.StartTurn(context.Background(), 1, "m", "same prompt")
 	m.RecordAssistant(context.Background(), &types.Message{Role: "assistant", Content: "done"}, 1)
 
-	slice, err := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
+	slice, err := testStore(m).ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -673,7 +673,7 @@ func TestRebuildTranscript_DedupesPromptAcrossIterations(t *testing.T) {
 func TestTraceMiddleware_RecordsRefusalOnlyAssistant(t *testing.T) {
 	m := newTestTraceMiddleware(t)
 	m.RecordAssistant(context.Background(), &types.Message{Role: "assistant", Refusal: "I cannot help with that."}, 0)
-	slice, err := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 99, shepherdtrace.ModeBoth)
+	slice, err := testStore(m).ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 99, shepherdtrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -681,4 +681,16 @@ func TestTraceMiddleware_RecordsRefusalOnlyAssistant(t *testing.T) {
 	if payload["refusal"] != "I cannot help with that." {
 		t.Errorf("refusal = %v", payload["refusal"])
 	}
+}
+
+// testStore recovers the concrete store a test middleware was built with, for
+// read-side assertions the write seam deliberately does not expose.
+func testStore(m *ShepherdTraceMiddleware) *shepherdtrace.SQLiteTraceStore {
+	switch s := m.store.(type) {
+	case kernelTraceSink:
+		return s.store
+	case *shepherdtrace.SQLiteTraceStore:
+		return s
+	}
+	return nil
 }

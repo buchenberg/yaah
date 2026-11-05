@@ -22,7 +22,7 @@ func TestSessionLoopBuilderWiresTraceStore(t *testing.T) {
 
 	s := &agentSession{cfg: &config.Config{}, traceStore: store, sessionID: "sess-wired"}
 	loop := s.loopBuilder(nil, "test-model", nil, "", nil, "", "").Build(agent.LoopBuildOptions{})
-	if loop.Config.TraceStore != store {
+	if loop.Config.TraceStore != agent.TraceSinkOf(store) {
 		t.Fatal("session loop builder dropped the shared trace store")
 	}
 }

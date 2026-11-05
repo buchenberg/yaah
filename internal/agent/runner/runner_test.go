@@ -3,10 +3,11 @@ package runner
 import (
 	"context"
 	"fmt"
-	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	"gopkg.in/yaml.v3"

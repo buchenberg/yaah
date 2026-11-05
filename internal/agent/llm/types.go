@@ -3,7 +3,6 @@ package llm
 import (
 	"context"
 
-	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -15,7 +14,7 @@ type Provider interface {
 // StreamProvider is a provider that supports streaming responses.
 type StreamProvider interface {
 	Provider
-	SendStream(ctx context.Context, req types.ChatRequest) (<-chan providers.StreamChunk, <-chan error)
+	SendStream(ctx context.Context, req types.ChatRequest) (<-chan types.StreamChunk, <-chan error)
 }
 
 // TokenCallback is called for each streamed token.

@@ -10,6 +10,7 @@ import (
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	goatherd "github.com/buchenberg/goatherd-runtime"
 	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
+	"github.com/buchenberg/yaah/internal/agent/pipeline"
 )
 
 // TestShepherdTurnCheckpointer_RestoreRevertsWorkspace verifies the adapter's
@@ -32,7 +33,7 @@ func TestShepherdTurnCheckpointer_RestoreRevertsWorkspace(t *testing.T) {
 		t.Fatalf("create scope: %v", err)
 	}
 
-	ck := NewShepherdTurnCheckpointer(mgr, scope.ID(), sb)
+	ck := NewShepherdTurnCheckpointer(pipeline.ScopeSourceOf(mgr), scope.ID(), sb)
 
 	ctx := context.Background()
 

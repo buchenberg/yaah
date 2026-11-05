@@ -10,6 +10,7 @@ import (
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	goatherd "github.com/buchenberg/goatherd-runtime"
 	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
+	"github.com/buchenberg/yaah/internal/agent/pipeline"
 )
 
 // Benchmark per-turn git checkpoints to measure their cost and decide
@@ -76,7 +77,7 @@ func benchCheckpointer(b *testing.B, repo string) *ShepherdTurnCheckpointer {
 	if err != nil {
 		b.Fatalf("create scope: %v", err)
 	}
-	return NewShepherdTurnCheckpointer(mgr, scope.ID(), sb)
+	return NewShepherdTurnCheckpointer(pipeline.ScopeSourceOf(mgr), scope.ID(), sb)
 }
 
 // BenchmarkTurnCheckpoint_CleanTree measures the common case: the turn

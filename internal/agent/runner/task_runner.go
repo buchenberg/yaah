@@ -144,7 +144,7 @@ type taskRunnerOpts struct {
 	// traceStore is the session's Shepherd trace store (plan 07, H4),
 	// injected alongside the manager: the sub-agent loops' shepherd_trace
 	// middleware writes through it. Nil when tracing is off.
-	traceStore *shepherdtrace.SQLiteTraceStore
+	traceStore pipeline.TraceSink
 
 	// guardCheck is the supervision service's blocking pre-dispatch
 	// check (adoption plan B2), injected by the wiring: each sub-agent
@@ -337,7 +337,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		var subScope *goatherd.Scope
 		if mgr := opts.scopeManager; mgr != nil {
 			var cerr error
-			subScope, cerr = createSubAgentScope(mgr, opts, subTraceID, params.Workdir)
+			subScope, cerr = createSubAgentScope(pipeline.ScopeSourceOf(mgr), opts, subTraceID, params.Workdir)
 			if cerr != nil {
 				// A scope-creation failure fails the dispatch (R1
 				// review): the durable worktree record is part of the
@@ -400,7 +400,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// tool's attempt-level checkpoints.
 		var turnCk agent.TurnCheckpointer
 		if opts.subCfg.Roles[string(role)].TurnCheckpoints && subScope != nil && subScope.Sandbox() != nil {
-			turnCk = NewShepherdTurnCheckpointer(opts.scopeManager, subScope.ID(), subScope.Sandbox())
+			turnCk = NewShepherdTurnCheckpointer(pipeline.ScopeSourceOf(opts.scopeManager), subScope.ID(), subScope.Sandbox())
 		}
 
 		subLoop := agent.NewSubAgentLoop(subProvider, subReg, subModel, sysPrompt, agent.SubAgentConfig{

@@ -23,7 +23,6 @@ import (
 	"log/slog"
 	"os"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	goatherd "github.com/buchenberg/goatherd-runtime"
 	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 	"github.com/buchenberg/yaah/internal/agent"
@@ -97,7 +96,7 @@ type DelegateToolOpts struct {
 	// TraceStore is the session's Shepherd trace store (plan 07, H4):
 	// the sub-agent loops' shepherd_trace middleware writes through it.
 	// Nil when tracing is off.
-	TraceStore *shepherdtrace.SQLiteTraceStore
+	TraceStore pipeline.TraceSink
 
 	// GuardCheck is the supervision service's blocking pre-dispatch
 	// check (adoption plan B2), passed through to every sub-agent loop's

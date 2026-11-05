@@ -1,4 +1,4 @@
-package providers
+package types
 
 import (
 	"bytes"
@@ -25,7 +25,7 @@ type contentBlock struct {
 	Content  json.RawMessage `json:"content"`
 }
 
-// decodeContentValue normalizes a wire content value into its visible text and
+// DecodeContentValue normalizes a wire content value into its visible text and
 // its reasoning text. The value is either a plain JSON string (the OpenAI
 // shape) or an array of typed blocks (zai/GLM). The streaming and
 // non-streaming paths share this decoder because the same endpoint sends the
@@ -34,7 +34,7 @@ type contentBlock struct {
 // A top-level shape that is neither is an error, and the caller turns it into
 // one warning per turn: silently dropping the chunk is how lost reasoning
 // stays invisible.
-func decodeContentValue(raw json.RawMessage) (text, thinking string, err error) {
+func DecodeContentValue(raw json.RawMessage) (text, thinking string, err error) {
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 || string(raw) == "null" {
 		return "", "", nil
@@ -71,14 +71,14 @@ func decodeContentValue(raw json.RawMessage) (text, thinking string, err error) 
 						reasoning.WriteString(b.Text)
 						continue
 					}
-					inner, _, err := decodeContentValue(b.Content)
+					inner, _, err := DecodeContentValue(b.Content)
 					if err != nil {
 						return "", "", err
 					}
 					reasoning.WriteString(inner)
 					continue
 				}
-				inner, _, err := decodeContentValue(b.Thinking)
+				inner, _, err := DecodeContentValue(b.Thinking)
 				if err != nil {
 					return "", "", err
 				}
@@ -98,7 +98,7 @@ func decodeContentValue(raw json.RawMessage) (text, thinking string, err error) 
 				if len(nested) == 0 {
 					nested = b.Thinking
 				}
-				inner, _, err := decodeContentValue(nested)
+				inner, _, err := DecodeContentValue(nested)
 				if err != nil {
 					return "", "", err
 				}
@@ -108,7 +108,7 @@ func decodeContentValue(raw json.RawMessage) (text, thinking string, err error) 
 					visible.WriteString(b.Text)
 					continue
 				}
-				inner, _, err := decodeContentValue(b.Content)
+				inner, _, err := DecodeContentValue(b.Content)
 				if err != nil {
 					return "", "", err
 				}
@@ -135,12 +135,12 @@ func decodeContentValue(raw json.RawMessage) (text, thinking string, err error) 
 	return "", "", fmt.Errorf("unsupported content shape (starts with %q, %d bytes)", raw[0], len(raw))
 }
 
-// mergeReasoning joins the two places a reasoning-capable endpoint may put
+// MergeReasoning joins the two places a reasoning-capable endpoint may put
 // reasoning in one response: the reasoning_content field and thinking blocks
 // carried in content. Endpoints that send both echo the same text twice, so
 // equal halves collapse to one copy; unequal halves both survive, since the
 // two places can hold complementary segments.
-func mergeReasoning(field, blocks string) string {
+func MergeReasoning(field, blocks string) string {
 	switch {
 	case field == "":
 		return blocks

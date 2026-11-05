@@ -242,7 +242,7 @@ func (s *agentSession) loopBuilder(
 		SystemPrompt:               s.modeDirective(mode),
 		Messages:                   msgs,
 		SessionID:                  s.sessionID,
-		TraceStore:                 s.traceStore,
+		TraceStore:                 agent.TraceSinkOf(s.traceStore),
 		Persister:                  persister,
 		Hooks:                      hooks,
 		Steer:                      s.steerCh,

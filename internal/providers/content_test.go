@@ -128,7 +128,7 @@ func TestStreamDelta_unknownContentShapeDegrades(t *testing.T) {
 	if len(delta.ToolCalls) != 1 {
 		t.Fatalf("tool calls lost: %+v", delta.ToolCalls)
 	}
-	if delta.contentShapeErr == nil {
+	if delta.ContentShapeErr() == nil {
 		t.Error("shape error must be recorded for the once-per-stream warning")
 	}
 
@@ -136,7 +136,7 @@ func TestStreamDelta_unknownContentShapeDegrades(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"content":[]}`), &clean); err != nil {
 		t.Fatalf("empty block array must decode, got %v", err)
 	}
-	if clean.contentShapeErr != nil {
+	if clean.ContentShapeErr() != nil {
 		t.Error("clean shapes must not record a shape error")
 	}
 	if err := json.Unmarshal([]byte(`{"content":null}`), &clean); err != nil {
@@ -224,7 +224,7 @@ func TestDecodeContentValue_shapes(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			text, reasoning, err := decodeContentValue(json.RawMessage(tc.raw))
+			text, reasoning, err := types.DecodeContentValue(json.RawMessage(tc.raw))
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got text=%q reasoning=%q", text, reasoning)
@@ -232,10 +232,10 @@ func TestDecodeContentValue_shapes(t *testing.T) {
 				return
 			}
 			if err != nil {
-				t.Fatalf("decodeContentValue() error: %v", err)
+				t.Fatalf("types.DecodeContentValue() error: %v", err)
 			}
 			if text != tc.wantText || reasoning != tc.wantReasoning {
-				t.Errorf("decodeContentValue() = (%q, %q), want (%q, %q)",
+				t.Errorf("types.DecodeContentValue() = (%q, %q), want (%q, %q)",
 					text, reasoning, tc.wantText, tc.wantReasoning)
 			}
 		})
@@ -341,8 +341,8 @@ func TestMergeReasoning(t *testing.T) {
 		{name: "both empty", want: ""},
 	}
 	for _, tc := range cases {
-		if got := mergeReasoning(tc.field, tc.blocks); got != tc.want {
-			t.Errorf("mergeReasoning(%q, %q) = %q, want %q", tc.field, tc.blocks, got, tc.want)
+		if got := types.MergeReasoning(tc.field, tc.blocks); got != tc.want {
+			t.Errorf("MergeReasoning(%q, %q) = %q, want %q", tc.field, tc.blocks, got, tc.want)
 		}
 	}
 }

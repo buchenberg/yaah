@@ -10,8 +10,6 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent/errorclassify"
-	"github.com/buchenberg/yaah/internal/providers"
-	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -39,14 +37,24 @@ type Client struct {
 	RetryBackoff         time.Duration
 	ContextWindow        int
 	SessionID            string
-	OnToken              TokenCallback
-	OnThinking           ThinkingCallback
-	Compact              CompactFunc
-	Trim                 TrimFunc
-	OtelEnabled          bool
-	OtelVerbose          bool
-	StripReasoning       func() // called to permanently strip reasoning from session history
-	replayCount          int    // tracks empty-response replays within a single Call
+	// SessionIDFn stamps the session ID onto the context of every Call so
+	// providers can set affinity headers. Nil leaves the context untouched.
+	// Injected by the caller: the LLM seam must not import the provider
+	// package to do this itself (yaah-9RCG).
+	SessionIDFn    func(ctx context.Context, sessionID string) context.Context
+	OnToken        TokenCallback
+	OnThinking     ThinkingCallback
+	Compact        CompactFunc
+	Trim           TrimFunc
+	OtelEnabled    bool
+	OtelVerbose    bool
+	StripReasoning func() // called to permanently strip reasoning from session history
+	replayCount    int    // tracks empty-response replays within a single Call
+
+	// Heartbeat reports liveness for the running call. Injected by the
+	// caller so this seam does not reach into the tool layer (yaah-9RCG).
+	// Nil means "emit no liveness signal".
+	Heartbeat func(ctx context.Context)
 
 	// HeartbeatInterval throttles the sub-agent liveness heartbeats
 	// emitted while a stream is being consumed. Zero means 5s. Tests
@@ -157,7 +165,11 @@ func (c *Client) swapToFallback(req *types.ChatRequest) {
 // provider rotation on credential errors, and context compaction on overflow.
 func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, error) {
 	// Inject session ID into context so providers can set affinity headers.
-	ctx = providers.WithSessionID(ctx, c.SessionID)
+	// The injection function is supplied by the caller: this package does
+	// not know which package owns the provider context key (yaah-9RCG).
+	if c.SessionIDFn != nil {
+		ctx = c.SessionIDFn(ctx, c.SessionID)
+	}
 
 	var lastResult CallResult
 	var lastErr error
@@ -187,7 +199,7 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 		// Per-attempt liveness ping marks the attempt boundary; the wait
 		// ticker (startWaitHeartbeat) covers the long silent windows
 		// within an attempt (yaah-1ep).
-		tools.SendHeartbeat(ctx)
+		c.beat(ctx)
 
 		var result CallResult
 		var err error
@@ -448,6 +460,14 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 	return attach(lastResult), lastErr
 }
 
+// beat reports one liveness heartbeat through the injected Heartbeat, if any.
+// A nil Heartbeat (no sub-agent dispatch, or a bare test client) is a no-op.
+func (c *Client) beat(ctx context.Context) {
+	if c.Heartbeat != nil {
+		c.Heartbeat(ctx)
+	}
+}
+
 func (c *Client) heartbeatInterval() time.Duration {
 	if c.HeartbeatInterval > 0 {
 		return c.HeartbeatInterval
@@ -470,7 +490,7 @@ func (c *Client) startWaitHeartbeat(ctx context.Context) (stop func()) {
 		for {
 			select {
 			case <-t.C:
-				tools.SendHeartbeat(ctx)
+				c.beat(ctx)
 			case <-done:
 				return
 			case <-ctx.Done():

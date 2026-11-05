@@ -11,7 +11,6 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/buchenberg/yaah/internal/observability"
-	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -62,8 +61,8 @@ func (p *abruptStreamProvider) Send(ctx context.Context, req types.ChatRequest) 
 	return nil, errors.New("streaming only")
 }
 
-func (p *abruptStreamProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan providers.StreamChunk, <-chan error) {
-	chunks := make(chan providers.StreamChunk, 4)
+func (p *abruptStreamProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan types.StreamChunk, <-chan error) {
+	chunks := make(chan types.StreamChunk, 4)
 	errs := make(chan error, 1)
 	fail := p.fails < p.maxFails
 	if fail {
@@ -74,13 +73,13 @@ func (p *abruptStreamProvider) SendStream(ctx context.Context, req types.ChatReq
 		defer close(chunks)
 		defer close(errs)
 		if fail {
-			chunks <- providers.StreamChunk{Choices: []providers.StreamChoice{{
-				Delta: providers.StreamDelta{Content: "partial text"},
+			chunks <- types.StreamChunk{Choices: []types.StreamChoice{{
+				Delta: types.StreamDelta{Content: "partial text"},
 			}}}
 			return // connection dies before finish_reason
 		}
-		chunks <- providers.StreamChunk{Choices: []providers.StreamChoice{{
-			Delta:        providers.StreamDelta{Content: "recovered"},
+		chunks <- types.StreamChunk{Choices: []types.StreamChoice{{
+			Delta:        types.StreamDelta{Content: "recovered"},
 			FinishReason: strPtr("stop"),
 		}}}
 	}()
@@ -185,14 +184,14 @@ func (p *errorThenCloseStreamProvider) Send(ctx context.Context, req types.ChatR
 	return nil, errors.New("streaming only")
 }
 
-func (p *errorThenCloseStreamProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan providers.StreamChunk, <-chan error) {
-	chunks := make(chan providers.StreamChunk, 4)
+func (p *errorThenCloseStreamProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan types.StreamChunk, <-chan error) {
+	chunks := make(chan types.StreamChunk, 4)
 	errs := make(chan error, 1)
 	go func() {
 		defer close(chunks)
 		defer close(errs)
-		chunks <- providers.StreamChunk{Choices: []providers.StreamChoice{{
-			Delta: providers.StreamDelta{Content: "partial text"},
+		chunks <- types.StreamChunk{Choices: []types.StreamChoice{{
+			Delta: types.StreamDelta{Content: "partial text"},
 		}}}
 		errs <- p.err
 	}()
@@ -209,12 +208,12 @@ func (p *closeErrsEarlyProvider) Send(ctx context.Context, req types.ChatRequest
 	return nil, errors.New("streaming only")
 }
 
-func (p *closeErrsEarlyProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan providers.StreamChunk, <-chan error) {
-	chunks := make(chan providers.StreamChunk, 4)
+func (p *closeErrsEarlyProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan types.StreamChunk, <-chan error) {
+	chunks := make(chan types.StreamChunk, 4)
 	errs := make(chan error, 1)
 	go func() {
-		chunks <- providers.StreamChunk{Choices: []providers.StreamChoice{{
-			Delta:        providers.StreamDelta{Content: "answer"},
+		chunks <- types.StreamChunk{Choices: []types.StreamChoice{{
+			Delta:        types.StreamDelta{Content: "answer"},
 			FinishReason: strPtr("stop"),
 		}}}
 		close(errs) // closed before chunks — the ordering the fix guards
@@ -263,26 +262,26 @@ func (p *splitUsageStreamProvider) Send(ctx context.Context, req types.ChatReque
 	return nil, errors.New("streaming only")
 }
 
-func (p *splitUsageStreamProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan providers.StreamChunk, <-chan error) {
+func (p *splitUsageStreamProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan types.StreamChunk, <-chan error) {
 	// Unbuffered on purpose: runStream's select also watches errs, and a
 	// closed errs channel races buffered chunks into the nondeterministic
 	// errs-nil early-close path. Rendezvous sends guarantee every chunk
 	// is consumed before the producer can close anything.
-	chunks := make(chan providers.StreamChunk)
+	chunks := make(chan types.StreamChunk)
 	errs := make(chan error, 1)
 	go func() {
 		defer close(chunks)
 		defer close(errs)
-		chunks <- providers.StreamChunk{
+		chunks <- types.StreamChunk{
 			Model: "claude-test",
 			Usage: &types.Usage{PromptTokens: 100},
 		}
-		chunks <- providers.StreamChunk{Choices: []providers.StreamChoice{{
-			Delta: providers.StreamDelta{Content: "hello"},
+		chunks <- types.StreamChunk{Choices: []types.StreamChoice{{
+			Delta: types.StreamDelta{Content: "hello"},
 		}}}
-		chunks <- providers.StreamChunk{
-			Choices: []providers.StreamChoice{{
-				Delta:        providers.StreamDelta{},
+		chunks <- types.StreamChunk{
+			Choices: []types.StreamChoice{{
+				Delta:        types.StreamDelta{},
 				FinishReason: strPtr("stop"),
 			}},
 			Usage: &types.Usage{CompletionTokens: 42},
@@ -373,11 +372,11 @@ func (p *partialThenHangStreamProvider) Send(ctx context.Context, req types.Chat
 	return nil, errors.New("streaming only")
 }
 
-func (p *partialThenHangStreamProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan providers.StreamChunk, <-chan error) {
-	chunks := make(chan providers.StreamChunk, 1)
+func (p *partialThenHangStreamProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan types.StreamChunk, <-chan error) {
+	chunks := make(chan types.StreamChunk, 1)
 	errs := make(chan error)
-	chunks <- providers.StreamChunk{Choices: []providers.StreamChoice{{
-		Delta: providers.StreamDelta{Content: "almost done"},
+	chunks <- types.StreamChunk{Choices: []types.StreamChoice{{
+		Delta: types.StreamDelta{Content: "almost done"},
 	}}}
 	return chunks, errs
 }
@@ -420,20 +419,20 @@ func (p *separateSignatureStreamProvider) Send(context.Context, types.ChatReques
 	return nil, errors.New("streaming only")
 }
 
-func (p *separateSignatureStreamProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan providers.StreamChunk, <-chan error) {
-	chunks := make(chan providers.StreamChunk, 4)
+func (p *separateSignatureStreamProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan types.StreamChunk, <-chan error) {
+	chunks := make(chan types.StreamChunk, 4)
 	errs := make(chan error, 1)
 	go func() {
 		defer close(chunks)
 		defer close(errs)
-		chunks <- providers.StreamChunk{Choices: []providers.StreamChoice{{
-			Delta: providers.StreamDelta{ReasoningContent: "thinking text"},
+		chunks <- types.StreamChunk{Choices: []types.StreamChoice{{
+			Delta: types.StreamDelta{ReasoningContent: "thinking text"},
 		}}}
-		chunks <- providers.StreamChunk{Choices: []providers.StreamChoice{{
-			Delta: providers.StreamDelta{ReasoningSignature: "sig-standalone"},
+		chunks <- types.StreamChunk{Choices: []types.StreamChoice{{
+			Delta: types.StreamDelta{ReasoningSignature: "sig-standalone"},
 		}}}
-		chunks <- providers.StreamChunk{Choices: []providers.StreamChoice{{
-			Delta:        providers.StreamDelta{Content: "answer"},
+		chunks <- types.StreamChunk{Choices: []types.StreamChoice{{
+			Delta:        types.StreamDelta{Content: "answer"},
 			FinishReason: strPtr("stop"),
 		}}}
 	}()

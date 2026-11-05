@@ -22,6 +22,20 @@ type Provider = llm.Provider
 // StreamProvider is a provider that supports streaming responses.
 type StreamProvider = llm.StreamProvider
 
+// TraceSink is the pipeline's trace-write seam, re-exported so agent-level
+// config surfaces (LoopConfig, LoopBuilder, the With* options) name the seam
+// without importing the pipeline package for it. See pipeline.TraceSink.
+type TraceSink = pipeline.TraceSink
+
+// TraceSinkOf adapts a kernel trace store to the seam, nil-safely: a
+// tracing-off session carries a nil store, and the seam must stay nil so the
+// pipeline's shepherd_trace slot resolves to its noop instead of a live
+// middleware over a nil handle. It is the agent-level name for
+// pipeline.TraceSinkOf.
+func TraceSinkOf(store *shepherdtrace.SQLiteTraceStore) TraceSink {
+	return pipeline.TraceSinkOf(store)
+}
+
 // ToolInfo is a legacy type preserved for external reference.
 // New code should consume ToolStartEvent / ToolEndEvent via the Broker.
 type ToolInfo struct {
@@ -262,11 +276,12 @@ type LoopConfig struct {
 	// unchanged.
 	DestructiveGuard func(ownerID, toolName, argsJSON string) string
 
-	// TraceStore is the session's Shepherd trace store (plan 07, H4),
+	// TraceStore is the session's Shepherd trace sink (plan 07, H4),
 	// plumbed through from SubAgentConfig: the sub-agent pipeline's
 	// shepherd_trace middleware writes through it. Nil when tracing
-	// is disabled.
-	TraceStore *shepherdtrace.SQLiteTraceStore
+	// is disabled. Typed as the pipeline seam so the loop config does
+	// not name the kernel's concrete store.
+	TraceStore TraceSink
 }
 
 // LoopState holds mutable runtime state modified during Run.

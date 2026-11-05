@@ -6,7 +6,9 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/events"
 	"github.com/buchenberg/yaah/internal/agent/llm"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
+	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/pubsub"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -193,19 +195,36 @@ func (l *Loop) applyDefaults() {
 			RetryBackoff:         l.Config.RetryBackoff,
 			ContextWindow:        l.Config.ContextWindow,
 			SessionID:            l.Config.SessionID,
-			OnToken:              onToken,
-			OnThinking:           onThinking,
-			Compact:              l.llmCompact,
-			Trim:                 l.llmTrim,
-			StripReasoning:       l.StripAllReasoning,
-			OtelEnabled:          l.Config.OtelEnabled,
-			OtelVerbose:          l.Config.OtelVerbose,
+			// The two seams the LLM client must not own itself: the provider
+			// context key and the tool-layer heartbeat are injected here, so
+			// internal/agent/llm imports neither package (yaah-9RCG).
+			SessionIDFn:    providers.WithSessionID,
+			Heartbeat:      jobs.SendHeartbeat,
+			OnToken:        onToken,
+			OnThinking:     onThinking,
+			Compact:        l.llmCompact,
+			Trim:           l.llmTrim,
+			StripReasoning: l.StripAllReasoning,
+			OtelEnabled:    l.Config.OtelEnabled,
+			OtelVerbose:    l.Config.OtelVerbose,
 		}
 	} else if l.broker != nil {
 		// Rebind the streaming callbacks to the current broker — closures
 		// captured by a previous Run reference a closed broker.
 		l.LLM.OnToken = l.publishTokenDelta
 		l.LLM.OnThinking = l.publishThinking
+	}
+	// Every path that hands back a client must carry the two injected seams,
+	// not just the fresh-construction one: a nil SessionIDFn silently drops
+	// provider session affinity and a nil Heartbeat drops liveness pings
+	// (yaah-9RCG review).
+	if l.LLM != nil {
+		if l.LLM.SessionIDFn == nil {
+			l.LLM.SessionIDFn = providers.WithSessionID
+		}
+		if l.LLM.Heartbeat == nil {
+			l.LLM.Heartbeat = jobs.SendHeartbeat
+		}
 	}
 }
 

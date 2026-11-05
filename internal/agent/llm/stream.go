@@ -11,7 +11,6 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/buchenberg/yaah/internal/tools"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/buchenberg/yaah/internal/observability"
@@ -85,7 +84,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 	var lastHeartbeat time.Time
 	emitHeartbeat := func() {
 		if time.Since(lastHeartbeat) > hbInterval {
-			tools.SendHeartbeat(ctx)
+			c.beat(ctx)
 			lastHeartbeat = time.Now()
 		}
 	}
