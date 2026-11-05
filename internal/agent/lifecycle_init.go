@@ -213,9 +213,12 @@ func (l *Loop) applyDefaults() {
 		// captured by a previous Run reference a closed broker.
 		l.LLM.OnToken = l.publishTokenDelta
 		l.LLM.OnThinking = l.publishThinking
-		// A client supplied by a caller must still carry the two injected
-		// seams: a nil SessionIDFn silently drops provider session affinity
-		// and a nil Heartbeat drops liveness pings (yaah-9RCG review).
+	}
+	// Every path that hands back a client must carry the two injected seams,
+	// not just the fresh-construction one: a nil SessionIDFn silently drops
+	// provider session affinity and a nil Heartbeat drops liveness pings
+	// (yaah-9RCG review).
+	if l.LLM != nil {
 		if l.LLM.SessionIDFn == nil {
 			l.LLM.SessionIDFn = providers.WithSessionID
 		}
