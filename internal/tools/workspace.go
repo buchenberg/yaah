@@ -98,6 +98,8 @@ type Workspace interface {
 	// ReadDir lists a directory. Entries are not sorted by the implementation;
 	// callers that need a stable order must sort.
 	ReadDir(ctx context.Context, path string) ([]fs.DirEntry, error)
+	// Remove deletes a file or an empty directory, matching os.Remove. A
+	// non-empty directory is an error.
 	Remove(ctx context.Context, path string) error
 	MkdirAll(ctx context.Context, path string, perm fs.FileMode) error
 
@@ -339,6 +341,8 @@ func (w *localWorkspace) ReadDir(_ context.Context, path string) ([]fs.DirEntry,
 }
 
 func (w *localWorkspace) Remove(_ context.Context, path string) error {
+	// os.Remove already removes a file or an empty directory, which is the
+	// Workspace contract rmdir and delete both rely on.
 	return os.Remove(path)
 }
 

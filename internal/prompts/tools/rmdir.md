@@ -1,0 +1,3 @@
+Remove an empty directory at `path`. `path` is resolved through the workspace path validator, so deny patterns and workspace-root containment apply exactly as they do for read, write, and delete.
+
+Directories only: a regular file is refused with a pointer to `delete`, and a symlink is not treated as a directory (the host path layer resolves a valid link like the other file tools; the container sandbox's lexical path layer refuses it). The directory must be empty — remove its entries first with `delete` (files) and `rmdir` (nested empty directories), deepest first. Removing a non-empty directory fails; this tool never recurses. Removing a directory needs approval like every other mutating file tool. To create a directory, use `mkdir`.

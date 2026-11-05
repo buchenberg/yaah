@@ -181,6 +181,7 @@ var leafTools = map[string]func() Tool{
 	"patch":       func() Tool { return &PatchTool{} },
 	"delete":      func() Tool { return &DeleteTool{} },
 	"mkdir":       func() Tool { return &MkdirTool{} },
+	"rmdir":       func() Tool { return &RmdirTool{} },
 	"move":        func() Tool { return &MoveTool{} },
 	"copy":        func() Tool { return &CopyTool{} },
 	"replace":     func() Tool { return &ReplaceTool{} },

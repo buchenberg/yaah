@@ -667,15 +667,18 @@ func TestSandboxWorkspace_StatParsesInBandOutput(t *testing.T) {
 func TestSandboxWorkspace_NonZeroExitIsAnError(t *testing.T) {
 	sb := sandboxfake.New()
 	ws := newSandboxWS(t, sb)
-	// rm -f on a directory refuses without -r, which is how a remove surfaces
-	// a real in-band failure instead of a canned one.
-	if err := sb.MkdirAll("/workspace/f.txt", 0o755); err != nil {
+	// rmdir on a non-empty directory refuses, which is how a remove surfaces a
+	// real in-band failure instead of a canned one.
+	if err := sb.MkdirAll("/workspace/dir", 0o755); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+	if err := sb.WriteFile(context.Background(), "/workspace/dir/keep.txt", []byte("x"), 0o644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
 
-	if err := ws.Remove(context.Background(), "/workspace/f.txt"); err == nil {
+	if err := ws.Remove(context.Background(), "/workspace/dir"); err == nil {
 		t.Fatal("a non-zero exit must surface as an error")
-	} else if !strings.Contains(err.Error(), "Is a directory") {
+	} else if !strings.Contains(err.Error(), "not empty") {
 		t.Errorf("error should carry stderr, got %v", err)
 	}
 }

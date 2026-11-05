@@ -31,6 +31,7 @@ import (
 //	stat -c "$2" -- "$1"                   # GNU stat with a format string
 //	stat -L -c "$2" -- "$1"
 //	rm -f -- "$1"
+//	rmdir -- "$1"                          # workspace Remove of an empty directory
 //	find "$1" -mindepth 1 -maxdepth 1 -printf '%y\0%f\0'
 //	mkdir -p -- "$1" && chmod "$2" "$1"    # && chains
 //
@@ -285,6 +286,8 @@ func (sh *shSession) runSimple(words []string) (string, int) {
 		return sh.cmdCp(words)
 	case "rm":
 		return sh.cmdRm(words)
+	case "rmdir":
+		return sh.cmdRmdir(words)
 	case "mkdir":
 		return sh.cmdMkdir(words)
 	case "find":
@@ -778,6 +781,35 @@ func (sh *shSession) cmdRm(words []string) (string, int) {
 		}
 		sh.sb.removeLocked(clean)
 	}
+	return "", 0
+}
+
+func (sh *shSession) cmdRmdir(words []string) (string, int) {
+	flags, ops := operands(words[1:])
+	if len(flags) != 0 {
+		return "", sh.errf("sandboxfake: rmdir: unsupported flag %s\n", flags[0])
+	}
+	if len(ops) != 1 {
+		return "", sh.errf("rmdir: missing operand\n")
+	}
+	clean, err := sh.sb.resolve(ops[0], sh.cwd)
+	if err != nil {
+		return "", sh.errf("rmdir: %v\n", err)
+	}
+	if clean == "/" {
+		return "", sh.errf("rmdir: failed to remove '/': Device or resource busy\n")
+	}
+	e, ok := sh.sb.files[clean]
+	if !ok {
+		return "", sh.errf("rmdir: failed to remove '%s': No such file or directory\n", ops[0])
+	}
+	if !e.isDir {
+		return "", sh.errf("rmdir: failed to remove '%s': Not a directory\n", ops[0])
+	}
+	if len(sh.sb.children(clean)) != 0 {
+		return "", sh.errf("rmdir: failed to remove '%s': Directory not empty\n", ops[0])
+	}
+	delete(sh.sb.files, clean)
 	return "", 0
 }
 

@@ -17,6 +17,7 @@ tools:
   - edit
   - delete
   - mkdir
+  - rmdir
   - move
   - copy
   - patch

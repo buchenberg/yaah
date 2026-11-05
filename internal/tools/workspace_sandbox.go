@@ -323,7 +323,18 @@ func sandboxMode(perm uint64, fileType string) fs.FileMode {
 	return mode
 }
 
+// Remove deletes a file or an empty directory, matching os.Remove rather than
+// rm -f: a directory is removed with rmdir (so a non-empty one fails with a
+// clear "Directory not empty"), and a missing path reports fs.ErrNotExist
+// instead of succeeding silently.
 func (w *sandboxWorkspace) Remove(ctx context.Context, p string) error {
+	info, err := w.Lstat(ctx, p)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return w.run(ctx, `rmdir -- "$1"`, p)
+	}
 	return w.run(ctx, `rm -f -- "$1"`, p)
 }
 

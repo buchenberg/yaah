@@ -20,6 +20,7 @@ tools:
   - edit
   - delete
   - mkdir
+  - rmdir
   - move
   - copy
   - replace
