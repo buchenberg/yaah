@@ -16,6 +16,7 @@ tools:
   - write
   - edit
   - delete
+  - mkdir
   - move
   - copy
   - patch

@@ -41,7 +41,7 @@ func (t *CopyTool) Schema() json.RawMessage {
 			},
 			"to": {
 				"type": "string",
-				"description": "Absolute destination path for the copy. Its parent directory must already exist."
+				"description": "Absolute destination path for the copy. Its parent directory must already exist; create it with mkdir first."
 			},
 			"force": {
 				"type": "boolean",

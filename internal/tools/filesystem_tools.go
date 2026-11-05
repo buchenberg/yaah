@@ -16,6 +16,7 @@ func (*ReadTool) filesystemTool()        {}
 func (*WriteTool) filesystemTool()       {}
 func (*EditTool) filesystemTool()        {}
 func (*DeleteTool) filesystemTool()      {}
+func (*MkdirTool) filesystemTool()       {}
 func (*MoveTool) filesystemTool()        {}
 func (*CopyTool) filesystemTool()        {}
 func (*PatchTool) filesystemTool()       {}

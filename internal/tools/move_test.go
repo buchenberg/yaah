@@ -105,6 +105,25 @@ func TestMoveTool_clobberRules(t *testing.T) {
 	}
 }
 
+func TestMoveTool_requiresDestinationParent(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.txt")
+	writeFile(t, src, []byte("x"))
+	dst := filepath.Join(dir, "missing", "dst.txt")
+
+	_, err := hostMoveTool(dir).Execute(context.Background(),
+		transferArgs(t, map[string]any{"path": src, "to": dst}))
+	if err == nil {
+		t.Fatal("moving into a missing parent must fail rather than create it")
+	}
+	if !strings.Contains(err.Error(), "mkdir") {
+		t.Errorf("error = %q, want a pointer to mkdir", err)
+	}
+	if _, statErr := os.Stat(src); statErr != nil {
+		t.Errorf("source removed by a refused move: %v", statErr)
+	}
+}
+
 func TestMoveTool_refusesDirectories(t *testing.T) {
 	dir := t.TempDir()
 	srcDir := filepath.Join(dir, "tree")

@@ -45,7 +45,7 @@ func (t *MoveTool) Schema() json.RawMessage {
 			},
 			"to": {
 				"type": "string",
-				"description": "Absolute destination path for the file. Its parent directory must already exist."
+				"description": "Absolute destination path for the file. Its parent directory must already exist; create it with mkdir first."
 			},
 			"force": {
 				"type": "boolean",
@@ -174,6 +174,21 @@ func prepareTransfer(ctx context.Context, tool string, ws Workspace, args string
 		return transferRequest{}, fmt.Errorf("%s: destination %s is a directory", tool, dst)
 	case !req.Force:
 		return transferRequest{}, fmt.Errorf("%s: destination %s already exists; pass force=true to replace it", tool, dst)
+	}
+
+	// The destination parent must already exist. Creating it here would make
+	// copy/move implicit directory creators; the explicit mkdir tool is the
+	// one place directories are made, and this check turns the substrate's
+	// opaque "create temp: no such file or directory" into an actionable
+	// message.
+	parent := wsPathDir(ws, dst)
+	switch info, statErr := ws.Stat(ctx, parent); {
+	case errors.Is(statErr, fs.ErrNotExist):
+		return transferRequest{}, fmt.Errorf("%s: destination parent %s does not exist; create it first with mkdir", tool, parent)
+	case statErr != nil:
+		return transferRequest{}, fmt.Errorf("%s: %s: %w", tool, parent, statErr)
+	case !info.IsDir():
+		return transferRequest{}, fmt.Errorf("%s: destination parent %s is not a directory", tool, parent)
 	}
 	return req, nil
 }

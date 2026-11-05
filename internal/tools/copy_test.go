@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -79,6 +80,50 @@ func TestCopyTool_clobberRules(t *testing.T) {
 				t.Errorf("source removed by a copy: %v", statErr)
 			}
 		})
+	}
+}
+
+func TestCopyTool_requiresDestinationParent(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.txt")
+	writeFile(t, src, []byte("x"))
+	dst := filepath.Join(dir, "missing", "dst.txt")
+
+	_, err := hostCopyTool(dir).Execute(context.Background(),
+		transferArgs(t, map[string]any{"path": src, "to": dst}))
+	if err == nil {
+		t.Fatal("copying into a missing parent must fail rather than create it")
+	}
+	if !strings.Contains(err.Error(), "mkdir") {
+		t.Errorf("error = %q, want a pointer to mkdir", err)
+	}
+	if _, statErr := os.Stat(dst); !os.IsNotExist(statErr) {
+		t.Errorf("a refused copy created the destination: %v", statErr)
+	}
+}
+
+// TestCopyTool_afterMkdir pins the explicit flow the two tools point at: the
+// model creates the destination directory with mkdir, then copies into it.
+func TestCopyTool_afterMkdir(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.txt")
+	dst := filepath.Join(dir, "nested", "dst.txt")
+	writeFile(t, src, []byte("payload"))
+
+	if _, err := hostMkdirTool(dir).Execute(context.Background(),
+		transferArgs(t, map[string]any{"path": filepath.Dir(dst)})); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if _, err := hostCopyTool(dir).Execute(context.Background(),
+		transferArgs(t, map[string]any{"path": src, "to": dst})); err != nil {
+		t.Fatalf("copy after mkdir: %v", err)
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("read destination: %v", err)
+	}
+	if string(got) != "payload" {
+		t.Errorf("destination = %q, want %q", got, "payload")
 	}
 }
 

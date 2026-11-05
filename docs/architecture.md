@@ -548,13 +548,13 @@ A retained dispatch runs the sub-agent in an **isolated dispatch world** — a g
 File: `internal/tools/tools.go`
 
 `NewRegistry()` pre-registers the built-in leaf tools. One shell tool is
-platform-selected (`powershell` on Windows, `bash` elsewhere), so 26 of the
-27 leaf tools register on a given OS:
+platform-selected (`powershell` on Windows, `bash` elsewhere), so 27 of the
+28 leaf tools register on a given OS:
 
 | Category | Tools |
 |---|---|
 | Filesystem (read) | `read`, `ls`, `file_info` |
-| Filesystem (mutate — always need approval) | `write`, `edit`, `replace`, `delete`, `move`, `copy`, `patch` |
+| Filesystem (mutate — always need approval) | `write`, `edit`, `replace`, `delete`, `mkdir`, `move`, `copy`, `patch` |
 | Search | `grep`, `glob` |
 | Shell (always need approval) | `bash`, `powershell` |
 | VCS / data (per-action approval) | `git`, `json_query` |

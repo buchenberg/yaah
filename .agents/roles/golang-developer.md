@@ -19,6 +19,7 @@ tools:
   - write
   - edit
   - delete
+  - mkdir
   - move
   - copy
   - replace

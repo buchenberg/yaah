@@ -180,6 +180,7 @@ var leafTools = map[string]func() Tool{
 	"edit":        func() Tool { return &EditTool{} },
 	"patch":       func() Tool { return &PatchTool{} },
 	"delete":      func() Tool { return &DeleteTool{} },
+	"mkdir":       func() Tool { return &MkdirTool{} },
 	"move":        func() Tool { return &MoveTool{} },
 	"copy":        func() Tool { return &CopyTool{} },
 	"replace":     func() Tool { return &ReplaceTool{} },
