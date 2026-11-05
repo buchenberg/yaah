@@ -155,11 +155,11 @@ func TestGGUF_ClampDecodeWindowToTrainContext(t *testing.T) {
 	// prose, so window*7 chars decodes at >= 2x the window in tokens — the
 	// shape of the message whose embed aborted the live TUI.
 	long := strings.Repeat("The repository layout maps workspace grants to dispatch worlds, and the settle path serializes per parent. ", window*7/len("The repository layout maps workspace grants to dispatch worlds, and the settle path serializes per parent. ")+1)
-	// ~1 token per 3.5 chars of prose: window*7 chars decodes at >= 2x
-	// the window in tokens. Asserted below against the real vocab.
-	if len(long) < window*3 {
-		t.Fatalf("fixture under-exercises the clamp: %d chars < 3x window %d", len(long), window)
-	}
+	// window*7 chars of prose decodes at >= 2x the window in tokens at
+	// the ~3.5 chars/token prose ratio, so the fixture always exercises
+	// past the window; no char-count guard can fire here by construction.
+	// A clamp regression re-introduces the SIGABRT: this test fails by
+	// dying (the Go runtime dump), which is the loud signal it was.
 	emb, err := e.Embed(context.Background(), long)
 	if err != nil {
 		t.Fatalf("over-window embed must not abort: %v", err)
