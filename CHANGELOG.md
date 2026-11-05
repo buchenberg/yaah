@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.139.0](https://github.com/buchenberg/yaah/compare/v0.138.0...v0.139.0) (2026-11-05)
+
+
+### Features
+
+* **tools:** add explicit mkdir; keep transfers' parent rule ([d27449d](https://github.com/buchenberg/yaah/commit/d27449de7346b002022afe5884be2597e2986877))
+* **tools:** add move/copy tools for byte-exact file operations (yaah-6yqc) ([c99d14e](https://github.com/buchenberg/yaah/commit/c99d14e5df94c9e7c311883929c27c40afd4fad6))
+* **tools:** add recursive removal to rmdir ([bccc8a7](https://github.com/buchenberg/yaah/commit/bccc8a71c3c88ed68b9777a260ed45c31f8a6c03))
+* **tools:** add rmdir and make delete file-only ([5ebb337](https://github.com/buchenberg/yaah/commit/5ebb337b13f59f7300d75f44a66c08942ba94c5e))
+* **tools:** move/copy tools for byte-exact file operations ([83f6ae2](https://github.com/buchenberg/yaah/commit/83f6ae2426ac367451e4e0b3ffe6de91b3cc5b03))
+
+
+### Bug Fixes
+
+* address review round 5 on role audit and rmdir evidence ([26e6fab](https://github.com/buchenberg/yaah/commit/26e6fab3d75087749f68fb9ffaacc0c013550357))
+* **tools:** address review round 2 for move/copy ([95732a1](https://github.com/buchenberg/yaah/commit/95732a1b7843794160c065eebd32488cff7397c8))
+* **tools:** address review round 3 for move/copy ([0d67cee](https://github.com/buchenberg/yaah/commit/0d67ceed1feccebdf1be2955d28c71bf7cd6a0b3))
+* **tools:** address review round 4 and Windows CI ([cac6eb3](https://github.com/buchenberg/yaah/commit/cac6eb33dfcccdc01f12dc37ac1d313f58b2ea59))
+* **tools:** harden move/copy - regular files only, symlink refusal, EXDEV fallback, sandbox mode parity (review round 1) ([68826cc](https://github.com/buchenberg/yaah/commit/68826cc9e017a402e9bd0e71951468055c54b7b6))
+* **tools:** preserve the rmdir failure marker when bounding detail ([5cb1f3c](https://github.com/buchenberg/yaah/commit/5cb1f3c73de239e9add3cada842369140bca3350))
+
+
+### Tests
+
+* **roles:** audit subagent tool belts ([fc1c43d](https://github.com/buchenberg/yaah/commit/fc1c43d9f01f3b77c5def04c26daa57656fe0e75))
+
 ## [0.138.0](https://github.com/buchenberg/yaah/compare/v0.137.2...v0.138.0) (2026-11-05)
 
 
