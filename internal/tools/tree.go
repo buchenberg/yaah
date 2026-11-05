@@ -186,6 +186,9 @@ func prepareTreeTransfer(ctx context.Context, tool string, ws Workspace, args st
 	}
 
 	parent := wsPathDir(ws, dst)
+	if err := refuseSymlinkAncestors(ctx, ws, parent); err != nil {
+		return treeRequest{}, fmt.Errorf("%s: %w", tool, err)
+	}
 	if params.MkdirP {
 		if err := ws.MkdirAll(ctx, parent, 0o755); err != nil {
 			return treeRequest{}, fmt.Errorf("%s: create destination parent %s: %w", tool, parent, err)
@@ -217,6 +220,41 @@ func pathWithin(ws Workspace, parent, child string) bool {
 	return rel != ".." &&
 		!strings.HasPrefix(rel, ".."+string(filepath.Separator)) &&
 		!strings.HasPrefix(rel, "../")
+}
+
+func workspaceRel(ws Workspace, base, target string) (string, error) {
+	if ws.Local() {
+		return filepath.Rel(base, target)
+	}
+	// Sandbox paths are POSIX and have no path.Rel analogue; every caller
+	// only needs a descendant relationship.
+	base = path.Clean(base)
+	target = path.Clean(target)
+	if base == target {
+		return ".", nil
+	}
+	prefix := strings.TrimSuffix(base, "/") + "/"
+	if !strings.HasPrefix(target, prefix) {
+		return "", fmt.Errorf("%s is not inside %s", target, base)
+	}
+	return strings.TrimPrefix(target, prefix), nil
+}
+
+// refuseSymlinkAncestors checks every component from the workspace root to
+// target, including target. The sandbox path layer is lexical, so a symlink
+// above a destination is otherwise invisible to containment.
+func refuseSymlinkAncestors(ctx context.Context, ws Workspace, target string) error {
+	root := ws.WorkDir()
+	if root == "" {
+		return nil
+	}
+	rel, err := workspaceRel(ws, root, target)
+	if err != nil || rel == ".." ||
+		strings.HasPrefix(rel, ".."+string(filepath.Separator)) ||
+		strings.HasPrefix(rel, "../") {
+		return nil
+	}
+	return refuseSymlinkComponents(ctx, ws, root, rel)
 }
 
 // refuseSymlinkComponents rejects an existing symlink in base or in any
@@ -318,36 +356,62 @@ func replaceTreeCopy(ctx context.Context, ws Workspace, src, dst string) (treeSt
 		_ = ws.RemoveAll(ctx, staging)
 		return stats, err
 	}
-	if err := ws.RemoveAll(ctx, dst); err != nil {
+	backup, err := treeStagingPath(ctx, ws, dst)
+	if err != nil {
 		_ = ws.RemoveAll(ctx, staging)
-		return stats, fmt.Errorf("staged copy is at %s; remove existing destination: %w", staging, err)
+		return stats, err
+	}
+	if err := ws.Move(ctx, dst, backup); err != nil {
+		_ = ws.RemoveAll(ctx, staging)
+		return stats, fmt.Errorf("stage existing destination %s aside: %w", dst, err)
 	}
 	if err := ws.Move(ctx, staging, dst); err != nil {
-		return stats, fmt.Errorf("staged copy remains at %s; promote to %s: %w", staging, dst, err)
+		if restoreErr := ws.Move(ctx, backup, dst); restoreErr != nil {
+			return stats, fmt.Errorf("promote staged copy: %v; staged copy at %s, old destination backup at %s; restore failed: %w", err, staging, backup, restoreErr)
+		}
+		_ = ws.RemoveAll(ctx, staging)
+		return stats, fmt.Errorf("promote staged copy: %w (old destination restored)", err)
+	}
+	if err := ws.RemoveAll(ctx, backup); err != nil {
+		return stats, fmt.Errorf("copied to %s but could not remove the backup %s: %w", dst, backup, err)
 	}
 	return stats, nil
 }
 
 func replaceTreeMove(ctx context.Context, ws Workspace, src, dst string) (treeStats, error) {
-	stats, err := replaceTreeCopy(ctx, ws, src, dst)
+	backup, err := treeStagingPath(ctx, ws, dst)
 	if err != nil {
+		return treeStats{}, err
+	}
+	if err := ws.Move(ctx, dst, backup); err != nil {
+		return treeStats{}, fmt.Errorf("stage existing destination %s aside: %w", dst, err)
+	}
+	stats, err := moveWorkspaceTree(ctx, ws, src, dst)
+	if err != nil {
+		// A cross-device fallback may have left a partial destination. Clear
+		// it before restoring the original tree.
+		_ = ws.RemoveAll(ctx, dst)
+		if restoreErr := ws.Move(ctx, backup, dst); restoreErr != nil {
+			return stats, fmt.Errorf("move failed (%v); old destination backup at %s; restore failed: %w", err, backup, restoreErr)
+		}
 		return stats, err
 	}
-	if err := ws.RemoveAll(ctx, src); err != nil {
-		return stats, fmt.Errorf("moved %s to %s but could not remove the source: %w", src, dst, err)
+	if err := ws.RemoveAll(ctx, backup); err != nil {
+		return stats, fmt.Errorf("moved to %s but could not remove the backup %s: %w", dst, backup, err)
 	}
 	return stats, nil
 }
 
 func treeStagingPath(ctx context.Context, ws Workspace, dst string) (string, error) {
 	parent := wsPathDir(ws, dst)
-	base := treePathBase(ws, dst)
 	for attempt := 0; attempt < 4; attempt++ {
 		var suffix [8]byte
 		if _, err := rand.Read(suffix[:]); err != nil {
 			return "", fmt.Errorf("staging name: %w", err)
 		}
-		candidate := ws.Join(parent, fmt.Sprintf(".%s.yaah-tmp-%x", base, suffix))
+		// A fixed short prefix keeps the name under NAME_MAX even when the
+		// destination basename is already near the limit.
+		candidate := ws.Join(parent, fmt.Sprintf(".yaah-tmp-%x", suffix))
 		_, err := ws.Lstat(ctx, candidate)
 		if errors.Is(err, fs.ErrNotExist) {
 			return candidate, nil
@@ -357,13 +421,6 @@ func treeStagingPath(ctx context.Context, ws Workspace, dst string) (string, err
 		}
 	}
 	return "", fmt.Errorf("could not allocate a staging path beside %s", dst)
-}
-
-func treePathBase(ws Workspace, p string) string {
-	if ws.Local() {
-		return filepath.Base(p)
-	}
-	return path.Base(p)
 }
 
 func moveWorkspaceTree(ctx context.Context, ws Workspace, src, dst string) (treeStats, error) {

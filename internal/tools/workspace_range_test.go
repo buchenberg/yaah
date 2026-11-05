@@ -50,6 +50,9 @@ func TestLocalWorkspaceAppendAndReadRange(t *testing.T) {
 	if err != nil || len(got) != 0 {
 		t.Fatalf("ReadRange past EOF = %q, %v", got, err)
 	}
+	if _, err := ws.ReadRange(context.Background(), path, -1, 4); err == nil {
+		t.Fatal("ReadRange accepted a negative offset")
+	}
 }
 
 func TestSandboxWorkspaceAppendAndReadRange(t *testing.T) {
@@ -82,6 +85,9 @@ func TestSandboxWorkspaceAppendAndReadRange(t *testing.T) {
 	got, err = ws.ReadRange(ctx, "/ledger.jsonl", 100, 10)
 	if err != nil || len(got) != 0 {
 		t.Fatalf("ReadRange past EOF = %q, %v", got, err)
+	}
+	if _, err := ws.ReadRange(ctx, "/ledger.jsonl", -1, 4); err == nil {
+		t.Fatal("sandbox ReadRange accepted a negative offset")
 	}
 }
 

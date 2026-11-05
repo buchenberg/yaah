@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"container/heap"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -15,6 +16,23 @@ import (
 )
 
 const findMaxResults = 1000
+
+// findResultHeap keeps the lexicographically smallest findMaxResults results
+// without materializing every match: Less is inverted so the heap root is the
+// largest kept result, the one a smaller candidate replaces.
+type findResultHeap []string
+
+func (h findResultHeap) Len() int           { return len(h) }
+func (h findResultHeap) Less(i, j int) bool { return h[i] > h[j] }
+func (h findResultHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *findResultHeap) Push(x any)        { *h = append(*h, x.(string)) }
+func (h *findResultHeap) Pop() any {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[:n-1]
+	return x
+}
 
 // FindTool searches a workspace tree by name, size, modification age, and
 // entry type, returning path + metadata so a caller does not have to ls and
@@ -110,7 +128,8 @@ func (t *FindTool) Execute(ctx context.Context, args string) (string, error) {
 		return "", fmt.Errorf("find: %w", err)
 	}
 	now := time.Now()
-	var results []string
+	var results findResultHeap
+	total := 0
 	walkErr := walkWorkspace(ctx, ws, root, func(p string, d fs.DirEntry, werr error) error {
 		if werr != nil || d == nil {
 			return nil
@@ -151,26 +170,32 @@ func (t *FindTool) Execute(ctx context.Context, args string) (string, error) {
 		if older > 0 && age < older {
 			return nil
 		}
-		results = append(results, fmt.Sprintf("%s\t%d\t%s", p, info.Size(), info.ModTime().UTC().Format(time.RFC3339)))
+		total++
+		line := fmt.Sprintf("%s\t%d\t%s", p, info.Size(), info.ModTime().UTC().Format(time.RFC3339))
+		if results.Len() < findMaxResults {
+			heap.Push(&results, line)
+		} else if line < results[0] {
+			results[0] = line
+			heap.Fix(&results, 0)
+		}
 		return nil
 	})
 	if walkErr != nil && walkErr != filepath.SkipDir && walkErr != filepath.SkipAll {
 		return "", fmt.Errorf("find: %w", walkErr)
 	}
-	if len(results) == 0 {
+	if total == 0 {
 		return "No matches.", nil
 	}
 	sort.Strings(results)
-	total := len(results)
-	if total > findMaxResults {
-		results = results[:findMaxResults]
-	}
 	out := strings.Join(results, "\n")
 	if total > findMaxResults {
-		// Prefix the marker so truncateResult's head-preserving cap cannot
-		// remove it. Results are sorted before the cutoff, so the retained
-		// set is the lexicographically first page rather than traversal order.
-		out = fmt.Sprintf("...[truncated: showing %d of %d matches]...\n%s", findMaxResults, total, out)
+		// Only claim a row count when the prefix and every kept row fit the
+		// result cap. Otherwise a single head-cap marker is the honest
+		// description; the count would overstate what was returned.
+		withMarker := fmt.Sprintf("...[showing %d of %d matches]...\n%s", findMaxResults, total, out)
+		if len(withMarker) <= toolResultMaxBytes {
+			return withMarker, nil
+		}
 	}
 	return truncateResult(out), nil
 }

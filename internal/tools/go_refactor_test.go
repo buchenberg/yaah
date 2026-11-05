@@ -76,7 +76,10 @@ func (m *memFS) ReadRange(_ context.Context, p string, offset, length int64) ([]
 	if !ok {
 		return nil, &fs.PathError{Op: "open", Path: p, Err: fs.ErrNotExist}
 	}
-	if offset < 0 || length <= 0 || offset >= int64(len(c)) {
+	if offset < 0 {
+		return nil, errors.New("read range: offset must be non-negative")
+	}
+	if length <= 0 || offset >= int64(len(c)) {
 		return []byte{}, nil
 	}
 	end := offset + length

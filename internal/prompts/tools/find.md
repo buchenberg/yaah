@@ -9,9 +9,10 @@ keeps entries modified within the given duration (`24h`, `30m`), while
 `older_than` keeps entries not modified within it. Durations are Go duration
 strings: use hours for days (`168h`), because `d` is not a duration unit.
 
-Symlinks are skipped, so a search cannot wander outside the workspace. All
-matches are sorted before the first 1000 are returned, so the kept page is
-lexicographically first rather than traversal order; a prefix marker reports
-how many matched when the cap trims the list. The output is also capped at the
-tool result limit. This is a read-only tool: use `glob` when you only need
-names, and `find` when size or modification age is part of the query.
+Symlinks are skipped, so a search cannot wander outside the workspace. A
+bounded heap keeps the lexicographically smallest 1000 matches, so a huge tree
+does not accumulate every match; the kept page is sorted before output. When
+the match cap trims the list and the whole page fits the result cap, a prefix
+marker reports the total. The output is also capped at the tool result limit.
+This is a read-only tool: use `glob` when you only need names, and `find` when
+size or modification age is part of the query.

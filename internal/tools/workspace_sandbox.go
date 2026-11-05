@@ -265,7 +265,10 @@ func (w *sandboxWorkspace) Append(ctx context.Context, p string, data []byte, pe
 // tools using it still bound what reaches the model. The host implementation
 // seeks instead and never reads outside the requested window.
 func (w *sandboxWorkspace) ReadRange(ctx context.Context, p string, offset, length int64) ([]byte, error) {
-	if offset < 0 || length <= 0 {
+	if offset < 0 {
+		return nil, fmt.Errorf("read range: offset must be non-negative")
+	}
+	if length <= 0 {
 		return []byte{}, nil
 	}
 	data, err := w.sb.ReadFile(ctx, p)
@@ -484,6 +487,12 @@ func (w *sandboxWorkspace) Move(ctx context.Context, src, dst string) error {
 		return err
 	}
 	after, afterErr := w.Lstat(ctx, dst)
+	if errors.Is(afterErr, fs.ErrNotExist) && isCrossDeviceMoveError(err) {
+		// mv refused across mounts and left no destination behind. Mark it
+		// so move_tree can copy+remove; a partial mv stays an ordinary
+		// error and must not be retried into a merge.
+		return fmt.Errorf("%w: %v", errCrossDevice, err)
+	}
 	if afterErr != nil {
 		return err
 	}
@@ -491,6 +500,16 @@ func (w *sandboxWorkspace) Move(ctx context.Context, src, dst string) error {
 		return &partialMoveError{Src: src, Dst: dst, Err: err}
 	}
 	return err
+}
+
+func isCrossDeviceMoveError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "cross-device") ||
+		strings.Contains(s, "cross device") ||
+		strings.Contains(s, "cross-filesystem")
 }
 
 // sameSandboxFile compares the metadata a sandbox stat exposes, used to tell a

@@ -350,7 +350,10 @@ func (w *localWorkspace) Append(_ context.Context, path string, data []byte, per
 // ReadRange seeks to offset and reads at most length bytes. A non-positive
 // length is an empty read, not an error: callers use it to request nothing.
 func (w *localWorkspace) ReadRange(_ context.Context, path string, offset, length int64) ([]byte, error) {
-	if offset < 0 || length <= 0 {
+	if offset < 0 {
+		return nil, fmt.Errorf("read range: offset must be non-negative")
+	}
+	if length <= 0 {
 		return []byte{}, nil
 	}
 	f, err := os.Open(path)
@@ -443,20 +446,25 @@ func (e *partialMoveError) Error() string {
 
 func (e *partialMoveError) Unwrap() error { return e.Err }
 
-// Move renames a file on the host. os.Rename moves the directory entry, so the
-// content, the mode, and (within one filesystem) ownership survive without the
-// bytes ever being read — the cheapest exact move available. Across filesystems
-// (EXDEV) it falls back to Copy plus Remove, matching the sandbox mv's
-// transparent behavior at the cost of actually reading the bytes.
+// errCrossDevice marks a substrate move that refused because the source and
+// destination are on different mounts. A caller may copy+remove only for this
+// error; any other move failure may have left partial state.
+var errCrossDevice = errors.New("cross-device move")
+
 // isCrossDeviceErr recognises the platform's cross-filesystem rename error.
 // Windows reports ERROR_NOT_SAME_DEVICE (17) where Unix reports EXDEV (18).
 func isCrossDeviceErr(err error) bool {
-	if errors.Is(err, syscall.EXDEV) {
+	if errors.Is(err, errCrossDevice) || errors.Is(err, syscall.EXDEV) {
 		return true
 	}
 	return runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(17))
 }
 
+// Move renames a file on the host. os.Rename moves the directory entry, so the
+// content, the mode, and (within one filesystem) ownership survive without the
+// bytes ever being read — the cheapest exact move available. Across filesystems
+// (EXDEV) it falls back to Copy plus Remove, matching the sandbox mv's
+// transparent behavior at the cost of actually reading the bytes.
 func (w *localWorkspace) Move(ctx context.Context, src, dst string) error {
 	err := os.Rename(src, dst)
 	if err == nil || !isCrossDeviceErr(err) {

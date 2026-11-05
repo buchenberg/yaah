@@ -136,6 +136,9 @@ func (t *BulkFilesTool) Execute(ctx context.Context, args string) (string, error
 		if pathWithin(ws, root, toRoot) {
 			return "", fmt.Errorf("bulk_files: destination %s is inside the search root %s", toRoot, root)
 		}
+		if err := refuseSymlinkAncestors(ctx, ws, toRoot); err != nil {
+			return "", fmt.Errorf("bulk_files: %w", err)
+		}
 	}
 
 	re, err := patternToRegex(filepath.ToSlash(params.Pattern))

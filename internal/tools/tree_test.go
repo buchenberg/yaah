@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -134,6 +135,20 @@ func TestMoveWorkspaceTreeFallsBackOnlyForCrossDevice(t *testing.T) {
 	}
 	if data, err := os.ReadFile(filepath.Join(dst, "a", "b", "two.txt")); err != nil || string(data) != "two\n" {
 		t.Fatalf("cross-device fallback content = %q, %v", data, err)
+	}
+
+	srcSentinel := filepath.Join(dir, "src-sentinel")
+	seedTree(t, srcSentinel)
+	dstSentinel := filepath.Join(dir, "dst-sentinel")
+	sentinelWS := moveErrorWorkspace{
+		Workspace: base,
+		err:       fmt.Errorf("%w: mv: invalid cross-device link", errCrossDevice),
+	}
+	if _, err := moveWorkspaceTree(context.Background(), sentinelWS, srcSentinel, dstSentinel); err != nil {
+		t.Fatalf("substrate cross-device fallback: %v", err)
+	}
+	if _, err := os.Stat(dstSentinel); err != nil {
+		t.Fatalf("substrate cross-device destination: %v", err)
 	}
 
 	src2 := filepath.Join(dir, "src2")
