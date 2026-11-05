@@ -1,9 +1,11 @@
 package memory
 
 import (
-	"bytes"
 	"context"
+	"fmt"
 	"os"
+	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -33,45 +35,62 @@ func TestGGUFSmoke(t *testing.T) {
 // TestGGUFSilentLoad guards the TUI-critical invariant: the FIRST llama
 // load (library + backend scan + model + decode) must write nothing to
 // stdout or stderr. The ggml backend loader's progress lines print through
-// the default log callback — a raw write to the process tty — and inside
-// the TUI that interleave with tcell repaints into garbled screen
-// artifacts. Run with YAAH_GGUF_SMOKE=1 (third review pass, yaah-x58j).
+// the default log callback — a raw fd-2 write — and inside the TUI that
+// interleave with tcell repaints into garbled screen artifacts (yaah-x58j).
+//
+// The guard runs the whole load in a FRESH SUBPROCESS (the test binary
+// re-invoking itself), because llamaOnce is process-global: in-process the
+// earlier TestGGUFSmoke would consume the once-guard and the assertion
+// would pass vacuously regardless of ordering. A child process also makes
+// the capture fd-level: the child's raw fds 1/2 are the pipes the parent
+// reads, so C-side writes (purego/llama.cpp) are caught too (third review
+// pass kilo-code-bot). Run with YAAH_GGUF_SMOKE=1.
 func TestGGUFSilentLoad(t *testing.T) {
 	if os.Getenv("YAAH_GGUF_SMOKE") == "" {
 		t.Skip("set YAAH_GGUF_SMOKE=1 to run")
 	}
-
-	capture := func() func() (string, string) {
-		stdoutR, stdoutW, _ := os.Pipe()
-		stderrR, stderrW, _ := os.Pipe()
-		oldOut, oldErr := os.Stdout, os.Stderr
-		os.Stdout, os.Stderr = stdoutW, stderrW
-		restore := func() (string, string) {
-			os.Stdout, os.Stderr = oldOut, oldErr
-			stdoutW.Close()
-			stderrW.Close()
-			var outB, errB bytes.Buffer
-			outB.ReadFrom(stdoutR)
-			errB.ReadFrom(stderrR)
-			stdoutR.Close()
-			stderrR.Close()
-			return outB.String(), errB.String()
-		}
-		return restore
+	if os.Getenv("YAAH_GGUF_SILENT_CHILD") == "1" {
+		runSilentProbe()
+		return
 	}
 
-	restore := capture()
-	e := NewGGUFEmbedder(os.Getenv("YAAH_GGUF_LIB"), os.Getenv("YAAH_GGUF_MODEL"), "search_query: ", "search_document: ")
-	emb, err := e.EmbedQuery(context.Background(), "silent load guard")
-	out, errOut := restore()
+	cmd := exec.Command(os.Args[0], "-test.run", "^TestGGUFSilentLoad$", "-test.v=false")
+	cmd.Env = append(os.Environ(), "YAAH_GGUF_SILENT_CHILD=1")
+	cmd.Stdin = nil
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Logf("captured stdout=%q stderr=%q", out, errOut)
-		t.Fatalf("EmbedQuery: %v", err)
+		t.Fatalf("silent-load probe failed: %v\n%s", err, out)
+	}
+	// The child may print only its own probe sentinel lines and the test
+	// binary's trailing "PASS". Every other byte is a leak.
+	allowed := 0
+	for _, ln := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if ln == "" || ln == "PASS" || strings.HasPrefix(ln, "OK dims=") {
+			allowed++
+			continue
+		}
+	}
+	if allowed != len(strings.Split(strings.TrimSpace(string(out)), "\n")) {
+		t.Errorf("first llama load leaked to the process tty — child output:\n%s", out)
+	}
+}
+
+// runSilentProbe is the subprocess body: one full embed with the model's
+// own stdout summary and nothing else.
+func runSilentProbe() {
+	e := NewGGUFEmbedder(os.Getenv("YAAH_GGUF_LIB"), os.Getenv("YAAH_GGUF_MODEL"), "search_query: ", "search_document: ")
+	childFailed := func(err error) {
+		// Errors go to Go's log (stderr is ours); exit nonzero so the
+		// parent's CombinedOutput non-empty-fails it anyway.
+		fmt.Fprintln(os.Stderr, "probe error:", err)
+		os.Exit(1)
+	}
+	emb, err := e.EmbedQuery(context.Background(), "silent load guard")
+	if err != nil {
+		childFailed(err)
 	}
 	if len(emb) < 3 {
-		t.Fatalf("embedding too short to validate: %d dims", len(emb))
+		childFailed(fmt.Errorf("embedding too short to validate: %d dims", len(emb)))
 	}
-	if out != "" || errOut != "" {
-		t.Errorf("first llama load leaked to the process tty: stdout=%q stderr=%q", out, errOut)
-	}
+	fmt.Printf("OK dims=%d first=[%.6g]\n", len(emb), emb[0])
 }
