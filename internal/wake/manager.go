@@ -335,8 +335,11 @@ func (m *Manager) Rehydrate(ctx context.Context) error {
 				})
 				continue
 			}
+			// Snapshot before the poller starts: a fast fire writes
+			// w.evidence under m.mu, and infoOf reads it outside the lock.
+			info := infoOf(w)
 			m.startWatch(w)
-			m.observeWatchArmed(infoOf(w))
+			m.observeWatchArmed(info)
 		}
 	}
 	if len(missed) > 0 {
