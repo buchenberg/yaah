@@ -120,10 +120,12 @@ func TestIsThinkingModel(t *testing.T) {
 		// of falling through to the snapshot's reasoning flag.
 		{"deepseek-chat-0324", false},
 		{"deepseek/deepseek-chat-0324", false},
-		// The pin beats the snapshot's own exact entry: models.dev flags
-		// deepseek-chat-v3.1 as reasoning:true, but "deepseek-chat" is an
-		// alias to deepseek-v4-flash upstream, so the whole line reaches
-		// yaah's OpenAI-compatible path as chat-only (see nonThinkingModels).
+		// The hyphen boundary is where the family rule is applied, and dots
+		// inside the suffix are preserved rather than normalized: "v3.1" is a
+		// variant below the boundary, so the pin answers for it. The pin is
+		// consulted before the snapshot, so this expectation holds whatever
+		// the current snapshot says about the exact ID — it does not inherit
+		// the family's reasoning claim.
 		{"deepseek-chat-v3.1", false},
 		// The hyphen boundary is the other half of the family rule:
 		// "deepseek-chatbot" is NOT a deepseek-chat variant, so the pin must
@@ -266,6 +268,23 @@ func TestIsThinkingModelPrecedence(t *testing.T) {
 		// when the snapshot has never heard of the exact ID.
 		if !IsThinkingModel("deepseek-v4-anything") {
 			t.Error("IsThinkingModel(deepseek-v4-anything) = false, want the hand prefix match")
+		}
+	})
+
+	t.Run("explicit false pin beats the heuristics", func(t *testing.T) {
+		// The pin is consulted before the hand thinking tables, so an explicit
+		// false decides even for an ID the heuristics would call reasoning.
+		// Swapping the map proves the ordering from test data alone, without
+		// borrowing a claim about what the snapshot or the shipped pins say.
+		const model = "deepseek-v4-flash"
+		if !IsThinkingModel(model) {
+			t.Fatalf("IsThinkingModel(%q) = false before the pin; the case proves nothing", model)
+		}
+		prev := nonThinkingModels
+		t.Cleanup(func() { nonThinkingModels = prev })
+		nonThinkingModels = map[string]bool{model: true}
+		if IsThinkingModel(model) {
+			t.Errorf("IsThinkingModel(%q) = true under an explicit false pin; the pin must outrank the heuristics", model)
 		}
 	})
 

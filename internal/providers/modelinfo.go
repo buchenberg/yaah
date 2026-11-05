@@ -161,16 +161,25 @@ var thinkingModels = map[string]bool{
 // nonThinkingModels pins models the models.dev snapshot flags as reasoning
 // but that yaah must treat as chat-only: "reasoning_content on every assistant
 // message" is a provider quirk, not a model fact, and an upstream overclaim
-// must not make the provider reject the request. Deliberate local answers win,
-// so these pins beat both the true-families heuristics and the snapshot.
+// must not make the provider reject the request. An explicit false pin is the
+// answer here rather than evidence to be weighed against other evidence — it is
+// consulted first, before the true-families heuristics and before the snapshot,
+// so regenerating data.json changes what the snapshot claims without reopening
+// this question. Whatever the snapshot says about an ID, the pin decides it.
 //
-// The family-wide pin is intended, not an over-broad accident. The snapshot is
-// the evidence: it aliases "deepseek-chat" onto "deepseek-v4-flash" (a
-// reasoning model), so an exact-key carve-out would be incoherent — the two
-// IDs are the same model upstream. yaah treats the whole deepseek-chat line as
-// chat-only on its OpenAI-compatible path, which is also why
-// "deepseek-chat-v3.1", carrying its own reasoning:true entry, is deliberately
-// flipped here: it belongs to the family the alias declaration calls chat.
+// The family-wide pin is intended, not an over-broad accident. "deepseek-chat"
+// names a line as it reaches yaah's OpenAI-compatible path, not a single dated
+// release, and the request that path builds for the line is valid without
+// reasoning_content. An exact-key carve-out would be incoherent: sibling
+// spellings carry their own snapshot entries — "deepseek-chat-v3.1" has one
+// saying reasoning:true — so the answer would flip on which spelling an
+// operator typed even though the wire format is the same either way. yaah
+// therefore treats the whole deepseek-chat line as chat-only on that path.
+//
+// History, kept because an earlier revision of this comment leaned on it: the
+// snapshot used to alias "deepseek-chat" onto "deepseek-v4-flash", and the
+// regeneration that dropped the alias is precisely why the argument above
+// stands on the quirk framing instead of on a neighbouring snapshot entry.
 //
 // Keyed like thinkingModels (sanitized, lowercase). A pin also covers its
 // variants — the key matches by exact name or by a hyphen-delimited family

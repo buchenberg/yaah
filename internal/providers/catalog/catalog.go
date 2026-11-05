@@ -173,16 +173,18 @@ var decodeSnapshot = func() (*index, error) { return indexFromData(dataJSON) }
 // loadIndex is the once-loader's body. It never returns nil: a broken snapshot
 // degrades to the empty index, so a lookup that happens after a bad build
 // answers "unknown" rather than panicking mid-run. It says so once, loudly,
-// instead of degrading in silence.
+// instead of degrading in silence. The nil guard sits outside the error branch
+// so the guarantee covers every seam, including one that decodes "cleanly" but
+// yields no index at all.
 func loadIndex() *index {
 	ix, err := decodeSnapshot()
 	if err != nil {
 		decodeErr = err
 		slog.Warn("catalog: embedded snapshot is unusable; every lookup will report unknown",
 			"err", err, "fix", "go run ./tools/cataloggen")
-		if ix == nil {
-			ix = emptyIndex()
-		}
+	}
+	if ix == nil {
+		ix = emptyIndex()
 	}
 	return ix
 }

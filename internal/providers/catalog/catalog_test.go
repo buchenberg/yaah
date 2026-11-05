@@ -205,6 +205,22 @@ func TestDecodeNilIndexDegrades(t *testing.T) {
 	}
 }
 
+// The "never nil" guarantee has to hold for every seam, not just the error
+// branch: a seam that reports no error and still hands back no index must
+// degrade too, or the next lookup dereferences nil.
+func TestDecodeNilIndexWithoutErrorDegrades(t *testing.T) {
+	withStubbedDecode(t, func() (*index, error) { return nil, nil })
+	if err := DecodeErr(); err != nil {
+		t.Fatalf("DecodeErr() = %v, want nil for a seam that reports no error", err)
+	}
+	if Len() != 0 {
+		t.Errorf("Len() = %d for a nil-yielding seam, want 0", Len())
+	}
+	if e, ok := Lookup("gpt-4o"); ok {
+		t.Errorf("Lookup on a nil-yielding catalog reported a hit: %+v", e)
+	}
+}
+
 func TestNormalize(t *testing.T) {
 	tests := []struct {
 		name string
