@@ -91,18 +91,28 @@ type Unadopted struct {
 }
 
 // Report summarizes one recovery for the caller's startup output.
+// Quarantined is one owner recovery dropped entirely: the trace holds
+// contradictory lifecycle records for it (e.g. a halt beside a merge), or
+// it descends from such an owner.
+type Quarantined struct {
+	// Owner is the trace owner the kernel refused to recover.
+	Owner string
+	// Path and Repo are the owner's recorded worktree and repository,
+	// when its fork record carried an address. The worktree is left on
+	// disk — it may hold the only copy of unmerged work — and listed
+	// here, never deleted.
+	Path string
+	Repo string
+}
+
 type Report struct {
-	Scopes    int
-	Roots     int
-	Adopted   []string // paths of worktree children re-adopted (their work is live again)
-	Orphans   []Orphan
-	Missing   []Missing
-	Unadopted []Unadopted
-	// Quarantined lists owners recovery dropped entirely: the kernel
-	// found contradictory terminal records for them (e.g. a halt beside a
-	// merge) or they descend from such an owner. Their worktrees — if any
-	// — are handled like the other unadopted cases: listed, never deleted.
-	Quarantined []string
+	Scopes      int
+	Roots       int
+	Adopted     []string // paths of worktree children re-adopted (their work is live again)
+	Orphans     []Orphan
+	Missing     []Missing
+	Unadopted   []Unadopted
+	Quarantined []Quarantined
 }
 
 // Recover rebuilds the ScopeManager from the trace's durable records
@@ -204,7 +214,9 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 	if err != nil {
 		return nil, nil, err
 	}
-	quarantined := append([]string(nil), stats.Quarantined...)
+	// Quarantined owners carry no scope in the manager: their worktree
+	// addresses are captured into report.Quarantined below, so the
+	// worktree loop's no-scope skip cannot lose them.
 
 	// Orphans stay inert (warn-only means never deletable): a terminal
 	// scope's worktree must not carry an owned sandbox handle a later
@@ -221,7 +233,14 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 		}
 	}
 
-	report := &Report{Quarantined: quarantined}
+	report := &Report{}
+	for _, owner := range stats.Quarantined {
+		q := Quarantined{Owner: owner}
+		if info, ok := paths[owner]; ok {
+			q.Path, q.Repo = info.path, info.repo
+		}
+		report.Quarantined = append(report.Quarantined, q)
+	}
 	for _, scope := range mgr.AllScopes() {
 		report.Scopes++
 		if scope.Parent() == nil {
@@ -231,8 +250,11 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 	for owner, info := range paths {
 		scope, ok := mgr.Get("scope:" + owner)
 		if !ok {
-			// A record whose fork failed before it happened; the
-			// provisioning path destroys the worktree in that case.
+			// No scope: either the fork failed before it happened (the
+			// provisioning path destroys the worktree in that case) or
+			// the owner was quarantined — its worktree is already listed
+			// with its address in report.Quarantined, not re-classified
+			// here.
 			continue
 		}
 		_, statErr := os.Stat(info.path)

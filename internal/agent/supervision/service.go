@@ -494,6 +494,14 @@ func (s *Service) deliverHalt(scopeID, reason string) {
 			"scope", scopeID)
 		return
 	}
+	if scope, ok := s.mgr.Get(scopeID); ok && scope.State() == goatherd.ScopeMerged {
+		// Merged is terminal: the kernel refuses a halt beside the merge
+		// record. Skip before touching any run — cancelling a run for a
+		// scope the kernel would refuse to halt is a side effect with no
+		// halt to show for it.
+		slog.Info("supervisor: halt skipped — scope already merged (terminal)", "scope", scopeID)
+		return
+	}
 
 	var quiesced, waited bool
 	if quiesce, err := s.runs.Cancel(scopeID); err == nil {
@@ -523,13 +531,6 @@ func (s *Service) deliverHalt(scopeID, reason string) {
 		return
 	}
 	if scope, ok := s.mgr.Get(scopeID); ok {
-		if scope.State() == goatherd.ScopeMerged {
-			// Merged is terminal: the kernel refuses a halt beside the
-			// merge record. Nothing is running under it; say so, not a
-			// failure.
-			slog.Info("supervisor: halt skipped — scope already merged (terminal)", "scope", scopeID)
-			return
-		}
 		if err := scope.Halt(); err != nil {
 			slog.Warn("supervisor: kernel halt failed", "scope", scopeID, "err", err)
 			return

@@ -884,7 +884,7 @@ func CheckShepherd(cfg *config.Config, cfgErr error) Check {
 		warns = append(warns, fmt.Sprintf("%d unadopted worktree(s): %s", n, joinPaths(report.Unadopted[0].Path, n)))
 	}
 	if n := len(report.Quarantined); n > 0 {
-		warns = append(warns, fmt.Sprintf("%d quarantined scope(s): %s — contradictory trace records; not recovered", n, report.Quarantined[0]))
+		warns = append(warns, fmt.Sprintf("%d quarantined scope(s): %s — contradictory trace records; not recovered", n, joinPaths(report.Quarantined[0].Owner, n)))
 	}
 	if len(warns) > 0 {
 		status = "WARN"

@@ -184,6 +184,13 @@ func executeHalt(mgr *goatherd.ScopeManager, runs *supervision.Registry, scopeID
 	if !ok {
 		return "", fmt.Errorf("supervisor: scope %s not found", scopeID)
 	}
+	if scope.State() == goatherd.ScopeMerged {
+		// Merged is terminal: the kernel refuses a halt beside the merge
+		// record. Report the ending before touching any run — there is
+		// nothing to cancel and nothing to quiesce, and the refusal must
+		// not cost a haltQuiesceTimeout wait.
+		return fmt.Sprintf("%s is already merged (terminal); nothing to halt — its effects are integrated and no run is using it.", scopeID), nil
+	}
 	// Halt bridge (adoption plan A3): cancel the run FIRST, then WAIT —
 	// bounded — for it to quiesce before recording the kernel halt,
 	// which tears down an owned sandbox (an isolated child's worktree).
@@ -214,12 +221,6 @@ func executeHalt(mgr *goatherd.ScopeManager, runs *supervision.Registry, scopeID
 		default:
 			return "", fmt.Errorf("supervisor: halt delivery failed: %w", err)
 		}
-	}
-	if scope.State() == goatherd.ScopeMerged {
-		// Merged is terminal: the kernel refuses a halt beside the merge
-		// record. Report the ending instead of an error — nothing is
-		// running under the scope and its work is already integrated.
-		return fmt.Sprintf("%s is already merged (terminal); nothing to halt — its effects are integrated and no run is using it.", scopeID), nil
 	}
 	if err := scope.Halt(); err != nil {
 		return "", fmt.Errorf("supervisor: halt failed: %w", err)
