@@ -88,6 +88,16 @@ func TestSplitGlobRoots(t *testing.T) {
 	}
 }
 
+// TestWakeGlobRejectsRootAnchored pins the containment answer for a pattern
+// whose walk root is the filesystem root: it is refused, not silently rewound
+// to the workspace (which would match files the pattern did not name).
+func TestWakeGlobRejectsRootAnchored(t *testing.T) {
+	_, ws := wakeTestWorkspace(t)
+	if _, err := wakeGlob(context.Background(), ws, "/*.log"); err == nil {
+		t.Fatal("root-anchored file pattern escaped workspace containment")
+	}
+}
+
 func TestWakeGlobDotfiles(t *testing.T) {
 	dir, ws := wakeTestWorkspace(t)
 	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("secret"), 0o644); err != nil {

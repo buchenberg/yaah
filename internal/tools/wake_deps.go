@@ -190,8 +190,13 @@ func hasGlobMeta(pattern string) bool {
 // splitGlob returns the non-magic prefix to walk from and the magic suffix
 // to match against a root-relative path. Splitting on segments (not a string
 // prefix) keeps dotfile patterns intact: ".*" has no literal root, so its
-// magic part is ".*", not "*". A root-anchored pattern such as "/*.log" keeps
-// its filesystem root; a relative one starts at the workspace.
+// magic part is ".*", not "*".
+//
+// A root-anchored pattern such as "/*.log" keeps "/" rather than being
+// silently rewound to the workspace. ResolvePath then refuses it as outside
+// the workspace (or accepts it when the workspace contains that path), which
+// is the containment rule every file tool follows. File predicates are
+// workspace-relative by design; the error is the honest answer.
 func splitGlob(pattern string) (root, magic string, err error) {
 	parts := strings.Split(pattern, "/")
 	i := 0
