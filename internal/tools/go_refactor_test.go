@@ -128,6 +128,21 @@ func (m *memFS) Remove(_ context.Context, p string) error {
 	return nil
 }
 
+func (m *memFS) RemoveAll(_ context.Context, p string) error {
+	prefix := p + "/"
+	for name := range m.files {
+		if name == p || strings.HasPrefix(name, prefix) {
+			delete(m.files, name)
+		}
+	}
+	for name := range m.dirs {
+		if name == p || strings.HasPrefix(name, prefix) {
+			delete(m.dirs, name)
+		}
+	}
+	return nil
+}
+
 func (m *memFS) MkdirAll(_ context.Context, p string, _ fs.FileMode) error {
 	m.dirs[p] = true
 	return nil

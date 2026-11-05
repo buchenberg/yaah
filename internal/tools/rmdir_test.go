@@ -75,6 +75,63 @@ func TestRmdirTool_refusesFile(t *testing.T) {
 	}
 }
 
+func TestRmdirTool_recursiveRemovesTree(t *testing.T) {
+	dir := t.TempDir()
+	tree := filepath.Join(dir, "tree")
+	if err := os.MkdirAll(filepath.Join(tree, "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(tree, "file.txt"), []byte("x"))
+	writeFile(t, filepath.Join(tree, "nested", "deep.txt"), []byte("y"))
+
+	result, err := hostRmdirTool(dir).Execute(context.Background(),
+		transferArgs(t, map[string]any{"path": tree, "recursive": true}))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result, "tree") {
+		t.Errorf("result = %q, want the removed path", result)
+	}
+	if _, statErr := os.Stat(tree); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Errorf("tree still present: %v", statErr)
+	}
+}
+
+func TestRmdirTool_recursiveRefusesFile(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "regular.txt")
+	writeFile(t, file, []byte("x"))
+
+	_, err := hostRmdirTool(dir).Execute(context.Background(),
+		transferArgs(t, map[string]any{"path": file, "recursive": true}))
+	if err == nil {
+		t.Fatal("recursive rmdir on a file must be refused")
+	}
+	if !strings.Contains(err.Error(), "use delete") {
+		t.Errorf("error = %q, want a pointer to delete", err)
+	}
+	if _, statErr := os.Stat(file); statErr != nil {
+		t.Errorf("file removed by a refused rmdir: %v", statErr)
+	}
+}
+
+func TestRmdirTool_refusesWorkspaceRoot(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "keep.txt"), []byte("keep"))
+
+	_, err := hostRmdirTool(dir).Execute(context.Background(),
+		transferArgs(t, map[string]any{"path": dir, "recursive": true}))
+	if err == nil {
+		t.Fatal("recursive rmdir of the workspace root must be refused")
+	}
+	if !strings.Contains(err.Error(), "workspace root") {
+		t.Errorf("error = %q, want a workspace-root refusal", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "keep.txt")); statErr != nil {
+		t.Errorf("workspace root contents were removed: %v", statErr)
+	}
+}
+
 func TestRmdirTool_missingPath(t *testing.T) {
 	dir := t.TempDir()
 	_, err := hostRmdirTool(dir).Execute(context.Background(),
@@ -139,6 +196,26 @@ func TestRmdirTool_sandboxParity(t *testing.T) {
 		t.Fatal("rmdir on a sandbox file must be refused")
 	} else if !strings.Contains(err.Error(), "use delete") {
 		t.Errorf("sandbox file error = %q, want a pointer to delete", err)
+	}
+
+	// Recursive removal takes the whole tree, and the sandbox root is never a
+	// legal target.
+	if err := ws.MkdirAll(ctx, "/workspace/tree/nested", 0o755); err != nil {
+		t.Fatalf("seed tree: %v", err)
+	}
+	if err := ws.WriteFile(ctx, "/workspace/tree/nested/deep.txt", []byte("y"), 0o644); err != nil {
+		t.Fatalf("seed deep file: %v", err)
+	}
+	if _, err := tool.Execute(ctx,
+		transferArgs(t, map[string]any{"path": "/workspace/tree", "recursive": true})); err != nil {
+		t.Fatalf("recursive Execute: %v", err)
+	}
+	if _, err := ws.Stat(ctx, "/workspace/tree"); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("tree still present in the sandbox: %v", err)
+	}
+	if _, err := tool.Execute(ctx,
+		transferArgs(t, map[string]any{"path": "/workspace", "recursive": true})); err == nil {
+		t.Fatal("recursive rmdir of the sandbox root must be refused")
 	}
 }
 

@@ -101,6 +101,10 @@ type Workspace interface {
 	// Remove deletes a file or an empty directory, matching os.Remove. A
 	// non-empty directory is an error.
 	Remove(ctx context.Context, path string) error
+	// RemoveAll deletes path and, when it is a directory, everything under it,
+	// matching os.RemoveAll. A missing path is not an error. Implementations
+	// must refuse the workspace root.
+	RemoveAll(ctx context.Context, path string) error
 	MkdirAll(ctx context.Context, path string, perm fs.FileMode) error
 
 	// Move renames src to dst, preserving the file's bytes and permission mode.
@@ -344,6 +348,22 @@ func (w *localWorkspace) Remove(_ context.Context, path string) error {
 	// os.Remove already removes a file or an empty directory, which is the
 	// Workspace contract rmdir and delete both rely on.
 	return os.Remove(path)
+}
+
+// RemoveAll deletes a tree, matching os.RemoveAll. It refuses the workspace
+// root: recursive removal is the one call where a path bug would be
+// unrecoverable, and the tool layer's guard should not be the only one.
+func (w *localWorkspace) RemoveAll(_ context.Context, path string) error {
+	if isRootPath(path) || (w.pv != nil && path == w.pv.WorkspaceRoot) {
+		return fmt.Errorf("refusing to remove the workspace root %s", path)
+	}
+	return os.RemoveAll(path)
+}
+
+// isRootPath reports whether p is a filesystem root: "/" on POSIX, or a volume
+// root such as "C:\" on Windows.
+func isRootPath(p string) bool {
+	return filepath.Clean(p) == filepath.VolumeName(p)+string(filepath.Separator)
 }
 
 func (w *localWorkspace) MkdirAll(_ context.Context, path string, perm fs.FileMode) error {

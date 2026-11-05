@@ -945,6 +945,30 @@ func TestSandboxWorkspace_MoveErrorClassification(t *testing.T) {
 	})
 }
 
+// TestWorkspace_RemoveAllRefusesRoot pins the defense-in-depth guard: the tool
+// refuses the workspace root first, but the workspace primitive refuses it too
+// so a future caller cannot wipe the tree with one recursive call.
+func TestWorkspace_RemoveAllRefusesRoot(t *testing.T) {
+	dir := t.TempDir()
+	pv := NewPathValidator(dir, false, nil)
+	pv.WorkDir = pv.WorkspaceRoot
+	ws := newLocalWorkspace(pv)
+	if err := ws.RemoveAll(context.Background(), dir); err == nil {
+		t.Error("host RemoveAll must refuse the workspace root")
+	}
+	if err := ws.RemoveAll(context.Background(), string(filepath.Separator)); err == nil {
+		t.Error("host RemoveAll must refuse the filesystem root")
+	}
+
+	sbWS := newSandboxWS(t, nil)
+	if err := sbWS.RemoveAll(context.Background(), "/workspace"); err == nil {
+		t.Error("sandbox RemoveAll must refuse the workspace root")
+	}
+	if err := sbWS.RemoveAll(context.Background(), "/"); err == nil {
+		t.Error("sandbox RemoveAll must refuse the container root")
+	}
+}
+
 // TestSandboxWorkspace_LstatDoesNotFollowLinks pins the Lstat/Stat split: a
 // symlink entry is reported as ModeSymlink without dereferencing, the two
 // calls run different stat invocations, and only Lstat's presence test accepts

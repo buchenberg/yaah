@@ -4,17 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path"
 
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
-// RmdirTool removes an empty directory from the workspace.
+// RmdirTool removes a directory from the workspace.
 //
-// It completes the explicit directory pair with mkdir. Removal is empty-only,
-// like the rmdir command: deleting a tree would make this a recursive
-// destructive primitive, so a caller removes the entries first with delete and
-// rmdir. A sandboxed sub-agent has no shell to fall back on, which is why the
-// leaf tool exists at all.
+// It completes the explicit directory pair with mkdir. The default is
+// empty-only, like the rmdir command; recursive=true removes the tree, the one
+// call where being explicit about the scope matters. A sandboxed sub-agent has
+// no shell to fall back on, which is why the leaf tool exists at all.
 type RmdirTool struct {
 	PV *PathValidator
 	WS Workspace
@@ -37,7 +37,12 @@ func (t *RmdirTool) Schema() json.RawMessage {
 		"properties": {
 			"path": {
 				"type": "string",
-				"description": "Absolute path of the empty directory to remove."
+				"description": "Absolute path of the directory to remove."
+			},
+			"recursive": {
+				"type": "boolean",
+				"description": "Remove the directory and everything under it. Default false: a non-empty directory is refused.",
+				"default": false
 			}
 		},
 		"required": ["path"]
@@ -49,7 +54,8 @@ func (t *RmdirTool) IsDangerous(string) bool { return true }
 
 func (t *RmdirTool) Execute(ctx context.Context, args string) (string, error) {
 	var params struct {
-		Path string `json:"path"`
+		Path      string `json:"path"`
+		Recursive bool   `json:"recursive"`
 	}
 	if err := json.Unmarshal([]byte(args), &params); err != nil {
 		return "", fmt.Errorf("rmdir: invalid arguments: %w", err)
@@ -64,6 +70,12 @@ func (t *RmdirTool) Execute(ctx context.Context, args string) (string, error) {
 		return "", fmt.Errorf("rmdir: %w", err)
 	}
 
+	// Refuse the workspace root before touching anything: removing it, with or
+	// without recursion, would dismantle the session's tree.
+	if atWorkspaceRoot(ws, t.PV, resolved) {
+		return "", fmt.Errorf("rmdir: refusing to remove the workspace root %s", resolved)
+	}
+
 	// Lstat: a symlink is not a directory to remove, and on the host a valid
 	// link was already resolved by the path layer. Files get a pointer to
 	// delete rather than a generic "not a directory" from the substrate.
@@ -74,8 +86,30 @@ func (t *RmdirTool) Execute(ctx context.Context, args string) (string, error) {
 	if !info.IsDir() {
 		return "", fmt.Errorf("rmdir: %s is not a directory; use delete for a file", resolved)
 	}
+	if params.Recursive {
+		if err := ws.RemoveAll(ctx, resolved); err != nil {
+			return "", fmt.Errorf("rmdir: %w", err)
+		}
+		return fmt.Sprintf("Removed directory tree %s", resolved), nil
+	}
 	if err := ws.Remove(ctx, resolved); err != nil {
 		return "", fmt.Errorf("rmdir: %w", err)
 	}
 	return fmt.Sprintf("Removed directory %s", resolved), nil
+}
+
+// atWorkspaceRoot reports whether resolved names the workspace root itself.
+// The validator's root is checked when one is present (a legacy host workspace
+// has no WorkDir), and WorkDir covers an injected sandbox.
+func atWorkspaceRoot(ws Workspace, pv *PathValidator, resolved string) bool {
+	if pv != nil && pv.WorkspaceRoot != "" && wsPathClean(ws, resolved) == wsPathClean(ws, pv.WorkspaceRoot) {
+		return true
+	}
+	if root := wsPathClean(ws, ws.WorkDir()); root != "" && root != "." && wsPathClean(ws, resolved) == root {
+		return true
+	}
+	if ws.Local() {
+		return isRootPath(resolved)
+	}
+	return path.Clean(resolved) == "/"
 }

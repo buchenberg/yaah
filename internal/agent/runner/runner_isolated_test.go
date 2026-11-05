@@ -60,6 +60,7 @@ func (fakeSandboxWorkspace) ReadDir(context.Context, string) ([]fs.DirEntry, err
 	return nil, fs.ErrNotExist
 }
 func (fakeSandboxWorkspace) Remove(context.Context, string) error                { return nil }
+func (fakeSandboxWorkspace) RemoveAll(context.Context, string) error             { return nil }
 func (fakeSandboxWorkspace) MkdirAll(context.Context, string, fs.FileMode) error { return nil }
 func (fakeSandboxWorkspace) Move(context.Context, string, string) error          { return nil }
 func (fakeSandboxWorkspace) Copy(context.Context, string, string) error          { return nil }

@@ -338,6 +338,17 @@ func (w *sandboxWorkspace) Remove(ctx context.Context, p string) error {
 	return w.run(ctx, `rm -f -- "$1"`, p)
 }
 
+// RemoveAll deletes a tree inside the sandbox with rm -rf. Like the host
+// implementation it refuses the workspace root, so a path bug cannot wipe the
+// container's working tree in one call.
+func (w *sandboxWorkspace) RemoveAll(ctx context.Context, p string) error {
+	clean := path.Clean(p)
+	if clean == "/" || clean == w.root {
+		return fmt.Errorf("refusing to remove the workspace root %s", clean)
+	}
+	return w.run(ctx, `rm -rf -- "$1"`, p)
+}
+
 // ReadDir lists a directory in-band. It uses `find -printf '%y\0%f\0'` rather
 // than `ls`: find emits a NUL-delimited stream, so a filename containing a
 // newline stays one entry instead of splitting into phantom entries, and it
