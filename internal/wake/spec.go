@@ -95,11 +95,46 @@ func DefaultInterval(src Source) time.Duration {
 	}
 }
 
-// MinInterval and MaxInterval bound a caller-supplied poll interval.
+// MinInterval and MaxInterval bound a caller-supplied poll interval. The
+// per-source ceilings below are usually tighter: a cheap file or health check
+// should not inherit the 30s ceiling a slow command needs.
 const (
 	MinInterval = 100 * time.Millisecond
 	MaxInterval = 30 * time.Second
 )
+
+// MaxIntervalFor is the backoff ceiling for a source. Zero means the source
+// does not poll (jobs block on their completion channel).
+func MaxIntervalFor(src Source) time.Duration {
+	switch src {
+	case SourceJob:
+		return 0
+	case SourceTime:
+		return time.Second
+	case SourceFile:
+		return 5 * time.Second
+	case SourceHTTP:
+		return 15 * time.Second
+	case SourceCommand, SourceProcess:
+		return MaxInterval
+	default:
+		return MaxInterval
+	}
+}
+
+// intervalFor normalizes a requested first interval for the source, applying
+// both the global bounds and the source's tighter ceiling.
+func intervalFor(src Source, requested time.Duration) time.Duration {
+	d := requested
+	if d <= 0 {
+		d = DefaultInterval(src)
+	}
+	d = clampInterval(d)
+	if max := MaxIntervalFor(src); max > 0 && d > max {
+		d = max
+	}
+	return d
+}
 
 // Condition is a parsed "until" clause.
 type condition struct {

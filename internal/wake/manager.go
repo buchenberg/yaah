@@ -3,6 +3,7 @@ package wake
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -25,9 +26,11 @@ func NewManager(opts Options) *Manager {
 		defaultExpiry: opts.DefaultExpiry,
 		maxExpiry:     opts.MaxExpiry,
 		onWake:        opts.OnWake,
+		observer:      opts.Observer,
 		ctx:           ctx,
 		cancel:        cancel,
 		watches:       make(map[string]*armedWatch),
+		delivered:     make(map[string]bool),
 	}
 	if m.digestWindow <= 0 {
 		m.digestWindow = DefaultDigestWindow
@@ -46,6 +49,14 @@ func NewManager(opts Options) *Manager {
 	}
 	if m.deps.Now == nil {
 		m.deps.Now = time.Now
+	}
+	m.ownerID = opts.OwnerID
+	if m.ownerID == "" {
+		m.ownerID = fmt.Sprintf("pid-%d", os.Getpid())
+	}
+	m.leaseDuration = opts.LeaseDuration
+	if m.leaseDuration <= 0 {
+		m.leaseDuration = DefaultLeaseDuration
 	}
 	return m
 }
@@ -88,13 +99,14 @@ func (m *Manager) SetOnWake(fn func(string)) {
 	m.mu.Unlock()
 }
 
-// Close stops every poller and drops undelivered digests. Fired watches stay
-// in the store: the next resume reports them as missed wakes rather than
-// losing them.
+// Close stops every poller and drops undelivered digests in this process.
+// Fired rows stay in the store and their short delivery lease is released, so
+// the next resume reports them as missed wakes rather than losing them.
 func (m *Manager) Close() {
 	m.closeOnce.Do(func() {
 		m.cancel()
 		var flushDone chan struct{}
+		var firedIDs []string
 		m.mu.Lock()
 		m.closed = true
 		if m.timer != nil {
@@ -110,6 +122,22 @@ func (m *Manager) Close() {
 				// The callback already started and closes done itself in
 				// finishFlush.
 				flushDone = m.flushDone
+			}
+		}
+		// Collect fired rows before dropping the map: their store leases
+		// must be released so a resume after this graceful close reports an
+		// undelivered digest instead of suppressing it.
+		seen := make(map[string]bool, len(m.watches)+len(m.pending))
+		for id, w := range m.watches {
+			if w.state == StateFired && !seen[id] {
+				firedIDs = append(firedIDs, id)
+				seen[id] = true
+			}
+		}
+		for _, p := range m.pending {
+			if !seen[p.id] {
+				firedIDs = append(firedIDs, p.id)
+				seen[p.id] = true
 			}
 		}
 		m.pending = nil
@@ -129,6 +157,28 @@ func (m *Manager) Close() {
 			case <-time.After(digestCloseTimeout):
 			}
 		}
+		if m.store != nil {
+			m.mu.Lock()
+			delivered := make(map[string]bool, len(firedIDs))
+			for _, id := range firedIDs {
+				delivered[id] = m.delivered[id]
+			}
+			m.mu.Unlock()
+			for _, id := range firedIDs {
+				if delivered[id] {
+					// The digest reached the session; a row left behind
+					// because Close set closed mid-flush must not be
+					// re-delivered.
+					_ = m.store.DeleteWatch(m.sessionID, id)
+					continue
+				}
+				// Undelivered: make it visible to the next resume.
+				_, _ = m.store.ReleaseWatchLease(m.sessionID, id, m.ownerID)
+			}
+		}
+		m.mu.Lock()
+		m.delivered = make(map[string]bool)
+		m.mu.Unlock()
 	})
 }
 
@@ -144,11 +194,7 @@ func (m *Manager) Arm(req ArmRequest) (WatchInfo, error) {
 	if err := m.validateDeps(src); err != nil {
 		return WatchInfo{}, err
 	}
-	interval := req.Interval
-	if interval <= 0 {
-		interval = DefaultInterval(src)
-	}
-	interval = clampInterval(interval)
+	interval := intervalFor(src, req.Interval)
 	expiresIn := req.ExpiresIn
 	if expiresIn <= 0 {
 		expiresIn = m.defaultExpiry
@@ -187,9 +233,15 @@ func (m *Manager) Arm(req ArmRequest) (WatchInfo, error) {
 		start:    now,
 		expires:  now.Add(expiresIn),
 		interval: interval,
+		owner:    m.ownerID,
+		lease:    now.Add(m.leaseDuration),
 		state:    StateArmed,
 	}
 	m.watches[id] = w
+	// A reused id starts a new generation; forget any delivered marker
+	// from the previous watch, or Close would delete the new row instead
+	// of releasing an undelivered digest.
+	delete(m.delivered, id)
 	rec := recordOf(w) // under m.mu: recordOf reads guarded fields
 	info := infoOf(w)
 	m.mu.Unlock()
@@ -210,6 +262,7 @@ func (m *Manager) Arm(req ArmRequest) (WatchInfo, error) {
 			return WatchInfo{}, fmt.Errorf("watch %q was cancelled while it was being armed", id)
 		}
 	}
+	m.observeWatchArmed(info)
 	m.startWatch(w)
 	return info, nil
 }
@@ -252,6 +305,7 @@ func (m *Manager) Cancel(id string) bool {
 	if m.store != nil {
 		_ = m.store.DeleteWatch(m.sessionID, id)
 	}
+	m.observeWatchCancelled(id)
 	return true
 }
 
@@ -264,42 +318,66 @@ func (m *Manager) Rehydrate(ctx context.Context) error {
 	if m.store == nil {
 		return nil
 	}
-	rows, err := m.store.ListWatches(m.sessionID)
+	now := m.deps.now()
+	// Claim every row before rebuilding it. Last resume wins: a later
+	// process takes over, and this process's ClaimFire calls then fail, so
+	// two processes cannot both deliver the same watch.
+	rows, err := m.store.ClaimWatches(m.sessionID, m.ownerID, now.Add(m.leaseDuration).UnixNano())
 	if err != nil {
 		return err
 	}
-	now := m.deps.now()
 	var missed []firedWatch
-	for _, row := range rows {
-		spec := Spec{On: row.On, Until: row.Until}
-		if row.State == StateFired {
-			missed = append(missed, firedWatch{id: row.ID, spec: spec, evidence: row.Evidence, missed: true})
+	// Fired rows are not claimed: a live owner may still be delivering
+	// them. Re-deliver one only after the previous owner's lease expired.
+	firedRows, err := m.store.ListWatches(m.sessionID)
+	if err != nil {
+		return err
+	}
+	for _, row := range firedRows {
+		if row.State != StateFired {
 			continue
 		}
+		if row.LeaseUntil > now.UnixNano() {
+			continue // previous owner still holds a live lease
+		}
+		missed = append(missed, firedWatch{
+			id: row.ID, spec: Spec{On: row.On, Until: row.Until},
+			evidence: row.Evidence, missed: true,
+			armedAt: row.ArmedAt, expiresAt: row.ExpiresAt, intervalMs: row.IntervalMs,
+		})
+	}
+	for _, row := range rows {
+		spec := Spec{On: row.On, Until: row.Until}
 		src, _, _, perr := parseSpec(spec)
+		base := firedWatch{
+			id: row.ID, spec: spec, missed: true,
+			armedAt: row.ArmedAt, expiresAt: row.ExpiresAt, intervalMs: row.IntervalMs,
+		}
 		switch {
 		case perr != nil:
-			missed = append(missed, firedWatch{id: row.ID, spec: spec, evidence: "the persisted predicate is no longer valid: " + perr.Error(), missed: true})
+			base.evidence = Evidence{Kind: "watch", Status: "dropped", Detail: "the persisted predicate is no longer valid: " + perr.Error()}
+			missed = append(missed, base)
 		case src == SourceJob || src == SourceProcess:
-			missed = append(missed, firedWatch{id: row.ID, spec: spec, evidence: fmt.Sprintf("%s ids are process-local; this watch could not be re-armed after the restart", src), missed: true})
+			base.evidence = Evidence{Kind: "watch", Status: "dropped", Detail: fmt.Sprintf("%s ids are process-local; this watch could not be re-armed after the restart", src)}
+			missed = append(missed, base)
 		case row.ExpiresAt > 0 && now.After(time.Unix(0, row.ExpiresAt)):
-			missed = append(missed, firedWatch{id: row.ID, spec: spec, evidence: "the watch expired while the session was down", missed: true})
+			base.evidence = Evidence{Kind: "watch", Status: "expired", Detail: "the watch expired while the session was down"}
+			missed = append(missed, base)
 		default:
 			start := time.Unix(0, row.ArmedAt)
 			expires := time.Unix(0, row.ExpiresAt)
 			if row.ExpiresAt == 0 {
 				expires = start.Add(m.defaultExpiry)
 			}
-			interval := time.Duration(row.IntervalMs) * time.Millisecond
-			if interval <= 0 {
-				interval = DefaultInterval(src)
-			}
+			interval := intervalFor(src, time.Duration(row.IntervalMs)*time.Millisecond)
 			w := &armedWatch{
 				id:       row.ID,
 				spec:     spec,
 				start:    start,
 				expires:  expires,
-				interval: clampInterval(interval),
+				interval: interval,
+				owner:    m.ownerID,
+				lease:    now.Add(m.leaseDuration),
 				state:    StateArmed,
 			}
 			m.mu.Lock()
@@ -316,13 +394,14 @@ func (m *Manager) Rehydrate(ctx context.Context) error {
 				// Do not drop a durable watch silently: the missed-wake
 				// digest names it, and the user can re-arm it after
 				// cancelling one.
-				missed = append(missed, firedWatch{
-					id: w.id, spec: spec,
-					evidence: fmt.Sprintf("the session's watch limit (%d) was already met; this watch was not re-armed", m.maxWatches),
-					missed:   true,
-				})
+				base.evidence = Evidence{Kind: "watch", Status: "dropped", Detail: fmt.Sprintf("the session's watch limit (%d) was already met; this watch was not re-armed", m.maxWatches)}
+				missed = append(missed, base)
 				continue
 			}
+			// Snapshot before the poller starts: a fast fire writes
+			// w.evidence under m.mu, and infoOf reads it outside the lock.
+			info := infoOf(w)
+			m.observeWatchArmed(info)
 			m.startWatch(w)
 		}
 	}
@@ -332,9 +411,13 @@ func (m *Manager) Rehydrate(ctx context.Context) error {
 		// than silence.
 		for i := range missed {
 			w := &armedWatch{
-				id:       missed[i].id,
-				spec:     missed[i].spec,
-				start:    now,
+				id:    missed[i].id,
+				spec:  missed[i].spec,
+				start: now,
+				owner: m.ownerID,
+				// No lease: if this process closes before the digest is
+				// delivered, the next resume must report the row again
+				// rather than suppress it.
 				state:    StateFired,
 				evidence: missed[i].evidence,
 				firedAt:  now,
@@ -342,6 +425,19 @@ func (m *Manager) Rehydrate(ctx context.Context) error {
 			if m.store != nil {
 				_ = m.store.SaveWatch(m.sessionID, recordOf(w))
 			}
+		}
+		for i := range missed {
+			ev := missed[i].evidence
+			m.observeWatchFired(WatchInfo{
+				ID:         missed[i].id,
+				On:         missed[i].spec.On,
+				Until:      missed[i].spec.Until,
+				State:      StateFired,
+				Evidence:   &ev,
+				ArmedAt:    missed[i].armedAt,
+				ExpiresAt:  missed[i].expiresAt,
+				IntervalMs: missed[i].intervalMs,
+			}, true)
 		}
 		m.enqueue(missed...)
 	}
@@ -375,7 +471,7 @@ func (m *Manager) startWatch(w *armedWatch) {
 func (m *Manager) runWatch(ctx context.Context, w *armedWatch) {
 	src, target, _, err := parseSpec(w.spec)
 	if err != nil {
-		m.fire(w, "watch dropped: "+err.Error(), false)
+		m.fire(w, Evidence{Kind: "watch", Status: "dropped", Detail: err.Error()}, false)
 		return
 	}
 
@@ -384,14 +480,14 @@ func (m *Manager) runWatch(ctx context.Context, w *armedWatch) {
 	if src == SourceTime {
 		dur, _ := time.ParseDuration(target)
 		deadline := w.start.Add(dur)
-		if wait := time.Until(deadline); wait > 0 {
+		if wait := deadline.Sub(m.deps.now()); wait > 0 {
 			select {
 			case <-ctx.Done():
 				if !m.deps.now().Before(w.expires) {
-					m.fire(w, fmt.Sprintf("watch %s expired before its %s predicate elapsed", w.id, target), false)
+					m.fire(w, Evidence{Kind: "watch", Status: "expired", Detail: fmt.Sprintf("watch %s expired before its %s predicate elapsed", w.id, target)}, false)
 				}
 				return
-			case <-time.After(wait):
+			case <-m.deps.after(wait):
 			}
 		}
 		fired, evidence, _ := m.deps.evaluate(ctx, w.spec, w.start)
@@ -399,7 +495,7 @@ func (m *Manager) runWatch(ctx context.Context, w *armedWatch) {
 			m.fire(w, evidence, false)
 			return
 		}
-		m.fire(w, "watch expired before its predicate fired", false)
+		m.fire(w, Evidence{Kind: "watch", Status: "expired", Detail: "watch expired before its predicate fired"}, false)
 		return
 	}
 
@@ -407,7 +503,7 @@ func (m *Manager) runWatch(ctx context.Context, w *armedWatch) {
 	if src == SourceJob && m.deps.Jobs != nil {
 		st, ok := m.deps.Jobs.Wait(ctx, target)
 		if !ok {
-			m.fire(w, fmt.Sprintf("watch dropped: unknown job_id %q", target), false)
+			m.fire(w, Evidence{Kind: "watch", Status: "dropped", Detail: fmt.Sprintf("unknown job_id %q", target)}, false)
 			return
 		}
 		if !st.StillRunning {
@@ -415,11 +511,11 @@ func (m *Manager) runWatch(ctx context.Context, w *armedWatch) {
 			m.fire(w, evidence, false)
 			return
 		}
-		m.fire(w, "watch expired before the job finished", false)
+		m.fire(w, Evidence{Kind: "watch", Status: "expired", Detail: "watch expired before the job finished"}, false)
 		return
 	}
 
-	interval := clampInterval(w.interval)
+	interval := intervalFor(src, w.interval)
 	for {
 		fired, evidence, terminal := m.deps.evaluate(ctx, w.spec, w.start)
 		if fired {
@@ -429,15 +525,15 @@ func (m *Manager) runWatch(ctx context.Context, w *armedWatch) {
 		if ctx.Err() != nil {
 			// An evaluation that observed the deadline can surface it as a
 			// terminal error; expiry is the honest label, not "dropped".
-			m.fire(w, "watch expired before its predicate fired", false)
+			m.fire(w, Evidence{Kind: "watch", Status: "expired", Detail: "watch expired before its predicate fired"}, false)
 			return
 		}
 		if terminal != nil {
-			m.fire(w, "watch dropped: "+terminal.Error(), false)
+			m.fire(w, Evidence{Kind: "watch", Status: "dropped", Detail: terminal.Error()}, false)
 			return
 		}
 		delay := interval
-		if remaining := time.Until(w.expires); remaining > 0 && remaining < delay {
+		if remaining := w.expires.Sub(m.deps.now()); remaining > 0 && remaining < delay {
 			delay = remaining
 		}
 		if delay <= 0 {
@@ -445,11 +541,11 @@ func (m *Manager) runWatch(ctx context.Context, w *armedWatch) {
 		}
 		select {
 		case <-ctx.Done():
-			m.fire(w, "watch expired before its predicate fired", false)
+			m.fire(w, Evidence{Kind: "watch", Status: "expired", Detail: "watch expired before its predicate fired"}, false)
 			return
-		case <-time.After(delay):
+		case <-m.deps.after(delay):
 		}
-		interval = nextInterval(interval)
+		interval = nextInterval(interval, MaxIntervalFor(src))
 	}
 }
 
@@ -457,32 +553,54 @@ func (m *Manager) runWatch(ctx context.Context, w *armedWatch) {
 // batching digest. A watch that is cancelled between firing and delivery is
 // still delivered: the predicate did fire, and silently dropping it would
 // lose the fact the orchestrator was waiting on.
-func (m *Manager) fire(w *armedWatch, evidence string, missed bool) {
+func (m *Manager) fire(w *armedWatch, evidence Evidence, missed bool) {
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
 		return
 	}
 	cur, ok := m.watches[w.id]
-	if !ok || cur != w {
+	if !ok || cur != w || cur.state == StateFired {
 		// Cancelled (or already delivered and reaped): a poller that was
 		// mid-evaluation must not resurrect it with a spurious digest.
 		m.mu.Unlock()
 		return
 	}
-	if cur.state == StateFired {
+	m.mu.Unlock()
+
+	// Claim the fire in the store before delivering. A process that lost the
+	// last-resume race gets false here; it drops the watch instead of
+	// duplicating the wake the current owner will deliver. A store error is
+	// treated as best-effort success: a duplicate is better than a lost wake.
+	if m.store != nil {
+		now := m.deps.now()
+		claimed, err := m.store.ClaimFire(
+			m.sessionID, w.id, m.ownerID,
+			w.start.UnixNano(), now.UnixNano(), now.Add(firedLeaseDuration).UnixNano(),
+			MarshalEvidence(evidence))
+		if err == nil && !claimed {
+			m.removeIf(w)
+			return
+		}
+	}
+
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return
+	}
+	cur, ok = m.watches[w.id]
+	if !ok || cur != w || cur.state == StateFired {
 		m.mu.Unlock()
 		return
 	}
 	w.state = StateFired
 	w.evidence = evidence
 	w.firedAt = m.deps.now()
-	rec := recordOf(w) // under m.mu
+	info := infoOf(w)
 	m.mu.Unlock()
 
-	if m.store != nil {
-		_ = m.store.SaveWatch(m.sessionID, rec)
-	}
+	m.observeWatchFired(info, missed)
 	m.enqueue(firedWatch{id: w.id, spec: w.spec, evidence: evidence, missed: missed, w: w})
 }
 
@@ -504,7 +622,7 @@ func (m *Manager) enqueue(ws ...firedWatch) {
 func (m *Manager) scheduleFlushLocked() {
 	done := make(chan struct{})
 	m.flushDone = done
-	m.timer = time.AfterFunc(m.digestWindow, func() { m.flushIfOpen(done) })
+	m.timer = m.deps.afterFunc(m.digestWindow, func() { m.flushIfOpen(done) })
 }
 
 // finishFlush closes the callback's done channel and starts another digest if
@@ -538,11 +656,17 @@ func (m *Manager) flushIfOpen(done chan struct{}) {
 	onWake := m.onWake
 	m.mu.Unlock()
 
-	if len(pending) > 0 && onWake != nil {
+	markDelivered := len(pending) > 0 && onWake != nil
+	if markDelivered {
 		onWake(digestText(pending))
 	}
 
 	m.mu.Lock()
+	if markDelivered {
+		for _, p := range pending {
+			m.delivered[p.id] = true
+		}
+	}
 	if m.closed {
 		// Close won the race: keep the fired rows so the next resume
 		// reports them as missed wakes instead of dropping a digest whose
@@ -577,6 +701,11 @@ func (m *Manager) flushIfOpen(done chan struct{}) {
 			_ = m.store.DeleteWatch(m.sessionID, p.id)
 		}
 	}
+	m.mu.Lock()
+	for _, p := range pending {
+		delete(m.delivered, p.id)
+	}
+	m.mu.Unlock()
 	m.finishFlush(done)
 }
 
@@ -586,6 +715,21 @@ func (m *Manager) remove(id string) {
 	delete(m.watches, id)
 	m.mu.Unlock()
 	if w != nil && w.cancel != nil {
+		w.cancel()
+	}
+}
+
+// removeIf removes w only while it is still the current record for its id, so
+// a lost claim cannot drop a same-id replacement armed after it.
+func (m *Manager) removeIf(w *armedWatch) {
+	m.mu.Lock()
+	if m.watches[w.id] != w {
+		m.mu.Unlock()
+		return
+	}
+	delete(m.watches, w.id)
+	m.mu.Unlock()
+	if w.cancel != nil {
 		w.cancel()
 	}
 }
@@ -613,7 +757,11 @@ func digestText(pending []firedWatch) string {
 			b.WriteString(" [fired while the session was away]")
 		}
 		b.WriteString(": ")
-		b.WriteString(clip(strings.ReplaceAll(p.evidence, "\n", "\n  "), 800))
+		rendered := p.evidence.Render()
+		if rendered == "" {
+			rendered = "no evidence"
+		}
+		b.WriteString(clip(strings.ReplaceAll(rendered, "\n", "\n  "), 800))
 		b.WriteString("\n")
 	}
 	b.WriteString("This is a harness wake, not a message from the user. Continue the task from where you left off; do not repeat polling that this wake replaces.")
@@ -629,9 +777,13 @@ func recordOf(w *armedWatch) WatchRecord {
 		Evidence:   w.evidence,
 		ArmedAt:    w.start.UnixNano(),
 		IntervalMs: w.interval.Milliseconds(),
+		Owner:      w.owner,
 	}
 	if !w.expires.IsZero() {
 		rec.ExpiresAt = w.expires.UnixNano()
+	}
+	if !w.lease.IsZero() {
+		rec.LeaseUntil = w.lease.UnixNano()
 	}
 	if !w.firedAt.IsZero() {
 		rec.FiredAt = w.firedAt.UnixNano()
@@ -645,9 +797,12 @@ func infoOf(w *armedWatch) WatchInfo {
 		On:         w.spec.On,
 		Until:      w.spec.Until,
 		State:      w.state,
-		Evidence:   w.evidence,
 		ArmedAt:    w.start.UnixNano(),
 		IntervalMs: w.interval.Milliseconds(),
+	}
+	if !w.evidence.IsZero() {
+		ev := w.evidence
+		info.Evidence = &ev
 	}
 	if !w.expires.IsZero() {
 		info.ExpiresAt = w.expires.UnixNano()
@@ -665,8 +820,11 @@ func clampInterval(d time.Duration) time.Duration {
 	return d
 }
 
-func nextInterval(d time.Duration) time.Duration {
+func nextInterval(d, max time.Duration) time.Duration {
 	d *= 2
+	if max > 0 && d > max {
+		d = max
+	}
 	if d > MaxInterval {
 		d = MaxInterval
 	}

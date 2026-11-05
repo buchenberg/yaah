@@ -20,10 +20,17 @@ const (
 	DefaultWaitTimeout = 15 * time.Minute
 	MaxWaitTimeout     = 24 * time.Hour
 
-	DefaultDigestWindow = 1500 * time.Millisecond
-	DefaultMaxWatches   = 32
-	DefaultWatchExpiry  = 24 * time.Hour
-	MaxWatchExpiry      = 7 * 24 * time.Hour
+	DefaultDigestWindow  = 1500 * time.Millisecond
+	DefaultMaxWatches    = 32
+	DefaultWatchExpiry   = 24 * time.Hour
+	MaxWatchExpiry       = 7 * 24 * time.Hour
+	DefaultLeaseDuration = 5 * time.Minute
+
+	// firedLeaseDuration reserves a fired row for its owner's in-flight
+	// digest. A graceful Close releases it; a crashed owner's row becomes
+	// re-deliverable after this short window rather than being suppressed
+	// for the full lease duration.
+	firedLeaseDuration = 30 * time.Second
 )
 
 // WatchRecord is the durable half of an armed watch. The manager owns the
@@ -33,11 +40,13 @@ type WatchRecord struct {
 	On         string
 	Until      string
 	State      string
-	Evidence   string
+	Evidence   Evidence
 	ArmedAt    int64 // unix nanoseconds
 	ExpiresAt  int64 // unix nanoseconds; 0 means no expiry
 	FiredAt    int64 // unix nanoseconds; 0 until fired
 	IntervalMs int64
+	Owner      string
+	LeaseUntil int64 // unix nanoseconds; informational last-claim lease
 }
 
 // Store persists watches so they survive a session restart. Implementations
@@ -47,14 +56,46 @@ type Store interface {
 	SaveWatch(sessionID string, rec WatchRecord) error
 	ListWatches(sessionID string) ([]WatchRecord, error)
 	DeleteWatch(sessionID, id string) error
+	// ClaimWatches makes owner the owner of every watch for the session and
+	// returns the claimed set. Last resume wins: a later claim takes over,
+	// and the previous owner's ClaimFire calls then fail.
+	ClaimWatches(sessionID, owner string, leaseUntil int64) ([]WatchRecord, error)
+	// ClaimFire transitions an armed watch owned by owner to fired and
+	// reports whether this owner still owned it. armedAt scopes the claim
+	// to the watch generation, so a same-id replacement is never marked.
+	ClaimFire(sessionID, id, owner string, armedAt, firedAt, leaseUntil int64, evidence string) (bool, error)
+	// ReleaseWatchLease clears the lease on a fired row this owner still
+	// holds, so a graceful close makes an undelivered digest visible to the
+	// next resume. A deleted or re-owned row is a no-op.
+	ReleaseWatchLease(sessionID, id, owner string) (bool, error)
+}
+
+// Observer receives lifecycle notifications for tracing and hook emission.
+// Implementations must be cheap and must not block the poll path. The target
+// of a predicate is deliberately not part of these calls: a URL, command or
+// path must not leak into a hook log or span attribute.
+type Observer interface {
+	// WaitStarted starts observing a blocking wait and returns a context for
+	// WaitFinished (the implementation may attach a span).
+	WaitStarted(ctx context.Context, spec Spec, timeout time.Duration) context.Context
+	WaitFinished(ctx context.Context, spec Spec, fired, timedOut, interrupted, errored bool, elapsed time.Duration)
+	WatchArmed(info WatchInfo)
+	WatchFired(info WatchInfo, missed bool)
+	WatchCancelled(id string)
 }
 
 // Options configures a Manager. Zero values take the defaults above.
 type Options struct {
-	SessionID     string
-	Deps          Deps
-	Store         Store
-	OnWake        func(string)
+	SessionID string
+	Deps      Deps
+	Store     Store
+	OnWake    func(string)
+	Observer  Observer
+	// OwnerID identifies this process in the watch store. Empty uses the
+	// process id. LeaseDuration is informational; the next resume claims
+	// regardless (last resume wins).
+	OwnerID       string
+	LeaseDuration time.Duration
 	DigestWindow  time.Duration
 	MaxWatches    int
 	DefaultExpiry time.Duration
@@ -74,15 +115,15 @@ type WaitRequest struct {
 // Interrupted are distinct so a caller abort is never reported as a normal
 // timeout (the same distinction subagent_jobs wait keeps).
 type Result struct {
-	Fired       bool   `json:"fired"`
-	Source      string `json:"source,omitempty"`
-	On          string `json:"on"`
-	Evidence    string `json:"evidence,omitempty"`
-	ElapsedMs   int64  `json:"elapsed_ms"`
-	TimedOut    bool   `json:"timed_out,omitempty"`
-	Interrupted bool   `json:"interrupted,omitempty"`
-	Handle      string `json:"handle,omitempty"`
-	Notes       string `json:"notes,omitempty"`
+	Fired       bool      `json:"fired"`
+	Source      string    `json:"source,omitempty"`
+	On          string    `json:"on"`
+	Evidence    *Evidence `json:"evidence,omitempty"`
+	ElapsedMs   int64     `json:"elapsed_ms"`
+	TimedOut    bool      `json:"timed_out,omitempty"`
+	Interrupted bool      `json:"interrupted,omitempty"`
+	Handle      string    `json:"handle,omitempty"`
+	Notes       string    `json:"notes,omitempty"`
 }
 
 // ArmRequest is one watch arm request.
@@ -96,14 +137,14 @@ type ArmRequest struct {
 
 // WatchInfo is the serializable snapshot the watch tool reports.
 type WatchInfo struct {
-	ID         string `json:"id"`
-	On         string `json:"on"`
-	Until      string `json:"until,omitempty"`
-	State      string `json:"state"`
-	Evidence   string `json:"evidence,omitempty"`
-	ArmedAt    int64  `json:"armed_at"`
-	ExpiresAt  int64  `json:"expires_at,omitempty"`
-	IntervalMs int64  `json:"interval_ms,omitempty"`
+	ID         string    `json:"id"`
+	On         string    `json:"on"`
+	Until      string    `json:"until,omitempty"`
+	State      string    `json:"state"`
+	Evidence   *Evidence `json:"evidence,omitempty"`
+	ArmedAt    int64     `json:"armed_at"`
+	ExpiresAt  int64     `json:"expires_at,omitempty"`
+	IntervalMs int64     `json:"interval_ms,omitempty"`
 }
 
 // Manager owns the blocking waits and the armed watches for one session.
@@ -118,7 +159,10 @@ type Manager struct {
 	defaultExpiry time.Duration
 	maxExpiry     time.Duration
 
-	onWake func(string)
+	onWake        func(string)
+	observer      Observer
+	ownerID       string
+	leaseDuration time.Duration
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -129,8 +173,11 @@ type Manager struct {
 	watches   map[string]*armedWatch
 	nextID    int
 	pending   []firedWatch
-	timer     *time.Timer
+	timer     Timer
 	flushDone chan struct{} // closed by the digest callback or by Close
+	// delivered records fired ids whose digest reached onWake, so Close
+	// deletes those rows instead of releasing them for a duplicate.
+	delivered map[string]bool
 	closed    bool
 }
 
@@ -141,17 +188,24 @@ type armedWatch struct {
 	expires  time.Time
 	interval time.Duration
 	cancel   context.CancelFunc
+	owner    string
+	lease    time.Time
 
 	state    string
-	evidence string
+	evidence Evidence
 	firedAt  time.Time
 }
 
 type firedWatch struct {
 	id       string
 	spec     Spec
-	evidence string
+	evidence Evidence
 	missed   bool
+	// The rehydrated missed-wake report carries the row's timing fields so
+	// the observer sees the same WatchInfo a live fire would.
+	armedAt    int64
+	expiresAt  int64
+	intervalMs int64
 	// w is the live record the fire came from. Matching it on flush keeps a
 	// fired watch from deleting a same-id replacement armed after it.
 	w *armedWatch

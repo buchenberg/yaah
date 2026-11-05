@@ -77,6 +77,30 @@ empty (the first user message that derives one). It carries `title` and
 from the store); not capability-gated in v1 — clients that ignore it
 lose nothing.
 
+## Wake notifications (yaah extension)
+
+When an armed `watch` fires while the ACP session is idle, the agent sends a
+**`yaah/wake`** notification:
+
+```json
+{"jsonrpc":"2.0","method":"yaah/wake","params":{
+  "sessionId":"sess-...",
+  "prompt":"[WATCH] armed watch fired: ..."
+}}
+```
+
+It is a notification, not a request: clients that do not know the method
+ignore it. The same digest is also queued as a follow-up, so the next
+`session/prompt` always delivers it to the model even if the client ignores
+the extension. The `prompt` field is the display copy; a client that wants
+the model to act immediately can send a short `session/prompt` (for example
+"continue") and the queued digest will be injected between turns. Echoing the
+digest back as a prompt would duplicate it.
+
+`yaah/wake` is the ACP counterpart of the TUI/REPL/web idle turn. MCP serve
+has no client notification channel and keeps the queued-follow-up behaviour
+only.
+
 ## Command palette
 
 After `session/new`, `session/load`, and `session/resume`, the agent sends an

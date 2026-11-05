@@ -1059,6 +1059,11 @@ yaah emits structured JSONL events to `<HookDir>/<session-id>.jsonl` for externa
 | `context.prune` | After each tool batch — soft-prune outcome (with `prune_reason`, `prune_candidates`, `prune_marked`, `prune_reclaimed`, `prune_protected`, `prune_committed`, `prune_total_marked`) |
 | `conflict.check` | Every turn when a `ConflictTracker` is present |
 | `conflict.detect` | When parallel workers diverged on a path or left unknown shell mutations (with `conflict_files` count) |
+| `wait.start` | When a `wait_for` call starts (with `wake_kind` and the call timeout in `duration_ms`) |
+| `wait.end` | When a `wait_for` call ends (with `wake_kind`, `wake_state` = fired/timed_out/interrupted/errored, and `duration_ms`) |
+| `watch.arm` | When a watch is armed or re-armed after resume (with `wake_id`, `wake_kind`) |
+| `watch.fire` | When a watch fires, expires, or is dropped (with `wake_id`, `wake_kind`, `wake_state`, `wake_missed`) |
+| `watch.cancel` | When a watch is cancelled (with `wake_id`) |
 
 ### HookEvent struct
 
@@ -1084,6 +1089,11 @@ type HookEvent struct {
     PruneProtected  int         `json:"prune_protected,omitempty"`
     PruneCommitted  bool        `json:"prune_committed,omitempty"`
     PruneTotalMarked int        `json:"prune_total_marked,omitempty"`
+    // wait.* / watch.* — the predicate kind, never its target.
+    WakeKind   string `json:"wake_kind,omitempty"`
+    WakeState  string `json:"wake_state,omitempty"`
+    WakeID     string `json:"wake_id,omitempty"`
+    WakeMissed bool   `json:"wake_missed,omitempty"`
 }
 ```
 
@@ -1245,6 +1255,8 @@ yaah emits traces via OTLP HTTP to any OpenTelemetry-compatible backend. Tracing
 | `subagent: <role> — <description>` | `toolDispatch.run` in `agent_dispatch.go` | Role + task description in the operation name. `dispatched` event with role and task text. `completed` / `failed` event on finish. |
 | `llm.stream` / `llm.chat` | `observability/provider.go` and `observability/trace.go` | Streaming uses `llm.stream`; non-streaming uses `llm.chat`. `tokens` event with prompt/completion/total tokens, message count, and system length. `llm.duration_ms` on `llm.chat`. |
 | `prune` | `SoftPruneMiddleware` (`PrepareStep` / `PostTool`) → `observability/trace.go` | `prune.reason`, `prune.candidates`, `prune.marked`, `prune.reclaimed_tokens`, `prune.protected_skipped`, `prune.committed`, `prune.total_marked`. Emitted after each pass, including non-committed passes. |
+| `yaah.wait` | `wake.Observer` → `observability/trace.go` | `wake.kind`, `wake.fired`, `wake.timed_out`, `wake.interrupted`, `wake.errored`, `wake.elapsed_ms`. The predicate target is not recorded. |
+| `yaah.watch.arm` / `yaah.watch.fire` | `wake.Observer` → `observability/trace.go` | `wake.kind`, `wake.id`, and on fire `wake.state` and `wake.missed`. Short spans; the predicate target is not recorded. |
 
 `conflict.check` is a hook event, not a span; the turn span carries
 `conflict.files` and a `conflict.detected` event when conflicts are found.

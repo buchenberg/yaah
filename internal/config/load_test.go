@@ -552,3 +552,18 @@ func TestLoad_intentKnobValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestIdleWakeTurnsEnabled(t *testing.T) {
+	var unset Defaults
+	if !unset.IdleWakeTurnsEnabled() {
+		t.Error("nil idle_wake_turns must default to enabled")
+	}
+	off := false
+	on := true
+	if (Defaults{IdleWakeTurns: &off}).IdleWakeTurnsEnabled() {
+		t.Error("idle_wake_turns: false must disable idle wake turns")
+	}
+	if !(Defaults{IdleWakeTurns: &on}).IdleWakeTurnsEnabled() {
+		t.Error("idle_wake_turns: true must enable idle wake turns")
+	}
+}

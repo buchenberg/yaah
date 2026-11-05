@@ -259,8 +259,11 @@ See [configuration.md](./configuration.md#observability-reference).
 
 Set `hooks.dir` to emit structured JSONL events: `session.start`,
 `session.end`, `turn.start`, `tool.start`, `tool.end`, `conflict.check`,
-`conflict.detect`, and `context.prune`. Events carry timestamps, model and
-tool data, durations, and prune counters. Unset or empty disables hooks.
+`conflict.detect`, `context.prune`, `wait.start`, `wait.end`, `watch.arm`,
+`watch.fire`, and `watch.cancel`. Events carry timestamps, model and tool
+data, durations, and prune counters; wait/watch events name the predicate
+kind, and outcome events also name the state, never the target. Unset or
+empty disables hooks.
 
 ## Approval gates
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"go.opentelemetry.io/otel"
@@ -109,6 +110,55 @@ func FinishTool(span trace.Span, result string, err error) {
 			attribute.String("tool.result", truncate(safeString(result), 200)),
 		))
 	}
+}
+
+// StartWait creates the span for one blocking wait_for call. Only the
+// predicate kind is recorded; its target (URL, command, path) is deliberately
+// absent so a trace does not carry a secret or a file name.
+func StartWait(ctx context.Context, kind string) (context.Context, trace.Span) {
+	ctx, span := tracer().Start(ctx, "yaah.wait")
+	span.SetAttributes(attribute.String("wake.kind", safeString(kind)))
+	return ctx, span
+}
+
+// FinishWait records the wait's outcome and ends its span.
+func FinishWait(span trace.Span, fired, timedOut, interrupted, errored bool, elapsed time.Duration) {
+	if span == nil {
+		return
+	}
+	span.SetAttributes(
+		attribute.Bool("wake.fired", fired),
+		attribute.Bool("wake.timed_out", timedOut),
+		attribute.Bool("wake.interrupted", interrupted),
+		attribute.Bool("wake.errored", errored),
+		attribute.Int64("wake.elapsed_ms", elapsed.Milliseconds()),
+	)
+	span.End()
+}
+
+// RecordWatchArm records a short arm span. The watch id is not secret, but the
+// predicate target is not included.
+func RecordWatchArm(ctx context.Context, kind, id string) {
+	_, span := tracer().Start(ctx, "yaah.watch.arm")
+	span.SetAttributes(attribute.String("wake.kind", safeString(kind)))
+	if id != "" {
+		span.SetAttributes(attribute.String("wake.id", safeString(id)))
+	}
+	span.End()
+}
+
+// RecordWatchFire records a short fire span with the terminal state.
+func RecordWatchFire(ctx context.Context, kind, state, id string, missed bool) {
+	_, span := tracer().Start(ctx, "yaah.watch.fire")
+	span.SetAttributes(
+		attribute.String("wake.kind", safeString(kind)),
+		attribute.String("wake.state", safeString(state)),
+		attribute.Bool("wake.missed", missed),
+	)
+	if id != "" {
+		span.SetAttributes(attribute.String("wake.id", safeString(id)))
+	}
+	span.End()
 }
 
 // StartPrune creates a span for a soft-prune pass — the Tier-0 context

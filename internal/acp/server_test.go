@@ -28,7 +28,9 @@ type fakeSession struct {
 	view    agent.View
 	ctrl    chan<- control.Msg
 	approve func(ctx context.Context, callID, name, args string) bool
-	closed  int
+	// wake is the idle-wake requester installed by the server.
+	wake   func(string) bool
+	closed int
 	// id is the persisted conversation id AgentSessionID reports; set
 	// at construction and never mutated.
 	id string
@@ -65,6 +67,11 @@ func (f *fakeSession) RunPrompt(ctx context.Context, prompt string) (string, boo
 }
 func (f *fakeSession) SetView(v agent.View)           { f.mu.Lock(); f.view = v; f.mu.Unlock() }
 func (f *fakeSession) SetCtrlCh(c chan<- control.Msg) { f.mu.Lock(); f.ctrl = c; f.mu.Unlock() }
+func (f *fakeSession) SetWakeTurnRequester(fn func(string) bool) {
+	f.mu.Lock()
+	f.wake = fn
+	f.mu.Unlock()
+}
 func (f *fakeSession) SetApproveCallFn(fn func(ctx context.Context, callID, name, args string) bool) {
 	f.mu.Lock()
 	f.approve = fn

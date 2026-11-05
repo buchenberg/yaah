@@ -390,7 +390,9 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 	// A watch that fires while no prompt is running starts its own turn and
 	// streams to this client. Installed only once a view exists: an idle
 	// wake with no connected client would run unheard.
-	ws.sess.SetWakeTurnRequester(ws.sess.StartWakeTurn)
+	if ws.sess.IdleWakeTurnsEnabled() {
+		ws.sess.SetWakeTurnRequester(ws.sess.StartWakeTurn)
+	}
 
 	// Send meta and current todo state to the newly-connected client.
 	v.SendConnect()

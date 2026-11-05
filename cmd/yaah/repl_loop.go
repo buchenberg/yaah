@@ -81,7 +81,11 @@ func startREPL() error {
 	// view installed here, and each user prompt replaces it. The requester
 	// policy is the driver's, not the session's.
 	sess.SetView(newTerminalView())
-	sess.SetWakeTurnRequester(sess.StartWakeTurn)
+	if sess.IdleWakeTurnsEnabled() {
+		sess.SetWakeTurnRequester(sess.StartWakeTurn)
+	} else {
+		fmt.Fprintf(os.Stderr, "  %s\n", Dim("idle wake turns disabled (agents.default.idle_wake_turns: false)"))
+	}
 	sess.Start()
 
 	fmt.Fprintf(os.Stderr, "\n  %s %s/%s\n", Dim("provider:"), sess.ProviderName(), sess.ModelName())

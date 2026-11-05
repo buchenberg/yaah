@@ -141,6 +141,218 @@ func TestParseCondition(t *testing.T) {
 	}
 }
 
+func TestMaxIntervalFor(t *testing.T) {
+	cases := map[Source]time.Duration{
+		SourceJob:     0,
+		SourceTime:    time.Second,
+		SourceFile:    5 * time.Second,
+		SourceHTTP:    15 * time.Second,
+		SourceCommand: MaxInterval,
+		SourceProcess: MaxInterval,
+	}
+	for src, want := range cases {
+		if got := MaxIntervalFor(src); got != want {
+			t.Errorf("MaxIntervalFor(%s) = %v, want %v", src, got, want)
+		}
+	}
+}
+
+func TestIntervalForClampsToSourceCeiling(t *testing.T) {
+	if got := intervalFor(SourceFile, 30*time.Second); got != 5*time.Second {
+		t.Errorf("file interval = %v, want the 5s ceiling", got)
+	}
+	if got := intervalFor(SourceHTTP, time.Second); got != time.Second {
+		t.Errorf("http interval = %v, want the requested 1s", got)
+	}
+	if got := intervalFor(SourceCommand, time.Minute); got != MaxInterval {
+		t.Errorf("command interval = %v, want %v", got, MaxInterval)
+	}
+	if got := intervalFor(SourceFile, 0); got != 500*time.Millisecond {
+		t.Errorf("file default interval = %v, want 500ms", got)
+	}
+}
+
+func TestNextIntervalCapsPerSource(t *testing.T) {
+	d := 500 * time.Millisecond
+	for i := 0; i < 10; i++ {
+		d = nextInterval(d, MaxIntervalFor(SourceFile))
+	}
+	if d != 5*time.Second {
+		t.Fatalf("file backoff settled at %v, want 5s", d)
+	}
+}
+
+// fakeClock drives Wait's poll delays without sleeping. After publishes the
+// requested delay and records the channel the test advances.
+type fakeClock struct {
+	mu       sync.Mutex
+	now      time.Time
+	last     chan time.Time
+	requests chan time.Duration
+}
+
+func newFakeClock() *fakeClock {
+	return &fakeClock{now: time.Now(), requests: make(chan time.Duration, 16)}
+}
+
+func (f *fakeClock) Now() time.Time { return f.now }
+
+func (f *fakeClock) After(d time.Duration) <-chan time.Time {
+	ch := make(chan time.Time, 1)
+	f.mu.Lock()
+	f.last = ch
+	f.mu.Unlock()
+	f.requests <- d
+	return ch
+}
+
+func (f *fakeClock) AfterFunc(time.Duration, func()) Timer { return fakeTimer{} }
+
+type fakeTimer struct{}
+
+func (fakeTimer) Stop() bool { return true }
+
+func (f *fakeClock) advance() {
+	f.mu.Lock()
+	ch := f.last
+	f.mu.Unlock()
+	if ch != nil {
+		ch <- f.now
+	}
+}
+
+func TestWaitBackoffUsesTheSourceCeiling(t *testing.T) {
+	clock := newFakeClock()
+	m := NewManager(Options{Deps: Deps{Clock: clock, Glob: func(context.Context, string) ([]string, error) {
+		return nil, nil // never fires
+	}}})
+	defer m.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = m.Wait(ctx, WaitRequest{On: "file:never", Timeout: 5 * time.Second})
+	}()
+
+	want := []time.Duration{
+		500 * time.Millisecond,
+		time.Second,
+		2 * time.Second,
+		4 * time.Second,
+		5 * time.Second,
+		5 * time.Second,
+	}
+	for _, expected := range want {
+		select {
+		case got := <-clock.requests:
+			if got != expected {
+				t.Fatalf("poll delay = %v, want %v", got, expected)
+			}
+			clock.advance()
+		case <-time.After(2 * time.Second):
+			t.Fatalf("Wait did not request a poll for %v", expected)
+		}
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Wait did not return after cancel")
+	}
+}
+
+type recordingObserver struct {
+	mu         sync.Mutex
+	waitStarts int
+	waitEnds   int
+	lastFired  bool
+	armed      []WatchInfo
+	fired      []WatchInfo
+	cancelled  []string
+}
+
+func (o *recordingObserver) WaitStarted(ctx context.Context, spec Spec, timeout time.Duration) context.Context {
+	o.mu.Lock()
+	o.waitStarts++
+	o.mu.Unlock()
+	return ctx
+}
+
+func (o *recordingObserver) WaitFinished(ctx context.Context, spec Spec, fired, timedOut, interrupted, errored bool, elapsed time.Duration) {
+	o.mu.Lock()
+	o.waitEnds++
+	o.lastFired = fired
+	o.mu.Unlock()
+}
+
+func (o *recordingObserver) WatchArmed(info WatchInfo) {
+	o.mu.Lock()
+	o.armed = append(o.armed, info)
+	o.mu.Unlock()
+}
+
+func (o *recordingObserver) WatchFired(info WatchInfo, missed bool) {
+	o.mu.Lock()
+	o.fired = append(o.fired, info)
+	o.mu.Unlock()
+}
+
+func (o *recordingObserver) WatchCancelled(id string) {
+	o.mu.Lock()
+	o.cancelled = append(o.cancelled, id)
+	o.mu.Unlock()
+}
+
+func TestObserverReceivesLifecycle(t *testing.T) {
+	obs := &recordingObserver{}
+	digests := make(chan string, 1)
+	m := NewManager(Options{
+		Deps:         fileDeps(map[string]string{"/w/ci": ""}),
+		Observer:     obs,
+		DigestWindow: 20 * time.Millisecond,
+		OnWake:       func(s string) { digests <- s },
+	})
+	defer m.Close()
+
+	// A blocking wait reports start and finish.
+	if _, err := m.Wait(context.Background(), WaitRequest{On: "file:*", Timeout: time.Second}); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	obs.mu.Lock()
+	if obs.waitStarts != 1 || obs.waitEnds != 1 || !obs.lastFired {
+		t.Fatalf("wait lifecycle = starts %d ends %d fired %v", obs.waitStarts, obs.waitEnds, obs.lastFired)
+	}
+	obs.mu.Unlock()
+
+	// Arm, fire and cancel each report.
+	info, err := m.Arm(ArmRequest{On: "time:10ms", ExpiresIn: time.Second})
+	if err != nil {
+		t.Fatalf("Arm: %v", err)
+	}
+	_ = waitForDigest(t, digests)
+	obs.mu.Lock()
+	if len(obs.armed) != 1 || obs.armed[0].ID != info.ID {
+		t.Fatalf("armed = %+v, want %s", obs.armed, info.ID)
+	}
+	if len(obs.fired) != 1 || obs.fired[0].ID != info.ID {
+		t.Fatalf("fired = %+v, want %s", obs.fired, info.ID)
+	}
+	obs.mu.Unlock()
+
+	info, err = m.Arm(ArmRequest{On: "time:1h", ExpiresIn: time.Hour})
+	if err != nil {
+		t.Fatalf("Arm(cancel): %v", err)
+	}
+	m.Cancel(info.ID)
+	obs.mu.Lock()
+	if len(obs.cancelled) != 1 || obs.cancelled[0] != info.ID {
+		t.Fatalf("cancelled = %+v, want %s", obs.cancelled, info.ID)
+	}
+	obs.mu.Unlock()
+}
+
 func TestParseSpecRejectsNonPositiveTime(t *testing.T) {
 	for _, on := range []string{"time:0s", "time:-5s"} {
 		if _, _, _, err := parseSpec(Spec{On: on}); err == nil {
@@ -175,7 +387,7 @@ func TestEngineTime(t *testing.T) {
 	d := Deps{Now: func() time.Time { return now }}
 	fired, ev, err := d.evaluate(context.Background(), Spec{On: "time:30s"}, now.Add(-31*time.Second))
 	if err != nil || !fired {
-		t.Fatalf("elapsed time predicate: fired=%v err=%v evidence=%q", fired, err, ev)
+		t.Fatalf("elapsed time predicate: fired=%v err=%v evidence=%+v", fired, err, ev)
 	}
 	fired, _, err = d.evaluate(context.Background(), Spec{On: "time:30s"}, now)
 	if err != nil || fired {
@@ -194,7 +406,7 @@ func TestEngineCommand(t *testing.T) {
 	for _, until := range []string{"", "exit_zero", "regex:PASS", "contains:PASS"} {
 		fired, ev, err := d.evaluate(context.Background(), Spec{On: "command:make", Until: until}, now)
 		if err != nil || !fired {
-			t.Errorf("until %q: fired=%v err=%v evidence=%q", until, fired, err, ev)
+			t.Errorf("until %q: fired=%v err=%v evidence=%+v", until, fired, err, ev)
 		}
 	}
 	fired, _, err := d.evaluate(context.Background(), Spec{On: "command:make", Until: "exit:2"}, now)
@@ -229,12 +441,12 @@ func TestEngineFile(t *testing.T) {
 		"/w/ci-green": "state: green\n",
 	})
 	fired, ev, err := d.evaluate(context.Background(), Spec{On: "file:ci*", Until: "exists"}, now)
-	if err != nil || !fired || !strings.Contains(ev, "/w/ci-green") {
-		t.Fatalf("exists: fired=%v err=%v evidence=%q", fired, err, ev)
+	if err != nil || !fired || !strings.Contains(ev.Render(), "/w/ci-green") {
+		t.Fatalf("exists: fired=%v err=%v evidence=%+v", fired, err, ev)
 	}
 	fired, ev, err = d.evaluate(context.Background(), Spec{On: "file:ci*", Until: "contains:green"}, now)
-	if err != nil || !fired || !strings.Contains(ev, "state: green") {
-		t.Fatalf("contains: fired=%v err=%v evidence=%q", fired, err, ev)
+	if err != nil || !fired || !strings.Contains(ev.Excerpt, "state: green") {
+		t.Fatalf("contains: fired=%v err=%v evidence=%+v", fired, err, ev)
 	}
 	fired, _, err = d.evaluate(context.Background(), Spec{On: "file:ci*", Until: "contains:red"}, now)
 	if err != nil || fired {
@@ -278,8 +490,8 @@ func TestEngineJobIncludesResult(t *testing.T) {
 	if err != nil || !fired {
 		t.Fatalf("job: fired=%v err=%v", fired, err)
 	}
-	if !strings.Contains(ev, "the report body") {
-		t.Errorf("job evidence omits the result: %q", ev)
+	if !strings.Contains(ev.Result, "the report body") {
+		t.Errorf("job evidence omits the result: %+v", ev)
 	}
 	if _, _, err := d.evaluate(context.Background(), Spec{On: "job:missing"}, now); err == nil {
 		t.Error("unknown job id was not a terminal error")
@@ -293,7 +505,7 @@ func TestEngineProcess(t *testing.T) {
 	}}}
 	fired, ev, err := d.evaluate(context.Background(), Spec{On: "process:proc-1"}, now)
 	if err != nil || !fired {
-		t.Fatalf("process: fired=%v err=%v evidence=%q", fired, err, ev)
+		t.Fatalf("process: fired=%v err=%v evidence=%+v", fired, err, ev)
 	}
 	if _, _, err := d.evaluate(context.Background(), Spec{On: "process:nope"}, now); err == nil {
 		t.Error("unknown process id was not a terminal error")
@@ -309,7 +521,7 @@ func TestManagerWaitFires(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Wait: %v", err)
 	}
-	if !res.Fired || res.Evidence == "" {
+	if !res.Fired || res.Evidence == nil {
 		t.Fatalf("Wait = %+v, want fired with evidence", res)
 	}
 }
@@ -328,7 +540,7 @@ func TestManagerWaitTimeoutThenResume(t *testing.T) {
 	if !res.TimedOut || res.Fired || res.Handle == "" {
 		t.Fatalf("Wait = %+v, want a timeout with a handle", res)
 	}
-	if res.Evidence == "" {
+	if res.Evidence == nil {
 		t.Fatal("timed-out wait lost the last attempt's evidence")
 	}
 
@@ -476,6 +688,9 @@ func TestManagerMaxWatches(t *testing.T) {
 type fakeStore struct {
 	mu   sync.Mutex
 	rows map[string]WatchRecord
+	// claimResults, when set, receives the outcome of every ClaimFire. It
+	// lets the ownership test observe the claim without a wall-clock race.
+	claimResults chan bool
 }
 
 func newFakeStore() *fakeStore { return &fakeStore{rows: map[string]WatchRecord{}} }
@@ -497,11 +712,146 @@ func (s *fakeStore) ListWatches(sessionID string) ([]WatchRecord, error) {
 	return out, nil
 }
 
+func (s *fakeStore) ClaimWatches(sessionID, owner string, leaseUntil int64) ([]WatchRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]WatchRecord, 0, len(s.rows))
+	for id, r := range s.rows {
+		if r.State != StateArmed {
+			continue
+		}
+		r.Owner = owner
+		r.LeaseUntil = leaseUntil
+		s.rows[id] = r
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+func (s *fakeStore) ClaimFire(sessionID, id, owner string, armedAt, firedAt, leaseUntil int64, evidence string) (bool, error) {
+	s.mu.Lock()
+	r, ok := s.rows[id]
+	claimed := ok && r.Owner == owner && r.State == StateArmed && r.ArmedAt == armedAt
+	if claimed {
+		r.State = StateFired
+		r.FiredAt = firedAt
+		r.LeaseUntil = leaseUntil
+		r.Evidence = ParseEvidence(evidence)
+		r.Owner = owner
+		s.rows[id] = r
+	}
+	s.mu.Unlock()
+	if s.claimResults != nil {
+		select {
+		case s.claimResults <- claimed:
+		default:
+		}
+	}
+	return claimed, nil
+}
+
+func (s *fakeStore) ReleaseWatchLease(sessionID, id, owner string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.rows[id]
+	if !ok || r.Owner != owner || r.State != StateFired {
+		return false, nil
+	}
+	r.LeaseUntil = 0
+	s.rows[id] = r
+	return true, nil
+}
+
 func (s *fakeStore) DeleteWatch(sessionID, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.rows, id)
 	return nil
+}
+
+// TestManagerDropsFireItNoLongerOwns simulates a second process resuming the
+// session and claiming the watches: the first process's stale poller must not
+// deliver a duplicate wake.
+func TestManagerDropsFireItNoLongerOwns(t *testing.T) {
+	store := newFakeStore()
+	store.claimResults = make(chan bool, 1)
+	wakes := make(chan string, 1)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	var startedOnce sync.Once
+	m := NewManager(Options{
+		SessionID: "sess",
+		Deps: Deps{Now: time.Now, Glob: func(context.Context, string) ([]string, error) {
+			startedOnce.Do(func() { close(started) })
+			<-release
+			return []string{"/w/ci"}, nil
+		}},
+		Store:        store,
+		OwnerID:      "process-a",
+		DigestWindow: 10 * time.Millisecond,
+		OnWake:       func(s string) { wakes <- s },
+	})
+	defer m.Close()
+
+	info, err := m.Arm(ArmRequest{On: "file:*", ExpiresIn: time.Second})
+	if err != nil {
+		t.Fatalf("Arm: %v", err)
+	}
+	// Wait until the poller is inside the glob, then let a newer resume
+	// claim the row before the predicate can complete.
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("watch poller never started")
+	}
+	store.mu.Lock()
+	row := store.rows[info.ID]
+	row.Owner = "process-b"
+	store.rows[info.ID] = row
+	store.mu.Unlock()
+	close(release)
+
+	select {
+	case claimed := <-store.claimResults:
+		if claimed {
+			t.Fatal("the stale owner claimed the fire")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("fire never reached ClaimFire")
+	}
+	select {
+	case got := <-wakes:
+		t.Fatalf("lost-ownership fire was delivered: %q", got)
+	default:
+	}
+}
+
+func TestManagerRehydrateClaimsRows(t *testing.T) {
+	store := newFakeStore()
+	_ = store.SaveWatch("sess", WatchRecord{
+		ID: "w1", On: "time:1h", State: StateArmed, Owner: "old",
+		ArmedAt: time.Now().UnixNano(), ExpiresAt: time.Now().Add(time.Hour).UnixNano(),
+	})
+	m := NewManager(Options{
+		SessionID: "sess", Deps: Deps{Now: time.Now}, Store: store, OwnerID: "new",
+	})
+	defer m.Close()
+	if err := m.Rehydrate(context.Background()); err != nil {
+		t.Fatalf("Rehydrate: %v", err)
+	}
+	store.mu.Lock()
+	owner := store.rows["w1"].Owner
+	store.mu.Unlock()
+	if owner != "new" {
+		t.Fatalf("rehydrate left owner %q, want new", owner)
+	}
 }
 
 func TestManagerPersistsAndDeletesOnDelivery(t *testing.T) {
@@ -546,7 +896,7 @@ func TestManagerRehydrateReportsMissedWakes(t *testing.T) {
 	store := newFakeStore()
 	now := time.Now()
 	_ = store.SaveWatch("sess-1", WatchRecord{
-		ID: "w1", On: "time:1m", State: StateFired, Evidence: "fired while away",
+		ID: "w1", On: "time:1m", State: StateFired, Evidence: Evidence{Kind: "watch", Detail: "fired while away"},
 		ArmedAt: now.Add(-2 * time.Minute).UnixNano(), FiredAt: now.UnixNano(),
 	})
 	_ = store.SaveWatch("sess-1", WatchRecord{
@@ -630,6 +980,106 @@ func TestManagerCloseDropsPendingDigest(t *testing.T) {
 	case s := <-wakes:
 		t.Fatalf("digest delivered after Close: %q", s)
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// TestManagerCloseDeletesDeliveredRow covers a Close that lands while the
+// digest sink is still running: the row must be deleted, not released for a
+// duplicate on the next resume.
+func TestManagerCloseDeletesDeliveredRow(t *testing.T) {
+	store := newFakeStore()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	m := NewManager(Options{
+		SessionID:    "sess",
+		Deps:         Deps{Now: time.Now},
+		Store:        store,
+		OwnerID:      "process-a",
+		DigestWindow: 10 * time.Millisecond,
+		OnWake: func(string) {
+			close(entered)
+			<-release
+		},
+	})
+	info, err := m.Arm(ArmRequest{On: "time:10ms", ExpiresIn: time.Second})
+	if err != nil {
+		t.Fatalf("Arm: %v", err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("digest sink never ran")
+	}
+	done := make(chan struct{})
+	go func() {
+		m.Close()
+		close(done)
+	}()
+	// Wait until Close has set closed, so the callback takes the
+	// Close-delete branch rather than the normal flush-delete path.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		m.mu.Lock()
+		closed := m.closed
+		m.mu.Unlock()
+		if closed {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Close did not reach its closed state")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close did not return")
+	}
+	store.mu.Lock()
+	_, ok := store.rows[info.ID]
+	store.mu.Unlock()
+	if ok {
+		t.Fatal("delivered fired row was left in the store")
+	}
+}
+
+// TestManagerCloseReleasesUndeliveredFiredLease pins the Close contract: a
+// fired row whose digest was not delivered is left re-deliverable by the next
+// resume, not suppressed by a live lease.
+func TestManagerCloseReleasesUndeliveredFiredLease(t *testing.T) {
+	store := newFakeStore()
+	m := NewManager(Options{
+		SessionID:    "sess",
+		Deps:         Deps{Now: time.Now},
+		Store:        store,
+		OwnerID:      "process-a",
+		DigestWindow: time.Hour,
+	})
+	info, err := m.Arm(ArmRequest{On: "time:10ms", ExpiresIn: time.Second})
+	if err != nil {
+		t.Fatalf("Arm: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		list := m.List()
+		if len(list) == 1 && list[0].State == StateFired {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("watch did not fire: %+v", list)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	m.Close()
+	store.mu.Lock()
+	row, ok := store.rows[info.ID]
+	store.mu.Unlock()
+	if !ok {
+		t.Fatal("undelivered fired row was deleted on close")
+	}
+	if row.State != StateFired || row.LeaseUntil != 0 {
+		t.Fatalf("row after close = %+v, want fired with a released lease", row)
 	}
 }
 

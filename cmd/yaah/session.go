@@ -41,6 +41,7 @@ import (
 	goatherd "github.com/buchenberg/goatherd-runtime"
 	"github.com/buchenberg/goatherd-runtime/sandbox/egress"
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/agent/events"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/config"
@@ -80,6 +81,9 @@ type Session interface {
 	// install. It claims the run gate and runs the wake prompt on its own
 	// goroutine, reporting false when a turn already holds the gate.
 	StartWakeTurn(string) bool
+	// IdleWakeTurnsEnabled reports whether the configured policy allows a
+	// watch to start a turn while the session is idle.
+	IdleWakeTurnsEnabled() bool
 	SetCtrlCh(chan<- control.Msg)
 	SetApproveFn(func(name, args string) bool)
 	SetModel(providerName, modelName string)
@@ -269,6 +273,9 @@ type agentSession struct {
 	// created during wiring and closed first in close(): its pollers must
 	// stop before the follow-up channel they deliver through goes away.
 	wakeMgr *wake.Manager
+	// wakeHooks is the session-scoped JSONL emitter for wait/watch lifecycle
+	// events. It is closed in close, after the manager stops emitting.
+	wakeHooks *events.HookEmitter
 	// wakeTurnRequester is the driver's policy for a watch that fires while
 	// the session is idle. It is installed by interactive drivers after
 	// their view exists; nil means queue the digest as a follow-up. Guarded
@@ -363,8 +370,16 @@ func (s *agentSession) close() {
 	if cancelRun != nil {
 		cancelRun()
 	}
-	if !s.waitForRunGate(backgroundJobDrainTimeout) {
+	joined := s.waitForRunGate(backgroundJobDrainTimeout)
+	if !joined {
 		fmt.Fprintf(os.Stderr, "warning: a wake-initiated turn is still running after %s; continuing session teardown\n", backgroundJobDrainTimeout)
+	}
+	// Close the hook emitter only after the manager and the run gate are
+	// quiescent. If the gate timed out, a late wait_for can still emit; the
+	// emitter is deliberately left open (the process exit reaps it) rather
+	// than re-opened after Close.
+	if joined && s.wakeHooks != nil {
+		s.wakeHooks.Close()
 	}
 	// The advisory rules service drains INTO the registry below: stop it
 	// first and join its drain goroutine, so no delivery is mid-flight
@@ -738,6 +753,16 @@ func (s *agentSession) Start() {
 			fmt.Fprintf(os.Stderr, "warning: re-arming watches: %v\n", err)
 		}
 	})
+}
+
+// IdleWakeTurnsEnabled reports whether the configured policy allows a watch
+// to start a turn while the session is idle. A nil session config (tests,
+// degenerate builds) defaults to enabled.
+func (s *agentSession) IdleWakeTurnsEnabled() bool {
+	if s.cfg == nil {
+		return true
+	}
+	return s.cfg.Agent.Default.IdleWakeTurnsEnabled()
 }
 
 // SetWakeTurnRequester installs the driver's idle-wake policy. The requester

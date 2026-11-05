@@ -57,6 +57,7 @@ agents:
     approval: ask                      # ask | allow | deny
     mcp_approval: ask                  # ask | allow | deny for MCP tools
     workspace_ask: false               # prompt before denying out-of-workspace paths
+    idle_wake_turns: true              # a watch may start a turn while idle
     max_inline_tools_per_turn: 0       # 0 = unlimited
     estimate_factor: 1.3               # token estimate multiplier (0 = 1.3)
 
@@ -285,6 +286,7 @@ rather than retrying a request that cannot succeed.
 | `mcp_approval` | `ask` | `allow`, `ask`, or `deny` for MCP-served tools |
 | `workspace_ask` | `false` | With `--workspace`: prompt before denying out-of-bounds access |
 | `workspace_deny_patterns` | nil (built-in secret defaults) | Globs denied even inside the workspace. `nil` applies `.env`, `*.pem`, `*.key`, SSH keys; `[]` disables the built-ins |
+| `idle_wake_turns` | `true` | Allow a watch that fires while an interactive session is idle to start a turn. `false` queues the digest as a follow-up instead; the tool belt still controls whether `wait_for`/`watch` exist |
 | `max_inline_tools_per_turn` | 0 (unlimited) | Cap inline tool calls per turn |
 | `estimate_factor` | 1.3 | Token estimate multiplier for preflight compaction |
 | `compaction_threshold` | 0.5 | Fraction of `context_window` that triggers summarisation (effective tokens after cache subtraction) |
@@ -838,8 +840,11 @@ hooks:
 ```
 
 Events: `session.start`, `session.end`, `turn.start`, `tool.start`,
-`tool.end`, `conflict.check`, `conflict.detect`, and `context.prune` — with
-timestamps, model, tool results, durations, and prune counters.
+`tool.end`, `conflict.check`, `conflict.detect`, `context.prune`,
+`wait.start`, `wait.end`, `watch.arm`, `watch.fire`, and `watch.cancel` —
+with timestamps, model, tool results, durations, and prune counters. Wait
+and watch events carry the predicate kind, and outcome events also carry
+the state, never the target (a URL, command or file path).
 
 ## Embeddings reference
 

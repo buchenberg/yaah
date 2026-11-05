@@ -53,7 +53,7 @@ func TestWaitForToolFiresWithEvidence(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &res); err != nil {
 		t.Fatalf("result is not JSON: %v (%q)", err, out)
 	}
-	if !res.Fired || !strings.Contains(res.Evidence, "state: green") {
+	if !res.Fired || res.Evidence == nil || !strings.Contains(res.Evidence.Excerpt, "state: green") {
 		t.Fatalf("result = %+v, want fired with file evidence", res)
 	}
 }
