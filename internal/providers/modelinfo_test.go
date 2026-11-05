@@ -120,6 +120,18 @@ func TestIsThinkingModel(t *testing.T) {
 		// of falling through to the snapshot's reasoning flag.
 		{"deepseek-chat-0324", false},
 		{"deepseek/deepseek-chat-0324", false},
+		// The pin beats the snapshot's own exact entry: models.dev flags
+		// deepseek-chat-v3.1 as reasoning:true, but "deepseek-chat" is an
+		// alias to deepseek-v4-flash upstream, so the whole line reaches
+		// yaah's OpenAI-compatible path as chat-only (see nonThinkingModels).
+		{"deepseek-chat-v3.1", false},
+		// The hyphen boundary is the other half of the family rule:
+		// "deepseek-chatbot" is NOT a deepseek-chat variant, so the pin must
+		// not cover it (TestNonThinkingPinBoundary proves that directly). The
+		// true here is the snapshot's answer, not the pin's: models.dev's
+		// deepseek family ORs reasoning across its members, and the family
+		// fallback answers for an ID no exact entry claims.
+		{"deepseek-chatbot", true},
 		{"gpt-4o", false},
 		{"claude-3.5-sonnet", false},
 	}
@@ -130,6 +142,28 @@ func TestIsThinkingModel(t *testing.T) {
 				t.Errorf("IsThinkingModel(%q) = %v, want %v", tt.model, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestNonThinkingPinBoundary pins both sides of the family-wide pin: a variant
+// below a hyphen boundary inherits it, a longer identifier does not. The second
+// half is what makes "deepseek-chatbot" a meaningful case in
+// TestIsThinkingModel — its answer comes from the snapshot's deepseek family
+// fallback (which ORs reasoning across its members), not from the pin.
+func TestNonThinkingPinBoundary(t *testing.T) {
+	for _, pinned := range []string{"deepseek-chat", "deepseek-chat-0324", "deepseek-chat-v3.1"} {
+		if !isPinnedNonThinking(pinned) {
+			t.Errorf("isPinnedNonThinking(%q) = false, want the deepseek-chat family pin to cover it", pinned)
+		}
+	}
+	if isPinnedNonThinking("deepseek-chatbot") {
+		t.Error(`isPinnedNonThinking("deepseek-chatbot") = true; the boundary must be a hyphen, not any prefix`)
+	}
+	// The snapshot is what answers for the unpinned ID. If a regeneration
+	// stops claiming reasoning for the deepseek family, the TestIsThinkingModel
+	// expectation has to change with it — this is the assertion that says so.
+	if reasoning, ok := catalog.Reasoning("deepseek-chatbot"); !ok || !reasoning {
+		t.Errorf("catalog.Reasoning(deepseek-chatbot) = %v, %v; want a snapshot answer that reasons (the family fallback)", reasoning, ok)
 	}
 }
 

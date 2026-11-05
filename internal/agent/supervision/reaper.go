@@ -20,24 +20,34 @@ import (
 //
 // goatherd-runtime v0.23.0 exports no sentinel for this refusal (its
 // Scope.Discard returns bare fmt.Errorf values), so classifyDiscard tags the
-// refusal shapes it documents. Everything else — a busy store, a deadline, an
-// I/O fault — is transient and must stay retryable, because a transient
-// stranding is exactly how an orphan scope leaks for the life of the process.
-// Replace the phrase list with errors.Is once upstream exports a sentinel.
+// refusal shapes it documents. Only the tree-shape refusals qualify, because
+// nothing in the append-only trace can change them between sweeps. Everything
+// else — a busy store, a deadline, an I/O fault, a scope its own teardown
+// already removed, and above all the "cannot discard ..." refusal a parent gets
+// while its children are still active — is transient and must stay retryable: a
+// transient stranding is exactly how an orphan scope leaks for the life of the
+// process. Replace the phrase list with errors.Is once upstream exports a
+// sentinel.
 var errPermanentDiscard = errors.New("scope reaper: the kernel permanently refuses this discard")
 
-// permanentDiscardMessages are the refusal shapes goatherd-runtime's
-// ScopeManager.Discard and Scope.Discard return when the tree can never accept
-// the discard: the scope vanished, it is the root, its own state (or its
-// parent's) is no longer active, or the reconstructed tree does not list it as
-// that parent's child. State transitions in the trace are append-only, so none
-// of these can change between sweeps.
+// permanentDiscardMessages are the ONLY refusal shapes that cannot change
+// between sweeps: the reconstructed tree does not list this scope as that
+// parent's child, or the scope is the root and has no parent to be discarded
+// from. Both are properties of the append-only trace, so a retry would produce
+// the identical refusal.
+//
+// The active-children refusal ("cannot discard scope: N active children") is
+// deliberately NOT permanent. It reads like a tree-shape refusal, but its cause
+// is a child that exists at this instant: the sweep discards deepest-first, so
+// a child whose own discard failed transiently leaves its parent refused in the
+// very same pass. The retry is the next sweep, after the child reaps — writing
+// the parent off as permanent would strand a scope that one more sweep fixes.
+// "not found" is transient for the same reason: the scope may have been
+// discarded by its own teardown path, and the refused-ledger hygiene already
+// drops entries for scopes the manager no longer holds.
 var permanentDiscardMessages = []string{
-	"cannot discard from scope",
-	"cannot discard scope",
 	"is not a child of",
 	"has no parent (root scope)",
-	"not found",
 }
 
 // classifyDiscard tags a permanent refusal with errPermanentDiscard and passes
@@ -97,6 +107,7 @@ type Reaper struct {
 	unbridged map[string]time.Time // scope ID → first pass seen unbridged
 	resumed   map[string]bool      // scope IDs startup recovery re-admitted from the trace
 	refused   map[string]error     // scope IDs the kernel permanently refused to discard (never retried)
+	transient map[string]int       // scope ID → consecutive transient discard failures (log throttling)
 	discard   func(id string) error
 	started   bool
 	stop      chan struct{}
@@ -117,6 +128,7 @@ func NewReaper(mgr *goatherd.ScopeManager, runs *Registry, rootScopeID string, g
 		unbridged:   make(map[string]time.Time),
 		resumed:     make(map[string]bool),
 		refused:     make(map[string]error),
+		transient:   make(map[string]int),
 		stop:        make(chan struct{}),
 		stopped:     make(chan struct{}),
 	}
@@ -294,21 +306,38 @@ func (r *Reaper) ReapOnce(now time.Time) (reaped, stale, pruned int) {
 	for _, cand := range ready {
 		if err := r.discard(cand.id); err != nil {
 			if !errors.Is(err, errPermanentDiscard) {
-				// A transient failure — busy store, deadline, I/O — must
-				// not strand the scope: it stays out of the refused ledger
-				// and keeps its unbridged/resumed bookkeeping, so the next
-				// sweep tries again.
-				slog.Warn("scope reaper: stale scope discard failed transiently; it will be retried on the next sweep",
-					"scope", cand.id, "err", err)
+				// A transient failure — busy store, deadline, I/O, or the
+				// active-children refusal a parent gets while a sibling's
+				// discard is still being retried — must not strand the scope:
+				// it stays out of the refused ledger and keeps its
+				// unbridged/resumed bookkeeping, so the next sweep tries
+				// again.
+				//
+				// The retry is expected to succeed, so only the FIRST failure
+				// earns a warning: a scope that keeps failing would otherwise
+				// log a warning on every sweep for as long as the process
+				// lives. Repeat failures drop to Debug with the attempt count,
+				// and the counter is pruned with the same hygiene as the rest
+				// of the ledger.
+				r.transient[cand.id]++
+				if attempts := r.transient[cand.id]; attempts == 1 {
+					slog.Warn("scope reaper: stale scope discard failed transiently; it will be retried on the next sweep",
+						"scope", cand.id, "err", err)
+				} else {
+					slog.Debug("scope reaper: stale scope discard failed again; still retrying",
+						"scope", cand.id, "attempts", attempts, "err", err)
+				}
 				continue
 			}
 			r.refused[cand.id] = err
+			delete(r.transient, cand.id)
 			delete(r.unbridged, cand.id)
 			delete(r.resumed, cand.id)
 			slog.Warn("scope reaper: stale scope refused the discard; it will not be retried",
 				"scope", cand.id, "err", err)
 			continue
 		}
+		delete(r.transient, cand.id)
 		delete(r.unbridged, cand.id)
 		delete(r.resumed, cand.id)
 		reaped++
@@ -322,9 +351,11 @@ func (r *Reaper) ReapOnce(now time.Time) (reaped, stale, pruned int) {
 	// Ledger hygiene: scopes discarded by their own teardown paths never
 	// come back live, so their entries would linger forever. Drop any
 	// ledger entry whose scope no longer exists in the manager. The
-	// resumed and refused sets get the same treatment: a resumed scope its
-	// own teardown retired is gone, and a refusal for a scope that no
-	// longer exists is not worth remembering.
+	// resumed, refused and transient sets get the same treatment: a resumed
+	// scope its own teardown retired is gone, a refusal for a scope that no
+	// longer exists is not worth remembering, and a retry counter for a
+	// vanished scope must not outlive it (it would only make a recycled ID's
+	// next failure log at Debug).
 	for id := range r.unbridged {
 		if _, ok := r.mgr.Get(id); !ok {
 			delete(r.unbridged, id)
@@ -338,6 +369,11 @@ func (r *Reaper) ReapOnce(now time.Time) (reaped, stale, pruned int) {
 	for id := range r.refused {
 		if _, ok := r.mgr.Get(id); !ok {
 			delete(r.refused, id)
+		}
+	}
+	for id := range r.transient {
+		if _, ok := r.mgr.Get(id); !ok {
+			delete(r.transient, id)
 		}
 	}
 	return reaped, stale, pruned

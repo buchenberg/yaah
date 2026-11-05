@@ -164,13 +164,23 @@ var thinkingModels = map[string]bool{
 // must not make the provider reject the request. Deliberate local answers win,
 // so these pins beat both the true-families heuristics and the snapshot.
 //
+// The family-wide pin is intended, not an over-broad accident. The snapshot is
+// the evidence: it aliases "deepseek-chat" onto "deepseek-v4-flash" (a
+// reasoning model), so an exact-key carve-out would be incoherent — the two
+// IDs are the same model upstream. yaah treats the whole deepseek-chat line as
+// chat-only on its OpenAI-compatible path, which is also why
+// "deepseek-chat-v3.1", carrying its own reasoning:true entry, is deliberately
+// flipped here: it belongs to the family the alias declaration calls chat.
+//
 // Keyed like thinkingModels (sanitized, lowercase). A pin also covers its
 // variants — the key matches by exact name or by a hyphen-delimited family
 // prefix, the same convention as thinkingPrefixes — because "deepseek-chat" is
 // a family, not a single ID: a dated release like "deepseek-chat-0324" would
 // otherwise slip past the pin and inherit the snapshot's reasoning flag. Dots
 // are preserved (no global dot→hyphen normalization), so a dotted ID can never
-// borrow a hyphenated pin.
+// borrow a hyphenated pin, and the hyphen boundary is real in the other
+// direction too: "deepseek-chatbot" is NOT a variant and is answered by the
+// snapshot rather than silently pinned.
 var nonThinkingModels = map[string]bool{
 	"deepseek-chat": true,
 }

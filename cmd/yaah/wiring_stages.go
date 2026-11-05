@@ -46,6 +46,7 @@ import (
 	processpkg "github.com/buchenberg/yaah/internal/process"
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/providers"
+	"github.com/buchenberg/yaah/internal/providers/catalog"
 	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
@@ -582,9 +583,9 @@ type loopInfraStage struct {
 // proposal and list_sub_agents.
 //
 // The body is the focused constructors below, in the order a session needs
-// them: restoreTranscript, buildBackgroundLoop, buildShepherdInfra,
-// wireDispatchPosture, buildDelegateTool, startScopeReaper, wireLaneRouting,
-// wireBackgroundJobs, registerSubAgentTools.
+// them: loadProviderCatalog, restoreTranscript, buildBackgroundLoop,
+// buildShepherdInfra, wireDispatchPosture, buildDelegateTool, startScopeReaper,
+// wireLaneRouting, wireBackgroundJobs, registerSubAgentTools.
 func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, ws *workspaceStage, tr *toolRegistryStage, mcps *mcpSkillsStage) (*loopInfraStage, error) {
 	st := &loopInfraStage{}
 
@@ -596,6 +597,7 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 	// constructors. The calls stay in the original statement order: the
 	// resource-owning pieces the guard releases (supervisorSvc, reaper,
 	// egressBroker) are on st before any later error return can fire.
+	loadProviderCatalog()
 	if err := restoreTranscript(st, cfg, opts, lc, ws, tr, mcps); err != nil {
 		return st, err
 	}
@@ -621,6 +623,24 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 	registerSubAgentTools(st, cfg, tr)
 
 	return st, nil
+}
+
+// loadProviderCatalog forces the embedded models.dev snapshot's one-time decode
+// during session startup, while os.Stderr still points at the real terminal.
+//
+// The catalog logs, once, the moment it finds data.json unusable — a build
+// error that otherwise degrades silently to "every limit and reasoning answer
+// is unknown". The TUI redirects os.Stderr to /dev/null before it enters the
+// alternate screen (see runTUI), so a decode left until the first lookup would
+// have its warning swallowed by exactly the surface that runs without a log
+// file. Decoding here, in the composition root every surface shares, gets the
+// warning out first.
+//
+// A broken snapshot still degrades instead of failing the build: the empty
+// index answers "unknown" and callers fall back to their own tables, so a bad
+// data.json never blocks startup — it is just no longer silent.
+func loadProviderCatalog() {
+	_ = catalog.DecodeErr()
 }
 
 // restoreTranscript restores the stored transcript for a resumed session (or

@@ -2,7 +2,9 @@ package catalog
 
 import (
 	"bytes"
+	"errors"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -139,6 +141,67 @@ func TestDecodeErrNilForEmbeddedSnapshot(t *testing.T) {
 	}
 	if Len() < 1000 {
 		t.Errorf("Len() = %d after a clean load, want at least 1000", Len())
+	}
+}
+
+// withStubbedDecode swaps the once-loader and its decode seam for the duration
+// of one test, so the failure branch — unreachable from a checked-in snapshot —
+// can be exercised. Everything it touches is restored on cleanup.
+func withStubbedDecode(t *testing.T, decode func() (*index, error)) {
+	t.Helper()
+	prevLoaded, prevDecode, prevErr := loaded, decodeSnapshot, decodeErr
+	decodeSnapshot = decode
+	loaded = sync.OnceValue(loadIndex)
+	decodeErr = nil
+	t.Cleanup(func() {
+		loaded, decodeSnapshot, decodeErr = prevLoaded, prevDecode, prevErr
+	})
+}
+
+// A snapshot that fails to decode must surface through DecodeErr, not only
+// through a log line: DecodeErr is what session startup calls before a surface
+// can hide stderr (cmd/yaah's loadProviderCatalog).
+func TestDecodeErrSurfacesDecodeFailure(t *testing.T) {
+	sentinel := errors.New("catalog: decode snapshot: unexpected EOF")
+	withStubbedDecode(t, func() (*index, error) { return emptyIndex(), sentinel })
+
+	if err := DecodeErr(); !errors.Is(err, sentinel) {
+		t.Fatalf("DecodeErr() = %v, want the decode error %v", err, sentinel)
+	}
+	// The no-panic degradation still holds: an empty, usable index.
+	if Len() != 0 {
+		t.Errorf("Len() = %d after a failed load, want 0", Len())
+	}
+	if _, ok := Lookup("gpt-4o"); ok {
+		t.Error("a failed load still claimed to know gpt-4o")
+	}
+}
+
+// The load is a Once: reporting the error must not re-run a failed decode, or a
+// warning would appear per lookup.
+func TestDecodeRunsOnceAcrossCallers(t *testing.T) {
+	calls := 0
+	withStubbedDecode(t, func() (*index, error) {
+		calls++
+		return emptyIndex(), errors.New("boom")
+	})
+	_ = DecodeErr()
+	_ = DecodeErr()
+	_ = Len()
+	if calls != 1 {
+		t.Errorf("decode ran %d times, want 1 — the snapshot is decoded once per process", calls)
+	}
+}
+
+// A seam that returns no index at all must still degrade: a nil index would
+// panic the first lookup.
+func TestDecodeNilIndexDegrades(t *testing.T) {
+	withStubbedDecode(t, func() (*index, error) { return nil, errors.New("boom") })
+	if err := DecodeErr(); err == nil {
+		t.Fatal("DecodeErr() = nil, want the decode error")
+	}
+	if e, ok := Lookup("gpt-4o"); ok {
+		t.Errorf("Lookup on a degraded catalog reported a hit: %+v", e)
 	}
 }
 

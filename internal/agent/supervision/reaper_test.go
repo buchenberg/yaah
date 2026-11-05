@@ -2,6 +2,7 @@ package supervision
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -302,6 +303,11 @@ func TestReapOnceTransientDiscardIsRetried(t *testing.T) {
 	if err, ok := r.refused["scope:flaky"]; ok {
 		t.Fatalf("a transient failure was recorded as permanent: %v", err)
 	}
+	// The first failure is the one that warns; the counter is what keeps the
+	// repeated sweeps at Debug.
+	if got := r.transient["scope:flaky"]; got != 1 {
+		t.Errorf("transient attempts after the first failure = %d, want 1", got)
+	}
 
 	// Pass 3: the retry succeeds and the scope is reaped.
 	reaped, _, _ = r.ReapOnce(now.Add(6 * time.Second))
@@ -317,6 +323,79 @@ func TestReapOnceTransientDiscardIsRetried(t *testing.T) {
 	if err, ok := r.refused["scope:flaky"]; ok {
 		t.Errorf("a successfully reaped scope stayed in the refused ledger: %v", err)
 	}
+	// A reaped scope takes its retry counter with it.
+	if got, ok := r.transient["scope:flaky"]; ok {
+		t.Errorf("a reaped scope left a retry counter behind: %d", got)
+	}
+}
+
+// TestClassifyDiscard pins the phrase table the retry policy rests on. The
+// permanent set is deliberately narrow: only a tree-shape refusal — something
+// the append-only trace cannot change between sweeps — may strand a scope.
+// Everything else stays retryable, including the "cannot discard" refusal a
+// parent gets while a child is still active (the retry is the next sweep, after
+// the child reaps).
+func TestClassifyDiscard(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		wantPerm bool
+	}{
+		{
+			name:     "kernel tree refusal is permanent",
+			err:      errors.New("discard scope: scope:abc is not a child of scope:def"),
+			wantPerm: true,
+		},
+		{
+			name:     "root scope refusal is permanent",
+			err:      errors.New("discard scope: scope:root has no parent (root scope)"),
+			wantPerm: true,
+		},
+		{
+			name: "deadline is transient",
+			err:  errors.New("record discard event: context deadline exceeded"),
+		},
+		{
+			name: "not found is transient",
+			err:  errors.New("discard scope: not found"),
+		},
+		{
+			name: "active children refusal is transient",
+			err:  errors.New("cannot discard scope: 1 active children"),
+		},
+		{
+			name: "cannot discard from scope is transient",
+			err:  errors.New("cannot discard scope:abc from scope:def"),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := classifyDiscard(tt.err)
+			if permanent := errors.Is(got, errPermanentDiscard); permanent != tt.wantPerm {
+				t.Fatalf("classifyDiscard(%q) permanent = %v, want %v", tt.err, permanent, tt.wantPerm)
+			}
+			if !errors.Is(got, tt.err) {
+				t.Errorf("classifyDiscard(%q) dropped the original error from the chain", tt.err)
+			}
+			if !tt.wantPerm && got.Error() != tt.err.Error() {
+				t.Errorf("classifyDiscard(%q) = %q, want the transient error passed through unchanged", tt.err, got)
+			}
+		})
+	}
+
+	t.Run("nil passes through", func(t *testing.T) {
+		if got := classifyDiscard(nil); got != nil {
+			t.Errorf("classifyDiscard(nil) = %v, want nil", got)
+		}
+	})
+
+	t.Run("an already classified error is not wrapped twice", func(t *testing.T) {
+		inner := fmt.Errorf("%w: scope is not reachable from the tree", errPermanentDiscard)
+		got := classifyDiscard(inner)
+		if got != inner {
+			t.Errorf("classifyDiscard returned %v, want the error untouched", got)
+		}
+	})
 }
 
 // TestReapOnceReapsDeadSubtreeChildFirst pins the tree half of

@@ -203,24 +203,33 @@ func TestBuildRejectsBadInput(t *testing.T) {
 }
 
 func TestPrefer(t *testing.T) {
+	// Every pair below is arranged so the EXPECTED winner is the candidate the
+	// rule under test favours and the LEXICOGRAPHICALLY WORSE one: the truthful
+	// row is "zzz-…" and the inflated, mirror or unstated row is "aaa-…". A
+	// test whose intended winner also sorts first would still pass with the
+	// rule deleted, which is exactly what these fixtures avoid.
+	//
 	// A positive-signal author: canonical names its own provider.
-	author := candidate{provider: "acme", model: "m", canonical: "acme/m", entry: catalog.Entry{Context: 1000, Output: 100}}
+	author := candidate{provider: "zzz-author", model: "m", canonical: "zzz-author/m", entry: catalog.Entry{Context: 1000, Output: 100}}
 	// A reseller that points canonical at the author — rank 0, loses every
-	// dispute even with wildly inflated limits.
-	mirror := candidate{provider: "zzz-reseller", model: "m", canonical: "acme/m", entry: catalog.Entry{Context: 900000, Output: 9000}}
+	// dispute even with wildly inflated limits (and sorts first, so only the
+	// rank rule can keep it out).
+	mirror := candidate{provider: "aaa-reseller", model: "m", canonical: "zzz-author/m", entry: catalog.Entry{Context: 900000, Output: 9000}}
 	// An author that ships no canonical at all: neutral, indistinguishable
 	// from a reseller that omits it, so only the conservative limit rule
 	// protects the truthful row.
-	anonAuthor := candidate{provider: "acme", model: "m", entry: catalog.Entry{Context: 1000, Output: 100}}
+	anonAuthor := candidate{provider: "zzz-author", model: "m", entry: catalog.Entry{Context: 1000, Output: 100}}
 	// A reseller with no canonical and inflated claims.
-	anonReseller := candidate{provider: "zzz-reseller", model: "m", entry: catalog.Entry{Context: 900000, Output: 9000}}
+	anonReseller := candidate{provider: "aaa-reseller", model: "m", entry: catalog.Entry{Context: 900000, Output: 9000}}
 	// A bare canonical (no provider part) is not authorship evidence.
-	bareAuthor := candidate{provider: "acme", model: "m", canonical: "m", entry: catalog.Entry{Context: 1000, Output: 100}}
-	// A second author with the same rank but an inflated claim.
-	authorInflated := candidate{provider: "acme-x", model: "m", canonical: "acme-x/m", entry: catalog.Entry{Context: 900000, Output: 9000}}
-	// Stated output on one side, unstated on the other.
-	stated := candidate{provider: "acme", model: "m", canonical: "acme/m", entry: catalog.Entry{Context: 1000, Output: 100}}
-	unstated := candidate{provider: "acme-b", model: "m", canonical: "acme-b/m", entry: catalog.Entry{Context: 1000}}
+	bareAuthor := candidate{provider: "zzz-author", model: "m", canonical: "m", entry: catalog.Entry{Context: 1000, Output: 100}}
+	// A second author with the same rank but an inflated claim, sorted first.
+	authorInflated := candidate{provider: "aaa-author", model: "m", canonical: "aaa-author/m", entry: catalog.Entry{Context: 900000, Output: 9000}}
+	// Stated output on one side, unstated on the other: the stated row is the
+	// one that must win, and it sorts last.
+	stated := candidate{provider: "zzz-author", model: "m", canonical: "zzz-author/m", entry: catalog.Entry{Context: 1000, Output: 100}}
+	unstated := candidate{provider: "aaa-author", model: "m", canonical: "aaa-author/m", entry: catalog.Entry{Context: 1000}}
+	// Nothing decides between these but the provider order itself.
 	sameA := candidate{provider: "aaa", model: "m", canonical: "aaa/m", entry: catalog.Entry{Context: 1000, Output: 100}}
 	sameB := candidate{provider: "bbb", model: "m", canonical: "bbb/m", entry: catalog.Entry{Context: 1000, Output: 100}}
 
@@ -229,7 +238,8 @@ func TestPrefer(t *testing.T) {
 		a, b candidate
 		want bool
 	}{
-		// Authorship rank decides first.
+		// Authorship rank decides first. Without the rank rule the inflated
+		// mirror would win on limits, so these cases are load-bearing.
 		{"author beats a mirror with inflated limits", author, mirror, true},
 		{"mirror never beats the author", mirror, author, false},
 		{"neutral beats a mirror", bareAuthor, mirror, true},
@@ -237,12 +247,15 @@ func TestPrefer(t *testing.T) {
 
 		// Same rank: the conservative limit rule. An inflated claim must
 		// never raise a limit, and an unstated one loses to a stated one.
+		// Each of these would flip if the comparison were deleted.
 		{"inflated reseller loses to the truthful author", anonReseller, anonAuthor, false},
 		{"truthful author beats the inflated reseller", anonAuthor, anonReseller, true},
 		{"inflated duplicate loses among authors", authorInflated, author, false},
 		{"smaller claimed limit wins among authors", author, authorInflated, true},
 		{"stated limit beats an unstated one", stated, unstated, true},
 		{"unstated limit loses to a stated one", unstated, stated, false},
+		// Neither side states a limit: nothing about limits decides, so the
+		// provider order does.
 		{"identical metadata falls back to provider order", sameA, sameB, true},
 		{"identical metadata reverse", sameB, sameA, false},
 	}
@@ -250,6 +263,38 @@ func TestPrefer(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := prefer(tt.a, tt.b); got != tt.want {
 				t.Errorf("prefer(%v, %v) = %v, want %v", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestSmallestNonZeroWins pins the conservative comparison directly, including
+// the case the table above cannot reach: two unstated values that differ.
+func TestSmallestNonZeroWins(t *testing.T) {
+	tests := []struct {
+		name    string
+		a, b    int
+		want    bool
+		decided bool
+	}{
+		{"smaller positive wins", 1000, 2000, true, true},
+		{"larger positive loses", 2000, 1000, false, true},
+		{"equal values decide nothing", 1000, 1000, false, false},
+		{"unstated loses to stated", 0, 1000, false, true},
+		{"stated beats unstated", 1000, 0, true, true},
+		{"zero versus zero decides nothing", 0, 0, false, false},
+		// Both unstated but unequal is noise, not a claim: the comparison must
+		// not decide on it, so prefer falls through to its provider/model
+		// tie-breaks.
+		{"zero versus negative decides nothing", 0, -1, false, false},
+		{"negative versus zero decides nothing", -1, 0, false, false},
+		{"both negative decides nothing", -5, -1, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wins, decided := smallestNonZeroWins(tt.a, tt.b)
+			if wins != tt.want || decided != tt.decided {
+				t.Errorf("smallestNonZeroWins(%d, %d) = (%v, %v), want (%v, %v)", tt.a, tt.b, wins, decided, tt.want, tt.decided)
 			}
 		})
 	}

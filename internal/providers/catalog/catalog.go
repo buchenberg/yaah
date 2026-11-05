@@ -160,24 +160,40 @@ func indexFromData(data []byte) (*index, error) {
 }
 
 // decodeErr records why the embedded snapshot failed to decode. It is written
-// once, inside loaded, and read only through DecodeErr, which calls loaded
+// once, inside loadIndex, and read only through DecodeErr, which calls loaded
 // first — the Once's completion is the happens-before edge for the read.
 var decodeErr error
 
-// loaded decodes the embedded snapshot exactly once. A decode failure means the
-// binary was built with a broken data.json, which
-// TestEmbeddedSnapshotInvariants catches in CI; at runtime the catalog then
-// has no opinion rather than panicking mid-run — but it says so, loudly and
-// once, instead of degrading to an empty catalog in silence.
-var loaded = sync.OnceValue(func() *index {
-	ix, err := indexFromData(dataJSON)
+// decodeSnapshot is the once-loader's decode seam. Production always decodes
+// the embedded snapshot; tests replace it (see withStubbedDecode in
+// catalog_test.go) because no checked-in data.json can reach the failure
+// branch. The var is read when the Once fires, not when it is created.
+var decodeSnapshot = func() (*index, error) { return indexFromData(dataJSON) }
+
+// loadIndex is the once-loader's body. It never returns nil: a broken snapshot
+// degrades to the empty index, so a lookup that happens after a bad build
+// answers "unknown" rather than panicking mid-run. It says so once, loudly,
+// instead of degrading in silence.
+func loadIndex() *index {
+	ix, err := decodeSnapshot()
 	if err != nil {
 		decodeErr = err
 		slog.Warn("catalog: embedded snapshot is unusable; every lookup will report unknown",
 			"err", err, "fix", "go run ./tools/cataloggen")
+		if ix == nil {
+			ix = emptyIndex()
+		}
 	}
 	return ix
-})
+}
+
+// loaded decodes the embedded snapshot exactly once. A decode failure means the
+// binary was built with a broken data.json, which
+// TestEmbeddedSnapshotInvariants catches in CI.
+//
+// It is a var rather than a bare sync.OnceValue so the failure branch is
+// testable; production never reassigns it.
+var loaded = sync.OnceValue(loadIndex)
 
 // DecodeErr reports why the embedded snapshot failed to decode, or nil when it
 // loaded cleanly. It forces the one-time load, so a caller that checks it at

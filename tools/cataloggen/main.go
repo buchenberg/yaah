@@ -270,13 +270,19 @@ func prefer(a, b candidate) bool {
 }
 
 // smallestNonZeroWins reports (aWins, decided) for one conservative limit
-// comparison: the smaller positive value wins, an unstated (zero) limit loses
-// to any stated one, and identical values decide nothing so the caller can
-// fall through to its next tie-break.
+// comparison: the smaller positive value wins, an unstated (zero or negative)
+// limit loses to any stated one, and anything that is not a claim on both sides
+// decides nothing so the caller can fall through to its next tie-break.
+//
+// Two unstated values are undecided even when they differ: 0 versus -1 is not
+// one claim beating another, it is noise, and deciding on it would make the
+// choice between two equally uninformative rows depend on nothing at all.
 func smallestNonZeroWins(a, b int) (aWins, decided bool) {
 	switch {
 	case a == b:
 		return false, false
+	case a <= 0 && b <= 0:
+		return false, false // both unstated: no claim to compare
 	case a <= 0:
 		return false, true // a unstated, b stated
 	case b <= 0:
