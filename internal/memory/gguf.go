@@ -146,8 +146,13 @@ func loadGGUF(ctx context.Context, libPath, modelPath string) (func(context.Cont
 	}
 	llamaOnce.Do(func() {
 		llama.Load(libPath) // prebuilt llama.cpp dylib/so via purego FFI
-		llama.Init()
+		// Silence FIRST: Init()'s backend scan ("load_backend: loaded CPU
+		// backend from …") prints through the default log callback, which
+		// writes straight to this process's terminal — inside the TUI that
+		// is a raw write onto tcell's screen, and the interleaving with
+		// repaints garbles whatever partial row the cursor sat on.
 		llama.LogSet(llama.LogSilent())
+		llama.Init()
 	})
 	if err := ctx.Err(); err != nil {
 		return nil, 0, err
