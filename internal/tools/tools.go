@@ -353,6 +353,19 @@ func NewLeafTool(name string) Tool {
 	return nil
 }
 
+// LeafToolNames returns the names of the built-in leaf tools, sorted. Role
+// belts and their audit test use it as the source of truth for the tool names
+// a role may declare; runtime-wired tools (delegate, memory_*) are validated
+// separately by the caller.
+func LeafToolNames() []string {
+	names := make([]string, 0, len(leafTools))
+	for name := range leafTools {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // Register adds a tool to the registry and injects the registry's workspace and
 // path validator if the tool wants them.
 // Register installs a tool. A tool the session's belt does not admit is
