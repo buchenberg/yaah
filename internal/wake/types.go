@@ -129,7 +129,7 @@ type Manager struct {
 	watches   map[string]*armedWatch
 	nextID    int
 	pending   []firedWatch
-	timer     *time.Timer
+	timer     Timer
 	flushDone chan struct{} // closed by the digest callback or by Close
 	closed    bool
 }

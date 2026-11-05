@@ -53,12 +53,18 @@ type Deps struct {
 	// content predicate from materializing a large file on every poll.
 	ReadFileLimit func(ctx context.Context, path string, max int) ([]byte, error)
 
-	Now func() time.Time
+	// Now pins the evaluator's clock. Clock is the scheduler seam (After,
+	// AfterFunc); when both are set they should agree.
+	Now   func() time.Time
+	Clock Clock
 }
 
 func (d Deps) now() time.Time {
 	if d.Now != nil {
 		return d.Now()
+	}
+	if d.Clock != nil {
+		return d.Clock.Now()
 	}
 	return time.Now()
 }

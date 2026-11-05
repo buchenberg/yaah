@@ -144,11 +144,7 @@ func (m *Manager) Arm(req ArmRequest) (WatchInfo, error) {
 	if err := m.validateDeps(src); err != nil {
 		return WatchInfo{}, err
 	}
-	interval := req.Interval
-	if interval <= 0 {
-		interval = DefaultInterval(src)
-	}
-	interval = clampInterval(interval)
+	interval := intervalFor(src, req.Interval)
 	expiresIn := req.ExpiresIn
 	if expiresIn <= 0 {
 		expiresIn = m.defaultExpiry
@@ -290,16 +286,13 @@ func (m *Manager) Rehydrate(ctx context.Context) error {
 			if row.ExpiresAt == 0 {
 				expires = start.Add(m.defaultExpiry)
 			}
-			interval := time.Duration(row.IntervalMs) * time.Millisecond
-			if interval <= 0 {
-				interval = DefaultInterval(src)
-			}
+			interval := intervalFor(src, time.Duration(row.IntervalMs)*time.Millisecond)
 			w := &armedWatch{
 				id:       row.ID,
 				spec:     spec,
 				start:    start,
 				expires:  expires,
-				interval: clampInterval(interval),
+				interval: interval,
 				state:    StateArmed,
 			}
 			m.mu.Lock()
@@ -384,14 +377,14 @@ func (m *Manager) runWatch(ctx context.Context, w *armedWatch) {
 	if src == SourceTime {
 		dur, _ := time.ParseDuration(target)
 		deadline := w.start.Add(dur)
-		if wait := time.Until(deadline); wait > 0 {
+		if wait := deadline.Sub(m.deps.now()); wait > 0 {
 			select {
 			case <-ctx.Done():
 				if !m.deps.now().Before(w.expires) {
 					m.fire(w, fmt.Sprintf("watch %s expired before its %s predicate elapsed", w.id, target), false)
 				}
 				return
-			case <-time.After(wait):
+			case <-m.deps.after(wait):
 			}
 		}
 		fired, evidence, _ := m.deps.evaluate(ctx, w.spec, w.start)
@@ -419,7 +412,7 @@ func (m *Manager) runWatch(ctx context.Context, w *armedWatch) {
 		return
 	}
 
-	interval := clampInterval(w.interval)
+	interval := intervalFor(src, w.interval)
 	for {
 		fired, evidence, terminal := m.deps.evaluate(ctx, w.spec, w.start)
 		if fired {
@@ -437,7 +430,7 @@ func (m *Manager) runWatch(ctx context.Context, w *armedWatch) {
 			return
 		}
 		delay := interval
-		if remaining := time.Until(w.expires); remaining > 0 && remaining < delay {
+		if remaining := w.expires.Sub(m.deps.now()); remaining > 0 && remaining < delay {
 			delay = remaining
 		}
 		if delay <= 0 {
@@ -447,9 +440,9 @@ func (m *Manager) runWatch(ctx context.Context, w *armedWatch) {
 		case <-ctx.Done():
 			m.fire(w, "watch expired before its predicate fired", false)
 			return
-		case <-time.After(delay):
+		case <-m.deps.after(delay):
 		}
-		interval = nextInterval(interval)
+		interval = nextInterval(interval, MaxIntervalFor(src))
 	}
 }
 
@@ -504,7 +497,7 @@ func (m *Manager) enqueue(ws ...firedWatch) {
 func (m *Manager) scheduleFlushLocked() {
 	done := make(chan struct{})
 	m.flushDone = done
-	m.timer = time.AfterFunc(m.digestWindow, func() { m.flushIfOpen(done) })
+	m.timer = m.deps.afterFunc(m.digestWindow, func() { m.flushIfOpen(done) })
 }
 
 // finishFlush closes the callback's done channel and starts another digest if
@@ -665,8 +658,11 @@ func clampInterval(d time.Duration) time.Duration {
 	return d
 }
 
-func nextInterval(d time.Duration) time.Duration {
+func nextInterval(d, max time.Duration) time.Duration {
 	d *= 2
+	if max > 0 && d > max {
+		d = max
+	}
 	if d > MaxInterval {
 		d = MaxInterval
 	}

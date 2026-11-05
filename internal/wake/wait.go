@@ -34,11 +34,7 @@ func (m *Manager) Wait(ctx context.Context, req WaitRequest) (Result, error) {
 	if timeout > MaxWaitTimeout {
 		timeout = MaxWaitTimeout
 	}
-	interval := req.Interval
-	if interval <= 0 {
-		interval = DefaultInterval(src)
-	}
-	interval = clampInterval(interval)
+	interval := intervalFor(src, req.Interval)
 
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -103,9 +99,9 @@ loop:
 		select {
 		case <-waitCtx.Done():
 			break loop
-		case <-time.After(delay):
+		case <-m.deps.after(delay):
 		}
-		interval = nextInterval(interval)
+		interval = nextInterval(interval, MaxIntervalFor(src))
 	}
 
 	res := Result{

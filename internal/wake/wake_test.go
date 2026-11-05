@@ -141,6 +141,128 @@ func TestParseCondition(t *testing.T) {
 	}
 }
 
+func TestMaxIntervalFor(t *testing.T) {
+	cases := map[Source]time.Duration{
+		SourceJob:     0,
+		SourceTime:    time.Second,
+		SourceFile:    5 * time.Second,
+		SourceHTTP:    15 * time.Second,
+		SourceCommand: MaxInterval,
+		SourceProcess: MaxInterval,
+	}
+	for src, want := range cases {
+		if got := MaxIntervalFor(src); got != want {
+			t.Errorf("MaxIntervalFor(%s) = %v, want %v", src, got, want)
+		}
+	}
+}
+
+func TestIntervalForClampsToSourceCeiling(t *testing.T) {
+	if got := intervalFor(SourceFile, 30*time.Second); got != 5*time.Second {
+		t.Errorf("file interval = %v, want the 5s ceiling", got)
+	}
+	if got := intervalFor(SourceHTTP, time.Second); got != time.Second {
+		t.Errorf("http interval = %v, want the requested 1s", got)
+	}
+	if got := intervalFor(SourceCommand, time.Minute); got != MaxInterval {
+		t.Errorf("command interval = %v, want %v", got, MaxInterval)
+	}
+	if got := intervalFor(SourceFile, 0); got != 500*time.Millisecond {
+		t.Errorf("file default interval = %v, want 500ms", got)
+	}
+}
+
+func TestNextIntervalCapsPerSource(t *testing.T) {
+	d := 500 * time.Millisecond
+	for i := 0; i < 10; i++ {
+		d = nextInterval(d, MaxIntervalFor(SourceFile))
+	}
+	if d != 5*time.Second {
+		t.Fatalf("file backoff settled at %v, want 5s", d)
+	}
+}
+
+// fakeClock drives Wait's poll delays without sleeping. After publishes the
+// requested delay and records the channel the test advances.
+type fakeClock struct {
+	mu       sync.Mutex
+	now      time.Time
+	last     chan time.Time
+	requests chan time.Duration
+}
+
+func newFakeClock() *fakeClock {
+	return &fakeClock{now: time.Now(), requests: make(chan time.Duration, 16)}
+}
+
+func (f *fakeClock) Now() time.Time { return f.now }
+
+func (f *fakeClock) After(d time.Duration) <-chan time.Time {
+	ch := make(chan time.Time, 1)
+	f.mu.Lock()
+	f.last = ch
+	f.mu.Unlock()
+	f.requests <- d
+	return ch
+}
+
+func (f *fakeClock) AfterFunc(time.Duration, func()) Timer { return fakeTimer{} }
+
+type fakeTimer struct{}
+
+func (fakeTimer) Stop() bool { return true }
+
+func (f *fakeClock) advance() {
+	f.mu.Lock()
+	ch := f.last
+	f.mu.Unlock()
+	if ch != nil {
+		ch <- f.now
+	}
+}
+
+func TestWaitBackoffUsesTheSourceCeiling(t *testing.T) {
+	clock := newFakeClock()
+	m := NewManager(Options{Deps: Deps{Clock: clock, Glob: func(context.Context, string) ([]string, error) {
+		return nil, nil // never fires
+	}}})
+	defer m.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = m.Wait(ctx, WaitRequest{On: "file:never", Timeout: 5 * time.Second})
+	}()
+
+	want := []time.Duration{
+		500 * time.Millisecond,
+		time.Second,
+		2 * time.Second,
+		4 * time.Second,
+		5 * time.Second,
+		5 * time.Second,
+	}
+	for _, expected := range want {
+		select {
+		case got := <-clock.requests:
+			if got != expected {
+				t.Fatalf("poll delay = %v, want %v", got, expected)
+			}
+			clock.advance()
+		case <-time.After(2 * time.Second):
+			t.Fatalf("Wait did not request a poll for %v", expected)
+		}
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Wait did not return after cancel")
+	}
+}
+
 func TestParseSpecRejectsNonPositiveTime(t *testing.T) {
 	for _, on := range []string{"time:0s", "time:-5s"} {
 		if _, _, _, err := parseSpec(Spec{On: on}); err == nil {
