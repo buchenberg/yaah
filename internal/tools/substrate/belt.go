@@ -1,4 +1,8 @@
-package tools
+// Package substrate holds the tool substrate: the policy and authority
+// types the leaf tools are written against, with no dependency on any tool
+// implementation. internal/tools depends on this package; this package
+// depends on nothing in internal/tools.
+package substrate
 
 import (
 	"slices"

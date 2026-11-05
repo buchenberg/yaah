@@ -347,11 +347,11 @@ func clampTimeoutSeconds(v int) int {
 	return v
 }
 
-// clampMaxLoopCycles enforces the schema's 1–50 window. Values above 50
+// clampMaxLoopCycles enforces the schema's 1–100 window. Values above 100
 // are capped; 0 is preserved (means "use the role default").
 func clampMaxLoopCycles(v int) int {
-	if v > 50 {
-		return 50
+	if v > 100 {
+		return 100
 	}
 	if v < 0 {
 		return 0

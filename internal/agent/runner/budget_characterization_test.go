@@ -78,10 +78,10 @@ func TestResolveSubAgentIterations_Characterization(t *testing.T) {
 		{
 			name: "config role override bypasses the role ceiling",
 			subCfg: config.SubAgentConfig{Roles: map[string]config.RoleConfig{
-				"charrole": {MaxLoopCycles: 100},
+				"charrole": {MaxLoopCycles: 150},
 			}},
 			profile:    subagent.RoleProfile{MaxLoopCycles: 30},
-			want:       50, // plan §4.1: HardCeiling (schema max 50) bounds it
+			want:       100, // plan §4.1: HardCeiling (schema max 100) bounds it
 			wantSource: budget.SourceCeiling,
 		},
 		{
@@ -256,9 +256,9 @@ func TestResolveSubAgentBudgets_Reconciliation(t *testing.T) {
 		},
 		{
 			name:      "floor unsatisfiable within ceiling clamps turns",
-			profile:   subagent.RoleProfile{MinToolTurns: 60},
-			wantIter:  50,
-			wantTurns: 49,
+			profile:   subagent.RoleProfile{MinToolTurns: 110},
+			wantIter:  100,
+			wantTurns: 99,
 		},
 	}
 	for _, tc := range tests {
@@ -283,8 +283,8 @@ func TestResolveSubAgentBudgets_ShippedRoles(t *testing.T) {
 		wantIter  int
 		wantTurns int
 	}{
-		{"analyst", 50, 24},   // role file asks for 75; schema ceiling is 50
-		{"developer", 50, 24}, // role file asks for 75; schema ceiling is 50
+		{"analyst", 75, 24},
+		{"developer", 100, 50}, // role file asks for 100; schema ceiling is 100
 		{"tester", 30, 8},
 		{"reviewer", 25, 12},
 	}

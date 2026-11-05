@@ -152,7 +152,7 @@ func TestValidateSubAgentBudgetFloors(t *testing.T) {
 		},
 		{
 			name:    "role min_turns unsatisfiable within hard ceiling",
-			mutate:  func(c *Config) { c.Agent.SubAgent.Roles = map[string]RoleConfig{"r": {MinToolTurns: 50}} },
+			mutate:  func(c *Config) { c.Agent.SubAgent.Roles = map[string]RoleConfig{"r": {MinToolTurns: 100}} },
 			wantSub: "unsatisfiable",
 		},
 		{
@@ -162,7 +162,7 @@ func TestValidateSubAgentBudgetFloors(t *testing.T) {
 		},
 		{
 			name:    "global default_min_turns unsatisfiable",
-			mutate:  func(c *Config) { c.Agent.SubAgent.DefaultMinToolTurns = 60 },
+			mutate:  func(c *Config) { c.Agent.SubAgent.DefaultMinToolTurns = 100 },
 			wantSub: "unsatisfiable",
 		},
 	}

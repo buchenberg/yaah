@@ -18,7 +18,7 @@ func (t *DelegateTool) Schema() json.RawMessage {
 			"description": {"type": "string", "description": "3-5 word description of the subtask"},
 			"prompt": {"type": "string", "description": "The task for the sub-agent to perform autonomously"},
 			"role": {"type": "string", "description": "Sub-agent role selecting its tool set and limits. Required. Use list_subagents to see available roles."},
-			"max_iterations": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Optional iteration cap. Prefer omitting — roles carry tuned budgets, and the value cannot go below the role's min_iterations."},
+			"max_iterations": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Optional iteration cap. Prefer omitting — roles carry tuned budgets, and the value cannot go below the role's min_iterations."},
 			"timeout_seconds": {"type": "integer", "minimum": 0, "maximum": 600, "description": "Optional wall-clock cap in seconds for the whole dispatch. 0 or omitted uses the role's configured timeout; values above 600 are clamped."},
 			"max_turns": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Optional soft cap on tool-using turns. Prefer omitting — the role knows its own budget, and the value cannot go below the role's min_turns."},
 			"json_mode": {"type": "boolean", "description": "Request structured JSON output from the sub-agent."},
@@ -94,7 +94,7 @@ func BuildDelegateSchema(roleNames []string, roleDescriptions map[string]string)
 			"max_iterations": map[string]any{
 				"type":        "integer",
 				"minimum":     1,
-				"maximum":     50,
+				"maximum":     100,
 				"description": "Optional iteration cap. Prefer omitting — roles carry tuned budgets, and the value cannot go below the role's min_iterations.",
 			},
 			"timeout_seconds": map[string]any{

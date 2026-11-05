@@ -29,6 +29,7 @@ import (
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	goatherd "github.com/buchenberg/goatherd-runtime"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 	"github.com/buchenberg/goatherd-runtime/sandbox/egress"
 
 	"github.com/buchenberg/yaah/internal/agent"
@@ -571,16 +572,57 @@ type loopInfraStage struct {
 // infrastructure (background jobs, shepherd scope tree, egress posture), and
 // registers the tools that depend on it: delegate, sub-agent jobs, supervisor,
 // proposal and list_sub_agents.
+//
+// The body is the focused constructors below, in the order a session needs
+// them: restoreTranscript, buildBackgroundLoop, buildShepherdInfra,
+// wireDispatchPosture, buildDelegateTool, startScopeReaper, wireLaneRouting,
+// wireBackgroundJobs, registerSubAgentTools.
 func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, ws *workspaceStage, tr *toolRegistryStage, mcps *mcpSkillsStage) (*loopInfraStage, error) {
 	st := &loopInfraStage{}
 
+	// Every focused constructor writes the resources it acquires straight
+	// onto st, so a constructor that fails still leaves them visible to the
+	// caller's startup guard — the same ownership rule the stages themselves
+	// keep (see wiring.go). Two constructors additionally return a small
+	// value struct (subAgentDefaults, dispatchPosture) that only feeds later
+	// constructors. The calls stay in the original statement order: the
+	// resource-owning pieces the guard releases (supervisorSvc, reaper,
+	// egressBroker) are on st before any later error return can fire.
+	if err := restoreTranscript(st, cfg, opts, lc, ws, tr, mcps); err != nil {
+		return st, err
+	}
+
+	subs := buildBackgroundLoop(st, cfg, lc)
+	// retainCapable reports whether the session root can capture workspace
+	// state, which decides the retained lane further down.
+	retainCapable := buildShepherdInfra(st, cfg, ws, tr)
+
+	posture, err := wireDispatchPosture(st, cfg, opts, ws, retainCapable)
+	if err != nil {
+		return st, err
+	}
+
+	buildDelegateTool(st, cfg, lc, ws, tr, posture, subs)
+	startScopeReaper(st)
+	wireLaneRouting(st)
+	wireBackgroundJobs(st, tr)
+	registerSubAgentTools(st, cfg, tr)
+
+	return st, nil
+}
+
+// restoreTranscript restores the stored transcript for a resumed session (or
+// starts a fresh one), persists the new session record, and derives the
+// top-level prompt from the clean system prompt. It owns no resource the
+// startup guard must release.
+func restoreTranscript(st *loopInfraStage, cfg *config.Config, opts SessionOptions, lc *sessionConfig, ws *workspaceStage, tr *toolRegistryStage, mcps *mcpSkillsStage) error {
 	var restoreStore sessionRestoreStore
 	if tr.db != nil {
 		restoreStore = tr.db
 	}
 	restored, err := restoreSession(restoreStore, opts.ResumeSessionID, mcps.systemPrompt)
 	if err != nil {
-		return st, err
+		return err
 	}
 	st.messages, st.sessionID, st.msgIdx, st.systemPrompt = restored.Messages, restored.SessionID, restored.MsgIdx, restored.SystemPrompt
 	st.mode = restored.Mode
@@ -602,12 +644,30 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 	// system prompt. systemPrompt stays clean so child sub-agent prompts
 	// never inherit top-level directives.
 	st.mainPrompt = buildMainPrompt(cfg, opts, st.systemPrompt)
+	return nil
+}
+
+// subAgentDefaults is what buildBackgroundLoop resolves for the sub-agent lane
+// before any dispatch: the model pair delegate runs sub-agents with, and the
+// sub-agent context window (half the orchestrator's, floored).
+type subAgentDefaults struct {
+	provider      agent.Provider
+	model         string
+	contextWindow int
+}
+
+// buildBackgroundLoop builds the loop's shared channels and background job
+// manager, and resolves the sub-agent model and window the delegate tool needs.
+// It starts nothing: the job manager and the channels belong to the session,
+// not to the startup guard.
+func buildBackgroundLoop(st *loopInfraStage, cfg *config.Config, lc *sessionConfig) subAgentDefaults {
+	var subs subAgentDefaults
 
 	st.tracker = &tools.ConflictTracker{}
-	subAgentProvider, subAgentModel := resolveSubAgent(cfg)
-	subCW := providers.ResolveWindow(lc.modelName, cfg.Agent.Default.ContextWindow) / 2
-	if subCW < 32000 {
-		subCW = 32000
+	subs.provider, subs.model = resolveSubAgent(cfg)
+	subs.contextWindow = providers.ResolveWindow(lc.modelName, cfg.Agent.Default.ContextWindow) / 2
+	if subs.contextWindow < 32000 {
+		subs.contextWindow = 32000
 	}
 
 	st.followupCh = make(chan string, 32)
@@ -622,6 +682,21 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 		st.backgroundJobs.MaxConcurrent = 4
 	}
 
+	return subs
+}
+
+// buildShepherdInfra brings up the session's supervision infrastructure: the
+// trace store, the recovered scope tree, the steering channel, the supervision
+// bridge, the root scope, the accept seam's effect sink and the advisory-rules
+// service. It returns retainCapable: whether the root scope can actually
+// capture workspace state, and therefore whether the retained lane can be live.
+//
+// Everything it creates that outlives the build lands on st as it is created —
+// scopeMgr, traceStore, traceBus, runs, rootScopeID and supervisorSvc — so the
+// guard can close the store and the service on a failed startup. Tracing
+// degrades rather than fails, so there is no error return: a session without
+// supervision is a supported session.
+func buildShepherdInfra(st *loopInfraStage, cfg *config.Config, ws *workspaceStage, tr *toolRegistryStage) bool {
 	// Shepherd infrastructure: session-shared trace store, effect bus,
 	// and scope manager. Initialized before the task tool is built — the
 	// session's root scope (shepherd-adoption plan D1) must exist when
@@ -779,6 +854,31 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 		}
 	}
 
+	return retainCapable
+}
+
+// dispatchPosture is what wireDispatchPosture produces: the workspace and spill
+// directory a sub-agent dispatch runs with, the confinement policy it carries,
+// the per-dispatch container worlds, and whether the retained lane is live.
+type dispatchPosture struct {
+	workspace    tools.Workspace
+	spillDir     string
+	network      confinement.NetworkPolicy
+	worlds       *tools.DispatchWorlds
+	retainedLane bool
+}
+
+// wireDispatchPosture resolves the world a dispatch would actually get: the
+// sub-agent workspace and spill directory, the sub-agent egress posture (which
+// starts the session's broker), the per-dispatch container worlds, the retained
+// lane, and the session-level world status every UI renders.
+//
+// The egress broker is a startup resource: it is assigned to st.egressBroker
+// before the error return, so the guard stops it on a failed startup and the
+// session stops it on close.
+func wireDispatchPosture(st *loopInfraStage, cfg *config.Config, opts SessionOptions, ws *workspaceStage, retainCapable bool) (dispatchPosture, error) {
+	var posture dispatchPosture
+
 	// Isolated session (plan §1.3, decision D2): sub-agents inherit the
 	// session's one sandbox, so the DelegateTool gets the same sandbox
 	// workspace the main registry runs on — a sub-agent's file tools and
@@ -787,22 +887,21 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 	// Sub-agents also get no host spill dir: a truncation hint pointing
 	// at a host file is unreadable through their sandboxed read tool,
 	// so the loop falls back to the bare truncation marker instead.
-	var subAgentWorkspace tools.Workspace
-	var subAgentSpillDir string
 	if ws.sessionSandbox == nil {
-		subAgentSpillDir = toolSpillDir()
+		posture.spillDir = toolSpillDir()
 	} else {
-		subAgentWorkspace = ws.sessionSandbox.Workspace()
+		posture.workspace = ws.sessionSandbox.Workspace()
 	}
 
 	// Egress (Plan 7 Phase 3): agents.subagent.network selects the confined
 	// dispatch's posture. "broker" needs a live broker, so one is started for the
 	// session and its port pinned — the same object the guard above stops on a
 	// failed startup and the session stops on close.
-	subNetwork, broker, nerr := wireSubAgentNetwork(cfg.Agent.SubAgent)
+	network, broker, nerr := wireSubAgentNetwork(cfg.Agent.SubAgent)
 	if nerr != nil {
-		return st, nerr
+		return posture, nerr
 	}
+	posture.network = network
 	st.egressBroker = broker
 
 	// Per-dispatch container worlds (yaah-ihfh.3, yaah-a7ks): a Linux host with
@@ -811,19 +910,18 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 	// container session it is seeded from the session container's captured
 	// state. In a container session both report and proposal lanes use a
 	// sibling; a host session keeps the host-settled GitDelta path.
-	var dispatchWorlds *tools.DispatchWorlds
 	if runtime.GOOS == "linux" && cfg.Workspace.Containerd.Image != "" {
-		dispatchWorlds = &tools.DispatchWorlds{
+		posture.worlds = &tools.DispatchWorlds{
 			Config: cfg.Workspace,
 			Opener: tools.OpenContainerdWorkspaceSandbox,
 			Deny:   ws.deny,
 		}
 		if ws.sessionSandbox != nil {
-			dispatchWorlds.SessionSandbox = ws.sessionSandbox
+			posture.worlds.SessionSandbox = ws.sessionSandbox
 		}
 	}
-	containerSession := dispatchWorlds != nil && dispatchWorlds.SessionSandbox != nil
-	retainLane := retainedLaneActive(cfg.Agent.SubAgent.Mode, retainCapable, containerSession)
+	containerSession := posture.worlds != nil && posture.worlds.SessionSandbox != nil
+	posture.retainedLane = retainedLaneActive(cfg.Agent.SubAgent.Mode, retainCapable, containerSession)
 
 	// Session-level posture for every UI (TUI info pane, REPL banner, web
 	// header, ACP _meta). One derivation shared with doctor, computed after
@@ -831,6 +929,14 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 	// describe the world a dispatch would actually get.
 	st.worldStatus = worldinfo.Derive(cfg, opts.WorkspaceRoot, ws.sessionSandbox != nil)
 
+	return posture, nil
+}
+
+// buildDelegateTool constructs the delegate tool with the session's provider,
+// supervision handles, workspace posture and sub-agent lane. It is not
+// fallible: a store that would not open or a root scope that could not be
+// created already disabled the pieces this tool would have carried.
+func buildDelegateTool(st *loopInfraStage, cfg *config.Config, lc *sessionConfig, ws *workspaceStage, tr *toolRegistryStage, posture dispatchPosture, subs subAgentDefaults) {
 	st.taskTool = runner.NewDelegateTool(runner.DelegateToolOpts{
 		Provider:              lc.provider,
 		ProviderName:          lc.providerName,
@@ -838,22 +944,22 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 		ModelName:             lc.modelName,
 		DB:                    tr.db,
 		SessionID:             st.sessionID,
-		SubAgentProvider:      subAgentProvider,
-		SubAgentModel:         subAgentModel,
+		SubAgentProvider:      subs.provider,
+		SubAgentModel:         subs.model,
 		SubCfg:                cfg.Agent.SubAgent,
 		RoleNames:             subagent.Roles(),
 		OtelEnabled:           cfg.Observability.Otel.Enabled,
 		OtelVerbose:           cfg.Observability.Otel.Verbose,
 		Tracker:               st.tracker,
 		EstimateFactor:        cfg.Agent.Default.EstimateFactor,
-		SubContextWindow:      subCW,
+		SubContextWindow:      subs.contextWindow,
 		OutputLimit:           cfg.Agent.SubAgent.OutputLimit,
 		ProviderMap:           cfg.Providers,
 		Defaults:              cfg.Agent.Default,
 		PipelineDisabled:      cfg.Agent.Middleware.Disabled,
-		ToolSpillDir:          subAgentSpillDir,
+		ToolSpillDir:          posture.spillDir,
 		PathValidator:         ws.pathValidator,
-		Workspace:             subAgentWorkspace,
+		Workspace:             posture.workspace,
 		RootScopeID:           st.rootScopeID,
 		Runs:                  st.runs,
 		ScopeManager:          st.scopeMgr,
@@ -866,18 +972,23 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 		// the runtime too, for report-lane sibling worlds; its proposal lane is
 		// routed shared below because there is no host worktree to settle into.
 		// agents.subagent.mode: shared remains the opt-out.
-		SubNetwork:           subNetwork,
-		Retain:               retainLane,
+		SubNetwork:           posture.network,
+		Retain:               posture.retainedLane,
 		RetainedRepoPath:     cfg.Agent.Default.RetainedRepoPath,
 		RetainedWorktreeRoot: cfg.Agent.Default.RetainedWorktreeRoot,
 		RetainedBootstrap:    cfg.Agent.Default.RetainedWorktreeBootstrap,
-		DispatchWorlds:       dispatchWorlds,
+		DispatchWorlds:       posture.worlds,
 	})
 
 	// RoleResolver provides a live role-name lookup so the delegate
 	// tool sees roles created via the role tool without a restart.
 	st.taskTool.RoleResolver = func() []string { return subagent.DefaultRegistry().Names() }
+}
 
+// startScopeReaper starts the session's scope reaper, the defense-in-depth
+// sweep behind the fork-site teardowns and the dispatch cap. The reaper is a
+// startup resource the guard closes, so it is on st before it is started.
+func startScopeReaper(st *loopInfraStage) {
 	// Scope reaper (yaah-95ri.4): sweeps active dispatch scopes that no
 	// longer have a bridged run or a pending retained proposal past the
 	// grace period. Defense in depth behind the fork-site teardowns and
@@ -886,7 +997,12 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 	st.reaper = supervision.NewReaper(st.scopeMgr, st.runs, st.rootScopeID, 0)
 	st.reaper.SetPendingSource(st.taskTool.LiveDispatchScopeIDs)
 	st.reaper.Start()
+}
 
+// wireLaneRouting installs the live role-contract lane lookup on the delegate
+// tool, so every dispatch is routed by the role's declared output contract and
+// a role created mid-session routes immediately.
+func wireLaneRouting(st *loopInfraStage) {
 	// LaneForRole routes each dispatch by the role's declared output
 	// contract (yaah-7yf): report roles get their text back with the
 	// worktree torn down (or run shared when they cannot mutate), proposal
@@ -902,7 +1018,12 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 			return tools.LaneProposal
 		}
 	}
+}
 
+// wireBackgroundJobs hands the job manager to the delegate tool, delivers
+// completed background results as follow-up messages, and registers the
+// delegate and sub-agent-job tools.
+func wireBackgroundJobs(st *loopInfraStage, tr *toolRegistryStage) {
 	// Hand the manager to the task tool so background:true dispatches go
 	// through it instead of the broken inline goroutine.
 	st.taskTool.BackgroundJobs = st.backgroundJobs
@@ -941,7 +1062,13 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 	tr.reg.Register(st.taskTool)
 
 	tr.reg.Register(&tools.SubAgentJobsTool{Jobs: st.backgroundJobs})
+}
 
+// registerSubAgentTools registers the tools that ride the infrastructure above:
+// the supervisor and proposal tools when supervision came up, and
+// list_sub_agents. A tool whose infrastructure stayed down is named on the belt
+// instead, so an allowlist mentioning it is not reported as a typo.
+func registerSubAgentTools(st *loopInfraStage, cfg *config.Config, tr *toolRegistryStage) {
 	// Shepherd-dependent tool surface: the supervisor and proposal tools
 	// register only when the infrastructure above came up.
 	if st.scopeMgr != nil {
@@ -1050,8 +1177,6 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 			return infos
 		},
 	})
-
-	return st, nil
 }
 
 // assemble seals the registry against the workspace, finishes the prompts,

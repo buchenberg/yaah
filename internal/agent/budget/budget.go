@@ -91,7 +91,7 @@ func fallbackTurns(iterations int) int {
 // per call. Resolve bounds the
 // final budget here so headroom reconciliation cannot grow iterations
 // without limit.
-const SchemaMaxIterations = 50
+const SchemaMaxIterations = 100
 
 // Resolve computes the effective budget for a Spec. Precedence mirrors
 // the historical runner behaviour:

@@ -320,8 +320,8 @@ Each sub-agent runs under a **role** that selects its tool set and default limit
 
 | Role | Iterations | Turns (floor) | Timeout | Tools |
 |---|---|---|---|---|
-| `analyst` (Jack) | 75 (cap 50) | 24 (5) | 600s | read/search/web + shell, git, diff, go_outline |
-| `developer` (Charley) | 75 (cap 50) | 24 (6) | 900s | analyst set + write/edit/delete/patch + Go tools |
+| `analyst` (Jack) | 75 | 24 (5) | 600s | read/search/web + shell, git, diff, go_outline |
+| `developer` (Charley) | 100 | 50 (6) | 900s | analyst set + write/edit/delete/patch + Go tools |
 | `tester` (Casey) | 30 | 8 (4) | 300s | read/search + shell + go_test + git/diff |
 | `reviewer` (Tim) | 25 | 12 (8) | 600s | read/search + git/diff/staticcheck; no shell or web |
 
