@@ -62,6 +62,32 @@ func TestWakeGlobRelativeAndExact(t *testing.T) {
 	}
 }
 
+func TestSplitGlobRoots(t *testing.T) {
+	cases := []struct {
+		pattern string
+		root    string
+		magic   string
+	}{
+		{"src/**/*.ts", "src", "**/*.ts"},
+		{"*.log", ".", "*.log"},
+		{".*", ".", ".*"},
+		{"/*.log", "/", "*.log"},
+		{"/**/*.go", "/", "**/*.go"},
+		{"ci/../logs/*.log", "ci/../logs", "*.log"},
+		{"link/**/*.go", "link", "**/*.go"},
+	}
+	for _, tc := range cases {
+		root, magic, err := splitGlob(tc.pattern)
+		if err != nil {
+			t.Errorf("splitGlob(%q): %v", tc.pattern, err)
+			continue
+		}
+		if root != tc.root || magic != tc.magic {
+			t.Errorf("splitGlob(%q) = (%q, %q), want (%q, %q)", tc.pattern, root, magic, tc.root, tc.magic)
+		}
+	}
+}
+
 func TestWakeGlobDotfiles(t *testing.T) {
 	dir, ws := wakeTestWorkspace(t)
 	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("secret"), 0o644); err != nil {

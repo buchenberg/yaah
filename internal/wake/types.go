@@ -124,16 +124,14 @@ type Manager struct {
 	cancel    context.CancelFunc
 	closeOnce sync.Once
 	wg        sync.WaitGroup
-	// flushWG tracks the digest timer callback so Close can wait for an
-	// in-flight onWake call. The pollers are tracked by wg.
-	flushWG sync.WaitGroup
 
-	mu      sync.Mutex
-	watches map[string]*armedWatch
-	nextID  int
-	pending []firedWatch
-	timer   *time.Timer
-	closed  bool
+	mu        sync.Mutex
+	watches   map[string]*armedWatch
+	nextID    int
+	pending   []firedWatch
+	timer     *time.Timer
+	flushDone chan struct{} // closed by the digest callback or by Close
+	closed    bool
 }
 
 type armedWatch struct {

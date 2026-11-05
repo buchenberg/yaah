@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+// digestCloseTimeout bounds how long Close waits for an in-flight digest
+// callback. A wedged view sink must not hang teardown; the fired rows stay in
+// the store and the next resume reports them as missed wakes.
+const digestCloseTimeout = 5 * time.Second
+
 // NewManager creates a session's manager. The caller must Close it.
 func NewManager(opts Options) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -89,15 +94,23 @@ func (m *Manager) SetOnWake(fn func(string)) {
 func (m *Manager) Close() {
 	m.closeOnce.Do(func() {
 		m.cancel()
+		var flushDone chan struct{}
 		m.mu.Lock()
 		m.closed = true
 		if m.timer != nil {
-			// Stop returns true only when the callback was prevented. If
-			// it already started, the callback owns the Done.
 			if m.timer.Stop() {
-				m.flushWG.Done()
+				// The callback was prevented; Close owns its done.
+				flushDone = m.flushDone
+				m.flushDone = nil
+				m.timer = nil
+				if flushDone != nil {
+					close(flushDone)
+				}
+			} else {
+				// The callback already started and closes done itself in
+				// finishFlush.
+				flushDone = m.flushDone
 			}
-			m.timer = nil
 		}
 		m.pending = nil
 		// Armed rows stay in the store: the next resume re-arms them. The
@@ -107,9 +120,15 @@ func (m *Manager) Close() {
 		m.mu.Unlock()
 		m.wg.Wait()
 		// Join an in-flight digest callback so no onWake call can outlive
-		// Close (the session closes closeCh before calling us, so a blocked
-		// sink unblocks).
-		m.flushWG.Wait()
+		// Close in the normal case. The wait is bounded: a view sink that
+		// does a blocking network write must not hang teardown, and the
+		// fired rows remain in the store for the next resume.
+		if flushDone != nil {
+			select {
+			case <-flushDone:
+			case <-time.After(digestCloseTimeout):
+			}
+		}
 	})
 }
 
@@ -475,39 +494,61 @@ func (m *Manager) enqueue(ws ...firedWatch) {
 	}
 	m.pending = append(m.pending, ws...)
 	if m.timer == nil {
-		m.flushWG.Add(1)
-		m.timer = time.AfterFunc(m.digestWindow, m.flushIfOpen)
+		m.scheduleFlushLocked()
+	}
+	m.mu.Unlock()
+}
+
+// scheduleFlushLocked starts the digest timer when none is pending. The
+// caller must hold m.mu and have checked m.closed.
+func (m *Manager) scheduleFlushLocked() {
+	done := make(chan struct{})
+	m.flushDone = done
+	m.timer = time.AfterFunc(m.digestWindow, func() { m.flushIfOpen(done) })
+}
+
+// finishFlush closes the callback's done channel and starts another digest if
+// fires arrived while this one was delivering. Only one callback runs at a
+// time: m.timer stays non-nil until here, so enqueue appends rather than
+// starting a second callback.
+func (m *Manager) finishFlush(done chan struct{}) {
+	m.mu.Lock()
+	m.timer = nil
+	if m.flushDone == done {
+		m.flushDone = nil
+	}
+	close(done)
+	if !m.closed && len(m.pending) > 0 {
+		m.scheduleFlushLocked()
 	}
 	m.mu.Unlock()
 }
 
 // flushIfOpen runs on the digest timer. It re-checks closed so a timer that
 // fires during Close leaves the fired records durable for the next resume.
-// The callback is tracked by flushWG so Close can join it.
-func (m *Manager) flushIfOpen() {
-	defer m.flushWG.Done()
+func (m *Manager) flushIfOpen(done chan struct{}) {
 	m.mu.Lock()
-	m.timer = nil
 	if m.closed {
 		m.mu.Unlock()
+		m.finishFlush(done)
 		return
 	}
 	pending := m.pending
 	m.pending = nil
 	onWake := m.onWake
 	m.mu.Unlock()
-	if len(pending) == 0 {
-		return
-	}
-	if onWake != nil {
+
+	if len(pending) > 0 && onWake != nil {
 		onWake(digestText(pending))
 	}
+
 	m.mu.Lock()
 	if m.closed {
 		// Close won the race: keep the fired rows so the next resume
 		// reports them as missed wakes instead of dropping a digest whose
 		// delivery may have been cut off by teardown.
 		m.mu.Unlock()
+		m.finishFlush(done)
 		return
 	}
 	for _, p := range pending {
@@ -516,31 +557,27 @@ func (m *Manager) flushIfOpen() {
 		}
 	}
 	m.mu.Unlock()
-	if m.store == nil {
-		return
-	}
-	for _, p := range pending {
-		// Never delete a same-id row that a newer watch now owns. A fired
-		// watch is matched by pointer; a missed-wake entry (p.w == nil) has
-		// no in-memory record, so an id that reappeared belongs to a new
-		// arm and its row must survive.
-		if p.w != nil {
+
+	if m.store != nil {
+		for _, p := range pending {
+			// Never delete a same-id row that a newer watch now owns. A
+			// fired watch is matched by pointer; a missed-wake entry
+			// (p.w == nil) has no in-memory record, so an id that
+			// reappeared belongs to a new arm and its row must survive.
 			m.mu.Lock()
 			current := m.watches[p.id]
-			m.mu.Unlock()
-			if current != nil && current != p.w {
-				continue
-			}
-		} else {
-			m.mu.Lock()
 			_, reused := m.watches[p.id]
 			m.mu.Unlock()
-			if reused {
+			if p.w != nil && current != nil && current != p.w {
 				continue
 			}
+			if p.w == nil && reused {
+				continue
+			}
+			_ = m.store.DeleteWatch(m.sessionID, p.id)
 		}
-		_ = m.store.DeleteWatch(m.sessionID, p.id)
 	}
+	m.finishFlush(done)
 }
 
 func (m *Manager) remove(id string) {

@@ -187,12 +187,11 @@ func hasGlobMeta(pattern string) bool {
 	return strings.ContainsAny(pattern, "*?[{")
 }
 
-// globRoot returns the non-magic prefix of a pattern, i.e. the directory a
-// walk may start from. For "src/**/*.ts" it is "src"; for "*.log" it is ".".
 // splitGlob returns the non-magic prefix to walk from and the magic suffix
 // to match against a root-relative path. Splitting on segments (not a string
 // prefix) keeps dotfile patterns intact: ".*" has no literal root, so its
-// magic part is ".*", not "*".
+// magic part is ".*", not "*". A root-anchored pattern such as "/*.log" keeps
+// its filesystem root; a relative one starts at the workspace.
 func splitGlob(pattern string) (root, magic string, err error) {
 	parts := strings.Split(pattern, "/")
 	i := 0
@@ -205,7 +204,11 @@ func splitGlob(pattern string) (root, magic string, err error) {
 	magic = strings.Join(parts[i:], "/")
 	root = strings.Join(parts[:i], "/")
 	if root == "" {
-		root = "."
+		if strings.HasPrefix(pattern, "/") {
+			root = "/"
+		} else {
+			root = "."
+		}
 	}
 	return root, magic, nil
 }
