@@ -358,9 +358,6 @@ func (s *agentSession) close() {
 	if s.wakeMgr != nil {
 		s.wakeMgr.Close()
 	}
-	if s.wakeHooks != nil {
-		s.wakeHooks.Close()
-	}
 	// A watch can start its own turn. Cancel it (once it has published its
 	// cancel func) and join the run gate — bounded — before the workspace
 	// substrate below is destroyed: a wake mid-Exec must not still hold the
@@ -375,6 +372,12 @@ func (s *agentSession) close() {
 	}
 	if !s.waitForRunGate(backgroundJobDrainTimeout) {
 		fmt.Fprintf(os.Stderr, "warning: a wake-initiated turn is still running after %s; continuing session teardown\n", backgroundJobDrainTimeout)
+	}
+	// Close the hook emitter only after the manager and the run gate are
+	// quiescent: a late wait_for in the joined turn would otherwise re-open
+	// the file after Close (HookEmitter is reusable by design).
+	if s.wakeHooks != nil {
+		s.wakeHooks.Close()
 	}
 	// The advisory rules service drains INTO the registry below: stop it
 	// first and join its drain goroutine, so no delivery is mid-flight

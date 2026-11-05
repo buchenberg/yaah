@@ -843,8 +843,8 @@ Events: `session.start`, `session.end`, `turn.start`, `tool.start`,
 `tool.end`, `conflict.check`, `conflict.detect`, `context.prune`,
 `wait.start`, `wait.end`, `watch.arm`, `watch.fire`, and `watch.cancel` —
 with timestamps, model, tool results, durations, and prune counters. Wait
-and watch events carry the predicate kind and state, never its target (a
-URL, command or file path).
+and watch events carry the predicate kind, and outcome events also carry
+the state, never the target (a URL, command or file path).
 
 ## Embeddings reference
 

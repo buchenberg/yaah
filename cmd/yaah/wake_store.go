@@ -46,8 +46,8 @@ func (s wakeStore) ClaimWatches(sessionID, owner string, leaseUntil int64) ([]wa
 	return toWakeRecords(rows), nil
 }
 
-func (s wakeStore) ClaimFire(sessionID, id, owner string, firedAt int64, evidence string) (bool, error) {
-	return s.db.ClaimSessionWatchFire(sessionID, id, owner, firedAt, evidence)
+func (s wakeStore) ClaimFire(sessionID, id, owner string, armedAt, firedAt, leaseUntil int64, evidence string) (bool, error) {
+	return s.db.ClaimSessionWatchFire(sessionID, id, owner, armedAt, firedAt, leaseUntil, evidence)
 }
 
 func (s wakeStore) DeleteWatch(sessionID, id string) error {

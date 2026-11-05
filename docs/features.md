@@ -262,7 +262,8 @@ Set `hooks.dir` to emit structured JSONL events: `session.start`,
 `conflict.detect`, `context.prune`, `wait.start`, `wait.end`, `watch.arm`,
 `watch.fire`, and `watch.cancel`. Events carry timestamps, model and tool
 data, durations, and prune counters; wait/watch events name the predicate
-kind and state, never its target. Unset or empty disables hooks.
+kind, and outcome events also name the state, never the target. Unset or
+empty disables hooks.
 
 ## Approval gates
 

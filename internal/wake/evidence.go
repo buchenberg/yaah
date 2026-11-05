@@ -71,7 +71,10 @@ func ParseEvidence(raw string) Evidence {
 		return Evidence{}
 	}
 	var ev Evidence
-	if err := json.Unmarshal([]byte(raw), &ev); err == nil && ev.Kind != "" {
+	if err := json.Unmarshal([]byte(raw), &ev); err == nil && !ev.IsZero() {
+		// A structured row may legitimately have no Kind (a synthesized
+		// Detail-only record); only a non-zero decoded object is taken as
+		// the envelope. Legacy prose fails the decode.
 		return ev
 	}
 	return Evidence{Detail: raw}

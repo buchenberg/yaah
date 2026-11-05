@@ -55,8 +55,9 @@ type Store interface {
 	// and the previous owner's ClaimFire calls then fail.
 	ClaimWatches(sessionID, owner string, leaseUntil int64) ([]WatchRecord, error)
 	// ClaimFire transitions an armed watch owned by owner to fired and
-	// reports whether this owner still owned it.
-	ClaimFire(sessionID, id, owner string, firedAt int64, evidence string) (bool, error)
+	// reports whether this owner still owned it. armedAt scopes the claim
+	// to the watch generation, so a same-id replacement is never marked.
+	ClaimFire(sessionID, id, owner string, armedAt, firedAt, leaseUntil int64, evidence string) (bool, error)
 }
 
 // Observer receives lifecycle notifications for tracing and hook emission.
@@ -187,6 +188,11 @@ type firedWatch struct {
 	spec     Spec
 	evidence Evidence
 	missed   bool
+	// The rehydrated missed-wake report carries the row's timing fields so
+	// the observer sees the same WatchInfo a live fire would.
+	armedAt    int64
+	expiresAt  int64
+	intervalMs int64
 	// w is the live record the fire came from. Matching it on flush keeps a
 	// fired watch from deleting a same-id replacement armed after it.
 	w *armedWatch

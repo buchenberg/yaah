@@ -122,7 +122,7 @@ func StartWait(ctx context.Context, kind string) (context.Context, trace.Span) {
 }
 
 // FinishWait records the wait's outcome and ends its span.
-func FinishWait(span trace.Span, fired, timedOut, interrupted bool, elapsed time.Duration) {
+func FinishWait(span trace.Span, fired, timedOut, interrupted, errored bool, elapsed time.Duration) {
 	if span == nil {
 		return
 	}
@@ -130,6 +130,7 @@ func FinishWait(span trace.Span, fired, timedOut, interrupted bool, elapsed time
 		attribute.Bool("wake.fired", fired),
 		attribute.Bool("wake.timed_out", timedOut),
 		attribute.Bool("wake.interrupted", interrupted),
+		attribute.Bool("wake.errored", errored),
 		attribute.Int64("wake.elapsed_ms", elapsed.Milliseconds()),
 	)
 	span.End()

@@ -688,6 +688,9 @@ func TestManagerMaxWatches(t *testing.T) {
 type fakeStore struct {
 	mu   sync.Mutex
 	rows map[string]WatchRecord
+	// claimResults, when set, receives the outcome of every ClaimFire. It
+	// lets the ownership test observe the claim without a wall-clock race.
+	claimResults chan bool
 }
 
 func newFakeStore() *fakeStore { return &fakeStore{rows: map[string]WatchRecord{}} }
@@ -714,6 +717,9 @@ func (s *fakeStore) ClaimWatches(sessionID, owner string, leaseUntil int64) ([]W
 	defer s.mu.Unlock()
 	out := make([]WatchRecord, 0, len(s.rows))
 	for id, r := range s.rows {
+		if r.State != StateArmed {
+			continue
+		}
 		r.Owner = owner
 		r.LeaseUntil = leaseUntil
 		s.rows[id] = r
@@ -722,19 +728,26 @@ func (s *fakeStore) ClaimWatches(sessionID, owner string, leaseUntil int64) ([]W
 	return out, nil
 }
 
-func (s *fakeStore) ClaimFire(sessionID, id, owner string, firedAt int64, evidence string) (bool, error) {
+func (s *fakeStore) ClaimFire(sessionID, id, owner string, armedAt, firedAt, leaseUntil int64, evidence string) (bool, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	r, ok := s.rows[id]
-	if !ok || r.Owner != owner || r.State != StateArmed {
-		return false, nil
+	claimed := ok && r.Owner == owner && r.State == StateArmed && r.ArmedAt == armedAt
+	if claimed {
+		r.State = StateFired
+		r.FiredAt = firedAt
+		r.LeaseUntil = leaseUntil
+		r.Evidence = ParseEvidence(evidence)
+		r.Owner = owner
+		s.rows[id] = r
 	}
-	r.State = StateFired
-	r.FiredAt = firedAt
-	r.Evidence = ParseEvidence(evidence)
-	r.Owner = owner
-	s.rows[id] = r
-	return true, nil
+	s.mu.Unlock()
+	if s.claimResults != nil {
+		select {
+		case s.claimResults <- claimed:
+		default:
+		}
+	}
+	return claimed, nil
 }
 
 func (s *fakeStore) DeleteWatch(sessionID, id string) error {
@@ -749,10 +762,18 @@ func (s *fakeStore) DeleteWatch(sessionID, id string) error {
 // deliver a duplicate wake.
 func TestManagerDropsFireItNoLongerOwns(t *testing.T) {
 	store := newFakeStore()
+	store.claimResults = make(chan bool, 1)
 	wakes := make(chan string, 1)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startedOnce sync.Once
 	m := NewManager(Options{
-		SessionID:    "sess",
-		Deps:         Deps{Now: time.Now},
+		SessionID: "sess",
+		Deps: Deps{Now: time.Now, Glob: func(context.Context, string) ([]string, error) {
+			startedOnce.Do(func() { close(started) })
+			<-release
+			return []string{"/w/ci"}, nil
+		}},
 		Store:        store,
 		OwnerID:      "process-a",
 		DigestWindow: 10 * time.Millisecond,
@@ -760,21 +781,36 @@ func TestManagerDropsFireItNoLongerOwns(t *testing.T) {
 	})
 	defer m.Close()
 
-	info, err := m.Arm(ArmRequest{On: "time:10ms", ExpiresIn: time.Second})
+	info, err := m.Arm(ArmRequest{On: "file:*", ExpiresIn: time.Second})
 	if err != nil {
 		t.Fatalf("Arm: %v", err)
 	}
-	// A newer resume claims the row before the poller fires.
+	// Wait until the poller is inside the glob, then let a newer resume
+	// claim the row before the predicate can complete.
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("watch poller never started")
+	}
 	store.mu.Lock()
 	row := store.rows[info.ID]
 	row.Owner = "process-b"
 	store.rows[info.ID] = row
 	store.mu.Unlock()
+	close(release)
 
+	select {
+	case claimed := <-store.claimResults:
+		if claimed {
+			t.Fatal("the stale owner claimed the fire")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("fire never reached ClaimFire")
+	}
 	select {
 	case got := <-wakes:
 		t.Fatalf("lost-ownership fire was delivered: %q", got)
-	case <-time.After(200 * time.Millisecond):
+	default:
 	}
 }
 

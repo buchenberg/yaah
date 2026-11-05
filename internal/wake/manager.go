@@ -218,8 +218,8 @@ func (m *Manager) Arm(req ArmRequest) (WatchInfo, error) {
 			return WatchInfo{}, fmt.Errorf("watch %q was cancelled while it was being armed", id)
 		}
 	}
-	m.startWatch(w)
 	m.observeWatchArmed(info)
+	m.startWatch(w)
 	return info, nil
 }
 
@@ -283,20 +283,42 @@ func (m *Manager) Rehydrate(ctx context.Context) error {
 		return err
 	}
 	var missed []firedWatch
-	for _, row := range rows {
-		spec := Spec{On: row.On, Until: row.Until}
-		if row.State == StateFired {
-			missed = append(missed, firedWatch{id: row.ID, spec: spec, evidence: row.Evidence, missed: true})
+	// Fired rows are not claimed: a live owner may still be delivering
+	// them. Re-deliver one only after the previous owner's lease expired.
+	firedRows, err := m.store.ListWatches(m.sessionID)
+	if err != nil {
+		return err
+	}
+	for _, row := range firedRows {
+		if row.State != StateFired {
 			continue
 		}
+		if row.LeaseUntil > now.UnixNano() {
+			continue // previous owner still holds a live lease
+		}
+		missed = append(missed, firedWatch{
+			id: row.ID, spec: Spec{On: row.On, Until: row.Until},
+			evidence: row.Evidence, missed: true,
+			armedAt: row.ArmedAt, expiresAt: row.ExpiresAt, intervalMs: row.IntervalMs,
+		})
+	}
+	for _, row := range rows {
+		spec := Spec{On: row.On, Until: row.Until}
 		src, _, _, perr := parseSpec(spec)
+		base := firedWatch{
+			id: row.ID, spec: spec, missed: true,
+			armedAt: row.ArmedAt, expiresAt: row.ExpiresAt, intervalMs: row.IntervalMs,
+		}
 		switch {
 		case perr != nil:
-			missed = append(missed, firedWatch{id: row.ID, spec: spec, evidence: Evidence{Kind: "watch", Status: "dropped", Detail: "the persisted predicate is no longer valid: " + perr.Error()}, missed: true})
+			base.evidence = Evidence{Kind: "watch", Status: "dropped", Detail: "the persisted predicate is no longer valid: " + perr.Error()}
+			missed = append(missed, base)
 		case src == SourceJob || src == SourceProcess:
-			missed = append(missed, firedWatch{id: row.ID, spec: spec, evidence: Evidence{Kind: "watch", Status: "dropped", Detail: fmt.Sprintf("%s ids are process-local; this watch could not be re-armed after the restart", src)}, missed: true})
+			base.evidence = Evidence{Kind: "watch", Status: "dropped", Detail: fmt.Sprintf("%s ids are process-local; this watch could not be re-armed after the restart", src)}
+			missed = append(missed, base)
 		case row.ExpiresAt > 0 && now.After(time.Unix(0, row.ExpiresAt)):
-			missed = append(missed, firedWatch{id: row.ID, spec: spec, evidence: Evidence{Kind: "watch", Status: "expired", Detail: "the watch expired while the session was down"}, missed: true})
+			base.evidence = Evidence{Kind: "watch", Status: "expired", Detail: "the watch expired while the session was down"}
+			missed = append(missed, base)
 		default:
 			start := time.Unix(0, row.ArmedAt)
 			expires := time.Unix(0, row.ExpiresAt)
@@ -328,18 +350,15 @@ func (m *Manager) Rehydrate(ctx context.Context) error {
 				// Do not drop a durable watch silently: the missed-wake
 				// digest names it, and the user can re-arm it after
 				// cancelling one.
-				missed = append(missed, firedWatch{
-					id: w.id, spec: spec,
-					evidence: Evidence{Kind: "watch", Status: "dropped", Detail: fmt.Sprintf("the session's watch limit (%d) was already met; this watch was not re-armed", m.maxWatches)},
-					missed:   true,
-				})
+				base.evidence = Evidence{Kind: "watch", Status: "dropped", Detail: fmt.Sprintf("the session's watch limit (%d) was already met; this watch was not re-armed", m.maxWatches)}
+				missed = append(missed, base)
 				continue
 			}
 			// Snapshot before the poller starts: a fast fire writes
 			// w.evidence under m.mu, and infoOf reads it outside the lock.
 			info := infoOf(w)
-			m.startWatch(w)
 			m.observeWatchArmed(info)
+			m.startWatch(w)
 		}
 	}
 	if len(missed) > 0 {
@@ -364,11 +383,14 @@ func (m *Manager) Rehydrate(ctx context.Context) error {
 		for i := range missed {
 			ev := missed[i].evidence
 			m.observeWatchFired(WatchInfo{
-				ID:       missed[i].id,
-				On:       missed[i].spec.On,
-				Until:    missed[i].spec.Until,
-				State:    StateFired,
-				Evidence: &ev,
+				ID:         missed[i].id,
+				On:         missed[i].spec.On,
+				Until:      missed[i].spec.Until,
+				State:      StateFired,
+				Evidence:   &ev,
+				ArmedAt:    missed[i].armedAt,
+				ExpiresAt:  missed[i].expiresAt,
+				IntervalMs: missed[i].intervalMs,
 			}, true)
 		}
 		m.enqueue(missed...)
@@ -505,9 +527,13 @@ func (m *Manager) fire(w *armedWatch, evidence Evidence, missed bool) {
 	// duplicating the wake the current owner will deliver. A store error is
 	// treated as best-effort success: a duplicate is better than a lost wake.
 	if m.store != nil {
-		claimed, err := m.store.ClaimFire(m.sessionID, w.id, m.ownerID, m.deps.now().UnixNano(), MarshalEvidence(evidence))
+		now := m.deps.now()
+		claimed, err := m.store.ClaimFire(
+			m.sessionID, w.id, m.ownerID,
+			w.start.UnixNano(), now.UnixNano(), now.Add(m.leaseDuration).UnixNano(),
+			MarshalEvidence(evidence))
 		if err == nil && !claimed {
-			m.remove(w.id)
+			m.removeIf(w)
 			return
 		}
 	}
@@ -632,6 +658,21 @@ func (m *Manager) remove(id string) {
 	delete(m.watches, id)
 	m.mu.Unlock()
 	if w != nil && w.cancel != nil {
+		w.cancel()
+	}
+}
+
+// removeIf removes w only while it is still the current record for its id, so
+// a lost claim cannot drop a same-id replacement armed after it.
+func (m *Manager) removeIf(w *armedWatch) {
+	m.mu.Lock()
+	if m.watches[w.id] != w {
+		m.mu.Unlock()
+		return
+	}
+	delete(m.watches, w.id)
+	m.mu.Unlock()
+	if w.cancel != nil {
 		w.cancel()
 	}
 }

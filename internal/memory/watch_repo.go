@@ -66,11 +66,13 @@ func (d *DB) ListSessionWatches(sessionID string) ([]SessionWatch, error) {
 	return scanSessionWatches(rows)
 }
 
-// ClaimSessionWatches makes owner the owner of every watch for the session
-// and returns the claimed set. Last resume wins: a newer process takes over
-// and the older process's eventual fires are rejected by ClaimSessionWatchFire.
-// The UPDATE and SELECT share a transaction so the returned set is the one
-// this owner claimed.
+// ClaimSessionWatches makes owner the owner of every armed watch for the
+// session and returns the claimed set. Last resume wins: a newer process
+// takes over and the older process's eventual fires are rejected by
+// ClaimSessionWatchFire. Fired rows are deliberately not claimed: a live
+// owner may still be delivering them, and a resume re-delivers them only
+// after the previous lease expires. The UPDATE and SELECT share a
+// transaction so the returned set is the one this owner claimed.
 func (d *DB) ClaimSessionWatches(sessionID, owner string, leaseUntil int64) ([]SessionWatch, error) {
 	tx, err := d.sql.BeginTx(context.Background(), nil)
 	if err != nil {
@@ -78,14 +80,14 @@ func (d *DB) ClaimSessionWatches(sessionID, owner string, leaseUntil int64) ([]S
 	}
 	defer tx.Rollback()
 	if _, err := tx.Exec(
-		`UPDATE session_watches SET owner = ?, lease_until = ? WHERE session_id = ?`,
+		`UPDATE session_watches SET owner = ?, lease_until = ? WHERE session_id = ? AND state = 'armed'`,
 		owner, leaseUntil, sessionID); err != nil {
 		return nil, fmt.Errorf("claim session watches: %w", err)
 	}
 	rows, err := tx.Query(`
 		SELECT id, on_spec, until_spec, state, evidence, armed_at, expires_at, fired_at, interval_ms, owner, lease_until
 		FROM session_watches
-		WHERE session_id = ?
+		WHERE session_id = ? AND state = 'armed'
 		ORDER BY armed_at, id`, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("list claimed watches: %w", err)
@@ -102,15 +104,17 @@ func (d *DB) ClaimSessionWatches(sessionID, owner string, leaseUntil int64) ([]S
 }
 
 // ClaimSessionWatchFire transitions an armed watch owned by owner to fired.
-// It reports false when another process owns the row or it is no longer
-// armed, so a process that lost the last-resume race cannot deliver a wake
-// the current owner is responsible for.
-func (d *DB) ClaimSessionWatchFire(sessionID, id, owner string, firedAt int64, evidence string) (bool, error) {
+// armedAt scopes the claim to that watch generation, so a same-id replacement
+// is never marked. It reports false when another process owns the row, the
+// row is no longer armed, or the generation changed, so a process that lost
+// the last-resume race cannot deliver a wake the current owner is responsible
+// for.
+func (d *DB) ClaimSessionWatchFire(sessionID, id, owner string, armedAt, firedAt, leaseUntil int64, evidence string) (bool, error) {
 	res, err := d.sql.Exec(`
 		UPDATE session_watches
-		SET state = 'fired', fired_at = ?, evidence = ?, owner = ?
-		WHERE session_id = ? AND id = ? AND owner = ? AND state = 'armed'`,
-		firedAt, evidence, owner, sessionID, id, owner)
+		SET state = 'fired', fired_at = ?, evidence = ?, owner = ?, lease_until = ?
+		WHERE session_id = ? AND id = ? AND owner = ? AND state = 'armed' AND armed_at = ?`,
+		firedAt, evidence, owner, leaseUntil, sessionID, id, owner, armedAt)
 	if err != nil {
 		return false, fmt.Errorf("claim watch fire %s: %w", id, err)
 	}

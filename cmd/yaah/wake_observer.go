@@ -53,7 +53,7 @@ func (o *wakeObserver) WaitFinished(ctx context.Context, spec wake.Spec, fired, 
 		WakeState:  state,
 		DurationMs: elapsed.Milliseconds(),
 	})
-	observability.FinishWait(trace.SpanFromContext(ctx), fired, timedOut, interrupted, elapsed)
+	observability.FinishWait(trace.SpanFromContext(ctx), fired, timedOut, interrupted, errored, elapsed)
 }
 
 func (o *wakeObserver) WatchArmed(info wake.WatchInfo) {

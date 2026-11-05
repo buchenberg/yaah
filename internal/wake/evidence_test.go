@@ -33,6 +33,18 @@ func TestEvidenceRenderAndPersistence(t *testing.T) {
 	if MarshalEvidence(Evidence{}) != "" {
 		t.Fatal("zero evidence should persist as an empty column")
 	}
+
+	// A Detail-only structured record must survive a second round trip
+	// without being mistaken for legacy prose and wrapped again.
+	detailOnly := Evidence{Detail: "a synthesized watch notice"}
+	got = ParseEvidence(MarshalEvidence(detailOnly))
+	if got.Detail != detailOnly.Detail || got.Kind != "" {
+		t.Fatalf("detail-only round trip = %+v", got)
+	}
+	got = ParseEvidence(MarshalEvidence(got))
+	if got.Detail != detailOnly.Detail || got.Kind != "" {
+		t.Fatalf("detail-only second round trip = %+v", got)
+	}
 }
 
 func TestEvidenceRenderFile(t *testing.T) {

@@ -126,7 +126,7 @@ func (d Deps) evalJob(id string) (bool, Evidence, error) {
 	}
 	ev := Evidence{Kind: "job", Status: st.Status, Detail: fmt.Sprintf("job %s %s", id, st.Status)}
 	if st.Error != "" {
-		ev.Detail += ": " + st.Error
+		ev.Detail += ": " + clip(st.Error, 500)
 	}
 	if result, ok := d.Jobs.Result(id); ok {
 		ev.Result = clip(result, evidenceCap)

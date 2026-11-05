@@ -1060,7 +1060,7 @@ yaah emits structured JSONL events to `<HookDir>/<session-id>.jsonl` for externa
 | `conflict.check` | Every turn when a `ConflictTracker` is present |
 | `conflict.detect` | When parallel workers diverged on a path or left unknown shell mutations (with `conflict_files` count) |
 | `wait.start` | When a `wait_for` call starts (with `wake_kind` and the call timeout in `duration_ms`) |
-| `wait.end` | When a `wait_for` call ends (with `wake_kind`, `wake_state` = completed/fired/timed_out/interrupted/errored, and `duration_ms`) |
+| `wait.end` | When a `wait_for` call ends (with `wake_kind`, `wake_state` = fired/timed_out/interrupted/errored, and `duration_ms`) |
 | `watch.arm` | When a watch is armed or re-armed after resume (with `wake_id`, `wake_kind`) |
 | `watch.fire` | When a watch fires, expires, or is dropped (with `wake_id`, `wake_kind`, `wake_state`, `wake_missed`) |
 | `watch.cancel` | When a watch is cancelled (with `wake_id`) |

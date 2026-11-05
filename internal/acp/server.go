@@ -319,6 +319,9 @@ func (s *Server) close() {
 		sessions = append(sessions, st)
 	}
 	s.sessions = make(map[string]*sessionState)
+	// No connection is live after teardown; a wake notification from a
+	// session that outlives Run must be a no-op, not a write to a dead pipe.
+	s.conn = nil
 	s.mu.Unlock()
 	for _, st := range sessions {
 		st.sess.Close()

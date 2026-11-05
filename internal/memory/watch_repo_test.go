@@ -76,8 +76,8 @@ func TestSessionWatchClaimAndFire(t *testing.T) {
 	}
 	defer db.Close()
 
-	_ = db.SaveSessionWatch("sess", SessionWatch{ID: "w1", On: "time:1h", State: "armed", Owner: "old"})
-	_ = db.SaveSessionWatch("sess", SessionWatch{ID: "w2", On: "time:1h", State: "armed", Owner: "old"})
+	_ = db.SaveSessionWatch("sess", SessionWatch{ID: "w1", On: "time:1h", State: "armed", ArmedAt: 10, Owner: "old"})
+	_ = db.SaveSessionWatch("sess", SessionWatch{ID: "w2", On: "time:1h", State: "armed", ArmedAt: 20, Owner: "old"})
 
 	// Last resume wins: the new owner takes over every row.
 	rows, err := db.ClaimSessionWatches("sess", "new", 999)
@@ -94,19 +94,38 @@ func TestSessionWatchClaimAndFire(t *testing.T) {
 	}
 
 	// The old owner can no longer fire.
-	ok, err := db.ClaimSessionWatchFire("sess", "w1", "old", 100, "old evidence")
+	ok, err := db.ClaimSessionWatchFire("sess", "w1", "old", 10, 100, 500, "old evidence")
 	if err != nil || ok {
 		t.Fatalf("old owner claimed fire: ok=%v err=%v", ok, err)
 	}
 	// The current owner can.
-	ok, err = db.ClaimSessionWatchFire("sess", "w1", "new", 200, "new evidence")
+	ok, err = db.ClaimSessionWatchFire("sess", "w1", "new", 10, 200, 500, "new evidence")
 	if err != nil || !ok {
 		t.Fatalf("new owner claim: ok=%v err=%v", ok, err)
 	}
 	// A second fire after the row is fired is refused.
-	ok, err = db.ClaimSessionWatchFire("sess", "w1", "new", 300, "again")
+	ok, err = db.ClaimSessionWatchFire("sess", "w1", "new", 10, 300, 500, "again")
 	if err != nil || ok {
 		t.Fatalf("second fire claim: ok=%v err=%v", ok, err)
+	}
+
+	// A later resume claims only the still-armed row; the fired row keeps
+	// its owner (a live owner may still be delivering it).
+	rows, err = db.ClaimSessionWatches("sess", "third", 777)
+	if err != nil {
+		t.Fatalf("second ClaimSessionWatches: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != "w2" || rows[0].Owner != "third" {
+		t.Fatalf("second claim = %+v, want only w2 for third", rows)
+	}
+	all, err := db.ListSessionWatches("sess")
+	if err != nil {
+		t.Fatalf("ListSessionWatches: %v", err)
+	}
+	for _, row := range all {
+		if row.ID == "w1" && row.Owner != "new" {
+			t.Fatalf("fired row owner changed to %q", row.Owner)
+		}
 	}
 
 	rows, err = db.ListSessionWatches("sess")
