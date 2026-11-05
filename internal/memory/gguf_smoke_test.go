@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hybridgroup/yzma/pkg/llama"
 )
 
 // Manual smoke test for the local gguf setup (run with YAAH_GGUF_SMOKE=1).
@@ -132,18 +134,43 @@ func TestGGUF_ClampDecodeWindowToTrainContext(t *testing.T) {
 	if os.Getenv("YAAH_GGUF_SMOKE") == "" || os.Getenv("YAAH_GGUF_MODEL") == "" {
 		t.Skip("set YAAH_GGUF_SMOKE=1 with YAAH_GGUF_LIB/MODEL to run")
 	}
-	e := NewGGUFEmbedder(os.Getenv("YAAH_GGUF_LIB"), os.Getenv("YAAH_GGUF_MODEL"), "search_query: ", "search_document: ")
-	// ~2.4K chars of prose: far past any 512-token train context, and the
-	// shape of the message whose embed aborted the live TUI.
-	long := strings.Repeat("The repository layout maps workspace grants to dispatch worlds, and the settle path serializes per parent. ", 24)
-	if len(long) < 1000 {
-		t.Fatalf("fixture too short to exercise the clamp: %d chars", len(long))
-	}
-	emb, err := e.Embed(context.Background(), long)
+	lib, model := os.Getenv("YAAH_GGUF_LIB"), os.Getenv("YAAH_GGUF_MODEL")
+	e := NewGGUFEmbedder(lib, model, "search_query: ", "search_document: ")
+	emb, err := e.Embed(context.Background(), "clamp probe")
 	if err != nil {
-		t.Fatalf("over-train-context embed must not abort: %v", err)
+		t.Fatalf("probe embed: %v", err)
 	}
-	if len(emb) == 0 {
-		t.Fatal("empty embedding")
+
+	// Assert the clamp actually took: the window must be the model's own
+	// train context whenever that is below the reserved default. Without
+	// the clamp the window stays 2048 regardless of the train context.
+	window := e.DecodeWindow()
+	if window <= 0 || window > ggufNCtx {
+		t.Fatalf("decode window %d out of range (reserved %d)", window, ggufNCtx)
+	}
+	llama.Load(lib) // process-global; already loaded, binds no new state
+	m, err := llama.ModelLoadFromFile(model, llama.ModelDefaultParams())
+	if err != nil {
+		t.Fatalf("model load (for n_ctx_train): %v", err)
+	}
+	defer llama.ModelFree(m)
+	train := int(llama.ModelNCtxTrain(m))
+	if train > 0 && train < ggufNCtx && window != train {
+		t.Fatalf("decode window %d is not clamped to the model's train context %d", window, train)
+	}
+
+	// Size the fixture past the actual window: ~1 token per 3.5 chars of
+	// prose, so window*7 chars decodes at >= 2x the window in tokens — the
+	// shape of the message whose embed aborted the live TUI.
+	long := strings.Repeat("The repository layout maps workspace grants to dispatch worlds, and the settle path serializes per parent. ", window*7/len("The repository layout maps workspace grants to dispatch worlds, and the settle path serializes per parent. ")+1)
+	if got := llama.Tokenize(llama.ModelGetVocab(m), long, true, true); int32(len(got)) <= int32(window) {
+		t.Fatalf("fixture under-exercises the clamp: %d tokens <= window %d", len(got), window)
+	}
+	emb, err = e.Embed(context.Background(), long)
+	if err != nil {
+		t.Fatalf("over-window embed must not abort: %v", err)
+	}
+	if len(emb) != e.Dims() || len(emb) == 0 {
+		t.Fatalf("unexpected embedding: %d dims (model %d)", len(emb), e.Dims())
 	}
 }
