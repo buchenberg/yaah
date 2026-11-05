@@ -388,9 +388,15 @@ func replaceTreeMove(ctx context.Context, ws Workspace, src, dst string) (treeSt
 	}
 	stats, err := moveWorkspaceTree(ctx, ws, src, dst)
 	if err != nil {
-		// A cross-device fallback may have left a partial destination. Clear
-		// it before restoring the original tree.
-		_ = ws.RemoveAll(ctx, dst)
+		// The move may have copied the whole source to dst before failing to
+		// remove the last source entry. In that case dst can be the only
+		// surviving copy of the removed files: never delete it to restore the
+		// backup. Keep both and report them instead.
+		if _, statErr := ws.Lstat(ctx, dst); statErr == nil {
+			return stats, fmt.Errorf("move failed (%v); new destination kept at %s, old destination backup at %s; inspect before retrying", err, dst, backup)
+		} else if !errors.Is(statErr, fs.ErrNotExist) {
+			return stats, fmt.Errorf("move failed (%v); check destination %s and old destination backup %s: %w", err, dst, backup, statErr)
+		}
 		if restoreErr := ws.Move(ctx, backup, dst); restoreErr != nil {
 			return stats, fmt.Errorf("move failed (%v); old destination backup at %s; restore failed: %w", err, backup, restoreErr)
 		}

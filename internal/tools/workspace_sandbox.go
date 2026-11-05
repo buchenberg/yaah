@@ -479,37 +479,44 @@ func sandboxEntryMode(typ string) fs.FileMode {
 // plain permission error is not misdescribed as a partial move.
 func (w *sandboxWorkspace) Move(ctx context.Context, src, dst string) error {
 	before, beforeErr := w.Lstat(ctx, dst)
-	err := w.run(ctx, `mv -f -- "$1" "$2"`, src, dst)
-	if err == nil {
+	res, execErr := w.sb.Exec(ctx, goatherdsandbox.ExecRequest{
+		Command: "sh",
+		Args:    []string{"-c", `mv -f -- "$1" "$2"`, "shepherd", src, dst},
+		Cwd:     w.root,
+	})
+	if execErr != nil {
+		return execErr
+	}
+	moveErr := fmt.Errorf("exit %d: %s", res.ExitCode, strings.TrimSpace(res.Stderr))
+	if res.ExitCode == 0 {
 		return nil
 	}
 	if beforeErr != nil && !errors.Is(beforeErr, fs.ErrNotExist) {
-		return err
+		return moveErr
 	}
 	after, afterErr := w.Lstat(ctx, dst)
-	if errors.Is(afterErr, fs.ErrNotExist) && isCrossDeviceMoveError(err) {
+	if errors.Is(afterErr, fs.ErrNotExist) && isCrossDeviceMoveError(res.Stderr) {
 		// mv refused across mounts and left no destination behind. Mark it
 		// so move_tree can copy+remove; a partial mv stays an ordinary
 		// error and must not be retried into a merge.
-		return fmt.Errorf("%w: %v", errCrossDevice, err)
+		return fmt.Errorf("%w: %v", errCrossDevice, moveErr)
 	}
 	if afterErr != nil {
-		return err
+		return moveErr
 	}
 	if errors.Is(beforeErr, fs.ErrNotExist) || !sameSandboxFile(before, after) {
-		return &partialMoveError{Src: src, Dst: dst, Err: err}
+		return &partialMoveError{Src: src, Dst: dst, Err: moveErr}
 	}
-	return err
+	return moveErr
 }
 
-func isCrossDeviceMoveError(err error) bool {
-	if err == nil {
-		return false
-	}
-	s := strings.ToLower(err.Error())
-	return strings.Contains(s, "cross-device") ||
-		strings.Contains(s, "cross device") ||
-		strings.Contains(s, "cross-filesystem")
+// isCrossDeviceMoveError inspects only the diagnostic suffix, not the whole
+// message: mv includes both paths, and a path may itself contain the phrase.
+func isCrossDeviceMoveError(stderr string) bool {
+	s := strings.ToLower(strings.TrimSpace(stderr))
+	return strings.HasSuffix(s, "invalid cross-device link") ||
+		strings.HasSuffix(s, "cross-device link") ||
+		strings.HasSuffix(s, "cross device link")
 }
 
 // sameSandboxFile compares the metadata a sandbox stat exposes, used to tell a

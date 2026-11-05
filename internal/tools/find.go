@@ -188,14 +188,20 @@ func (t *FindTool) Execute(ctx context.Context, args string) (string, error) {
 	}
 	sort.Strings(results)
 	out := strings.Join(results, "\n")
-	if total > findMaxResults {
-		// Only claim a row count when the prefix and every kept row fit the
-		// result cap. Otherwise a single head-cap marker is the honest
-		// description; the count would overstate what was returned.
-		withMarker := fmt.Sprintf("...[showing %d of %d matches]...\n%s", findMaxResults, total, out)
-		if len(withMarker) <= toolResultMaxBytes {
-			return withMarker, nil
-		}
+	if total <= findMaxResults && len(out) <= toolResultMaxBytes {
+		return out, nil
 	}
-	return truncateResult(out), nil
+	// A 1000-row page almost always exceeds the byte cap, so the count must
+	// live in the suffix marker rather than a prefix branch that can never
+	// fit. Replace truncateResult's generic marker so only one appears.
+	marker := fmt.Sprintf("\n...[truncated: %d matches total", total)
+	if total > findMaxResults {
+		marker += fmt.Sprintf("; showing the first %d", findMaxResults)
+	}
+	marker += "]..."
+	capped := truncateResult(out)
+	if strings.HasSuffix(capped, truncationMarker) {
+		return strings.TrimSuffix(capped, truncationMarker) + marker, nil
+	}
+	return out + marker, nil
 }

@@ -91,6 +91,22 @@ func TestSandboxWorkspaceAppendAndReadRange(t *testing.T) {
 	}
 }
 
+func TestIsCrossDeviceMoveError(t *testing.T) {
+	for _, tc := range []struct {
+		stderr string
+		want   bool
+	}{
+		{"mv: cannot move 'a' to 'b': Invalid cross-device link", true},
+		{"mv: cannot move 'a' to 'b': cross-device link", true},
+		{"mv: cannot move 'cross-device' to 'b': Permission denied", false},
+		{"mv: cannot move 'a' to 'b': No such file or directory", false},
+	} {
+		if got := isCrossDeviceMoveError(tc.stderr); got != tc.want {
+			t.Errorf("isCrossDeviceMoveError(%q) = %v, want %v", tc.stderr, got, tc.want)
+		}
+	}
+}
+
 func TestLocalWorkspaceConcurrentAppend(t *testing.T) {
 	dir := t.TempDir()
 	ws := newLocalWorkspace(NewPathValidator(dir, false, nil))

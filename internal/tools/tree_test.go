@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -117,6 +118,28 @@ type moveErrorWorkspace struct {
 
 func (w moveErrorWorkspace) Move(context.Context, string, string) error { return w.err }
 
+// partialTreeMoveWorkspace refuses the source rename (cross-device) and fails the
+// source removal after the copy, leaving a complete dst and a partial src.
+type partialTreeMoveWorkspace struct {
+	Workspace
+	source     string
+	failRemove string
+}
+
+func (w partialTreeMoveWorkspace) Move(ctx context.Context, src, dst string) error {
+	if src == w.source {
+		return fmt.Errorf("%w: simulated", errCrossDevice)
+	}
+	return w.Workspace.Move(ctx, src, dst)
+}
+
+func (w partialTreeMoveWorkspace) RemoveAll(ctx context.Context, p string) error {
+	if p == w.failRemove {
+		return errors.New("injected remove failure")
+	}
+	return w.Workspace.RemoveAll(ctx, p)
+}
+
 func TestMoveWorkspaceTreeFallsBackOnlyForCrossDevice(t *testing.T) {
 	dir, base := treeWorkspace(t)
 	src := filepath.Join(dir, "src")
@@ -163,6 +186,49 @@ func TestMoveWorkspaceTreeFallsBackOnlyForCrossDevice(t *testing.T) {
 	}
 	if _, err := os.Stat(dst2); !os.IsNotExist(err) {
 		t.Fatalf("non-cross-device failure created the destination: %v", err)
+	}
+}
+
+func TestMoveTreeForceKeepsNewDestinationWhenSourceRemovalFails(t *testing.T) {
+	dir, base := treeWorkspace(t)
+	src := filepath.Join(dir, "src")
+	seedTree(t, src)
+	dst := filepath.Join(dir, "dst")
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dst, "old.txt"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ws := partialTreeMoveWorkspace{Workspace: base, source: src, failRemove: src}
+	_, err := replaceTreeMove(context.Background(), ws, src, dst)
+	if err == nil {
+		t.Fatal("partial source removal reported success")
+	}
+	if !strings.Contains(err.Error(), "new destination kept") {
+		t.Fatalf("error does not preserve the new destination: %v", err)
+	}
+	data, readErr := os.ReadFile(filepath.Join(dst, "top.txt"))
+	if readErr != nil || string(data) != "top\n" {
+		t.Fatalf("new destination was discarded: %q, %v", data, readErr)
+	}
+	entries, readErr := os.ReadDir(dir)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	var backup string
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".yaah-tmp-") {
+			backup = filepath.Join(dir, entry.Name())
+			break
+		}
+	}
+	if backup == "" {
+		t.Fatal("old destination backup was not kept")
+	}
+	old, readErr := os.ReadFile(filepath.Join(backup, "old.txt"))
+	if readErr != nil || string(old) != "old" {
+		t.Fatalf("backup content = %q, %v", old, readErr)
 	}
 }
 

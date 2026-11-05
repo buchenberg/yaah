@@ -13,11 +13,14 @@ destination inside the source or an ancestor of the source is refused.
 `mkdir_p` creates missing parent directories of `to`; otherwise the parent must
 already exist.
 
-Symlinks and special files are refused at any depth, matching `copy_tree`.
-Only a genuine cross-device rename falls back to copy + remove; any other
-rename error is returned without touching the destination. A cross-device
-fallback that copied successfully but could not remove the source returns an
-error naming both paths — the destination exists, so inspect before retrying.
-A same-filesystem rename is the cheap path; the copy fallback reads the bytes.
+A same-filesystem rename moves the tree as-is, including symlinks and special
+entries (they are moved, not followed). The copy fallback used for a
+cross-device move refuses symlinks and special files at any depth, matching
+`copy_tree`, so such a tree can only be moved within one filesystem. Only a
+genuine cross-device rename falls back to copy + remove; any other rename
+error is returned without touching the destination. A cross-device fallback
+that copied successfully but could not remove the source returns an error
+naming both paths — the destination exists, so inspect before retrying. A
+same-filesystem rename is the cheap path; the copy fallback reads the bytes.
 
 Use `move` for a single regular file. The call writes, so it is approval-gated.
