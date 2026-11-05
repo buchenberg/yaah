@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"runtime"
 	"sync"
 
@@ -144,16 +145,45 @@ func loadGGUF(ctx context.Context, libPath, modelPath string) (func(context.Cont
 	if modelPath == "" {
 		return nil, 0, fmt.Errorf("gguf embed: model_path is required")
 	}
+	// llamaRuntimeErr: the once-guard runs the library stages exactly once,
+	// so a failure must be remembered and re-surfaced to later callers —
+	// a swallowed init error is a backend gone dark with no signal at all.
+	var llamaRuntimeErr error
 	llamaOnce.Do(func() {
-		llama.Load(libPath) // prebuilt llama.cpp dylib/so via purego FFI
+		// llama.Load binds logSetFunc, so LogSet can only run after it —
+		// the library load itself must stay quiet by construction (yzma's
+		// loader buffers its diagnostics into returned errors). Resolve
+		// the empty-path case against the filesystem first so the loader's
+		// default-search fallback can never enter the picture while the
+		// default callback is still the loud one.
+		if libPath == "" {
+			libPath = os.Getenv("YZMA_LIB")
+		}
+		if libPath != "" {
+			if _, err := os.Stat(libPath); err != nil {
+				llamaRuntimeErr = fmt.Errorf("gguf embed: lib_path %s: %w", libPath, err)
+				return
+			}
+		}
+		if err := llama.Load(libPath); err != nil {
+			llamaRuntimeErr = fmt.Errorf("gguf embed: load llama libraries from %s: %w", libPath, err)
+			return
+		}
 		// Silence FIRST: Init()'s backend scan ("load_backend: loaded CPU
 		// backend from …") prints through the default log callback, which
 		// writes straight to this process's terminal — inside the TUI that
 		// is a raw write onto tcell's screen, and the interleaving with
 		// repaints garbles whatever partial row the cursor sat on.
 		llama.LogSet(llama.LogSilent())
-		llama.Init()
+		if err := llama.Init(); err != nil {
+			// The tracker's own error is returned below; do not also print
+			// (a print here is the ancestor of the tty artifact).
+			llamaRuntimeErr = fmt.Errorf("gguf embed: init backends: %w", err)
+		}
 	})
+	if llamaRuntimeErr != nil {
+		return nil, 0, llamaRuntimeErr
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, 0, err
 	}
