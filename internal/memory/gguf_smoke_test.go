@@ -2,11 +2,13 @@ package memory
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Manual smoke test for the local gguf setup (run with YAAH_GGUF_SMOKE=1).
@@ -45,33 +47,43 @@ func TestGGUFSmoke(t *testing.T) {
 // the capture fd-level: the child's raw fds 1/2 are the pipes the parent
 // reads, so C-side writes (purego/llama.cpp) are caught too (third review
 // pass kilo-code-bot). Run with YAAH_GGUF_SMOKE=1.
+// yaahSilentProbe is how the parent test marks the child process: an
+// explicit argv flag the test binary itself registers, NOT an environment
+// variable — a leaked ambient env value could else re-trigger the child
+// branch in-process and reintroduce the vacuous pass this test exists to
+// eliminate (fourth review pass, kilo-code-bot).
+var yaahSilentProbe = flag.Bool("yaah-silent-probe", false, "internal: run the gguf silent-load probe as the child process")
+
 func TestGGUFSilentLoad(t *testing.T) {
 	if os.Getenv("YAAH_GGUF_SMOKE") == "" {
 		t.Skip("set YAAH_GGUF_SMOKE=1 to run")
 	}
-	if os.Getenv("YAAH_GGUF_SILENT_CHILD") == "1" {
+	if *yaahSilentProbe {
 		runSilentProbe()
 		return
 	}
 
-	cmd := exec.Command(os.Args[0], "-test.run", "^TestGGUFSilentLoad$", "-test.v=false")
-	cmd.Env = append(os.Environ(), "YAAH_GGUF_SILENT_CHILD=1")
+	// Bounded: a hung FFI/backend call must surface as a probe failure,
+	// not as a run until the outer go-test timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run", "^TestGGUFSilentLoad$", "-yaah-silent-probe=true")
+	cmd.Env = os.Environ() // YAAH_GGUF_SMOKE/LIB/MODEL flow through
 	cmd.Stdin = nil
+	cmd.WaitDelay = 5 * time.Second
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("silent-load probe failed: %v\n%s", err, out)
 	}
-	// The child may print only its own probe sentinel lines and the test
-	// binary's trailing "PASS". Every other byte is a leak.
-	allowed := 0
-	for _, ln := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if ln == "" || ln == "PASS" || strings.HasPrefix(ln, "OK dims=") {
-			allowed++
+	// The child may print only the "OK dims=…" probe line and the test
+	// binary's trailing "PASS". EVERYTHING else — including blank or
+	// whitespace-only lines — is a leak that lands raw on the tty.
+	for _, ln := range strings.Split(strings.TrimSuffix(string(out), "\n"), "\n") {
+		if ln == "PASS" || strings.HasPrefix(ln, "OK dims=") {
 			continue
 		}
-	}
-	if allowed != len(strings.Split(strings.TrimSpace(string(out)), "\n")) {
-		t.Errorf("first llama load leaked to the process tty — child output:\n%s", out)
+		t.Errorf("first llama load leaked to the process tty — unexpected child output line %q (full output:\n%s)", ln, out)
+		break
 	}
 }
 
