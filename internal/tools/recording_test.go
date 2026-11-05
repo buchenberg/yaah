@@ -199,6 +199,29 @@ func TestRecordingTool_RecursiveRmdirDetailBounded(t *testing.T) {
 	if !strings.HasPrefix(detail, "rmdir -r ") {
 		t.Errorf("detail = %q, want the rmdir -r prefix preserved", detail)
 	}
+
+	// The failure marker must survive truncation too: a failed recursive
+	// delete must not look like a clean one just because the path is long.
+	inner.fn = func(context.Context, string) (string, error) {
+		return "", errors.New("permission denied")
+	}
+	if _, err := rt.Execute(WithConflictDispatch(context.Background(), "worker", ConflictLaneShared), string(args)); err == nil {
+		t.Fatal("expected the fake rmdir to fail")
+	}
+	report = tracker.DetectAndResetReport()
+	if report == nil || len(report.Unknown) != 1 {
+		t.Fatalf("failed report = %+v, want one unknown entry", report)
+	}
+	detail = report.Unknown[0].Detail
+	if !strings.HasPrefix(detail, "rmdir -r ") {
+		t.Errorf("failed detail = %q, want the rmdir -r prefix preserved", detail)
+	}
+	if !strings.Contains(detail, "reported an error") {
+		t.Errorf("failed detail = %q, want the failure marker preserved", detail)
+	}
+	if n := utf8.RuneCountInString(detail); n > 120 {
+		t.Errorf("failed detail length = %d runes, want <= 120: %q", n, detail)
+	}
 }
 
 func TestBoundedDetail_TruncatesAndSanitizes(t *testing.T) {

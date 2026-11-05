@@ -165,11 +165,16 @@ func (rt *RecordingTool) Execute(ctx context.Context, args string) (string, erro
 			Recursive bool   `json:"recursive"`
 		}
 		if json.Unmarshal([]byte(args), &params) == nil && params.Recursive && params.Path != "" {
-			detail := "rmdir -r " + params.Path
+			// Reserve the prefix and failure marker before bounding the path:
+			// truncating the assembled string would drop the marker for a long
+			// path, making a failed recursive delete look like a clean one.
+			detail := "rmdir -r "
+			suffix := ""
 			if err != nil {
-				detail += " (command reported an error)"
+				suffix = " (command reported an error)"
 			}
-			rt.tracker.RecordUnknown(dispatch, toolName, boundedDetail(detail))
+			budget := 120 - utf8.RuneCountInString(detail) - utf8.RuneCountInString(suffix)
+			rt.tracker.RecordUnknown(dispatch, toolName, detail+boundedRunes(params.Path, budget)+suffix)
 		}
 		return result, err
 	}
@@ -564,13 +569,25 @@ func shellDetail(args string) string {
 // report: at most 120 runes, with invalid UTF-8 (legal in a POSIX path)
 // replaced rather than stored raw. Every caller-supplied fragment that reaches
 // FileRecord.Detail goes through here.
-func boundedDetail(s string) string {
+func boundedDetail(s string) string { return boundedRunes(s, 120) }
+
+// boundedRunes sanitizes s and limits it to max runes, keeping a trailing
+// ellipsis when it truncates. A caller that appends a fixed marker must bound
+// only the variable part and reserve the marker's runes, so the marker cannot
+// be truncated away.
+func boundedRunes(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
 	if !utf8.ValidString(s) {
 		s = strings.ToValidUTF8(s, "?")
 	}
 	runes := []rune(s)
-	if len(runes) > 120 {
-		s = string(runes[:117]) + "..."
+	if len(runes) <= max {
+		return s
 	}
-	return s
+	if max <= 3 {
+		return string(runes[:max])
+	}
+	return string(runes[:max-3]) + "..."
 }
