@@ -34,6 +34,13 @@ func printRecoveryReport(report *recovery.Report) {
 	for _, u := range report.Unadopted {
 		fmt.Fprintf(os.Stderr, "warning: scope %s's worktree was not re-adopted: %s — the directory is not a registered worktree of its repository; any work in it is unreachable\n", u.ScopeID, u.Path)
 	}
+	for _, q := range report.Quarantined {
+		if q.Path != "" {
+			fmt.Fprintf(os.Stderr, "warning: scope %s was dropped during recovery: its trace holds contradictory lifecycle records — its worktree is left on disk at %s and is never deleted automatically\n", q.Owner, q.Path)
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "warning: scope %s was dropped during recovery: its trace holds contradictory lifecycle records — it is not recovered and nothing in it is settle-able\n", q.Owner)
+	}
 }
 
 // formatSize renders a byte count for the orphan report.

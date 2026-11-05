@@ -171,7 +171,7 @@ func printShepherdReport(w io.Writer, report *recovery.Report) {
 		return
 	}
 	fmt.Fprintf(w, "recovery rebuilt %d scope(s) (%d root(s))\n", report.Scopes, report.Roots)
-	if len(report.Adopted) == 0 && len(report.Orphans) == 0 && len(report.Missing) == 0 && len(report.Unadopted) == 0 {
+	if len(report.Adopted) == 0 && len(report.Orphans) == 0 && len(report.Missing) == 0 && len(report.Unadopted) == 0 && len(report.Quarantined) == 0 {
 		fmt.Fprintln(w, "no worktree leftovers.")
 		return
 	}
@@ -186,6 +186,13 @@ func printShepherdReport(w io.Writer, report *recovery.Report) {
 	}
 	for _, u := range report.Unadopted {
 		fmt.Fprintf(w, "  unadopted %s — scope %s; not a registered worktree of its repository\n", u.Path, u.ScopeID)
+	}
+	for _, q := range report.Quarantined {
+		if q.Path != "" {
+			fmt.Fprintf(w, "  quarantined %s — scope %s; the trace's lifecycle records contradict, the scope is not recovered — the worktree is left on disk\n", q.Path, q.Owner)
+			continue
+		}
+		fmt.Fprintf(w, "  quarantined %s — the trace's lifecycle records contradict, the scope is not recovered (it recorded no worktree)\n", q.Owner)
 	}
 }
 
