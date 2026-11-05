@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.137.2](https://github.com/buchenberg/yaah/compare/v0.137.1...v0.137.2) (2026-11-05)
+
+
+### Documentation
+
+* **memory:** scope the TrainContext 0-sentinel note to the loaded case (round-9 review) ([297259f](https://github.com/buchenberg/yaah/commit/297259ff6a30afbbb6edae74189cbd1ac813cf5e))
+
 ## [0.137.1](https://github.com/buchenberg/yaah/compare/v0.137.0...v0.137.1) (2026-11-05)
 
 
