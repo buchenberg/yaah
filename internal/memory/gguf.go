@@ -281,9 +281,19 @@ func loadGGUF(ctx context.Context, libPath, modelPath string) (func(context.Cont
 	if threads > 8 {
 		threads = 8
 	}
+	// Decode window: never above the model's trained context. Decoding
+	// more than n_ctx_train tokens aborts llama.cpp from inside the C
+	// (SIGABRT during cgo — a corrupted terminal and a dead TUI; the
+	// nomic model warns "n_ctx_seq > n_ctx_train -- possible training
+	// context overflow" at 2048), so the window clamps to the model's own
+	// train context. Longer inputs truncate at the closure below.
+	ctxWindow := ggufNCtx
+	if nCtxTrain := llama.ModelNCtxTrain(model); nCtxTrain > 0 && int(nCtxTrain) < ctxWindow {
+		ctxWindow = int(nCtxTrain)
+	}
 	params := llama.ContextDefaultParams()
-	params.NCtx = ggufNCtx
-	params.NBatch = ggufNCtx
+	params.NCtx = uint32(ctxWindow)
+	params.NBatch = uint32(ctxWindow)
 	params.Embeddings = 1
 	params.NThreads = threads
 	params.NThreadsBatch = threads
@@ -315,8 +325,8 @@ func loadGGUF(ctx context.Context, libPath, modelPath string) (func(context.Cont
 		// llama.Decode rejects batches longer than n_ctx, and a long memory
 		// body would otherwise error on every embed. Leading tokens (BOS +
 		// opening text) are kept, the usual truncation side.
-		if len(tokens) > ggufNCtx {
-			tokens = tokens[:ggufNCtx]
+		if len(tokens) > ctxWindow {
+			tokens = tokens[:ctxWindow]
 		}
 		if _, err := llama.Decode(lctx, llama.BatchGetOne(tokens)); err != nil {
 			return nil, fmt.Errorf("gguf embed: decode: %w", err)

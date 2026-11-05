@@ -117,3 +117,30 @@ func runSilentProbe() {
 	}
 	fmt.Printf("OK dims=%d first=[%.6g]\n", len(emb), emb[0])
 }
+
+// TestGGUF_ClampDecodWindowToTrainContext pins the SIGABRT fix
+// (yaah-x58j): llama.cpp aborts inside cgo when decode runs more tokens
+// than the model's n_ctx_train (the nomic-v2-moe GGUF trains at 512 while
+// the embedder reserved 2048 — the crash took the whole TUI down with a
+// raw runtime dump onto the alt screen). The decode window must clamp to
+// the model's own train context, so an input many times over it embeds
+// without aborting. Run with YAAH_GGUF_SMOKE=1.
+func TestGGUF_ClampDecodeWindowToTrainContext(t *testing.T) {
+	if os.Getenv("YAAH_GGUF_SMOKE") == "" || os.Getenv("YAAH_GGUF_MODEL") == "" {
+		t.Skip("set YAAH_GGUF_SMOKE=1 with YAAH_GGUF_LIB/MODEL to run")
+	}
+	e := NewGGUFEmbedder(os.Getenv("YAAH_GGUF_LIB"), os.Getenv("YAAH_GGUF_MODEL"), "search_query: ", "search_document: ")
+	// ~2.4K chars of prose: far past any 512-token train context, and the
+	// shape of the message whose embed aborted the live TUI.
+	long := strings.Repeat("The repository layout maps workspace grants to dispatch worlds, and the settle path serializes per parent. ", 24)
+	if len(long) < 1000 {
+		t.Fatalf("fixture too short to exercise the clamp: %d chars", len(long))
+	}
+	emb, err := e.Embed(context.Background(), long)
+	if err != nil {
+		t.Fatalf("over-train-context embed must not abort: %v", err)
+	}
+	if len(emb) == 0 {
+		t.Fatal("empty embedding")
+	}
+}
