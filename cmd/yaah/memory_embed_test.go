@@ -115,3 +115,46 @@ func TestEmbedderFor_incomplete(t *testing.T) {
 		})
 	}
 }
+
+// TestEmbedderFor_matchesEmbeddingSearchLive pins that the enablement
+// predicate shared with the TUI info pane and `yaah config` is exactly
+// embedderFor's own: if the status display ever disagrees with runtime
+// behavior again (the gguf backend once rendered "(inactive)" while
+// semantic search ran), this fails.
+func TestEmbedderFor_matchesEmbeddingSearchLive(t *testing.T) {
+	cfgs := map[string]*config.Config{
+		"gguf with model_path": {Embedding: config.EmbeddingConfig{
+			Backend: config.EmbeddingBackendGGUF, ModelPath: "/models/nomic.gguf",
+		}},
+		"gguf without model_path": {Embedding: config.EmbeddingConfig{
+			Backend: config.EmbeddingBackendGGUF,
+		}},
+		"http complete": {
+			Providers: map[string]config.Provider{"p": {}},
+			Embedding: config.EmbeddingConfig{Provider: "p", Model: "m"},
+		},
+		"http explicit backend": {
+			Providers: map[string]config.Provider{"p": {}},
+			Embedding: config.EmbeddingConfig{Backend: config.EmbeddingBackendHTTP, Provider: "p", Model: "m"},
+		},
+		"http dangling provider": {
+			Providers: map[string]config.Provider{"p": {}},
+			Embedding: config.EmbeddingConfig{Provider: "nope", Model: "m"},
+		},
+		"http half-set provider only": {Embedding: config.EmbeddingConfig{Provider: "p"}},
+		"http half-set model only":    {Embedding: config.EmbeddingConfig{Model: "m"}},
+		"unknown backend": {
+			Providers: map[string]config.Provider{"p": {}},
+			Embedding: config.EmbeddingConfig{Backend: "bogus", Provider: "p", Model: "m"},
+		},
+		"nothing configured": {},
+	}
+	for name, cfg := range cfgs {
+		t.Run(name, func(t *testing.T) {
+			_, ok := embedderFor(cfg)
+			if ok != cfg.EmbeddingSearchLive() {
+				t.Errorf("embedderFor ok = %v, EmbeddingSearchLive = %v; the display must match runtime", ok, cfg.EmbeddingSearchLive())
+			}
+		})
+	}
+}

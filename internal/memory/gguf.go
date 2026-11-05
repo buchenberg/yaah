@@ -1,13 +1,19 @@
 package memory
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
+	"time"
+	"unsafe"
 
+	"github.com/ebitengine/purego"
 	"github.com/hybridgroup/yzma/pkg/llama"
 )
 
@@ -38,10 +44,29 @@ type GGUFEmbedder struct {
 	QueryPrefix    string
 	DocumentPrefix string
 
-	mu      sync.Mutex
-	embedFn func(ctx context.Context, text string) (Embedding, error)
-	dims    int
-	initErr error
+	mu           sync.Mutex
+	embedFn      func(ctx context.Context, text string) (Embedding, error)
+	dims         int
+	decodeWindow int
+	trainContext int
+	initErr      error
+}
+
+// DecodeWindow reports the decode window the embedder actually uses —
+// tokens per decode after the train-context clamp — or 0 before the
+// model is loaded. Diagnostic surface for the clamp (yaah-x58j).
+func (g *GGUFEmbedder) DecodeWindow() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.decodeWindow
+}
+
+// TrainContext reports the model's own n_ctx_train (the clamp's source),
+// or 0 before the model is loaded.
+func (g *GGUFEmbedder) TrainContext() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.trainContext
 }
 
 // NewGGUFEmbedder returns a GGUF-backed embedder. Model loading is deferred
@@ -110,7 +135,7 @@ func (g *GGUFEmbedder) ensureLocked(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	fn, dims, err := loadGGUF(ctx, g.LibPath, g.ModelPath)
+	fn, dims, ctxWindow, trainContext, err := loadGGUF(ctx, g.LibPath, g.ModelPath)
 	if err != nil {
 		// A cancelled or timed-out load is transient: caching it would
 		// permanently disable the embedder for the process (m3pk review).
@@ -121,7 +146,7 @@ func (g *GGUFEmbedder) ensureLocked(ctx context.Context) error {
 		g.initErr = err
 		return err
 	}
-	g.embedFn, g.dims = fn, dims
+	g.embedFn, g.dims, g.decodeWindow, g.trainContext = fn, dims, ctxWindow, trainContext
 	return nil
 }
 
@@ -136,38 +161,171 @@ func isContextErr(err error) bool {
 // use, and process teardown reclaims it.
 var llamaOnce sync.Once
 
+// llamaLoadErr holds the once-guard's failure: the library stages run
+// exactly once per process, so a failure must be remembered on shared
+// state — later embed callers (a second embedder, the startup probe over
+// the live path) must see the same error instead of skipping into unbound
+// FFI. Reading it after llamaOnce.Do returns is safe: Do guarantees the
+// closure's memory effects are visible to every caller on return.
+var llamaLoadErr error
+
+// llamaLogMu/llamaLogFile back the level-aware log hook: ggml noise
+// (the backend-scan chatter) is dropped, but WARN/ERROR land in a file —
+// never the tty, and never lost: a silenced GGML abort is a crash with
+// no diagnosis (the SIGABRT-in-decode of yaah-x58j printed its assert
+// text into the silent callback).
+var llamaLogMu sync.Mutex
+var llamaLogFile *os.File
+
+// llamaLogHook installs the llama.cpp/ggml log callback. DEBUG/INFO noise
+// (e.g. "load_backend: loaded CPU backend from …" — the tty artifact's
+// original source) is dropped; WARN/ERROR append to ~/.yaah/llama.log so
+// field failures (a GGML_ASSERT abort among them) stay diagnosable.
+func llamaLogHook() {
+	// The same home resolution the rest of the package uses (YAAH_HOME
+	// for sandboxed/relocated homes), with the directory created — an
+	// ENOENT on ~/.yaah would otherwise silently drop every diagnostic.
+	home := os.Getenv("YAAH_HOME")
+	if home == "" {
+		userHome, uerr := os.UserHomeDir()
+		if uerr != nil {
+			llama.LogSet(llama.LogSilent())
+			return
+		}
+		home = filepath.Join(userHome, ".yaah")
+	}
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		llama.LogSet(llama.LogSilent())
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(home, "llama.log"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		// Nowhere to write the diagnostics — drop everything rather than
+		// print (printing is the tty artifact).
+		llama.LogSet(llama.LogSilent())
+		return
+	}
+	llamaLogFile = f
+	cb := purego.NewCallback(func(level int32, text unsafe.Pointer, data uintptr) uintptr {
+		// ggml_log_level: none=0 debug=1 info=2 warn=3 error=4 cont=5.
+		if level != 3 && level != 4 && level != 5 {
+			return 0
+		}
+		var b []byte
+		if text != nil {
+			buf := (*[8192]byte)(text)
+			if n := bytes.IndexByte(buf[:], 0); n > 0 {
+				b = buf[:n]
+			}
+		}
+		if len(b) == 0 {
+			return 0
+		}
+		llamaLogMu.Lock()
+		defer llamaLogMu.Unlock()
+		if llamaLogFile == nil {
+			return 0
+		}
+		if level == 5 { // cont: continue the previous line
+			llamaLogFile.Write(b)
+			return 0
+		}
+		llamaLogFile.Write([]byte(time.Now().Format("2006/01/02 15:04:05 ")))
+		llamaLogFile.Write([]byte(llamaLevelName(level) + " " + string(b) + "\n"))
+		return 0
+	})
+	llama.LogSet(cb)
+}
+
+func llamaLevelName(level int32) string {
+	switch level {
+	case 3:
+		return "WARN"
+	case 4:
+		return "ERROR"
+	default:
+		return "LOG"
+	}
+}
+
 // loadGGUF loads the llama.cpp library and GGUF model once per process and
 // returns a pooling closure plus the model's embedding width. Context is
 // checked between the load stages (the FFI calls themselves are not
 // interruptible), so a cancelled request stops before the next one.
-func loadGGUF(ctx context.Context, libPath, modelPath string) (func(context.Context, string) (Embedding, error), int, error) {
+func loadGGUF(ctx context.Context, libPath, modelPath string) (fn func(ctx context.Context, text string) (Embedding, error), dims, ctxWindow, trainContext int, err error) {
 	if modelPath == "" {
-		return nil, 0, fmt.Errorf("gguf embed: model_path is required")
+		return nil, 0, 0, 0, fmt.Errorf("gguf embed: model_path is required")
 	}
 	llamaOnce.Do(func() {
-		llama.Load(libPath) // prebuilt llama.cpp dylib/so via purego FFI
-		llama.Init()
-		llama.LogSet(llama.LogSilent())
+		// llama.Load binds logSetFunc, so LogSet can only run after it —
+		// the library load itself must stay quiet by construction (yzma's
+		// loader buffers its diagnostics into returned errors). Resolve
+		// the empty-path case against the filesystem first so the loader's
+		// default-search fallback can never enter the picture while the
+		// default callback is still the loud one.
+		if libPath == "" {
+			libPath = os.Getenv("YZMA_LIB")
+		}
+		if libPath != "" {
+			if _, err := os.Stat(libPath); err != nil {
+				llamaLoadErr = fmt.Errorf("gguf embed: lib_path %s: %w", libPath, err)
+				return
+			}
+		}
+		if err := llama.Load(libPath); err != nil {
+			llamaLoadErr = fmt.Errorf("gguf embed: load llama libraries from %s: %w", libPath, err)
+			return
+		}
+		// Install the level-aware hook BEFORE Init(): the backend scan
+		// ("load_backend: loaded CPU backend from …") prints through the
+		// default log callback, which writes straight to this process's
+		// terminal — inside the TUI that is a raw write onto tcell's
+		// screen, and the interleaving with repaints garbles whatever
+		// partial row the cursor sat on. The hook drops that noise but
+		// keeps WARN and ERROR: the assert text of a GGML abort is the
+		// only diagnosis a SIGABRT-in-decode leaves (yaah-x58j).
+		llamaLogHook()
+		if err := llama.Init(); err != nil {
+			llamaLoadErr = fmt.Errorf("gguf embed: init backends: %w", err)
+		}
 	})
+	if llamaLoadErr != nil {
+		return nil, 0, 0, 0, llamaLoadErr
+	}
 	if err := ctx.Err(); err != nil {
-		return nil, 0, err
+		return nil, 0, 0, 0, err
 	}
 
 	model, err := llama.ModelLoadFromFile(modelPath, llama.ModelDefaultParams())
 	if err != nil {
-		return nil, 0, fmt.Errorf("gguf embed: load model %s: %w", modelPath, err)
+		return nil, 0, 0, 0, fmt.Errorf("gguf embed: load model %s: %w", modelPath, err)
 	}
 	if err := ctx.Err(); err != nil {
 		llama.ModelFree(model)
-		return nil, 0, err
+		return nil, 0, 0, 0, err
 	}
 	threads := int32(runtime.NumCPU())
 	if threads > 8 {
 		threads = 8
 	}
+	// Decode window: never above the model's trained context. Decoding
+	// more than n_ctx_train tokens aborts llama.cpp from inside the C
+	// (SIGABRT during cgo — a corrupted terminal and a dead TUI; the
+	// nomic model warns "n_ctx_seq > n_ctx_train -- possible training
+	// context overflow" at 2048), so the window clamps to the model's own
+	// train context. Longer inputs truncate at the closure below.
+	ctxWindow = ggufNCtx
+	trainContext = int(llama.ModelNCtxTrain(model))
+	if trainContext > 0 && trainContext < ctxWindow {
+		ctxWindow = trainContext
+	}
 	params := llama.ContextDefaultParams()
-	params.NCtx = ggufNCtx
-	params.NBatch = ggufNCtx
+	params.NCtx = uint32(ctxWindow)
+	params.NBatch = uint32(ctxWindow)
+	// n_ubatch <= n_batch is llama.cpp's invariant; leaving NUbatch at the
+	// 512 default would violate it for models training under 512.
+	params.NUbatch = uint32(ctxWindow)
 	params.Embeddings = 1
 	params.NThreads = threads
 	params.NThreadsBatch = threads
@@ -177,17 +335,17 @@ func loadGGUF(ctx context.Context, libPath, modelPath string) (func(context.Cont
 	lctx, err := llama.InitFromModel(model, params)
 	if err != nil {
 		llama.ModelFree(model)
-		return nil, 0, fmt.Errorf("gguf embed: init context: %w", err)
+		return nil, 0, 0, 0, fmt.Errorf("gguf embed: init context: %w", err)
 	}
 	vocab := llama.ModelGetVocab(model)
-	dims := int(llama.ModelNEmbd(model))
+	dims = int(llama.ModelNEmbd(model))
 	if dims <= 0 {
 		llama.Free(lctx)
 		llama.ModelFree(model)
-		return nil, 0, fmt.Errorf("gguf embed: model %s reports %d embedding dims", modelPath, dims)
+		return nil, 0, 0, 0, fmt.Errorf("gguf embed: model %s reports %d embedding dims", modelPath, dims)
 	}
 
-	fn := func(ctx context.Context, text string) (Embedding, error) {
+	fn = func(ctx context.Context, text string) (Embedding, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -199,8 +357,8 @@ func loadGGUF(ctx context.Context, libPath, modelPath string) (func(context.Cont
 		// llama.Decode rejects batches longer than n_ctx, and a long memory
 		// body would otherwise error on every embed. Leading tokens (BOS +
 		// opening text) are kept, the usual truncation side.
-		if len(tokens) > ggufNCtx {
-			tokens = tokens[:ggufNCtx]
+		if len(tokens) > ctxWindow {
+			tokens = tokens[:ctxWindow]
 		}
 		if _, err := llama.Decode(lctx, llama.BatchGetOne(tokens)); err != nil {
 			return nil, fmt.Errorf("gguf embed: decode: %w", err)
@@ -228,5 +386,5 @@ func loadGGUF(ctx context.Context, libPath, modelPath string) (func(context.Cont
 		}
 		return out, nil
 	}
-	return fn, dims, nil
+	return fn, dims, ctxWindow, trainContext, nil
 }

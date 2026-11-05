@@ -108,7 +108,7 @@ func runTUI() error {
 		subProvider,
 		cfg.Agent.SubAgent.MaxConcurrency,
 		subModel,
-		cfg.Embedding.Provider != "" && cfg.Embedding.Model != "",
+		cfg.EmbeddingSearchLive(),
 		cfg.Embedding.Model,
 		pipelineList,
 	)
