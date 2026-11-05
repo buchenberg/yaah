@@ -225,7 +225,7 @@ Built-in tools include:
 
 | Group | Tools |
 |---|---|
-| Files | `read`, `write`, `edit`, `patch`, `delete`, `replace`, `json_query`, `file_info` |
+| Files | `read`, `write`, `edit`, `patch`, `delete`, `move`, `copy`, `replace`, `json_query`, `file_info` |
 | Search | `grep`, `glob`, `ls` |
 | Shell | `bash`, `powershell` (platform-appropriate) |
 | Version control | `git`, `diff`, `bisect` |

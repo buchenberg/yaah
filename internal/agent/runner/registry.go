@@ -96,6 +96,8 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, ro
 		"write":      true,
 		"edit":       true,
 		"delete":     true,
+		"move":       true,
+		"copy":       true,
 		"bash":       true,
 		"powershell": true,
 	}

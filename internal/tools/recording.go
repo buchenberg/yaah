@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -148,6 +149,10 @@ func (rt *RecordingTool) Execute(ctx context.Context, args string) (string, erro
 		return result, err
 	}
 
+	if toolName == "move" || toolName == "copy" {
+		return rt.recordTransfer(ctx, dispatch, toolName, args)
+	}
+
 	var params struct {
 		FilePath string `json:"filePath"`
 	}
@@ -174,9 +179,18 @@ func (rt *RecordingTool) Execute(ctx context.Context, args string) (string, erro
 	if err != nil {
 		return result, err
 	}
+	rt.recordSnapshot(ctx, dispatch, toolName, ws, abs, before)
+	return result, nil
+}
+
+// recordSnapshot captures abs's after-image and records the change when it
+// differs from before. Single-path tools (write/edit/delete) and the two-path
+// ones (move/copy) both record through here, so the evidence shape cannot
+// diverge between them.
+func (rt *RecordingTool) recordSnapshot(ctx context.Context, dispatch ConflictDispatch, toolName string, ws Workspace, abs string, before conflictSnapshot) {
 	after := captureConflictSnapshot(ctx, ws, abs)
 	if conflictSnapshotsEqual(before, after) {
-		return result, nil
+		return
 	}
 	rt.tracker.RecordChange(FileRecord{
 		DispatchID:    dispatch.ID,
@@ -192,7 +206,53 @@ func (rt *RecordingTool) Execute(ctx context.Context, args string) (string, erro
 		AfterMode:     after.Mode,
 		Known:         before.Known && after.Known,
 	})
+}
+
+// recordTransfer records both ends of a move/copy. One call changes two paths —
+// the source disappears, the destination appears or changes — so a
+// single-path record would report half of what happened and let a parallel
+// worker's write to the source go unseen.
+func (rt *RecordingTool) recordTransfer(ctx context.Context, dispatch ConflictDispatch, toolName, args string) (string, error) {
+	src, dst := transferPaths(args)
+	ws := rt.workspace()
+	if src == "" || dst == "" || ws == nil {
+		return rt.inner.Execute(ctx, args)
+	}
+	absSrc, err := ws.ResolvePath(src)
+	if err != nil {
+		return rt.inner.Execute(ctx, args)
+	}
+	absDst, err := ws.ResolvePath(dst)
+	if err != nil {
+		return rt.inner.Execute(ctx, args)
+	}
+
+	// Both paths in one critical section. The locks are taken in sorted order so
+	// two dispatches moving A→B and B→A cannot deadlock.
+	unlock := lockConflictPathSet(absSrc, absDst)
+	defer unlock()
+
+	beforeSrc := captureConflictSnapshot(ctx, ws, absSrc)
+	beforeDst := captureConflictSnapshot(ctx, ws, absDst)
+	result, err := rt.inner.Execute(ctx, args)
+	if err != nil {
+		return result, err
+	}
+	rt.recordSnapshot(ctx, dispatch, toolName, ws, absSrc, beforeSrc)
+	rt.recordSnapshot(ctx, dispatch, toolName, ws, absDst, beforeDst)
 	return result, nil
+}
+
+// transferPaths reads the path/to pair the move and copy tools share.
+func transferPaths(args string) (src, dst string) {
+	var params struct {
+		Path string `json:"path"`
+		To   string `json:"to"`
+	}
+	if json.Unmarshal([]byte(args), &params) != nil {
+		return "", ""
+	}
+	return params.Path, params.To
 }
 
 type conflictPathLock struct {
@@ -229,6 +289,33 @@ func lockConflictPath(abs string) func() {
 			delete(conflictPathLocks, key)
 		}
 		conflictPathLocksMu.Unlock()
+	}
+}
+
+// lockConflictPathSet takes the per-path lock for every named path, in sorted
+// key order, and returns one release. Sorted acquisition is what keeps two
+// dispatches that touch the same pair of paths in opposite directions from
+// deadlocking.
+func lockConflictPathSet(paths ...string) func() {
+	keys := make([]string, 0, len(paths))
+	seen := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		key := pathKey(normalizeTrackedPath(p))
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	unlocks := make([]func(), 0, len(keys))
+	for _, key := range keys {
+		unlocks = append(unlocks, lockConflictPath(key))
+	}
+	return func() {
+		for i := len(unlocks) - 1; i >= 0; i-- {
+			unlocks[i]()
+		}
 	}
 }
 

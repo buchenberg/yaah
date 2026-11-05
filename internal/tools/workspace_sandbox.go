@@ -349,6 +349,19 @@ func sandboxEntryMode(typ string) fs.FileMode {
 	}
 }
 
+// Move renames a file inside the sandbox with mv — the substrate's own rename,
+// so the bytes never cross the Exec transport. force is passed because the tool
+// above has already decided whether a clobber is allowed.
+func (w *sandboxWorkspace) Move(ctx context.Context, src, dst string) error {
+	return w.run(ctx, `mv -f -- "$1" "$2"`, src, dst)
+}
+
+// Copy duplicates a file inside the sandbox with cp: the bytes stay in the
+// substrate, so a large copy costs neither context nor a read/write round trip.
+func (w *sandboxWorkspace) Copy(ctx context.Context, src, dst string) error {
+	return w.run(ctx, `cp -f -- "$1" "$2"`, src, dst)
+}
+
 func (w *sandboxWorkspace) MkdirAll(ctx context.Context, p string, perm fs.FileMode) error {
 	return w.run(ctx, `mkdir -p -- "$1" && chmod "$2" "$1"`, p, strconv.FormatUint(uint64(perm.Perm()), 8))
 }

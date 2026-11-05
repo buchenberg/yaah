@@ -16,6 +16,8 @@ tools:
   - write
   - edit
   - delete
+  - move
+  - copy
   - patch
   - replace
   - grep

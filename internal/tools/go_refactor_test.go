@@ -133,6 +133,25 @@ func (m *memFS) MkdirAll(_ context.Context, p string, _ fs.FileMode) error {
 	return nil
 }
 
+func (m *memFS) Move(_ context.Context, src, dst string) error {
+	c, ok := m.files[src]
+	if !ok {
+		return &fs.PathError{Op: "move", Path: src, Err: fs.ErrNotExist}
+	}
+	delete(m.files, src)
+	m.files[dst] = c
+	return nil
+}
+
+func (m *memFS) Copy(_ context.Context, src, dst string) error {
+	c, ok := m.files[src]
+	if !ok {
+		return &fs.PathError{Op: "copy", Path: src, Err: fs.ErrNotExist}
+	}
+	m.files[dst] = c
+	return nil
+}
+
 func (m *memFS) Exec(context.Context, ExecRequest) (ExecResult, error) {
 	return ExecResult{ExitCode: -1}, errors.New("memFS: commands are not available")
 }

@@ -180,6 +180,8 @@ var leafTools = map[string]func() Tool{
 	"edit":        func() Tool { return &EditTool{} },
 	"patch":       func() Tool { return &PatchTool{} },
 	"delete":      func() Tool { return &DeleteTool{} },
+	"move":        func() Tool { return &MoveTool{} },
+	"copy":        func() Tool { return &CopyTool{} },
 	"replace":     func() Tool { return &ReplaceTool{} },
 	"json_query":  func() Tool { return &JSONQueryTool{} },
 	"grep":        func() Tool { return &GrepTool{} },

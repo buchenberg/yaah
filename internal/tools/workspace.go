@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -98,6 +99,16 @@ type Workspace interface {
 	ReadDir(ctx context.Context, path string) ([]fs.DirEntry, error)
 	Remove(ctx context.Context, path string) error
 	MkdirAll(ctx context.Context, path string, perm fs.FileMode) error
+
+	// Move renames src to dst, preserving the file's bytes and permission mode.
+	// Both paths arrive already resolved. An implementation MAY replace an
+	// existing dst: the no-clobber rule belongs to the move/copy tools, which
+	// refuse an existing destination unless force is set, so a substrate must not
+	// add a second, divergent one here. Directories are the caller's to refuse.
+	Move(ctx context.Context, src, dst string) error
+	// Copy duplicates src at dst with src's bytes and permission mode, leaving
+	// src in place. Same contract as Move.
+	Copy(ctx context.Context, src, dst string) error
 
 	// Exec runs a command. A non-nil error reports that the command could not be
 	// started or exited non-zero; callers that need the distinction inspect
@@ -332,6 +343,56 @@ func (w *localWorkspace) Remove(_ context.Context, path string) error {
 
 func (w *localWorkspace) MkdirAll(_ context.Context, path string, perm fs.FileMode) error {
 	return os.MkdirAll(path, perm)
+}
+
+// Move renames a file on the host. os.Rename moves the directory entry, so the
+// content, the mode, and (within one filesystem) ownership survive without the
+// bytes ever being read — the cheapest exact move available.
+func (w *localWorkspace) Move(_ context.Context, src, dst string) error {
+	return os.Rename(src, dst)
+}
+
+// Copy streams src into a temp file beside dst and renames it into place, so a
+// crash mid-copy leaves the previous dst intact instead of a truncated one —
+// the same crash-safety WriteFile has. The content is never buffered whole: a
+// large file copies in fixed-size chunks.
+func (w *localWorkspace) Copy(_ context.Context, src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	info, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(dst)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(dst)+".tmp*")
+	if err != nil {
+		return fmt.Errorf("copy: create temp: %w", err)
+	}
+	tmpName := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpName) }
+
+	if _, err := io.Copy(tmp, in); err != nil {
+		tmp.Close()
+		cleanup()
+		return fmt.Errorf("copy: %w", err)
+	}
+	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+		tmp.Close()
+		cleanup()
+		return fmt.Errorf("copy: chmod: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return fmt.Errorf("copy: %w", err)
+	}
+	if err := os.Rename(tmpName, dst); err != nil {
+		cleanup()
+		return fmt.Errorf("copy: rename: %w", err)
+	}
+	return nil
 }
 
 // Exec runs a command in the workspace. On the orchestrator's host workspace (no

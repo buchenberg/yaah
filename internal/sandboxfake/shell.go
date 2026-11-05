@@ -26,6 +26,7 @@ import (
 //	base64 -d "$t.b64" >> "$t"            # base64 decode, append redirection
 //	chmod "$2" "$t" || exit 1
 //	mv -f -- "$t" "$1"
+//	cp -f -- "$1" "$2"                    # workspace Move/Copy
 //	[ -e "$1" ] || [ -L "$1" ] || exit 42  # test, || chains
 //	stat -c "$2" -- "$1"                   # GNU stat with a format string
 //	stat -L -c "$2" -- "$1"
@@ -280,6 +281,8 @@ func (sh *shSession) runSimple(words []string) (string, int) {
 		return sh.cmdChmod(words)
 	case "mv":
 		return sh.cmdMv(words)
+	case "cp":
+		return sh.cmdCp(words)
 	case "rm":
 		return sh.cmdRm(words)
 	case "mkdir":
@@ -643,6 +646,45 @@ func (sh *shSession) cmdMv(words []string) (string, int) {
 	delete(sh.sb.files, srcClean)
 	sh.sb.files[dstClean] = e
 	e.modTime = time.Now()
+	return "", 0
+}
+
+// cmdCp copies a file, matching `cp -f -- src dst`: the form sandboxWorkspace.Copy
+// emits. A directory is refused the way a real cp without -r refuses it, so the
+// fake cannot accept a copy the substrate would reject.
+func (sh *shSession) cmdCp(words []string) (string, int) {
+	flags, ops := operands(words[1:])
+	for _, f := range flags {
+		if f != "-f" {
+			return "", sh.errf("sandboxfake: cp: unsupported flag %s\n", f)
+		}
+	}
+	if len(ops) != 2 {
+		return "", sh.errf("cp: missing operand\n")
+	}
+	src, dst := ops[0], ops[1]
+	srcClean, err := sh.sb.resolve(src, sh.cwd)
+	if err != nil {
+		return "", sh.errf("cp: %v\n", err)
+	}
+	e, ok := sh.sb.files[srcClean]
+	if !ok {
+		return "", sh.errf("cp: cannot stat '%s': No such file or directory\n", src)
+	}
+	if e.isDir {
+		return "", sh.errf("cp: -r not specified; omitting directory '%s'\n", src)
+	}
+	dstClean, err := sh.sb.resolve(dst, sh.cwd)
+	if err != nil {
+		return "", sh.errf("cp: %v\n", err)
+	}
+	if existing, ok := sh.sb.files[dstClean]; ok && existing.isDir {
+		return "", sh.errf("sandboxfake: cp: destination is a directory\n")
+	}
+	if parent := path.Dir(dstClean); !sh.sb.dirExists(parent) {
+		return "", sh.errf("cp: cannot create regular file '%s': No such file or directory\n", dst)
+	}
+	sh.sb.files[dstClean] = &entry{mode: e.mode, data: append([]byte(nil), e.data...), modTime: time.Now()}
 	return "", 0
 }
 
