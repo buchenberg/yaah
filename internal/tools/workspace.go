@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
@@ -347,9 +348,21 @@ func (w *localWorkspace) MkdirAll(_ context.Context, path string, perm fs.FileMo
 
 // Move renames a file on the host. os.Rename moves the directory entry, so the
 // content, the mode, and (within one filesystem) ownership survive without the
-// bytes ever being read — the cheapest exact move available.
-func (w *localWorkspace) Move(_ context.Context, src, dst string) error {
-	return os.Rename(src, dst)
+// bytes ever being read — the cheapest exact move available. Across filesystems
+// (EXDEV) it falls back to Copy plus Remove, matching the sandbox mv's
+// transparent behavior at the cost of actually reading the bytes.
+func (w *localWorkspace) Move(ctx context.Context, src, dst string) error {
+	err := os.Rename(src, dst)
+	if err == nil || !errors.Is(err, syscall.EXDEV) {
+		return err
+	}
+	if cerr := w.Copy(ctx, src, dst); cerr != nil {
+		return fmt.Errorf("move: cross-filesystem fallback: %w", cerr)
+	}
+	if rerr := os.Remove(src); rerr != nil {
+		return fmt.Errorf("move: copied across filesystems but could not remove the source: %w", rerr)
+	}
+	return nil
 }
 
 // Copy streams src into a temp file beside dst and renames it into place, so a

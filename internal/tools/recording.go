@@ -238,7 +238,13 @@ func (rt *RecordingTool) recordTransfer(ctx context.Context, dispatch ConflictDi
 	if err != nil {
 		return result, err
 	}
-	rt.recordSnapshot(ctx, dispatch, toolName, ws, absSrc, beforeSrc)
+	// A copy leaves the source untouched: recording it would report a change
+	// that never happened — and for an unknown snapshot (a special file, or a
+	// file over the hash cap) invent a conflict between two readers of the same
+	// file. Only a move changes the source end.
+	if toolName == "move" {
+		rt.recordSnapshot(ctx, dispatch, toolName, ws, absSrc, beforeSrc)
+	}
 	rt.recordSnapshot(ctx, dispatch, toolName, ws, absDst, beforeDst)
 	return result, nil
 }

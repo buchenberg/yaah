@@ -356,10 +356,14 @@ func (w *sandboxWorkspace) Move(ctx context.Context, src, dst string) error {
 	return w.run(ctx, `mv -f -- "$1" "$2"`, src, dst)
 }
 
-// Copy duplicates a file inside the sandbox with cp: the bytes stay in the
-// substrate, so a large copy costs neither context nor a read/write round trip.
+// Copy duplicates a file inside the sandbox with cp -p: the bytes stay in the
+// substrate, so a large copy costs neither context nor a read/write round trip,
+// and -p carries the source's mode to the destination. Without -p, cp would
+// apply the sandbox umask on create (0666 becoming 0644) and leave an
+// overwritten destination's old mode in place — the host path sets the source
+// mode exactly and the docs promise it.
 func (w *sandboxWorkspace) Copy(ctx context.Context, src, dst string) error {
-	return w.run(ctx, `cp -f -- "$1" "$2"`, src, dst)
+	return w.run(ctx, `cp -f -p -- "$1" "$2"`, src, dst)
 }
 
 func (w *sandboxWorkspace) MkdirAll(ctx context.Context, p string, perm fs.FileMode) error {

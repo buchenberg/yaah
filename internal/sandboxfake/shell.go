@@ -26,7 +26,7 @@ import (
 //	base64 -d "$t.b64" >> "$t"            # base64 decode, append redirection
 //	chmod "$2" "$t" || exit 1
 //	mv -f -- "$t" "$1"
-//	cp -f -- "$1" "$2"                    # workspace Move/Copy
+//	cp -f -p -- "$1" "$2"                # workspace Move/Copy
 //	[ -e "$1" ] || [ -L "$1" ] || exit 42  # test, || chains
 //	stat -c "$2" -- "$1"                   # GNU stat with a format string
 //	stat -L -c "$2" -- "$1"
@@ -655,7 +655,7 @@ func (sh *shSession) cmdMv(words []string) (string, int) {
 func (sh *shSession) cmdCp(words []string) (string, int) {
 	flags, ops := operands(words[1:])
 	for _, f := range flags {
-		if f != "-f" {
+		if f != "-f" && f != "-p" {
 			return "", sh.errf("sandboxfake: cp: unsupported flag %s\n", f)
 		}
 	}

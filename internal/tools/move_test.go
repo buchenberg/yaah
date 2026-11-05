@@ -132,6 +132,32 @@ func TestMoveTool_refusesDirectories(t *testing.T) {
 			t.Fatal("a destination that is a directory must be refused")
 		}
 	})
+	t.Run("non-regular source", func(t *testing.T) {
+		// A dangling symlink is the portable stand-in for the rule that also
+		// refuses FIFOs and devices: the path layer resolves a valid symlink to
+		// its target (as for every file tool) but leaves a dangling link
+		// untouched, so the transfer sees the link itself and refuses it.
+		link := filepath.Join(dir, "dangling-src")
+		if err := os.Symlink(filepath.Join(dir, "no-such-file"), link); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		if _, err := hostMoveTool(dir).Execute(context.Background(),
+			transferArgs(t, map[string]any{"path": link, "to": filepath.Join(dir, "out.txt")})); err == nil {
+			t.Fatal("a non-regular source must be refused")
+		}
+	})
+	t.Run("symlink destination", func(t *testing.T) {
+		// Same mechanics on the destination side: a dangling link resolves to
+		// itself and is refused outright, even with force.
+		link := filepath.Join(dir, "dangling-dst")
+		if err := os.Symlink(filepath.Join(dir, "no-such-file"), link); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		if _, err := hostMoveTool(dir).Execute(context.Background(),
+			transferArgs(t, map[string]any{"path": file, "to": link, "force": true})); err == nil {
+			t.Fatal("a symlink destination must be refused even with force")
+		}
+	})
 }
 
 func TestMoveTool_pathValidatorDenial(t *testing.T) {

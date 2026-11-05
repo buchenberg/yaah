@@ -88,10 +88,17 @@ type transferRequest struct {
 // substrate's replace semantics (host rename, sandbox mv/cp, and the in-memory
 // double all disagree on clobbering, so the rule is applied once, above them):
 //
-//   - the source must exist and be a file — moving or copying a directory is
-//     refused with a clear error, which keeps the tool's semantics bounded;
-//   - the destination must not be a directory;
+//   - the source must exist and be a regular file — a directory, symlink,
+//     FIFO, or device is refused with a clear error, which keeps the tool's
+//     semantics bounded and the host copy from blocking on a special file;
+//   - the destination must not be a directory or a symlink;
 //   - an existing destination is refused unless force is set.
+//
+// The no-clobber rule is check-then-act: a writer that creates dst between the
+// Lstat here and the substrate primitive below can still be overwritten.
+// In-process dispatches are serialized by the ConflictTracker locks; an
+// external writer racing a dispatch is a documented limitation — no portable
+// no-replace rename exists on every supported OS.
 //
 // Both paths are resolved through the workspace's PathValidator first, so deny
 // patterns and workspace-root containment apply exactly as they do for
@@ -124,14 +131,17 @@ func prepareTransfer(ctx context.Context, tool string, ws Workspace, args string
 	req.Path, req.To = src, dst
 
 	// Lstat, not Stat: the entry at the path is what a rename moves and a copy
-	// reads, so a symlink's own type is the honest answer to "is this a
-	// directory". A symlink to a directory is moved as the link it is.
+	// reads. The source must be a regular file as the path layer leaves it: a
+	// directory, FIFO, or device — and, on a lexical substrate where symlink
+	// resolution does not run, a symlink — would make the substrates diverge
+	// (mv moves the link, cp dereferences it) and a FIFO would block the host
+	// copy forever, so all of them are refused with a clear error instead.
 	info, err := ws.Lstat(ctx, src)
 	if err != nil {
 		return transferRequest{}, fmt.Errorf("%s: %s: %w", tool, src, err)
 	}
-	if info.IsDir() {
-		return transferRequest{}, fmt.Errorf("%s: %s is a directory; %s operates on files only", tool, src, tool)
+	if !info.Mode().IsRegular() {
+		return transferRequest{}, fmt.Errorf("%s: %s is not a regular file; %s operates on regular files only", tool, src, tool)
 	}
 
 	dstInfo, err := ws.Lstat(ctx, dst)
@@ -140,6 +150,13 @@ func prepareTransfer(ctx context.Context, tool string, ws Workspace, args string
 		// The common case: a fresh destination.
 	case err != nil:
 		return transferRequest{}, fmt.Errorf("%s: %s: %w", tool, dst, err)
+	case dstInfo.Mode()&fs.ModeSymlink != 0:
+		// A symlink destination is refused outright: mv would replace the
+		// link while cp writes through it — and for a link to a directory the
+		// transfer would drop the file inside that directory on a substrate
+		// whose path resolution is lexical. Accepting one would make the
+		// tools' semantics depend on the substrate.
+		return transferRequest{}, fmt.Errorf("%s: destination %s is a symlink; pass the real path or remove the link", tool, dst)
 	case dstInfo.IsDir():
 		return transferRequest{}, fmt.Errorf("%s: destination %s is a directory", tool, dst)
 	case !req.Force:
