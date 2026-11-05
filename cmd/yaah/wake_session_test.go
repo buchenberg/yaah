@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/wake"
 )
 
@@ -78,6 +79,19 @@ func TestDeliverWakeUnblocksOnClose(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("wake delivery did not unblock when the session closed")
+	}
+}
+
+func TestIdleWakeTurnsEnabledConfig(t *testing.T) {
+	s := &agentSession{}
+	if !s.IdleWakeTurnsEnabled() {
+		t.Fatal("a session with no config must default to idle wake turns enabled")
+	}
+	off := false
+	s.cfg = &config.Config{}
+	s.cfg.Agent.Default.IdleWakeTurns = &off
+	if s.IdleWakeTurnsEnabled() {
+		t.Fatal("idle_wake_turns: false must disable the session policy")
 	}
 }
 

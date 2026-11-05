@@ -46,6 +46,7 @@ func TestConfigAgentConfigParity(t *testing.T) {
 		"TurnCheckpointMax":         true, // → sub-agent runner turn checkpointer
 		"MaxTurnRestores":           true, // → sub-agent runner turn checkpointer
 		"ConsolidateDeepEvery":      true, // → read directly from s.cfg in consolidateFn (cmd/yaah), not via AgentConfig
+		"IdleWakeTurns":             true, // → interactive driver idle-wake policy (cmd/yaah), not an agent-loop knob
 	}
 
 	// Fields in agent.AgentConfig that come from other config sections

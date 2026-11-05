@@ -180,7 +180,11 @@ func runTUI() error {
 	// The TUI accepts harness-initiated turns: a watch that fires while the
 	// terminal is idle starts a turn through the session's run gate. The
 	// policy lives here, in the driver, so headless surfaces can differ.
-	sess.SetWakeTurnRequester(sess.StartWakeTurn)
+	if sess.IdleWakeTurnsEnabled() {
+		sess.SetWakeTurnRequester(sess.StartWakeTurn)
+	} else {
+		app.SetEphemeral("idle wake turns disabled (agents.default.idle_wake_turns: false)")
+	}
 
 	// One shared bridge for questions and approvals (internal/control): the
 	// TUI's only job is to be the transport.

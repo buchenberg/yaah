@@ -140,6 +140,12 @@ type Defaults struct {
 	MaxInlineToolsPerTurn int      `yaml:"max_inline_tools_per_turn"` // 0 = unlimited
 	EstimateFactor        float64  `yaml:"estimate_factor"`           // 0 = default (1.3)
 
+	// IdleWakeTurns allows an interactive session to start a turn when an
+	// armed watch fires while it is idle. Unset or true = allow; false =
+	// queue the digest as a follow-up instead. The tool belt remains the
+	// hard off switch for the wait/watch tools themselves.
+	IdleWakeTurns *bool `yaml:"idle_wake_turns"`
+
 	// Tools is the main session's tool belt: when set, only these tools
 	// are registered, and every other tool is left out of the request's
 	// schema list. Empty means every registered tool (the default). The
@@ -249,6 +255,13 @@ type Defaults struct {
 	// MaxTurnRestores caps turn-level restores per sub-agent run so a
 	// deterministically failing turn cannot rewind forever. 0 = default (3).
 	MaxTurnRestores int `yaml:"max_turn_restores"`
+}
+
+// IdleWakeTurnsEnabled reports whether an interactive session may start a
+// turn when an armed watch fires while it is idle. Unset means enabled: the
+// wait/watch tools are opt-in, and the tool belt is the hard off switch.
+func (d Defaults) IdleWakeTurnsEnabled() bool {
+	return d.IdleWakeTurns == nil || *d.IdleWakeTurns
 }
 
 // Hooks holds configuration for external integrations via JSONL hook events.

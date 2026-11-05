@@ -81,6 +81,9 @@ type Session interface {
 	// install. It claims the run gate and runs the wake prompt on its own
 	// goroutine, reporting false when a turn already holds the gate.
 	StartWakeTurn(string) bool
+	// IdleWakeTurnsEnabled reports whether the configured policy allows a
+	// watch to start a turn while the session is idle.
+	IdleWakeTurnsEnabled() bool
 	SetCtrlCh(chan<- control.Msg)
 	SetApproveFn(func(name, args string) bool)
 	SetModel(providerName, modelName string)
@@ -745,6 +748,16 @@ func (s *agentSession) Start() {
 			fmt.Fprintf(os.Stderr, "warning: re-arming watches: %v\n", err)
 		}
 	})
+}
+
+// IdleWakeTurnsEnabled reports whether the configured policy allows a watch
+// to start a turn while the session is idle. A nil session config (tests,
+// degenerate builds) defaults to enabled.
+func (s *agentSession) IdleWakeTurnsEnabled() bool {
+	if s.cfg == nil {
+		return true
+	}
+	return s.cfg.Agent.Default.IdleWakeTurnsEnabled()
 }
 
 // SetWakeTurnRequester installs the driver's idle-wake policy. The requester
