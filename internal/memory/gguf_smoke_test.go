@@ -34,6 +34,12 @@ func TestGGUFSmoke(t *testing.T) {
 	}
 }
 
+// yaahSilentProbe marks the child process: an explicit argv flag the test
+// binary itself registers, NOT an environment variable — a leaked ambient
+// env value could else re-trigger the child branch in-process and
+// reintroduce the vacuous pass this guard exists to eliminate.
+var yaahSilentProbe = flag.Bool("yaah-silent-probe", false, "internal: run the gguf silent-load probe as the child process")
+
 // TestGGUFSilentLoad guards the TUI-critical invariant: the FIRST llama
 // load (library + backend scan + model + decode) must write nothing to
 // stdout or stderr. The ggml backend loader's progress lines print through
@@ -45,15 +51,8 @@ func TestGGUFSmoke(t *testing.T) {
 // earlier TestGGUFSmoke would consume the once-guard and the assertion
 // would pass vacuously regardless of ordering. A child process also makes
 // the capture fd-level: the child's raw fds 1/2 are the pipes the parent
-// reads, so C-side writes (purego/llama.cpp) are caught too (third review
-// pass kilo-code-bot). Run with YAAH_GGUF_SMOKE=1.
-// yaahSilentProbe is how the parent test marks the child process: an
-// explicit argv flag the test binary itself registers, NOT an environment
-// variable — a leaked ambient env value could else re-trigger the child
-// branch in-process and reintroduce the vacuous pass this test exists to
-// eliminate (fourth review pass, kilo-code-bot).
-var yaahSilentProbe = flag.Bool("yaah-silent-probe", false, "internal: run the gguf silent-load probe as the child process")
-
+// reads, so C-side writes (purego/llama.cpp) are caught too. Run with
+// YAAH_GGUF_SMOKE=1.
 func TestGGUFSilentLoad(t *testing.T) {
 	if os.Getenv("YAAH_GGUF_SMOKE") == "" {
 		t.Skip("set YAAH_GGUF_SMOKE=1 to run")
@@ -64,8 +63,17 @@ func TestGGUFSilentLoad(t *testing.T) {
 	}
 
 	// Bounded: a hung FFI/backend call must surface as a probe failure,
-	// not as a run until the outer go-test timeout.
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	// not as a run until the outer go-test timeout. The deadline scales
+	// for large models on slow disks via YAAH_GGUF_PROBE_TIMEOUT (a raw
+	// duration; default 2m — a failure from the kill surfaces as
+	// "signal: killed" and names the override, not the load).
+	deadline := 2 * time.Minute
+	if v := os.Getenv("YAAH_GGUF_PROBE_TIMEOUT"); v != "" {
+		if d, perr := time.ParseDuration(v); perr == nil && d > 0 {
+			deadline = d
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run", "^TestGGUFSilentLoad$", "-yaah-silent-probe=true")
 	cmd.Env = os.Environ() // YAAH_GGUF_SMOKE/LIB/MODEL flow through
