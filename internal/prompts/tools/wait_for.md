@@ -9,7 +9,10 @@ stays open, a wait costs zero model turns: prefer it to repeatedly asking
 - `process:<id>` — a tracked `background_process` id (`proc-N`).
 - `time:<duration>` — for example `time:90s`, `time:5m`.
 - `command:<cmd>` — run a shell command; it fires on exit zero by default.
-- `http:<url>` — probe a URL; it fires on any 2xx by default.
+- `http:<url>` — probe a URL; it fires on any 2xx by default. GET only,
+  SSRF-guarded, and issued from the yaah process (like the `http` tool), not
+  from inside a container. Use a `command:` probe for an endpoint that is
+  reachable only inside the workload.
 - `file:<glob>` — wait for a file to exist or match content. Patterns are
   workspace-relative; root-anchored or absolute patterns are refused.
 
