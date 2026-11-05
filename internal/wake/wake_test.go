@@ -1015,6 +1015,21 @@ func TestManagerCloseDeletesDeliveredRow(t *testing.T) {
 		m.Close()
 		close(done)
 	}()
+	// Wait until Close has set closed, so the callback takes the
+	// Close-delete branch rather than the normal flush-delete path.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		m.mu.Lock()
+		closed := m.closed
+		m.mu.Unlock()
+		if closed {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Close did not reach its closed state")
+		}
+		time.Sleep(time.Millisecond)
+	}
 	close(release)
 	select {
 	case <-done:

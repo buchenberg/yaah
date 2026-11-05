@@ -176,6 +176,9 @@ func (m *Manager) Close() {
 				_, _ = m.store.ReleaseWatchLease(m.sessionID, id, m.ownerID)
 			}
 		}
+		m.mu.Lock()
+		m.delivered = make(map[string]bool)
+		m.mu.Unlock()
 	})
 }
 
@@ -235,6 +238,10 @@ func (m *Manager) Arm(req ArmRequest) (WatchInfo, error) {
 		state:    StateArmed,
 	}
 	m.watches[id] = w
+	// A reused id starts a new generation; forget any delivered marker
+	// from the previous watch, or Close would delete the new row instead
+	// of releasing an undelivered digest.
+	delete(m.delivered, id)
 	rec := recordOf(w) // under m.mu: recordOf reads guarded fields
 	info := infoOf(w)
 	m.mu.Unlock()
@@ -694,6 +701,11 @@ func (m *Manager) flushIfOpen(done chan struct{}) {
 			_ = m.store.DeleteWatch(m.sessionID, p.id)
 		}
 	}
+	m.mu.Lock()
+	for _, p := range pending {
+		delete(m.delivered, p.id)
+	}
+	m.mu.Unlock()
 	m.finishFlush(done)
 }
 
