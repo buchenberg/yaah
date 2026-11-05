@@ -127,10 +127,11 @@ func formatBytes(n int) string {
 	}
 	div := unit
 	exp := 0
-	for nn := n / unit; nn >= unit && exp < 3; nn /= unit {
+	prefixes := []string{"KB", "MB", "GB", "TB", "PB", "EB"}
+	for nn := n / unit; nn >= unit && exp < len(prefixes)-1; nn /= unit {
 		div *= unit
 		exp++
 	}
-	prefix := []string{"KB", "MB", "GB"}[exp]
+	prefix := prefixes[exp]
 	return fmt.Sprintf("%.1f %s", float64(n)/float64(div), prefix)
 }

@@ -580,13 +580,14 @@ type loopInfraStage struct {
 func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, ws *workspaceStage, tr *toolRegistryStage, mcps *mcpSkillsStage) (*loopInfraStage, error) {
 	st := &loopInfraStage{}
 
-	// Each focused constructor below writes what it built straight onto st
-	// instead of returning it, so a constructor that fails still leaves every
-	// resource it acquired visible to the caller's startup guard — the same
-	// ownership rule the stages themselves keep (see wiring.go). The calls
-	// stay in the original statement order: the resource-owning pieces the
-	// guard releases (supervisorSvc, reaper, egressBroker) are on st before
-	// any later error return can fire.
+	// Every focused constructor writes the resources it acquires straight
+	// onto st, so a constructor that fails still leaves them visible to the
+	// caller's startup guard — the same ownership rule the stages themselves
+	// keep (see wiring.go). Two constructors additionally return a small
+	// value struct (subAgentDefaults, dispatchPosture) that only feeds later
+	// constructors. The calls stay in the original statement order: the
+	// resource-owning pieces the guard releases (supervisorSvc, reaper,
+	// egressBroker) are on st before any later error return can fire.
 	if err := restoreTranscript(st, cfg, opts, lc, ws, tr, mcps); err != nil {
 		return st, err
 	}
