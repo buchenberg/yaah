@@ -58,6 +58,11 @@ type Session interface {
 	TurnBudgetExhausted() bool
 	SetView(agent.View)
 	SetCtrlCh(chan<- control.Msg)
+	// SetWakeTurnRequester installs the ACP wake policy. The server's
+	// requester sends the yaah/wake extension notification and returns
+	// false, so the digest remains queued for the next session/prompt as
+	// well.
+	SetWakeTurnRequester(func(string) bool)
 	SetApproveCallFn(func(ctx context.Context, callID, name, args string) bool)
 	// AgentSessionID returns the id of the underlying persisted
 	// conversation (the memory-DB session id). The ACP server exposes
@@ -280,6 +285,16 @@ func (c *connection) write(v any) {
 	c.mu.Lock()
 	_, _ = fmt.Fprintln(c.w, string(data))
 	c.mu.Unlock()
+}
+
+// notify writes a server->client JSON-RPC notification (no id, no response).
+func (c *connection) notify(method string, params any) {
+	data, err := json.Marshal(params)
+	if err != nil {
+		c.logf("marshal params: %v", err)
+		return
+	}
+	c.write(Message{JSONRPC: "2.0", Method: method, Params: data})
 }
 
 // sendRequest writes a JSON-RPC request with the given numeric ID.

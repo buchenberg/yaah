@@ -131,6 +131,14 @@ func (s *Server) buildSession(opts BuildOptions, expectedID string) (*sessionSta
 		return nil, fmt.Errorf("resumed session %q does not match requested %q", id, expectedID)
 	}
 	st := &sessionState{id: id, sess: sess, cwd: opts.Cwd}
+	// A watch can fire while the session is idle. Send the yaah/wake
+	// extension notification so the client can surface (or prompt on) it,
+	// and return false so the digest stays queued as a follow-up for the
+	// next session/prompt.
+	sess.SetWakeTurnRequester(func(prompt string) bool {
+		s.notifyWake(id, prompt)
+		return false
+	})
 	if err := s.wrapClientWorkspace(st); err != nil {
 		sess.Close()
 		return nil, err
