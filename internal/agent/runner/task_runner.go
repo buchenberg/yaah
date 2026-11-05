@@ -141,6 +141,12 @@ type taskRunnerOpts struct {
 	// jobs.DefaultMaxDispatchScopes (yaah-95ri.4).
 	maxDispatchScopes int
 
+	// resumedScopes is the set of scope IDs startup recovery re-admitted
+	// from the trace (yaah-95ri.7). Nothing runs under them in this
+	// process, so the dispatch cap must not count them — see
+	// jobs.DispatchScopeCount. Nil when no recovery adopted anything.
+	resumedScopes map[string]bool
+
 	// traceStore is the session's Shepherd trace store (plan 07, H4),
 	// injected alongside the manager: the sub-agent loops' shepherd_trace
 	// middleware writes through it. Nil when tracing is off.

@@ -2,8 +2,15 @@ package providers
 
 import (
 	"strings"
+
+	"github.com/buchenberg/yaah/internal/providers/catalog"
 )
 
+// modelWindows is the hand-maintained context-window table. It sits above the
+// models.dev snapshot in resolution order: entries live here because the ID is
+// yaah-specific (deepseek-v4-pro) or because a deliberately conservative value
+// beats the published one. Keys are model IDs as users type them; lookup
+// retries after stripping a provider prefix.
 var modelWindows = map[string]int{
 	"deepseek-v4-pro":   1048576,
 	"deepseek-v4-flash": 1048576,
@@ -84,21 +91,40 @@ var modelOutputLimitAliases = map[string]string{
 
 // normalizeModelID lowercases a model ID and strips any provider prefix,
 // preserving dots so aliases stay distinguishable from date/version
-// separators.
+// separators. It defers to catalog.Normalize so the hand-maintained tables
+// below and the models.dev snapshot share exactly one key space.
 func normalizeModelID(name string) string {
-	return strings.ToLower(sanitizeModelName(name))
+	return catalog.Normalize(name)
 }
 
 // ResolveOutputLimit returns the known output-token ceiling for modelName,
-// or 0 when the model family is not in the conservative table. Matching uses
-// the longest key that equals the ID or prefixes it with a hyphen, so
-// "gpt-4o-2024-08-06" resolves to gpt-4o while "gpt-4o-mini" does not fall
-// back to gpt-4o and "gpt-4.1" does not match "gpt-4".
+// or 0 when the model family is not in the conservative table or the snapshot.
+// Resolution order:
+//  1. the hand-maintained conservative table (deliberately small — these are
+//     caps yaah has learned the hard way),
+//  2. the pinned models.dev snapshot, whose limit.output is the provider's own
+//     stated maximum (a ceiling, never a target),
+//  3. 0, letting the retry ladder apply its global bound.
+//
+// Matching uses the longest key that equals the ID or prefixes it with a
+// hyphen, so "gpt-4o-2024-08-06" resolves to gpt-4o while "gpt-4o-mini" does
+// not fall back to gpt-4o and "gpt-4.1" does not match "gpt-4".
 func ResolveOutputLimit(modelName string) int {
 	name := normalizeModelID(modelName)
 	if alias, ok := modelOutputLimitAliases[name]; ok {
 		name = alias
 	}
+	if limit := handOutputLimit(name); limit > 0 {
+		return limit
+	}
+	if limit, ok := catalog.OutputLimit(modelName); ok {
+		return limit
+	}
+	return 0
+}
+
+// handOutputLimit is the longest-prefix lookup over modelOutputLimits.
+func handOutputLimit(name string) int {
 	bestLen, best := 0, 0
 	for key, limit := range modelOutputLimits {
 		if name == key || strings.HasPrefix(name, key+"-") {
@@ -113,7 +139,8 @@ func ResolveOutputLimit(modelName string) int {
 // thinkingModels are models that use interleaved reasoning and require
 // reasoning_content to be passed back on every assistant message. Keyed by
 // sanitized model name (after the last "/"). Prefix matching is used for
-// model families (e.g. "deepseek-r1" matches "deepseek-r1-0528").
+// model families (e.g. "deepseek-r1" matches "deepseek-r1-0528"). Families
+// absent here fall through to the models.dev snapshot.
 var thinkingModels = map[string]bool{
 	"deepseek-r1":         true,
 	"deepseek-r1-0528":    true,
@@ -129,6 +156,53 @@ var thinkingModels = map[string]bool{
 	"qwq-plus":            true,
 	"kimi-k1.5":           true,
 	"kimi-k2-thinking":    true,
+}
+
+// nonThinkingModels pins models the models.dev snapshot flags as reasoning
+// but that yaah must treat as chat-only: "reasoning_content on every assistant
+// message" is a provider quirk, not a model fact, and an upstream overclaim
+// must not make the provider reject the request. An explicit false pin is the
+// answer here rather than evidence to be weighed against other evidence — it is
+// consulted first, before the true-families heuristics and before the snapshot,
+// so regenerating data.json changes what the snapshot claims without reopening
+// this question. Whatever the snapshot says about an ID, the pin decides it.
+//
+// The family-wide pin is intended, not an over-broad accident. "deepseek-chat"
+// names a line as it reaches yaah's OpenAI-compatible path, not a single dated
+// release, and the request that path builds for the line is valid without
+// reasoning_content. An exact-key carve-out would be incoherent: sibling
+// spellings carry their own snapshot entries — "deepseek-chat-v3.1" has one
+// saying reasoning:true — so the answer would flip on which spelling an
+// operator typed even though the wire format is the same either way. yaah
+// therefore treats the whole deepseek-chat line as chat-only on that path.
+//
+// History, kept because an earlier revision of this comment leaned on it: the
+// snapshot used to alias "deepseek-chat" onto "deepseek-v4-flash", and the
+// regeneration that dropped the alias is precisely why the argument above
+// stands on the quirk framing instead of on a neighbouring snapshot entry.
+//
+// Keyed like thinkingModels (sanitized, lowercase). A pin also covers its
+// variants — the key matches by exact name or by a hyphen-delimited family
+// prefix, the same convention as thinkingPrefixes — because "deepseek-chat" is
+// a family, not a single ID: a dated release like "deepseek-chat-0324" would
+// otherwise slip past the pin and inherit the snapshot's reasoning flag. Dots
+// are preserved (no global dot→hyphen normalization), so a dotted ID can never
+// borrow a hyphenated pin, and the hyphen boundary is real in the other
+// direction too: "deepseek-chatbot" is NOT a variant and is answered by the
+// snapshot rather than silently pinned.
+var nonThinkingModels = map[string]bool{
+	"deepseek-chat": true,
+}
+
+// isPinnedNonThinking reports whether name matches a pinned chat-only family:
+// either the key itself or a variant of it below a hyphen boundary.
+func isPinnedNonThinking(name string) bool {
+	for key := range nonThinkingModels {
+		if name == key || strings.HasPrefix(name, key+"-") {
+			return true
+		}
+	}
+	return false
 }
 
 // thinkingPrefixes matches model families where any variant is a thinking
@@ -149,10 +223,15 @@ func sanitizeModelName(name string) string {
 }
 
 // IsThinkingModel reports whether a model uses interleaved reasoning mode
-// and requires reasoning_content on all assistant messages.
+// and requires reasoning_content on all assistant messages. Hand-maintained
+// families win (yaah-specific IDs and provider quirks); the pinned models.dev
+// snapshot answers for the long tail; unknown models are assumed non-thinking.
 func IsThinkingModel(modelName string) bool {
 	name := sanitizeModelName(modelName)
 	name = strings.ToLower(name)
+	if isPinnedNonThinking(name) {
+		return false
+	}
 	if thinkingModels[name] {
 		return true
 	}
@@ -161,15 +240,29 @@ func IsThinkingModel(modelName string) bool {
 			return true
 		}
 	}
+	if reasoning, ok := catalog.Reasoning(modelName); ok {
+		return reasoning
+	}
 	return false
 }
 
+// ResolveWindow returns the context window for modelName, or configCap when
+// nothing knows the model. Resolution order:
+//  1. configCap from agents.default.context_window, which always caps a
+//     discovered window so a user who narrowed it keeps their value,
+//  2. the hand-maintained modelWindows table (yaah-specific IDs and
+//     deliberate conservatism),
+//  3. the pinned models.dev snapshot (exact ID, longest hyphen prefix, then
+//     conservative family guess).
 func ResolveWindow(modelName string, configCap int) int {
 	discovered, ok := modelWindows[modelName]
 	if !ok {
 		discovered, ok = modelWindows[sanitizeModelName(modelName)]
 	}
 	if !ok || discovered <= 0 {
+		discovered, _ = catalog.ContextWindow(modelName)
+	}
+	if discovered <= 0 {
 		return configCap
 	}
 	if configCap > 0 && configCap < discovered {

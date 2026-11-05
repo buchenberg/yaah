@@ -122,9 +122,15 @@ func createSubAgentScope(mgr pipeline.ScopeSource, opts taskRunnerOpts, subTrace
 		// isolated or shared — so a saturated substrate fails the dispatch
 		// fast with ErrScopeExhausted instead of provisioning a world that
 		// will contend with (or hang behind) the scopes already present.
+		//
+		// Resumed scopes do not count (yaah-95ri.7): recovery re-admitted
+		// them from the trace, but they hold no loop and provision no
+		// world, so charging them to the cap turns a trace full of crashed
+		// dispatches into a process that can never dispatch again — and a
+		// restart re-admits them, so no restart clears it either.
 		cap := jobs.ResolveDispatchScopeCap(opts.maxDispatchScopes)
-		if active := mgr.ActiveScopes(); len(active) >= cap {
-			return nil, fmt.Errorf("%w: %d active scopes at cap %d", jobs.ErrScopeExhausted, len(active), cap)
+		if active := jobs.DispatchScopeCount(mgr.ActiveScopes(), opts.resumedScopes); active >= cap {
+			return nil, fmt.Errorf("%w: %d active scopes at cap %d", jobs.ErrScopeExhausted, active, cap)
 		}
 	}
 	if opts.rootScopeID == "" {

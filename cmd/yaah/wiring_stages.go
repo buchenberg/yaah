@@ -47,6 +47,7 @@ import (
 	processpkg "github.com/buchenberg/yaah/internal/process"
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/providers"
+	"github.com/buchenberg/yaah/internal/providers/catalog"
 	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
@@ -568,6 +569,12 @@ type loopInfraStage struct {
 	reaper        *supervision.Reaper
 	egressBroker  *egress.Broker
 
+	// resumedScopes is the scope-ID set startup recovery re-admitted from
+	// the trace (yaah-95ri.7): nothing runs under them in this process, so
+	// the dispatch cap skips them and the reaper retires them on its
+	// startup pass. Nil when recovery adopted nothing.
+	resumedScopes map[string]bool
+
 	worldStatus worldinfo.Status
 	taskTool    *tools.DelegateTool
 }
@@ -578,9 +585,9 @@ type loopInfraStage struct {
 // proposal and list_sub_agents.
 //
 // The body is the focused constructors below, in the order a session needs
-// them: restoreTranscript, buildBackgroundLoop, buildShepherdInfra,
-// wireDispatchPosture, buildDelegateTool, startScopeReaper, wireLaneRouting,
-// wireBackgroundJobs, registerSubAgentTools.
+// them: loadProviderCatalog, restoreTranscript, buildBackgroundLoop,
+// buildShepherdInfra, wireDispatchPosture, buildDelegateTool, startScopeReaper,
+// wireLaneRouting, wireBackgroundJobs, registerSubAgentTools.
 func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, ws *workspaceStage, tr *toolRegistryStage, mcps *mcpSkillsStage) (*loopInfraStage, error) {
 	st := &loopInfraStage{}
 
@@ -592,6 +599,7 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 	// constructors. The calls stay in the original statement order: the
 	// resource-owning pieces the guard releases (supervisorSvc, reaper,
 	// egressBroker) are on st before any later error return can fire.
+	loadProviderCatalog()
 	if err := restoreTranscript(st, cfg, opts, lc, ws, tr, mcps); err != nil {
 		return st, err
 	}
@@ -617,6 +625,24 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 	registerSubAgentTools(st, cfg, tr)
 
 	return st, nil
+}
+
+// loadProviderCatalog forces the embedded models.dev snapshot's one-time decode
+// during session startup, while os.Stderr still points at the real terminal.
+//
+// The catalog logs, once, the moment it finds data.json unusable — a build
+// error that otherwise degrades silently to "every limit and reasoning answer
+// is unknown". The TUI redirects os.Stderr to /dev/null before it enters the
+// alternate screen (see runTUI), so a decode left until the first lookup would
+// have its warning swallowed by exactly the surface that runs without a log
+// file. Decoding here, in the composition root every surface shares, gets the
+// warning out first.
+//
+// A broken snapshot still degrades instead of failing the build: the empty
+// index answers "unknown" and callers fall back to their own tables, so a bad
+// data.json never blocks startup — it is just no longer silent.
+func loadProviderCatalog() {
+	_ = catalog.DecodeErr()
 }
 
 // restoreTranscript restores the stored transcript for a resumed session (or
@@ -792,6 +818,16 @@ func buildShepherdInfra(st *loopInfraStage, cfg *config.Config, ws *workspaceSta
 				tracingReady = false
 			} else {
 				mgr = recovered
+				// Resumed scopes (yaah-95ri.7): recovery runs before this
+				// process forks anything, so every ACTIVE scope it handed
+				// back was re-admitted from the trace and has no loop
+				// behind it. The set rides the stage to the two consumers
+				// that must not mistake "the trace says active" for
+				// "something is running": the dispatch cap (a trace full of
+				// crashed dispatches must not refuse every new dispatch)
+				// and the scope reaper (they are past grace from the
+				// start).
+				st.resumedScopes = recovery.ResumedIDs(report.Resumed)
 				printRecoveryReport(report)
 				printRecoveryStats(&stats)
 			}
@@ -1001,6 +1037,7 @@ func buildDelegateTool(st *loopInfraStage, cfg *config.Config, lc *sessionConfig
 		RootScopeID:           st.rootScopeID,
 		Runs:                  st.runs,
 		ScopeManager:          st.scopeMgr,
+		ResumedScopes:         st.resumedScopes,
 		TraceStore:            pipeline.TraceSinkOf(st.traceStore),
 		GuardCheck:            supervisorSvcGuardCheck(st.supervisorSvc),
 		ResolveProviderByName: resolveProviderByName,
@@ -1034,6 +1071,21 @@ func startScopeReaper(st *loopInfraStage) {
 	// close.
 	st.reaper = supervision.NewReaper(st.scopeMgr, st.runs, st.rootScopeID, 0)
 	st.reaper.SetPendingSource(st.taskTool.LiveDispatchScopeIDs)
+	// Resumed scopes (yaah-95ri.7): recovery re-admitted them from the
+	// trace, nothing in this process runs under them, and their unbridged
+	// clock predates the process — so the reaper's startup pass retires
+	// them instead of granting a grace window that would leave the
+	// dispatch cap holding dead work. A resumed scope the pending source
+	// reports live (a rehydrated proposal awaiting settlement) is still
+	// spared.
+	if len(st.resumedScopes) > 0 {
+		ids := make([]string, 0, len(st.resumedScopes))
+		for id := range st.resumedScopes {
+			ids = append(ids, id)
+		}
+		slices.Sort(ids)
+		st.reaper.SetResumed(ids)
+	}
 	st.reaper.Start()
 }
 

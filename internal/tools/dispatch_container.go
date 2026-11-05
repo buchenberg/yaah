@@ -456,16 +456,21 @@ func runDispatchContainerProposal(
 // worktree fork so a saturated substrate refuses the dispatch fast with
 // ErrScopeExhausted — before any world is provisioned and before the
 // watchdog arms — instead of hanging into a watchdog kill later.
+//
+// Resumed scopes are excluded (yaah-95ri.7): startup recovery re-admitted
+// them from the trace, and nothing runs under them in this process, so
+// counting them would refuse every dispatch after a crash — exactly the
+// state a restart is supposed to clear.
 func dispatchScopeCapExceeded(rt RetainedRuntime) error {
 	if rt.ScopeManager == nil {
 		return nil
 	}
-	active := rt.ScopeManager.ActiveScopes()
+	active := jobs.DispatchScopeCount(rt.ScopeManager.ActiveScopes(), rt.ResumedScopes)
 	cap := jobs.ResolveDispatchScopeCap(rt.MaxDispatchScopes)
-	if len(active) < cap {
+	if active < cap {
 		return nil
 	}
-	return fmt.Errorf("%w: %d active scopes at cap %d", jobs.ErrScopeExhausted, len(active), cap)
+	return fmt.Errorf("%w: %d active scopes at cap %d", jobs.ErrScopeExhausted, active, cap)
 }
 
 // teardownDispatchWorld discards the dispatch's pure-causal scope and destroys

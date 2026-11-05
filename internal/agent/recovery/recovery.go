@@ -111,6 +111,12 @@ type Report struct {
 	Missing     []Missing
 	Unadopted   []Unadopted
 	Quarantined []Quarantined
+	// Resumed lists every ACTIVE scope recovery re-admitted from the
+	// trace (yaah-95ri.7). Nothing runs under them in this process, so the
+	// caller hands the set to the dispatch-cap accounting (they must not
+	// hold capacity) and to the reaper (they are past grace from the
+	// start). Sorted by scope ID.
+	Resumed []Resumed
 }
 
 // Recover rebuilds the ScopeManager from the trace's durable records
@@ -245,6 +251,14 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 			report.Roots++
 		}
 	}
+	// Resumed scopes (yaah-95ri.7): recovery runs before this process
+	// forks anything, so every ACTIVE entry in the rebuilt manager is a
+	// scope re-admitted from the trace — registered in the tree, with its
+	// parent re-hung, but with no run behind it. Listing them here is what
+	// lets the composition root keep them out of the dispatch-cap count
+	// and hand them to the reaper instead of discovering, one refused
+	// dispatch at a time, that the trace's dead work owns the capacity.
+	report.Resumed = ResumedScopes(mgr)
 	for owner, info := range paths {
 		scope, ok := mgr.Get("scope:" + owner)
 		if !ok {
