@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.137.0](https://github.com/buchenberg/yaah/compare/v0.136.0...v0.137.0) (2026-11-05)
+
+
+### Features
+
+* bump goatherd-runtime to v0.23.0; adapt to the arch-audit P1 fixes ([7dbc5aa](https://github.com/buchenberg/yaah/commit/7dbc5aa3af50cc2381ec6ceefee81afd8e7bba80))
+
+
+### Bug Fixes
+
+* address-less quarantine line printed the owner twice ([01afeb0](https://github.com/buchenberg/yaah/commit/01afeb094492a8fd9194a3ccbffe819618cc40d2))
+* PR [#785](https://github.com/buchenberg/yaah/issues/785) review round 1 — quarantine paths, halt ordering, shepherd report ([4aecf27](https://github.com/buchenberg/yaah/commit/4aecf27eec3f2916349504a1a0d44d543a46e05c))
+* PR [#785](https://github.com/buchenberg/yaah/issues/785) review round 2 — quarantine entry polish ([9a0ac05](https://github.com/buchenberg/yaah/commit/9a0ac054584b52aa280c58982c0adc5c84fc3aad))
+
 ## [0.136.0](https://github.com/buchenberg/yaah/compare/v0.135.0...v0.136.0) (2026-11-05)
 
 
