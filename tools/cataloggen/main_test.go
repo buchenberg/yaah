@@ -203,23 +203,46 @@ func TestBuildRejectsBadInput(t *testing.T) {
 }
 
 func TestPrefer(t *testing.T) {
-	first := candidate{provider: "acme", model: "m", entry: catalog.Entry{Context: 1000, Output: 100}}
+	// A positive-signal author: canonical names its own provider.
+	author := candidate{provider: "acme", model: "m", canonical: "acme/m", entry: catalog.Entry{Context: 1000, Output: 100}}
+	// A reseller that points canonical at the author — rank 0, loses every
+	// dispute even with wildly inflated limits.
 	mirror := candidate{provider: "zzz-reseller", model: "m", canonical: "acme/m", entry: catalog.Entry{Context: 900000, Output: 9000}}
-	wider := candidate{provider: "acme-x", model: "m", entry: catalog.Entry{Context: 2000, Output: 100}}
-	narrower := candidate{provider: "acme-a", model: "m", entry: catalog.Entry{Context: 1000, Output: 50}}
-	sameA := candidate{provider: "aaa", model: "m", entry: catalog.Entry{Context: 1000, Output: 100}}
-	sameB := candidate{provider: "bbb", model: "m", entry: catalog.Entry{Context: 1000, Output: 100}}
+	// An author that ships no canonical at all: neutral, indistinguishable
+	// from a reseller that omits it, so only the conservative limit rule
+	// protects the truthful row.
+	anonAuthor := candidate{provider: "acme", model: "m", entry: catalog.Entry{Context: 1000, Output: 100}}
+	// A reseller with no canonical and inflated claims.
+	anonReseller := candidate{provider: "zzz-reseller", model: "m", entry: catalog.Entry{Context: 900000, Output: 9000}}
+	// A bare canonical (no provider part) is not authorship evidence.
+	bareAuthor := candidate{provider: "acme", model: "m", canonical: "m", entry: catalog.Entry{Context: 1000, Output: 100}}
+	// A second author with the same rank but an inflated claim.
+	authorInflated := candidate{provider: "acme-x", model: "m", canonical: "acme-x/m", entry: catalog.Entry{Context: 900000, Output: 9000}}
+	// Stated output on one side, unstated on the other.
+	stated := candidate{provider: "acme", model: "m", canonical: "acme/m", entry: catalog.Entry{Context: 1000, Output: 100}}
+	unstated := candidate{provider: "acme-b", model: "m", canonical: "acme-b/m", entry: catalog.Entry{Context: 1000}}
+	sameA := candidate{provider: "aaa", model: "m", canonical: "aaa/m", entry: catalog.Entry{Context: 1000, Output: 100}}
+	sameB := candidate{provider: "bbb", model: "m", canonical: "bbb/m", entry: catalog.Entry{Context: 1000, Output: 100}}
 
 	tests := []struct {
 		name string
 		a, b candidate
 		want bool
 	}{
-		{"first party beats a wider mirror", first, mirror, true},
-		{"mirror never beats first party", mirror, first, false},
-		{"wider context wins among first parties", wider, first, true},
-		{"wider output wins on equal context", first, narrower, true},
-		{"narrower output loses on equal context", narrower, first, false},
+		// Authorship rank decides first.
+		{"author beats a mirror with inflated limits", author, mirror, true},
+		{"mirror never beats the author", mirror, author, false},
+		{"neutral beats a mirror", bareAuthor, mirror, true},
+		{"neutral author beats a mirror even with smaller limits", anonAuthor, mirror, true},
+
+		// Same rank: the conservative limit rule. An inflated claim must
+		// never raise a limit, and an unstated one loses to a stated one.
+		{"inflated reseller loses to the truthful author", anonReseller, anonAuthor, false},
+		{"truthful author beats the inflated reseller", anonAuthor, anonReseller, true},
+		{"inflated duplicate loses among authors", authorInflated, author, false},
+		{"smaller claimed limit wins among authors", author, authorInflated, true},
+		{"stated limit beats an unstated one", stated, unstated, true},
+		{"unstated limit loses to a stated one", unstated, stated, false},
 		{"identical metadata falls back to provider order", sameA, sameB, true},
 		{"identical metadata reverse", sameB, sameA, false},
 	}
@@ -227,6 +250,33 @@ func TestPrefer(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := prefer(tt.a, tt.b); got != tt.want {
 				t.Errorf("prefer(%v, %v) = %v, want %v", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestAuthorshipRank pins the three-way signal that replaced the old
+// first-party bool: only a canonical naming the candidate's own provider is
+// positive evidence, and both "no canonical" and a bare canonical stay
+// neutral rather than being read as authorship.
+func TestAuthorshipRank(t *testing.T) {
+	tests := []struct {
+		name string
+		c    candidate
+		want int
+	}{
+		{"own provider in canonical", candidate{provider: "acme", canonical: "acme/gpt-4o"}, rankAuthor},
+		{"own provider, different case", candidate{provider: "Acme", canonical: "acme/gpt-4o"}, rankAuthor},
+		{"no canonical", candidate{provider: "acme"}, rankNeutral},
+		{"bare canonical", candidate{provider: "acme", canonical: "gpt-4o"}, rankNeutral},
+		{"empty provider part", candidate{provider: "acme", canonical: "/gpt-4o"}, rankNeutral},
+		{"empty model part", candidate{provider: "acme", canonical: "acme/"}, rankNeutral},
+		{"somebody else's provider", candidate{provider: "reseller", canonical: "acme/gpt-4o"}, rankMirror},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := authorshipRank(tt.c); got != tt.want {
+				t.Errorf("authorshipRank(%v) = %d, want %d", tt.c, got, tt.want)
 			}
 		})
 	}

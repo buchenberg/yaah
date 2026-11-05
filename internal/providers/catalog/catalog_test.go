@@ -101,6 +101,47 @@ func TestParseRejectsBadSnapshots(t *testing.T) {
 	}
 }
 
+// A broken embedded snapshot must not be silent: the loader degrades to an
+// empty catalog (no panics, no nil index) AND reports why, so a bad build shows
+// up as a warning and a DecodeErr instead of as a catalog that mysteriously
+// knows nothing.
+func TestBuildIndexReportsCorruptSnapshot(t *testing.T) {
+	ix, err := buildIndex([]byte(`{"schema":1,"models":`))
+	if err == nil {
+		t.Fatal("buildIndex(corrupt) succeeded, want a decode error")
+	}
+	if ix != nil {
+		t.Errorf("buildIndex(corrupt) returned an index alongside its error: %v", ix)
+	}
+
+	// The degradation policy: an empty, non-nil index that answers "unknown".
+	degraded, err := indexFromData([]byte(`nope`))
+	if err == nil {
+		t.Fatal("indexFromData(corrupt) swallowed the decode error")
+	}
+	if degraded == nil {
+		t.Fatal("indexFromData(corrupt) returned a nil index; every lookup would panic")
+	}
+	if len(degraded.models) != 0 {
+		t.Errorf("degraded index carries %d models, want 0", len(degraded.models))
+	}
+	if e, ok := degraded.lookup("gpt-4o"); ok {
+		t.Errorf("degraded index claimed to know gpt-4o: %+v", e)
+	}
+}
+
+// The shipped snapshot must decode, so DecodeErr is nil and Lookup works. This
+// also forces the one-time load, proving the fetch is wired rather than
+// accidentally shadowed by a test seam.
+func TestDecodeErrNilForEmbeddedSnapshot(t *testing.T) {
+	if err := DecodeErr(); err != nil {
+		t.Fatalf("DecodeErr() = %v, want nil for the checked-in snapshot", err)
+	}
+	if Len() < 1000 {
+		t.Errorf("Len() = %d after a clean load, want at least 1000", Len())
+	}
+}
+
 func TestNormalize(t *testing.T) {
 	tests := []struct {
 		name string

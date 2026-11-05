@@ -1,8 +1,11 @@
 package supervision
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -10,6 +13,48 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent/recovery"
 )
+
+// errPermanentDiscard marks a discard failure that no later sweep can turn
+// into a success: the kernel's own reconstructed tree will refuse it again on
+// every attempt.
+//
+// goatherd-runtime v0.23.0 exports no sentinel for this refusal (its
+// Scope.Discard returns bare fmt.Errorf values), so classifyDiscard tags the
+// refusal shapes it documents. Everything else — a busy store, a deadline, an
+// I/O fault — is transient and must stay retryable, because a transient
+// stranding is exactly how an orphan scope leaks for the life of the process.
+// Replace the phrase list with errors.Is once upstream exports a sentinel.
+var errPermanentDiscard = errors.New("scope reaper: the kernel permanently refuses this discard")
+
+// permanentDiscardMessages are the refusal shapes goatherd-runtime's
+// ScopeManager.Discard and Scope.Discard return when the tree can never accept
+// the discard: the scope vanished, it is the root, its own state (or its
+// parent's) is no longer active, or the reconstructed tree does not list it as
+// that parent's child. State transitions in the trace are append-only, so none
+// of these can change between sweeps.
+var permanentDiscardMessages = []string{
+	"cannot discard from scope",
+	"cannot discard scope",
+	"is not a child of",
+	"has no parent (root scope)",
+	"not found",
+}
+
+// classifyDiscard tags a permanent refusal with errPermanentDiscard and passes
+// transient failures through unchanged. It is applied at the discard seam so
+// the sweep loop only has to ask errors.Is.
+func classifyDiscard(err error) error {
+	if err == nil || errors.Is(err, errPermanentDiscard) {
+		return err
+	}
+	msg := err.Error()
+	for _, phrase := range permanentDiscardMessages {
+		if strings.Contains(msg, phrase) {
+			return fmt.Errorf("%w: %w", errPermanentDiscard, err)
+		}
+	}
+	return err
+}
 
 // DefaultReapGrace is how long an active dispatch scope with no bridged
 // run and no pending retained proposal survives before the reaper
@@ -51,7 +96,7 @@ type Reaper struct {
 	pending   func() []string
 	unbridged map[string]time.Time // scope ID → first pass seen unbridged
 	resumed   map[string]bool      // scope IDs startup recovery re-admitted from the trace
-	refused   map[string]error     // scope IDs the kernel refused to discard (never retried)
+	refused   map[string]error     // scope IDs the kernel permanently refused to discard (never retried)
 	discard   func(id string) error
 	started   bool
 	stop      chan struct{}
@@ -76,10 +121,11 @@ func NewReaper(mgr *goatherd.ScopeManager, runs *Registry, rootScopeID string, g
 		stopped:     make(chan struct{}),
 	}
 	if mgr != nil {
-		// The discard seam is the manager's own discard: a reaper without
-		// a manager has nothing to sweep, and a nil func keeps ReapOnce
-		// from dereferencing it.
-		r.discard = mgr.Discard
+		// The discard seam is the manager's own discard, tagged with the
+		// permanent/transient classification so the sweep loop can tell a
+		// refusal (never retried) from a fault (retried next sweep). A nil
+		// func keeps ReapOnce from dereferencing a reaper with no manager.
+		r.discard = func(id string) error { return classifyDiscard(mgr.Discard(id)) }
 	}
 	return r
 }
@@ -247,6 +293,15 @@ func (r *Reaper) ReapOnce(now time.Time) (reaped, stale, pruned int) {
 	})
 	for _, cand := range ready {
 		if err := r.discard(cand.id); err != nil {
+			if !errors.Is(err, errPermanentDiscard) {
+				// A transient failure — busy store, deadline, I/O — must
+				// not strand the scope: it stays out of the refused ledger
+				// and keeps its unbridged/resumed bookkeeping, so the next
+				// sweep tries again.
+				slog.Warn("scope reaper: stale scope discard failed transiently; it will be retried on the next sweep",
+					"scope", cand.id, "err", err)
+				continue
+			}
 			r.refused[cand.id] = err
 			delete(r.unbridged, cand.id)
 			delete(r.resumed, cand.id)

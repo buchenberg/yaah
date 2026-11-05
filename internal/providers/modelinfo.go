@@ -163,9 +163,27 @@ var thinkingModels = map[string]bool{
 // message" is a provider quirk, not a model fact, and an upstream overclaim
 // must not make the provider reject the request. Deliberate local answers win,
 // so these pins beat both the true-families heuristics and the snapshot.
-// Keyed like thinkingModels (sanitized, lowercase).
+//
+// Keyed like thinkingModels (sanitized, lowercase). A pin also covers its
+// variants — the key matches by exact name or by a hyphen-delimited family
+// prefix, the same convention as thinkingPrefixes — because "deepseek-chat" is
+// a family, not a single ID: a dated release like "deepseek-chat-0324" would
+// otherwise slip past the pin and inherit the snapshot's reasoning flag. Dots
+// are preserved (no global dot→hyphen normalization), so a dotted ID can never
+// borrow a hyphenated pin.
 var nonThinkingModels = map[string]bool{
 	"deepseek-chat": true,
+}
+
+// isPinnedNonThinking reports whether name matches a pinned chat-only family:
+// either the key itself or a variant of it below a hyphen boundary.
+func isPinnedNonThinking(name string) bool {
+	for key := range nonThinkingModels {
+		if name == key || strings.HasPrefix(name, key+"-") {
+			return true
+		}
+	}
+	return false
 }
 
 // thinkingPrefixes matches model families where any variant is a thinking
@@ -192,7 +210,7 @@ func sanitizeModelName(name string) string {
 func IsThinkingModel(modelName string) bool {
 	name := sanitizeModelName(modelName)
 	name = strings.ToLower(name)
-	if nonThinkingModels[name] {
+	if isPinnedNonThinking(name) {
 		return false
 	}
 	if thinkingModels[name] {

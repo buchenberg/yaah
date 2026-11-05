@@ -2,7 +2,7 @@ package supervision
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -226,10 +226,10 @@ func TestStartSweepsResumedScopesBeforeTheFirstTick(t *testing.T) {
 }
 
 // TestReapOnceRefusedDiscardRecordedOnce pins failure mode three of
-// yaah-95ri.7: a scope the kernel refuses to discard is named once and
-// never retried. The refusal comes from the trace's own reconstructed
-// tree, so a retry cannot succeed — and an endless retry loop is what
-// left the parent unable to close while the UI kept listing the scope.
+// yaah-95ri.7: a scope the kernel PERMANENTLY refuses to discard is named once
+// and never retried. The refusal comes from the trace's own reconstructed
+// tree, so a retry cannot succeed — and an endless retry loop is what left the
+// parent unable to close while the UI kept listing the scope.
 func TestReapOnceRefusedDiscardRecordedOnce(t *testing.T) {
 	r, mgr, _, rootID := newReaperFixture(t)
 	forkChild(t, mgr, rootID, "tree-rejected")
@@ -238,7 +238,7 @@ func TestReapOnceRefusedDiscardRecordedOnce(t *testing.T) {
 	attempts := 0
 	r.discard = func(string) error {
 		attempts++
-		return errors.New("scope is not reachable from the tree")
+		return fmt.Errorf("%w: scope is not reachable from the tree", errPermanentDiscard)
 	}
 
 	now := time.Now()
@@ -257,6 +257,65 @@ func TestReapOnceRefusedDiscardRecordedOnce(t *testing.T) {
 	}
 	if r.resumed["scope:tree-rejected"] {
 		t.Error("a refused scope must leave the resumed ledger — it is refused, not resumed")
+	}
+}
+
+// TestReapOnceTransientDiscardIsRetried pins the other half of the refusal
+// policy: a failure that is not the kernel's tree refusal (a busy store, a
+// deadline, an I/O fault) must not be recorded as permanent. Stranding an
+// orphan scope on one bad sweep is a leak that lasts the process's whole life,
+// so a transient error leaves the ledger clean and the scope staggers into the
+// next sweep, which reaps it.
+func TestReapOnceTransientDiscardIsRetried(t *testing.T) {
+	r, mgr, _, rootID := newReaperFixture(t)
+	forkChild(t, mgr, rootID, "flaky")
+
+	attempts := 0
+	inner := r.discard // the real one: the retry must actually land
+	r.discard = func(id string) error {
+		attempts++
+		if attempts == 1 {
+			return fmt.Errorf("record discard event: %w", context.DeadlineExceeded)
+		}
+		return inner(id)
+	}
+
+	now := time.Now()
+
+	// Pass 1: the scope is unbridged but fresh — recorded, not attempted.
+	if reaped, stale, _ := r.ReapOnce(now); reaped != 0 || stale != 1 {
+		t.Fatalf("pass 1: reaped=%d stale=%d, want 0/1", reaped, stale)
+	}
+	if attempts != 0 {
+		t.Fatalf("discard attempts = %d after the first pass, want 0 — grace has not expired", attempts)
+	}
+
+	// Pass 2 past grace: the discard fails transiently. The scope survives
+	// and is NOT written off as refused.
+	reaped, _, _ := r.ReapOnce(now.Add(3 * time.Second))
+	if reaped != 0 {
+		t.Fatalf("pass 2: reaped %d, want 0 — the discard failed", reaped)
+	}
+	if _, ok := mgr.Get("scope:flaky"); !ok {
+		t.Fatal("a transiently failed discard dropped the scope's record")
+	}
+	if err, ok := r.refused["scope:flaky"]; ok {
+		t.Fatalf("a transient failure was recorded as permanent: %v", err)
+	}
+
+	// Pass 3: the retry succeeds and the scope is reaped.
+	reaped, _, _ = r.ReapOnce(now.Add(6 * time.Second))
+	if reaped != 1 {
+		t.Fatalf("pass 3: reaped %d, want 1 — a transient failure must be retried", reaped)
+	}
+	if attempts != 2 {
+		t.Fatalf("discard attempts = %d, want 2", attempts)
+	}
+	if _, ok := mgr.Get("scope:flaky"); ok {
+		t.Fatal("the scope survived the sweep that retried successfully")
+	}
+	if err, ok := r.refused["scope:flaky"]; ok {
+		t.Errorf("a successfully reaped scope stayed in the refused ledger: %v", err)
 	}
 }
 

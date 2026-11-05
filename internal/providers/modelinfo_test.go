@@ -116,6 +116,10 @@ func TestIsThinkingModel(t *testing.T) {
 		// Non-thinking models: reasoning_content is omitted.
 		{"deepseek-v3", false},
 		{"deepseek/deepseek-chat", false},
+		// The pin is a family, not one ID: dated releases inherit it instead
+		// of falling through to the snapshot's reasoning flag.
+		{"deepseek-chat-0324", false},
+		{"deepseek/deepseek-chat-0324", false},
 		{"gpt-4o", false},
 		{"claude-3.5-sonnet", false},
 	}

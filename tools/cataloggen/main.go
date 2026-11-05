@@ -232,20 +232,36 @@ func candidateFor(provider, model string, m upstreamModel) (candidate, bool) {
 	return candidate{provider: provider, model: model, canonical: m.Canonical, entry: entry}, true
 }
 
-// prefer reports whether a should represent the model instead of b. A
-// first-party registration wins over a mirror (resellers clone a model and
-// point canonical_model_id at its author), then the widest stated context,
-// then the widest stated output, then the smallest provider and model IDs so
-// the tie-break never depends on map order.
+// Registration ranks, highest first. The model author's own row outranks a row
+// that carries no authorship signal, which outranks a mirror that names
+// somebody else's provider.
+const (
+	rankMirror  = 0 // canonical_model_id names a different provider
+	rankNeutral = 1 // no canonical_model_id, or a bare one with no provider part
+	rankAuthor  = 2 // canonical_model_id names this candidate's own provider
+)
+
+// prefer reports whether a should represent the model instead of b.
+//
+// Authorship ranks first, then a deliberately conservative limit comparison,
+// then the smallest provider and model IDs so the tie-break never depends on
+// map order.
+//
+// The limit tie-break is the same policy catalog.conservativeMerge uses for a
+// family: the smallest NON-ZERO value wins, and an unstated limit (zero) loses
+// to any stated one. The snapshot is a ceiling source, so an inflated claim
+// must never raise a limit — the opposite rule ("widest wins") turns one
+// reseller's optimistic copy of a model into the number every caller trusts,
+// which is exactly the failure the rank signal is meant to prevent.
 func prefer(a, b candidate) bool {
-	if af, bf := isFirstParty(a), isFirstParty(b); af != bf {
-		return af
+	if ar, br := authorshipRank(a), authorshipRank(b); ar != br {
+		return ar > br
 	}
-	if a.entry.Context != b.entry.Context {
-		return a.entry.Context > b.entry.Context
+	if aWins, decided := smallestNonZeroWins(a.entry.Context, b.entry.Context); decided {
+		return aWins
 	}
-	if a.entry.Output != b.entry.Output {
-		return a.entry.Output > b.entry.Output
+	if aWins, decided := smallestNonZeroWins(a.entry.Output, b.entry.Output); decided {
+		return aWins
 	}
 	if a.provider != b.provider {
 		return a.provider < b.provider
@@ -253,16 +269,43 @@ func prefer(a, b candidate) bool {
 	return a.model < b.model
 }
 
-// isFirstParty reports whether a registration looks like the model author's
-// own: either it carries no canonical_model_id at all (authors rarely need
-// one) or the canonical ID points back at the same provider. Mirrors point at
-// somebody else's provider and lose every dispute.
-func isFirstParty(c candidate) bool {
-	if c.canonical == "" {
-		return true
+// smallestNonZeroWins reports (aWins, decided) for one conservative limit
+// comparison: the smaller positive value wins, an unstated (zero) limit loses
+// to any stated one, and identical values decide nothing so the caller can
+// fall through to its next tie-break.
+func smallestNonZeroWins(a, b int) (aWins, decided bool) {
+	switch {
+	case a == b:
+		return false, false
+	case a <= 0:
+		return false, true // a unstated, b stated
+	case b <= 0:
+		return true, true // a stated, b unstated
+	default:
+		return a < b, true
 	}
-	prefix, _, ok := strings.Cut(c.canonical, "/")
-	return ok && strings.EqualFold(prefix, c.provider)
+}
+
+// authorshipRank classifies how strongly a registration looks like the model
+// author's own.
+//
+// The signal is canonical_model_id, the field models.dev uses to point a
+// mirror at the model it clones, so mirrors name somebody else's provider.
+// Only a canonical that names the candidate's OWN provider is positive
+// evidence: anything else would let a reseller that omits canonical, or writes
+// it bare with no provider part, pass itself off as the author and win a
+// tie-break on inflated limits. Absent signals stay neutral — they are
+// indistinguishable from an author with nothing to point at — and the
+// conservative limit rule below is what keeps a neutral imposter harmless.
+func authorshipRank(c candidate) int {
+	prefix, rest, ok := strings.Cut(c.canonical, "/")
+	if c.canonical == "" || !ok || prefix == "" || rest == "" {
+		return rankNeutral // no canonical, or bare/empty — no authorship claim
+	}
+	if strings.EqualFold(prefix, c.provider) {
+		return rankAuthor
+	}
+	return rankMirror
 }
 
 // aliasFor derives an alias when a model's canonical ID names a different ID

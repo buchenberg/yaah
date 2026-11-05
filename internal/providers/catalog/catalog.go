@@ -23,6 +23,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -131,17 +132,60 @@ type index struct {
 	families map[string]Entry // family name → conservative representative
 }
 
-// loaded decodes the embedded snapshot exactly once. A decode failure means
-// the binary was built with a broken data.json, which
-// TestEmbeddedSnapshotParses catches in CI; at runtime the catalog then simply
-// has no opinion rather than panicking mid-run.
-var loaded = sync.OnceValue(func() *index {
-	s, err := Parse(dataJSON)
+// buildIndex decodes a snapshot and builds its lookup tables. It is the seam
+// the once-loader and the tests share: tests feed it corrupt bytes to prove the
+// failure is reported rather than swallowed.
+func buildIndex(data []byte) (*index, error) {
+	s, err := Parse(data)
 	if err != nil {
-		return &index{models: map[string]Entry{}}
+		return nil, err
 	}
-	return newIndex(s)
+	return newIndex(s), nil
+}
+
+// emptyIndex is the degradation target: a catalog with no opinions. Lookups
+// answer "unknown" and callers fall back to their own tables.
+func emptyIndex() *index { return &index{models: map[string]Entry{}} }
+
+// indexFromData is the degradation policy in one place: a decodable snapshot
+// becomes the index, an unusable one becomes an empty index plus the error that
+// explains it. The index is never nil, so no caller has to guard a lookup that
+// happens after a broken build.
+func indexFromData(data []byte) (*index, error) {
+	ix, err := buildIndex(data)
+	if err != nil {
+		return emptyIndex(), err
+	}
+	return ix, nil
+}
+
+// decodeErr records why the embedded snapshot failed to decode. It is written
+// once, inside loaded, and read only through DecodeErr, which calls loaded
+// first — the Once's completion is the happens-before edge for the read.
+var decodeErr error
+
+// loaded decodes the embedded snapshot exactly once. A decode failure means the
+// binary was built with a broken data.json, which
+// TestEmbeddedSnapshotInvariants catches in CI; at runtime the catalog then
+// has no opinion rather than panicking mid-run — but it says so, loudly and
+// once, instead of degrading to an empty catalog in silence.
+var loaded = sync.OnceValue(func() *index {
+	ix, err := indexFromData(dataJSON)
+	if err != nil {
+		decodeErr = err
+		slog.Warn("catalog: embedded snapshot is unusable; every lookup will report unknown",
+			"err", err, "fix", "go run ./tools/cataloggen")
+	}
+	return ix
 })
+
+// DecodeErr reports why the embedded snapshot failed to decode, or nil when it
+// loaded cleanly. It forces the one-time load, so a caller that checks it at
+// startup gets the warning logged before the first lookup.
+func DecodeErr() error {
+	loaded()
+	return decodeErr
+}
 
 // newIndex builds the lookup tables. Iteration follows sorted key order so the
 // family representatives are a pure function of the snapshot content.
