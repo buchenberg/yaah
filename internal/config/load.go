@@ -455,17 +455,44 @@ type Config struct {
 	Workspace     WorkspaceConfig            `yaml:"workspace"`
 }
 
+// Embedding backends supported by EmbeddingConfig.Backend.
+const (
+	// EmbeddingBackendHTTP (default) calls an OpenAI-compatible
+	// /v1/embeddings endpoint.
+	EmbeddingBackendHTTP = "http"
+	// EmbeddingBackendGGUF embeds in-process from a local GGUF model via
+	// yzma's prebuilt llama.cpp bindings (no daemon, no cgo).
+	EmbeddingBackendGGUF = "gguf"
+)
+
 // EmbeddingConfig configures semantic memory search via an embedding model.
-// The provider is resolved from the providers map to obtain the base URL.
 type EmbeddingConfig struct {
+	// Backend selects the embedder: "http" (default) or "gguf".
+	Backend string `yaml:"backend"`
+
 	// Provider is the provider name (key in the providers map) whose
 	// base URL hosts the embeddings endpoint. When empty, semantic
-	// search is disabled.
+	// search is disabled. Only used by the http backend.
 	Provider string `yaml:"provider"`
 
 	// Model is the embedding model name sent to the /v1/embeddings
-	// endpoint. Required when Provider is set.
+	// endpoint. Required when Provider is set. Only used by the http
+	// backend.
 	Model string `yaml:"model"`
+
+	// ModelPath is the GGUF model file for the gguf backend (e.g. a
+	// nomic-embed GGUF under ~/.lmstudio/models). Required for gguf.
+	ModelPath string `yaml:"model_path"`
+
+	// LibPath is the prebuilt llama.cpp shared library the gguf backend
+	// loads via yzma (e.g. libllama.so). Empty uses the loader default.
+	LibPath string `yaml:"lib_path"`
+
+	// QueryPrefix and DocumentPrefix are the asymmetric prefixes applied
+	// by the gguf backend for nomic-style models:
+	// "search_query: " and "search_document: ". Empty for symmetric models.
+	QueryPrefix    string `yaml:"query_prefix"`
+	DocumentPrefix string `yaml:"document_prefix"`
 }
 
 // ObservabilityConfig holds OpenTelemetry tracing and metrics settings.

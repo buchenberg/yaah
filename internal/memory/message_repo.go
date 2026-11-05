@@ -191,7 +191,7 @@ func (d *DB) SearchMessagesVector(ctx context.Context, query string, limit int) 
 	if embedder == nil {
 		return nil, nil
 	}
-	qEmb, err := embedder.Embed(ctx, query)
+	qEmb, err := embedQuery(ctx, embedder, query)
 	if err != nil {
 		d.recordEmbedFailure("search_messages_vector", err)
 		return nil, nil

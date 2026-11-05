@@ -210,6 +210,11 @@ type DB struct {
 	embedder  Embedder
 	embMu     sync.Mutex
 	embedWarn embedWarnLimiter
+	// dimWarn rate-limits the stale-dimensionality warning (yaah-shq): a
+	// store left behind by a previous embedding model warns once per
+	// interval instead of on every search, because the condition repeats
+	// until the rows are re-embedded.
+	dimWarn embedWarnLimiter
 	// embeds tracks in-flight background embedding writes so Close can
 	// drain them before the SQL pool is closed.
 	embeds pendingEmbeds
@@ -883,9 +888,95 @@ func IsEmbedFailure(err error) bool {
 	return errors.As(err, &e) && e.err != nil
 }
 
+// keywordTokens lowercases a query and splits it into the words the
+// stale-embedding fallback matches against. Short words are kept on purpose:
+// a token here is only a hint that an uncomparable row is worth surfacing,
+// not an FTS term.
+func keywordTokens(query string) []string {
+	return strings.Fields(strings.ToLower(query))
+}
+
+// keywordScore scores text by the fraction of query tokens it contains,
+// scaled into (0, 1]. It reports false when no token matches, so a row that
+// cannot be compared semantically and shares no word with the query is left
+// out rather than padding the result list.
+func keywordScore(text string, tokens []string) (float32, bool) {
+	if len(tokens) == 0 {
+		return 0, false
+	}
+	lower := strings.ToLower(text)
+	hits := 0
+	for _, t := range tokens {
+		if strings.Contains(lower, t) {
+			hits++
+		}
+	}
+	if hits == 0 {
+		return 0, false
+	}
+	return float32(hits) / float32(len(tokens)), true
+}
+
+// ReembedStaleEmbeddings rewrites memory rows whose stored vector has a
+// different dimensionality than the configured embedder produces (yaah-shq).
+// Swapping the model (say 384-dim all-MiniLM for 768-dim nomic) leaves every
+// earlier row uncomparable to the new query vectors — it survives on keyword
+// fallback until this runs. Returns the number of rows rewritten; a nil
+// embedder is a no-op. An embed failure is surfaced like any other and does
+// not stop the sweep.
+func (d *DB) ReembedStaleEmbeddings(ctx context.Context) (int, error) {
+	embedder := d.Embedder()
+	if embedder == nil {
+		return 0, nil
+	}
+	// The probe call is the only way to learn the current model's width,
+	// and it is one round-trip on a path that is about to make many.
+	probe, err := embedder.Embed(ctx, "dimension probe")
+	if err != nil {
+		d.recordEmbedFailure("reconcile_embeddings", err)
+		return 0, nil
+	}
+	rows, err := d.sql.Query(
+		`SELECT id, text FROM memory WHERE embedding IS NOT NULL AND length(embedding) != ?`, 4*len(probe))
+	if err != nil {
+		return 0, fmt.Errorf("reembed stale: query: %w", err)
+	}
+	defer rows.Close()
+
+	type staleRow struct{ id, text string }
+	var stale []staleRow
+	for rows.Next() {
+		var r staleRow
+		if err := rows.Scan(&r.id, &r.text); err != nil {
+			return 0, err
+		}
+		stale = append(stale, r)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	reembedded := 0
+	for _, r := range stale {
+		emb, err := embedder.Embed(ctx, r.text)
+		if err != nil {
+			d.recordEmbedFailure("reconcile_embeddings", err)
+			continue
+		}
+		if _, err := d.sql.Exec(`UPDATE memory SET embedding = ? WHERE id = ?`, EncodeEmbedding(emb), r.id); err != nil {
+			slog.Warn("memory: store embedding failed", "op", "reembed_stale", "id", r.id, "err", err)
+			continue
+		}
+		reembedded++
+	}
+	return reembedded, nil
+}
+
 // SearchMemoryVector embeds the query, scans all rows with non-null
 // embedding, and returns the top-K sorted by cosine similarity
-// (descending). Falls back to an empty result when no embedder is
+// (descending). Rows whose stored vector has a different dimensionality
+// than the embedder's output are scored by keyword fallback and ranked
+// after the vector hits (yaah-shq). Falls back to an empty result when no embedder is
 // configured or the embedding call fails; a failed embedding call is
 // surfaced via the rate-limited warning log and the OTel embed-failure
 // counter.
@@ -923,7 +1014,7 @@ func (d *DB) SearchMemoryVectorScopedDiag(ctx context.Context, query string, lim
 	if embedder == nil {
 		return nil, nil
 	}
-	qEmb, err := embedder.Embed(ctx, query)
+	qEmb, err := embedQuery(ctx, embedder, query)
 	if err != nil {
 		d.recordEmbedFailure("search_memory_vector", err)
 		return nil, &embedError{err: err}
@@ -961,19 +1052,47 @@ func (d *DB) SearchMemoryVectorScopedDiag(ctx context.Context, query string, lim
 		return nil, err
 	}
 
-	var results []VectorResult
+	// Rows embedded by a previous embedding model decode to a different
+	// dimensionality and cannot be compared with this query's vector.
+	// CosineSimilarity returns 0 on a length mismatch, so such rows used to
+	// rank last and fall off the end of the limit with no signal at all
+	// (yaah-shq). Score them by keyword overlap instead and append them
+	// after the vector hits: a model swap then degrades those rows to
+	// keyword recall rather than losing them, and the mismatch is warned
+	// about so it can be repaired.
+	tokens := keywordTokens(query)
+	var results, keywordResults []VectorResult
+	var staleRows, staleDim int
 	for _, c := range candidates {
 		if len(c.blob) == 0 {
 			continue
 		}
 		emb := DecodeEmbedding(c.blob)
+		if len(emb) != len(qEmb) {
+			if staleRows == 0 {
+				staleDim = len(emb)
+			}
+			staleRows++
+			if score, ok := keywordScore(c.e.Text, tokens); ok {
+				keywordResults = append(keywordResults, VectorResult{Entry: c.e, Score: score})
+			}
+			continue
+		}
 		score := CosineSimilarity(qEmb, emb)
 		results = append(results, VectorResult{Entry: c.e, Score: score})
+	}
+	if staleRows > 0 {
+		d.warnEmbedDimMismatch(staleDim, len(qEmb), staleRows)
 	}
 
 	// Sort descending by score (sort.Slice — the hand-rolled bubble
 	// sort was O(n²) on every vector search, review A6).
 	sort.Slice(results, func(i, j int) bool { return results[i].Score > results[j].Score })
+	sort.Slice(keywordResults, func(i, j int) bool { return keywordResults[i].Score > keywordResults[j].Score })
+	// A cosine score and a keyword-overlap score are not on the same
+	// scale, so the two lists are concatenated rather than merged: every
+	// vector hit outranks every keyword-fallback hit.
+	results = append(results, keywordResults...)
 
 	if limit > 0 && len(results) > limit {
 		results = results[:limit]
@@ -1058,7 +1177,16 @@ func (d *DB) ReconcileEmbeddings(ctx context.Context) (int, error) {
 		}
 		updated++
 	}
-	return updated, nil
+
+	// A model swap leaves rows at the old dimensionality, which the vector
+	// search cannot compare; fold the repair into this sweep so the stale
+	// population drains instead of persisting behind keyword fallback
+	// (yaah-shq).
+	healed, err := d.ReembedStaleEmbeddings(ctx)
+	if err != nil {
+		slog.Warn("memory: re-embed stale rows failed", "err", err)
+	}
+	return updated + healed, nil
 }
 
 // GetMemory retrieves a single memory entry by ID.

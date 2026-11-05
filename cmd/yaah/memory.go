@@ -1,6 +1,7 @@
 package yaah
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -163,7 +164,18 @@ it does not need quoting. Use '--' when the text begins with a dash:
 // Separated from attachEmbedder so the provider→embedder field mapping
 // can be tested directly (it was once shipped with model and API key
 // swapped, silently breaking semantic search).
-func embedderFor(cfg *config.Config) (*memory.HTTPEmbedder, bool) {
+func embedderFor(cfg *config.Config) (memory.Embedder, bool) {
+	if cfg.Embedding.Backend == config.EmbeddingBackendGGUF {
+		if cfg.Embedding.ModelPath == "" {
+			fmt.Fprintf(os.Stderr, "warning: embedding backend %q requires embedding.model_path\n", config.EmbeddingBackendGGUF)
+			return nil, false
+		}
+		return memory.NewGGUFEmbedder(cfg.Embedding.LibPath, cfg.Embedding.ModelPath, cfg.Embedding.QueryPrefix, cfg.Embedding.DocumentPrefix), true
+	}
+	if cfg.Embedding.Backend != "" && cfg.Embedding.Backend != config.EmbeddingBackendHTTP {
+		fmt.Fprintf(os.Stderr, "warning: unknown embedding backend %q (want %q or %q)\n", cfg.Embedding.Backend, config.EmbeddingBackendHTTP, config.EmbeddingBackendGGUF)
+		return nil, false
+	}
 	if cfg.Embedding.Provider == "" || cfg.Embedding.Model == "" {
 		return nil, false
 	}
@@ -187,6 +199,68 @@ func attachEmbedder(db *memory.DB, cfg *config.Config) bool {
 		return false
 	}
 	db.SetEmbedder(e)
+	return true
+}
+
+// embedProbeTimeout bounds the startup reachability probe. It is short on
+// purpose: a session must not wait on a down embed server, and semantic
+// recall is best-effort.
+const embedProbeTimeout = 5 * time.Second
+
+// probeEmbedder issues one cheap embed call so an unreachable embedding
+// server is visible at startup instead of showing up as an unexplained
+// absence of semantic results later (yaah-ka6). A nil embedder has nothing
+// to probe.
+func probeEmbedder(ctx context.Context, e memory.Embedder) error {
+	if e == nil {
+		return nil
+	}
+	_, err := e.Embed(ctx, "ping")
+	return err
+}
+
+// embedderLabel names the embedder target for warnings: endpoint for the
+// http backend, model file for in-process gguf (yaah-ka6 probe messages).
+func embedderLabel(e memory.Embedder) string {
+	switch t := e.(type) {
+	case *memory.HTTPEmbedder:
+		return t.BaseURL
+	case *memory.GGUFEmbedder:
+		return t.ModelPath
+	}
+	return fmt.Sprintf("%T", e)
+}
+
+// embedderModel names the embedding model for warnings alongside the label.
+func embedderModel(e memory.Embedder) string {
+	switch t := e.(type) {
+	case *memory.HTTPEmbedder:
+		return t.Model
+	case *memory.GGUFEmbedder:
+		return t.ModelPath
+	}
+	return ""
+}
+
+// checkEmbedderAtStartup probes the configured embedder once and returns
+// whether it answered. It never fails startup: an unreachable embedder
+// degrades memory search to its keyword path, which is worth exactly one
+// warning — repeated warnings per session would be noise, so callers invoke
+// this once at wiring time. A session with no embedding stanza configured
+// warns nothing: there is no embedder to be unreachable.
+func checkEmbedderAtStartup(cfg *config.Config) bool {
+	e, ok := embedderFor(cfg)
+	if !ok {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), embedProbeTimeout)
+	defer cancel()
+	if err := probeEmbedder(ctx, e); err != nil {
+		slog.Warn("embedder at "+embedderLabel(e)+" unreachable — semantic memory search will fall back to keyword",
+			"provider", cfg.Embedding.Provider, "model", embedderModel(e), "err", err)
+		return false
+	}
+	slog.Debug("memory: embedder reachable", "addr", embedderLabel(e), "model", embedderModel(e))
 	return true
 }
 
