@@ -843,6 +843,8 @@ func TestSandboxMode_TypeBits(t *testing.T) {
 		{"block special file", func(m fs.FileMode) bool {
 			return m&fs.ModeDevice != 0 && m&fs.ModeCharDevice == 0
 		}, "block device"},
+		{"weird file", func(m fs.FileMode) bool { return m&fs.ModeIrregular != 0 }, "irregular"},
+		{"door", func(m fs.FileMode) bool { return m&fs.ModeIrregular != 0 }, "irregular"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
@@ -872,12 +874,72 @@ func TestSandboxEntryMode_TypeChars(t *testing.T) {
 		{"s", fs.ModeSocket},
 		{"c", fs.ModeDevice | fs.ModeCharDevice},
 		{"b", fs.ModeDevice},
+		{"?", fs.ModeIrregular},
 	}
 	for _, tc := range cases {
 		if got := sandboxEntryMode(tc.typ); got != tc.want {
 			t.Errorf("sandboxEntryMode(%q) = %v, want %v", tc.typ, got, tc.want)
 		}
 	}
+}
+
+// TestSandboxWorkspace_MoveErrorClassification pins the sandbox half of the
+// partial move contract: mv across a filesystem boundary copies and then
+// unlinks, so an unlink failure leaves dst in place after mv reports an error.
+// That must be a partialMoveError so RecordingTool records the destination; a
+// failure that left dst untouched must stay a plain error, so a permission
+// problem is not misdescribed as a partial move.
+func TestSandboxWorkspace_MoveErrorClassification(t *testing.T) {
+	runMove := func(t *testing.T, dstBefore, dstAfter goatherdsandbox.ExecResult) error {
+		t.Helper()
+		sb := sandboxfake.New()
+		ws := newSandboxWS(t, sb)
+		stats := 0
+		sb.ExecHook = func(req goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
+			var script string
+			if len(req.Args) > 1 {
+				script = req.Args[1]
+			}
+			switch {
+			case strings.Contains(script, "mv -f"):
+				return goatherdsandbox.ExecResult{ExitCode: 1, Stderr: "mv: cannot remove: Permission denied\n"}, nil
+			case strings.Contains(script, "stat"):
+				stats++
+				if stats == 1 {
+					return dstBefore, nil
+				}
+				return dstAfter, nil
+			default:
+				return goatherdsandbox.ExecResult{}, nil
+			}
+		}
+		return ws.Move(context.Background(), "/workspace/src.txt", "/workspace/dst.txt")
+	}
+
+	t.Run("created destination is partial", func(t *testing.T) {
+		err := runMove(t,
+			goatherdsandbox.ExecResult{ExitCode: 42}, // destination absent before mv
+			goatherdsandbox.ExecResult{ExitCode: 0, Stdout: "regular file|7|644|1700000000\n"})
+		var partial *partialMoveError
+		if !errors.As(err, &partial) {
+			t.Fatalf("Move error = %v, want *partialMoveError", err)
+		}
+		if partial.Src != "/workspace/src.txt" || partial.Dst != "/workspace/dst.txt" {
+			t.Errorf("partial paths = %s -> %s, want /workspace/src.txt -> /workspace/dst.txt", partial.Src, partial.Dst)
+		}
+	})
+
+	t.Run("unchanged destination stays a plain error", func(t *testing.T) {
+		unchanged := goatherdsandbox.ExecResult{ExitCode: 0, Stdout: "regular file|7|644|1700000000\n"}
+		err := runMove(t, unchanged, unchanged)
+		var partial *partialMoveError
+		if errors.As(err, &partial) {
+			t.Fatalf("Move error = %v; a failure that did not change dst must not claim a partial move", err)
+		}
+		if err == nil {
+			t.Fatal("Move must report the failed mv")
+		}
+	})
 }
 
 // TestSandboxWorkspace_LstatDoesNotFollowLinks pins the Lstat/Stat split: a

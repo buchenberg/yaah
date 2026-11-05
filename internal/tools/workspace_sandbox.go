@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path"
@@ -285,9 +286,11 @@ stat -L -c "$2" -- "$1"`
 // lives in bits above the permission bits, so a plain cast would both report a
 // directory as a regular file and turn "4755" into a meaningless low bit.
 //
-// Every non-regular type `%F` can report gets its type bits: without them a
-// FIFO, socket, or device node looks like a plain file to Mode().IsRegular(),
-// and a tool that gates on regular files would then open, copy, or block on it.
+// Every non-regular type `%F` can report gets type bits. Without them a FIFO,
+// socket, or device node looks like a plain file to Mode().IsRegular(), and a
+// tool that gates on regular files would then open, copy, or block on it. An
+// unrecognized spelling (GNU's "weird file", platform-specific door/event
+// port) is irregular rather than regular, for the same reason.
 func sandboxMode(perm uint64, fileType string) fs.FileMode {
 	mode := fs.FileMode(perm & 0o777)
 	if perm&0o4000 != 0 {
@@ -300,6 +303,8 @@ func sandboxMode(perm uint64, fileType string) fs.FileMode {
 		mode |= fs.ModeSticky
 	}
 	switch {
+	case strings.Contains(fileType, "regular"):
+		// No type bits.
 	case strings.Contains(fileType, "directory"):
 		mode |= fs.ModeDir
 	case strings.Contains(fileType, "symbolic link"):
@@ -312,6 +317,8 @@ func sandboxMode(perm uint64, fileType string) fs.FileMode {
 		mode |= fs.ModeDevice | fs.ModeCharDevice
 	case strings.Contains(fileType, "block special"):
 		mode |= fs.ModeDevice
+	default:
+		mode |= fs.ModeIrregular
 	}
 	return mode
 }
@@ -349,9 +356,12 @@ func (w *sandboxWorkspace) ReadDir(ctx context.Context, p string) ([]fs.DirEntry
 
 // sandboxEntryMode maps find's `%y` type character to fs.FileMode type bits.
 // Walkers test `d.Type()&fs.ModeSymlink != 0` to skip symlinks, so returning 0
-// here would silently disable that guard.
+// for an unrecognized letter would both disable that guard and let the entry
+// look regular: regular `f` is the only spelling that maps to no type bits.
 func sandboxEntryMode(typ string) fs.FileMode {
 	switch typ {
+	case "f":
+		return 0
 	case "d":
 		return fs.ModeDir
 	case "l":
@@ -365,15 +375,47 @@ func sandboxEntryMode(typ string) fs.FileMode {
 	case "b":
 		return fs.ModeDevice
 	default:
-		return 0
+		return fs.ModeIrregular
 	}
 }
 
 // Move renames a file inside the sandbox with mv — the substrate's own rename,
 // so the bytes never cross the Exec transport. force is passed because the tool
 // above has already decided whether a clobber is allowed.
+//
+// Across filesystems mv copies and then unlinks. If the unlink fails after the
+// copy succeeded, mv reports an error with the destination in place. That is
+// the same partial outcome the host fallback classifies with partialMoveError,
+// so check whether the destination appeared or changed and report it the same
+// way: RecordingTool then records the destination even though the call failed.
+// A failure that left the destination untouched keeps the original error, so a
+// plain permission error is not misdescribed as a partial move.
 func (w *sandboxWorkspace) Move(ctx context.Context, src, dst string) error {
-	return w.run(ctx, `mv -f -- "$1" "$2"`, src, dst)
+	before, beforeErr := w.Lstat(ctx, dst)
+	err := w.run(ctx, `mv -f -- "$1" "$2"`, src, dst)
+	if err == nil {
+		return nil
+	}
+	if beforeErr != nil && !errors.Is(beforeErr, fs.ErrNotExist) {
+		return err
+	}
+	after, afterErr := w.Lstat(ctx, dst)
+	if afterErr != nil {
+		return err
+	}
+	if errors.Is(beforeErr, fs.ErrNotExist) || !sameSandboxFile(before, after) {
+		return &partialMoveError{Src: src, Dst: dst, Err: err}
+	}
+	return err
+}
+
+// sameSandboxFile compares the metadata a sandbox stat exposes, used to tell a
+// failed move that created or replaced the destination from one that changed
+// nothing. It is only a heuristic for the force-overwrite case: when dst
+// already existed with identical size, mode, and mtime, the partial move is
+// invisible here (the recorder's content snapshot is the authoritative check).
+func sameSandboxFile(a, b fs.FileInfo) bool {
+	return a.Mode() == b.Mode() && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime())
 }
 
 // Copy duplicates a file inside the sandbox with cp, then sets the source's

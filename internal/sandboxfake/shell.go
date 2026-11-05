@@ -604,6 +604,9 @@ func (sh *shSession) cmdChmod(words []string) (string, int) {
 	if ref != nil {
 		// chmod --reference=<file> -- <dest> carries the source's mode to the
 		// destination, the form sandboxWorkspace.Copy emits after cp.
+		if len(ops) == 0 {
+			return "", sh.errf("chmod: missing operand\n")
+		}
 		for _, p := range ops {
 			e, err := sh.sb.lookup(sh.ctx, p, true)
 			if err != nil {
@@ -674,14 +677,31 @@ func (sh *shSession) cmdMv(words []string) (string, int) {
 	return "", 0
 }
 
+// sandboxUmask is the process umask the fake models for plain (non -p)
+// creations, the conventional 022. Tests can therefore tell a umask-masked
+// create from a mode carried by cp -p or chmod --reference.
+const sandboxUmask fs.FileMode = 0o022
+
 // cmdCp copies a file, matching `cp -f -- src dst`: the form
 // sandboxWorkspace.Copy emits before its chmod --reference. A directory is
 // refused the way a real cp without -r refuses it, so the fake cannot accept a
 // copy the substrate would reject.
+//
+// Without -p the mode follows real cp: a new destination is created with the
+// source mode masked by the process umask, while an existing destination is
+// truncated in place and keeps its own mode. That fidelity matters because
+// sandboxWorkspace.Copy relies on the following chmod --reference to restore the
+// exact source mode; a fake that always copied e.mode would let a missing
+// chmod pass its parity test.
 func (sh *shSession) cmdCp(words []string) (string, int) {
 	flags, ops := operands(words[1:])
+	preserve := false
 	for _, f := range flags {
-		if f != "-f" && f != "-p" {
+		switch f {
+		case "-f":
+		case "-p":
+			preserve = true
+		default:
 			return "", sh.errf("sandboxfake: cp: unsupported flag %s\n", f)
 		}
 	}
@@ -704,13 +724,24 @@ func (sh *shSession) cmdCp(words []string) (string, int) {
 	if err != nil {
 		return "", sh.errf("cp: %v\n", err)
 	}
-	if existing, ok := sh.sb.files[dstClean]; ok && existing.isDir {
-		return "", sh.errf("sandboxfake: cp: destination is a directory\n")
+	mode := e.mode
+	if existing, exists := sh.sb.files[dstClean]; exists {
+		if existing.isDir {
+			return "", sh.errf("sandboxfake: cp: destination is a directory\n")
+		}
+		if !preserve {
+			// cp -f truncates an existing destination in place, so its mode
+			// survives even though the content is replaced.
+			mode = existing.mode
+		}
+	} else if !preserve {
+		// A fresh destination gets the source mode minus the umask.
+		mode = (e.mode & fs.ModePerm) &^ sandboxUmask
 	}
 	if parent := path.Dir(dstClean); !sh.sb.dirExists(parent) {
 		return "", sh.errf("cp: cannot create regular file '%s': No such file or directory\n", dst)
 	}
-	sh.sb.files[dstClean] = &entry{mode: e.mode, data: append([]byte(nil), e.data...), modTime: time.Now()}
+	sh.sb.files[dstClean] = &entry{mode: mode, data: append([]byte(nil), e.data...), modTime: time.Now()}
 	return "", 0
 }
 

@@ -58,31 +58,45 @@ func TestRecordingTool_FailedWriteNotRecorded(t *testing.T) {
 	}
 }
 
+// partialMoveWorkspace turns a successful Copy into the cross-filesystem
+// partial outcome: dst exists, src remains, and Move reports the typed error.
+type partialMoveWorkspace struct {
+	Workspace
+}
+
+func (w *partialMoveWorkspace) Move(ctx context.Context, src, dst string) error {
+	if err := w.Workspace.Copy(ctx, src, dst); err != nil {
+		return err
+	}
+	return &partialMoveError{Src: src, Dst: dst, Err: errors.New("permission denied")}
+}
+
 // TestRecordingTool_PartialMoveRecordsDestination pins the cross-filesystem
 // move edge: Copy created dst but Remove of src failed. The call errors, yet the
 // destination change is real and must be recorded — otherwise a parallel writer
 // sees no evidence and a retry without force is refused because dst now exists.
+//
+// It drives the real MoveTool so the test also covers Execute's `%w` wrapping:
+// if that boundary ever dropped the wrap, errors.As in recordTransfer (and here)
+// would stop matching.
 func TestRecordingTool_PartialMoveRecordsDestination(t *testing.T) {
 	dir := t.TempDir()
 	tracker := &ConflictTracker{}
 	pv := NewPathValidator(dir, false, nil)
 	pv.WorkDir = pv.WorkspaceRoot
 	src := filepath.Join(dir, "src.txt")
-	dst := filepath.Join(dir, "dst.txt")
 	writeFile(t, src, []byte("payload"))
 
-	inner := &recordingTestTool{name: "move", fn: func(_ context.Context, _ string) (string, error) {
-		// The fallback copied src to dst, then failed to unlink src.
-		writeFile(t, dst, []byte("payload"))
-		return "", &partialMoveError{Src: src, Dst: dst, Err: errors.New("permission denied")}
-	}}
-	rt := NewRecordingTool(inner, tracker)
+	ws := &partialMoveWorkspace{Workspace: newLocalWorkspace(pv)}
+	rt := NewRecordingTool(&MoveTool{}, tracker)
 	rt.SetPathValidator(pv)
-	rt.SetWorkspace(newLocalWorkspace(pv))
+	rt.SetWorkspace(ws)
 
-	if _, err := rt.Execute(WithConflictDispatch(context.Background(), "worker", ConflictLaneShared),
-		`{"path":"src.txt","to":"dst.txt"}`); err == nil {
-		t.Fatal("expected the partial move to report an error")
+	_, err := rt.Execute(WithConflictDispatch(context.Background(), "worker", ConflictLaneShared),
+		`{"path":"src.txt","to":"dst.txt"}`)
+	var partial *partialMoveError
+	if !errors.As(err, &partial) {
+		t.Fatalf("error = %v, want the MoveTool wrap to preserve *partialMoveError", err)
 	}
 
 	tracker.mu.Lock()
