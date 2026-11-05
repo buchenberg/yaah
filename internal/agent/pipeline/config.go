@@ -101,12 +101,14 @@ type PipelineConfig struct {
 	// checks to the same owner.
 	SessionID string
 
-	// TraceStore is the session-wide Shepherd trace store (plan 07,
+	// TraceStore is the session-wide Shepherd trace sink (plan 07,
 	// H4): session-owned and injected by the wiring, like the
 	// supervisor registry — sub-agent middleware writes through this
 	// shared connection instead of reaching through package globals.
-	// Nil when tracing is disabled.
-	TraceStore *shepherdtrace.SQLiteTraceStore
+	// Nil when tracing is disabled. The seam, not the kernel's concrete
+	// store: pipeline code only ever appends facts and publishes
+	// frontiers through it (see TraceSink in scope_init.go).
+	TraceStore TraceSink
 
 	// RetainedContext, when set, is stamped onto every fact group this
 	// middleware appends. Sub-agents use it to bind their transcript to the
@@ -180,7 +182,11 @@ func buildToolConcurrency(cfg PipelineConfig) Middleware {
 // the noop slot so the pipeline shape stays stable.
 func buildShepherdTrace(cfg PipelineConfig) Middleware {
 	store := cfg.TraceStore
-	if store == nil || cfg.SessionID == "" {
+	// A tracing-off session carries a nil kernel store in a non-nil interface
+	// (the composition root still holds the concrete handle), so the nil test
+	// goes through the seam's own predicate: a typed-nil sink must resolve to
+	// the noop slot, exactly as it did when the field held the bare pointer.
+	if sinkIsNil(store) || cfg.SessionID == "" {
 		return &noopShepherdTraceMiddleware{}
 	}
 	return &ShepherdTraceMiddleware{

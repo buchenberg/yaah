@@ -10,6 +10,7 @@ import (
 	goatherd "github.com/buchenberg/goatherd-runtime"
 	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
+	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/jobs"
 )
 
@@ -115,7 +116,7 @@ func CreateRootScope(mgr *goatherd.ScopeManager, sessionID, repoPath string, iso
 // trace. An empty root scope ID — tracing came up without a root — falls
 // back to the
 // legacy flat Create so the sub-agent still gets a superviseable scope.
-func createSubAgentScope(mgr *goatherd.ScopeManager, opts taskRunnerOpts, subTraceID, workdir string) (*goatherd.Scope, error) {
+func createSubAgentScope(mgr pipeline.ScopeSource, opts taskRunnerOpts, subTraceID, workdir string) (*goatherd.Scope, error) {
 	if mgr != nil {
 		// Dispatch-scope cap (yaah-95ri.4): refuse before any fork — flat,
 		// isolated or shared — so a saturated substrate fails the dispatch

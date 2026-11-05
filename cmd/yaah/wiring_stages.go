@@ -962,7 +962,7 @@ func buildDelegateTool(st *loopInfraStage, cfg *config.Config, lc *sessionConfig
 		RootScopeID:           st.rootScopeID,
 		Runs:                  st.runs,
 		ScopeManager:          st.scopeMgr,
-		TraceStore:            st.traceStore,
+		TraceStore:            pipeline.TraceSinkOf(st.traceStore),
 		GuardCheck:            supervisorSvcGuardCheck(st.supervisorSvc),
 		ResolveProviderByName: resolveProviderByName,
 

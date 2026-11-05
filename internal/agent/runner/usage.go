@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -15,7 +16,7 @@ import (
 // The orchestrator's session totals fold child usage in, so state.db exposes
 // only the aggregate sub-agent share. This fact keeps the per-dispatch and
 // per-role split available to benchmark metrics and trace readers.
-func recordSubAgentUsage(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, sessionID, parentSession, role, model, lane string, usage types.Usage) {
+func recordSubAgentUsage(ctx context.Context, store pipeline.TraceSink, sessionID, parentSession, role, model, lane string, usage types.Usage) {
 	if store == nil || sessionID == "" {
 		return
 	}

@@ -3,9 +3,9 @@ package runner
 import (
 	"context"
 
-	goatherd "github.com/buchenberg/goatherd-runtime"
 	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/agent/pipeline"
 )
 
 // ShepherdTurnCheckpointer adapts agent.TurnCheckpointer to the shared
@@ -13,14 +13,14 @@ import (
 // opaque snapshots) on a single scope, using whatever Sandbox that scope holds
 // — an in-place repository, or the sub-agent's isolated worktree.
 type ShepherdTurnCheckpointer struct {
-	mgr     *goatherd.ScopeManager
+	mgr     pipeline.ScopeSource
 	scopeID string
 	sandbox goatherdsandbox.Sandbox
 }
 
 // NewShepherdTurnCheckpointer returns a turn checkpointer that creates
 // single-use checkpoints on scopeID against sb.
-func NewShepherdTurnCheckpointer(mgr *goatherd.ScopeManager, scopeID string, sb goatherdsandbox.Sandbox) *ShepherdTurnCheckpointer {
+func NewShepherdTurnCheckpointer(mgr pipeline.ScopeSource, scopeID string, sb goatherdsandbox.Sandbox) *ShepherdTurnCheckpointer {
 	return &ShepherdTurnCheckpointer{mgr: mgr, scopeID: scopeID, sandbox: sb}
 }
 

@@ -375,7 +375,7 @@ func (s *agentSession) close() {
 		if !drained {
 			fmt.Fprintln(os.Stderr, "warning: shepherd trace store left open — a background job outlived the drain and still writes it")
 		} else {
-			pipeline.CloseShepherdInfrastructure(s.traceStore, s.traceBus)
+			pipeline.CloseShepherdInfrastructure(pipeline.TraceSinkOf(s.traceStore), s.traceBus)
 			s.traceStore, s.traceBus = nil, nil
 		}
 	}

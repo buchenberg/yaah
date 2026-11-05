@@ -62,7 +62,14 @@ func WithPersister(p *SessionPersister) Option {
 // orchestrator pipeline uses it for session-context, assistant, and tool-output
 // facts; nil leaves the shepherd_trace slot a noop.
 func WithTraceStore(store *shepherdtrace.SQLiteTraceStore) Option {
-	return func(l *Loop) { l.Config.TraceStore = store }
+	return WithTraceSink(TraceSinkOf(store))
+}
+
+// WithTraceSink sets the trace-write seam directly, for callers that already
+// hold it (the LoopBuilder's injected sink). Same contract as WithTraceStore:
+// a nil sink leaves the shepherd_trace slot a noop.
+func WithTraceSink(sink TraceSink) Option {
+	return func(l *Loop) { l.Config.TraceStore = sink }
 }
 
 // WithHooks sets the hook emitter.

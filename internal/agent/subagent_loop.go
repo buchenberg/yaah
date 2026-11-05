@@ -93,7 +93,7 @@ type SubAgentConfig struct {
 	// injected by the wiring through the task runner: the sub-agent
 	// pipeline's shepherd_trace middleware writes through it. Nil when
 	// tracing is disabled.
-	TraceStore *shepherdtrace.SQLiteTraceStore
+	TraceStore TraceSink
 
 	// TraceCWD is the working directory recorded in the session-context
 	// fact. Empty falls back to the process cwd.

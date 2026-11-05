@@ -20,7 +20,7 @@ func NewShepherdTraceStore(path string) (*shepherdtrace.SQLiteTraceStore, error)
 // ShepherdTraceMiddleware records every tool call as a declaration (intent)
 // and capture (observation) in a Shepherd trace store.
 type ShepherdTraceMiddleware struct {
-	store           *shepherdtrace.SQLiteTraceStore
+	store           TraceSink
 	bus             *shepherdtrace.EffectBus
 	scopeManager    *goatherd.ScopeManager
 	sessionID       string
@@ -55,7 +55,7 @@ var nextOrdinal atomic.Int64
 
 // NewShepherdTraceMiddleware creates a trace middleware that owns the
 // given store — Close will close it.
-func NewShepherdTraceMiddleware(store *shepherdtrace.SQLiteTraceStore, sessionID string) *ShepherdTraceMiddleware {
+func NewShepherdTraceMiddleware(store TraceSink, sessionID string) *ShepherdTraceMiddleware {
 	return &ShepherdTraceMiddleware{
 		store:     store,
 		sessionID: sessionID,
@@ -401,8 +401,8 @@ func (m *ShepherdTraceMiddleware) Close(ctx context.Context) error {
 	return nil
 }
 
-// Store returns the underlying trace store for inspection by CLI commands.
-func (m *ShepherdTraceMiddleware) Store() *shepherdtrace.SQLiteTraceStore {
+// Store returns the underlying trace store seam for inspection by CLI commands.
+func (m *ShepherdTraceMiddleware) Store() TraceSink {
 	return m.store
 }
 
