@@ -983,6 +983,52 @@ func TestManagerCloseDropsPendingDigest(t *testing.T) {
 	}
 }
 
+// TestManagerCloseDeletesDeliveredRow covers a Close that lands while the
+// digest sink is still running: the row must be deleted, not released for a
+// duplicate on the next resume.
+func TestManagerCloseDeletesDeliveredRow(t *testing.T) {
+	store := newFakeStore()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	m := NewManager(Options{
+		SessionID:    "sess",
+		Deps:         Deps{Now: time.Now},
+		Store:        store,
+		OwnerID:      "process-a",
+		DigestWindow: 10 * time.Millisecond,
+		OnWake: func(string) {
+			close(entered)
+			<-release
+		},
+	})
+	info, err := m.Arm(ArmRequest{On: "time:10ms", ExpiresIn: time.Second})
+	if err != nil {
+		t.Fatalf("Arm: %v", err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("digest sink never ran")
+	}
+	done := make(chan struct{})
+	go func() {
+		m.Close()
+		close(done)
+	}()
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close did not return")
+	}
+	store.mu.Lock()
+	_, ok := store.rows[info.ID]
+	store.mu.Unlock()
+	if ok {
+		t.Fatal("delivered fired row was left in the store")
+	}
+}
+
 // TestManagerCloseReleasesUndeliveredFiredLease pins the Close contract: a
 // fired row whose digest was not delivered is left re-deliverable by the next
 // resume, not suppressed by a live lease.
@@ -1001,14 +1047,12 @@ func TestManagerCloseReleasesUndeliveredFiredLease(t *testing.T) {
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		store.mu.Lock()
-		row, ok := store.rows[info.ID]
-		store.mu.Unlock()
-		if ok && row.State == StateFired {
+		list := m.List()
+		if len(list) == 1 && list[0].State == StateFired {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("watch did not fire: %+v", row)
+			t.Fatalf("watch did not fire: %+v", list)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}

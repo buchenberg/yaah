@@ -175,6 +175,9 @@ type Manager struct {
 	pending   []firedWatch
 	timer     Timer
 	flushDone chan struct{} // closed by the digest callback or by Close
+	// delivered records fired ids whose digest reached onWake, so Close
+	// deletes those rows instead of releasing them for a duplicate.
+	delivered map[string]bool
 	closed    bool
 }
 

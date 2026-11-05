@@ -30,6 +30,7 @@ func NewManager(opts Options) *Manager {
 		ctx:           ctx,
 		cancel:        cancel,
 		watches:       make(map[string]*armedWatch),
+		delivered:     make(map[string]bool),
 	}
 	if m.digestWindow <= 0 {
 		m.digestWindow = DefaultDigestWindow
@@ -157,9 +158,21 @@ func (m *Manager) Close() {
 			}
 		}
 		if m.store != nil {
+			m.mu.Lock()
+			delivered := make(map[string]bool, len(firedIDs))
 			for _, id := range firedIDs {
-				// A delivered row was deleted already (no-op); an
-				// undelivered one becomes visible to the next resume.
+				delivered[id] = m.delivered[id]
+			}
+			m.mu.Unlock()
+			for _, id := range firedIDs {
+				if delivered[id] {
+					// The digest reached the session; a row left behind
+					// because Close set closed mid-flush must not be
+					// re-delivered.
+					_ = m.store.DeleteWatch(m.sessionID, id)
+					continue
+				}
+				// Undelivered: make it visible to the next resume.
 				_, _ = m.store.ReleaseWatchLease(m.sessionID, id, m.ownerID)
 			}
 		}
@@ -636,11 +649,17 @@ func (m *Manager) flushIfOpen(done chan struct{}) {
 	onWake := m.onWake
 	m.mu.Unlock()
 
-	if len(pending) > 0 && onWake != nil {
+	markDelivered := len(pending) > 0 && onWake != nil
+	if markDelivered {
 		onWake(digestText(pending))
 	}
 
 	m.mu.Lock()
+	if markDelivered {
+		for _, p := range pending {
+			m.delivered[p.id] = true
+		}
+	}
 	if m.closed {
 		// Close won the race: keep the fired rows so the next resume
 		// reports them as missed wakes instead of dropping a digest whose
