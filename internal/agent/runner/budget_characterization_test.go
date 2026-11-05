@@ -284,7 +284,7 @@ func TestResolveSubAgentBudgets_ShippedRoles(t *testing.T) {
 		wantTurns int
 	}{
 		{"analyst", 50, 24},   // role file asks for 75; schema ceiling is 50
-		{"developer", 50, 24}, // role file asks for 75; schema ceiling is 50
+		{"developer", 50, 49}, // role file asks for 150; schema ceiling is 50; unfloored turns clamp to iterations-1
 		{"tester", 30, 8},
 		{"reviewer", 25, 12},
 	}
