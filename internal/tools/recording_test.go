@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 type recordingTestTool struct {
@@ -55,6 +56,189 @@ func TestRecordingTool_FailedWriteNotRecorded(t *testing.T) {
 	}
 	if got := tracker.DetectAndReset(); got != "" {
 		t.Fatalf("a failed write must not be evidence of a conflict, got:\n%s", got)
+	}
+}
+
+// partialMoveWorkspace turns a successful Copy into the cross-filesystem
+// partial outcome: dst exists, src remains, and Move reports the typed error.
+type partialMoveWorkspace struct {
+	Workspace
+}
+
+func (w *partialMoveWorkspace) Move(ctx context.Context, src, dst string) error {
+	if err := w.Workspace.Copy(ctx, src, dst); err != nil {
+		return err
+	}
+	return &partialMoveError{Src: src, Dst: dst, Err: errors.New("permission denied")}
+}
+
+// TestRecordingTool_PartialMoveRecordsDestination pins the cross-filesystem
+// move edge: Copy created dst but Remove of src failed. The call errors, yet the
+// destination change is real and must be recorded — otherwise a parallel writer
+// sees no evidence and a retry without force is refused because dst now exists.
+//
+// It drives the real MoveTool so the test also covers Execute's `%w` wrapping:
+// if that boundary ever dropped the wrap, errors.As in recordTransfer (and here)
+// would stop matching.
+func TestRecordingTool_PartialMoveRecordsDestination(t *testing.T) {
+	dir := t.TempDir()
+	tracker := &ConflictTracker{}
+	pv := NewPathValidator(dir, false, nil)
+	pv.WorkDir = pv.WorkspaceRoot
+	src := filepath.Join(dir, "src.txt")
+	writeFile(t, src, []byte("payload"))
+
+	ws := &partialMoveWorkspace{Workspace: newLocalWorkspace(pv)}
+	rt := NewRecordingTool(&MoveTool{}, tracker)
+	rt.SetPathValidator(pv)
+	rt.SetWorkspace(ws)
+
+	_, err := rt.Execute(WithConflictDispatch(context.Background(), "worker", ConflictLaneShared),
+		`{"path":"src.txt","to":"dst.txt"}`)
+	var partial *partialMoveError
+	if !errors.As(err, &partial) {
+		t.Fatalf("error = %v, want the MoveTool wrap to preserve *partialMoveError", err)
+	}
+
+	tracker.mu.Lock()
+	records := append([]FileRecord(nil), tracker.records...)
+	tracker.mu.Unlock()
+	if len(records) != 1 {
+		t.Fatalf("records = %d, want only the created destination: %+v", len(records), records)
+	}
+	if records[0].FilePath != "dst.txt" || !records[0].AfterExists {
+		t.Errorf("record = %+v, want the created destination dst.txt", records[0])
+	}
+}
+
+// TestRecordingTool_RecursiveRmdirRecordsUnknown pins the no-false-all-clear
+// rule for the most destructive new call: a recursive rmdir cannot enumerate
+// the files it removed without walking the tree first, so it must record an
+// explicit unknown. A parallel worker editing a file inside the tree then sees
+// evidence instead of "nothing changed".
+func TestRecordingTool_RecursiveRmdirRecordsUnknown(t *testing.T) {
+	tracker := &ConflictTracker{}
+	inner := &recordingTestTool{name: "rmdir", fn: func(context.Context, string) (string, error) {
+		return "Removed directory tree /workspace/tree", nil
+	}}
+	rt := NewRecordingTool(inner, tracker)
+
+	if _, err := rt.Execute(WithConflictDispatch(context.Background(), "worker", ConflictLaneShared),
+		`{"path":"/workspace/tree","recursive":true}`); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	report := tracker.DetectAndResetReport()
+	if report == nil || len(report.Unknown) != 1 {
+		t.Fatalf("report = %+v, want one unknown entry", report)
+	}
+	if !strings.Contains(report.Unknown[0].Detail, "rmdir -r /workspace/tree") {
+		t.Errorf("unknown detail = %q, want the recursive path", report.Unknown[0].Detail)
+	}
+
+	// A failed recursive removal may still have deleted part of the tree, so it
+	// records the unknown too, matching a failed shell command.
+	inner.fn = func(context.Context, string) (string, error) {
+		return "", errors.New("permission denied")
+	}
+	if _, err := rt.Execute(WithConflictDispatch(context.Background(), "worker", ConflictLaneShared),
+		`{"path":"/workspace/tree","recursive":true}`); err == nil {
+		t.Fatal("expected the fake rmdir to fail")
+	}
+	report = tracker.DetectAndResetReport()
+	if report == nil || len(report.Unknown) != 1 {
+		t.Fatalf("failed recursive rmdir report = %+v, want one unknown entry", report)
+	}
+	if !strings.Contains(report.Unknown[0].Detail, "reported an error") {
+		t.Errorf("unknown detail = %q, want the failure noted", report.Unknown[0].Detail)
+	}
+}
+
+// TestRecordingTool_EmptyRmdirNotRecorded pins the other half: removing an
+// empty directory touches no file, so it is not conflict evidence.
+func TestRecordingTool_EmptyRmdirNotRecorded(t *testing.T) {
+	tracker := &ConflictTracker{}
+	inner := &recordingTestTool{name: "rmdir", fn: func(context.Context, string) (string, error) {
+		return "Removed directory /workspace/empty", nil
+	}}
+	rt := NewRecordingTool(inner, tracker)
+
+	if _, err := rt.Execute(WithConflictDispatch(context.Background(), "worker", ConflictLaneShared),
+		`{"path":"/workspace/empty"}`); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if report := tracker.DetectAndResetReport(); report != nil {
+		t.Fatalf("report = %+v, want no evidence for an empty rmdir", report)
+	}
+}
+
+// TestRecordingTool_RecursiveRmdirDetailBounded pins the conflict-report
+// hardening: a long or non-UTF-8 path must not reach FileRecord.Detail raw.
+func TestRecordingTool_RecursiveRmdirDetailBounded(t *testing.T) {
+	tracker := &ConflictTracker{}
+	inner := &recordingTestTool{name: "rmdir", fn: func(context.Context, string) (string, error) {
+		return "Removed directory tree", nil
+	}}
+	rt := NewRecordingTool(inner, tracker)
+
+	longPath := "/workspace/" + strings.Repeat("a", 300)
+	args, err := json.Marshal(map[string]any{"path": longPath, "recursive": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.Execute(WithConflictDispatch(context.Background(), "worker", ConflictLaneShared), string(args)); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	report := tracker.DetectAndResetReport()
+	if report == nil || len(report.Unknown) != 1 {
+		t.Fatalf("report = %+v, want one unknown entry", report)
+	}
+	detail := report.Unknown[0].Detail
+	if n := utf8.RuneCountInString(detail); n > 120 {
+		t.Errorf("detail length = %d runes, want <= 120: %q", n, detail)
+	}
+	if !strings.HasPrefix(detail, "rmdir -r ") {
+		t.Errorf("detail = %q, want the rmdir -r prefix preserved", detail)
+	}
+
+	// The failure marker must survive truncation too: a failed recursive
+	// delete must not look like a clean one just because the path is long.
+	inner.fn = func(context.Context, string) (string, error) {
+		return "", errors.New("permission denied")
+	}
+	if _, err := rt.Execute(WithConflictDispatch(context.Background(), "worker", ConflictLaneShared), string(args)); err == nil {
+		t.Fatal("expected the fake rmdir to fail")
+	}
+	report = tracker.DetectAndResetReport()
+	if report == nil || len(report.Unknown) != 1 {
+		t.Fatalf("failed report = %+v, want one unknown entry", report)
+	}
+	detail = report.Unknown[0].Detail
+	if !strings.HasPrefix(detail, "rmdir -r ") {
+		t.Errorf("failed detail = %q, want the rmdir -r prefix preserved", detail)
+	}
+	if !strings.Contains(detail, "reported an error") {
+		t.Errorf("failed detail = %q, want the failure marker preserved", detail)
+	}
+	if n := utf8.RuneCountInString(detail); n > 120 {
+		t.Errorf("failed detail length = %d runes, want <= 120: %q", n, detail)
+	}
+}
+
+func TestBoundedDetail_TruncatesAndSanitizes(t *testing.T) {
+	long := boundedDetail(strings.Repeat("x", 300))
+	if n := utf8.RuneCountInString(long); n != 120 {
+		t.Errorf("truncated length = %d runes, want 120", n)
+	}
+	if !strings.HasSuffix(long, "...") {
+		t.Errorf("truncated detail = %q, want a trailing ellipsis", long)
+	}
+
+	got := boundedDetail("ok\xffbad")
+	if !utf8.ValidString(got) {
+		t.Errorf("sanitized detail is not valid UTF-8: %q", got)
+	}
+	if got != "ok?bad" {
+		t.Errorf("sanitized detail = %q, want invalid bytes replaced with '?'", got)
 	}
 }
 

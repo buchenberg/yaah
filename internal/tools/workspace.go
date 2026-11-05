@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
@@ -96,8 +98,24 @@ type Workspace interface {
 	// ReadDir lists a directory. Entries are not sorted by the implementation;
 	// callers that need a stable order must sort.
 	ReadDir(ctx context.Context, path string) ([]fs.DirEntry, error)
+	// Remove deletes a file or an empty directory, matching os.Remove. A
+	// non-empty directory is an error.
 	Remove(ctx context.Context, path string) error
+	// RemoveAll deletes path and, when it is a directory, everything under it,
+	// matching os.RemoveAll. A missing path is not an error. Implementations
+	// must refuse the workspace root.
+	RemoveAll(ctx context.Context, path string) error
 	MkdirAll(ctx context.Context, path string, perm fs.FileMode) error
+
+	// Move renames src to dst, preserving the file's bytes and permission mode.
+	// Both paths arrive already resolved. An implementation MAY replace an
+	// existing dst: the no-clobber rule belongs to the move/copy tools, which
+	// refuse an existing destination unless force is set, so a substrate must not
+	// add a second, divergent one here. Directories are the caller's to refuse.
+	Move(ctx context.Context, src, dst string) error
+	// Copy duplicates src at dst with src's bytes and permission mode, leaving
+	// src in place. Same contract as Move.
+	Copy(ctx context.Context, src, dst string) error
 
 	// Exec runs a command. A non-nil error reports that the command could not be
 	// started or exited non-zero; callers that need the distinction inspect
@@ -327,11 +345,127 @@ func (w *localWorkspace) ReadDir(_ context.Context, path string) ([]fs.DirEntry,
 }
 
 func (w *localWorkspace) Remove(_ context.Context, path string) error {
+	// os.Remove already removes a file or an empty directory, which is the
+	// Workspace contract rmdir and delete both rely on.
 	return os.Remove(path)
+}
+
+// RemoveAll deletes a tree, matching os.RemoveAll. It refuses the workspace
+// root: recursive removal is the one call where a path bug would be
+// unrecoverable, and the tool layer's guard should not be the only one.
+func (w *localWorkspace) RemoveAll(_ context.Context, path string) error {
+	if isRootPath(path) || (w.pv != nil && w.pv.WorkspaceRoot != "" && sameHostPath(path, w.pv.WorkspaceRoot)) {
+		return fmt.Errorf("refusing to remove the workspace root %s", path)
+	}
+	return os.RemoveAll(path)
+}
+
+// isRootPath reports whether p is a filesystem root: "/" on POSIX, or a volume
+// root such as "C:\" on Windows.
+func isRootPath(p string) bool {
+	return filepath.Clean(p) == filepath.VolumeName(p)+string(filepath.Separator)
+}
+
+// sameHostPath compares two host paths after resolving symlinks, so a caller
+// that passes /var/... matches the /private/var/... root the validator stores,
+// and a Windows short name matches its long form. Case is folded on Windows,
+// where the filesystem is case-insensitive.
+func sameHostPath(a, b string) bool {
+	if resolved, err := filepath.EvalSymlinks(a); err == nil {
+		a = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(b); err == nil {
+		b = resolved
+	}
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
 
 func (w *localWorkspace) MkdirAll(_ context.Context, path string, perm fs.FileMode) error {
 	return os.MkdirAll(path, perm)
+}
+
+// partialMoveError reports a cross-filesystem move that copied the file but
+// could not remove the source. The destination exists, so callers that track
+// changes must record it even though Move returned an error; the message says
+// so, because a plain retry without force will be refused as a clobber.
+type partialMoveError struct {
+	Src string
+	Dst string
+	Err error
+}
+
+func (e *partialMoveError) Error() string {
+	return fmt.Sprintf("destination %s was created, but the source %s could not be removed: %v; remove one of the two files before retrying", e.Dst, e.Src, e.Err)
+}
+
+func (e *partialMoveError) Unwrap() error { return e.Err }
+
+// Move renames a file on the host. os.Rename moves the directory entry, so the
+// content, the mode, and (within one filesystem) ownership survive without the
+// bytes ever being read — the cheapest exact move available. Across filesystems
+// (EXDEV) it falls back to Copy plus Remove, matching the sandbox mv's
+// transparent behavior at the cost of actually reading the bytes.
+func (w *localWorkspace) Move(ctx context.Context, src, dst string) error {
+	err := os.Rename(src, dst)
+	if err == nil || !errors.Is(err, syscall.EXDEV) {
+		return err
+	}
+	if cerr := w.Copy(ctx, src, dst); cerr != nil {
+		return fmt.Errorf("move: cross-filesystem fallback: %w", cerr)
+	}
+	if rerr := os.Remove(src); rerr != nil {
+		return &partialMoveError{Src: src, Dst: dst, Err: rerr}
+	}
+	return nil
+}
+
+// Copy streams src into a temp file beside dst and renames it into place, so a
+// crash mid-copy leaves the previous dst intact instead of a truncated one —
+// the same crash-safety WriteFile has. The content is never buffered whole: a
+// large file copies in fixed-size chunks. The source's mode, including
+// setuid/setgid/sticky, is applied to the temp before the rename. Ownership and
+// extended attributes are not portable across filesystems and are not carried.
+func (w *localWorkspace) Copy(_ context.Context, src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	info, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(dst)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(dst)+".tmp*")
+	if err != nil {
+		return fmt.Errorf("copy: create temp: %w", err)
+	}
+	tmpName := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpName) }
+
+	if _, err := io.Copy(tmp, in); err != nil {
+		tmp.Close()
+		cleanup()
+		return fmt.Errorf("copy: %w", err)
+	}
+	if err := tmp.Chmod(info.Mode()); err != nil {
+		tmp.Close()
+		cleanup()
+		return fmt.Errorf("copy: chmod: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return fmt.Errorf("copy: %w", err)
+	}
+	if err := os.Rename(tmpName, dst); err != nil {
+		cleanup()
+		return fmt.Errorf("copy: rename: %w", err)
+	}
+	return nil
 }
 
 // Exec runs a command in the workspace. On the orchestrator's host workspace (no

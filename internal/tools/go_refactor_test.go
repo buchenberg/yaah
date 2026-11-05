@@ -128,8 +128,42 @@ func (m *memFS) Remove(_ context.Context, p string) error {
 	return nil
 }
 
+func (m *memFS) RemoveAll(_ context.Context, p string) error {
+	prefix := p + "/"
+	for name := range m.files {
+		if name == p || strings.HasPrefix(name, prefix) {
+			delete(m.files, name)
+		}
+	}
+	for name := range m.dirs {
+		if name == p || strings.HasPrefix(name, prefix) {
+			delete(m.dirs, name)
+		}
+	}
+	return nil
+}
+
 func (m *memFS) MkdirAll(_ context.Context, p string, _ fs.FileMode) error {
 	m.dirs[p] = true
+	return nil
+}
+
+func (m *memFS) Move(_ context.Context, src, dst string) error {
+	c, ok := m.files[src]
+	if !ok {
+		return &fs.PathError{Op: "move", Path: src, Err: fs.ErrNotExist}
+	}
+	delete(m.files, src)
+	m.files[dst] = c
+	return nil
+}
+
+func (m *memFS) Copy(_ context.Context, src, dst string) error {
+	c, ok := m.files[src]
+	if !ok {
+		return &fs.PathError{Op: "copy", Path: src, Err: fs.ErrNotExist}
+	}
+	m.files[dst] = c
 	return nil
 }
 

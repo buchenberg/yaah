@@ -16,6 +16,10 @@ tools:
   - write
   - edit
   - delete
+  - mkdir
+  - rmdir
+  - move
+  - copy
   - patch
   - replace
   - grep

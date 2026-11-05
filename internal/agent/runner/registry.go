@@ -96,6 +96,9 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, ro
 		"write":      true,
 		"edit":       true,
 		"delete":     true,
+		"rmdir":      true,
+		"move":       true,
+		"copy":       true,
 		"bash":       true,
 		"powershell": true,
 	}
@@ -265,7 +268,14 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, ro
 			}
 			continue
 		}
-		registerLeaf(reg, name)
+		if !registerLeaf(reg, name) {
+			// A role file names a tool this harness does not have (a typo, a
+			// renamed tool, or a session-only tool). It is dropped rather than
+			// failing the dispatch, but say so: silently shipping a role
+			// without the tool it asked for is how a belt drifts for months.
+			slog.Warn("sub-agent role names an unknown tool; it was not registered",
+				"role", profile.Specialty, "tool", name)
+		}
 	}
 	if isolated {
 		// Isolated session (plan §1.3, decision D2): the sub-agent

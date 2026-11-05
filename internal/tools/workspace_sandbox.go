@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path"
@@ -284,6 +285,12 @@ stat -L -c "$2" -- "$1"`
 // an fs.FileMode. The high octal digit carries setuid/setgid/sticky and the type
 // lives in bits above the permission bits, so a plain cast would both report a
 // directory as a regular file and turn "4755" into a meaningless low bit.
+//
+// Every non-regular type `%F` can report gets type bits. Without them a FIFO,
+// socket, or device node looks like a plain file to Mode().IsRegular(), and a
+// tool that gates on regular files would then open, copy, or block on it. An
+// unrecognized spelling (GNU's "weird file", platform-specific door/event
+// port) is irregular rather than regular, for the same reason.
 func sandboxMode(perm uint64, fileType string) fs.FileMode {
 	mode := fs.FileMode(perm & 0o777)
 	if perm&0o4000 != 0 {
@@ -296,16 +303,50 @@ func sandboxMode(perm uint64, fileType string) fs.FileMode {
 		mode |= fs.ModeSticky
 	}
 	switch {
+	case strings.Contains(fileType, "regular"):
+		// No type bits.
 	case strings.Contains(fileType, "directory"):
 		mode |= fs.ModeDir
 	case strings.Contains(fileType, "symbolic link"):
 		mode |= fs.ModeSymlink
+	case strings.Contains(fileType, "fifo"):
+		mode |= fs.ModeNamedPipe
+	case strings.Contains(fileType, "socket"):
+		mode |= fs.ModeSocket
+	case strings.Contains(fileType, "character special"):
+		mode |= fs.ModeDevice | fs.ModeCharDevice
+	case strings.Contains(fileType, "block special"):
+		mode |= fs.ModeDevice
+	default:
+		mode |= fs.ModeIrregular
 	}
 	return mode
 }
 
+// Remove deletes a file or an empty directory, matching os.Remove rather than
+// rm -f: a directory is removed with rmdir (so a non-empty one fails with a
+// clear "Directory not empty"), and a missing path reports fs.ErrNotExist
+// instead of succeeding silently.
 func (w *sandboxWorkspace) Remove(ctx context.Context, p string) error {
+	info, err := w.Lstat(ctx, p)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return w.run(ctx, `rmdir -- "$1"`, p)
+	}
 	return w.run(ctx, `rm -f -- "$1"`, p)
+}
+
+// RemoveAll deletes a tree inside the sandbox with rm -rf. Like the host
+// implementation it refuses the workspace root, so a path bug cannot wipe the
+// container's working tree in one call.
+func (w *sandboxWorkspace) RemoveAll(ctx context.Context, p string) error {
+	clean := path.Clean(p)
+	if clean == "/" || clean == w.root {
+		return fmt.Errorf("refusing to remove the workspace root %s", clean)
+	}
+	return w.run(ctx, `rm -rf -- "$1"`, p)
 }
 
 // ReadDir lists a directory in-band. It uses `find -printf '%y\0%f\0'` rather
@@ -337,16 +378,80 @@ func (w *sandboxWorkspace) ReadDir(ctx context.Context, p string) ([]fs.DirEntry
 
 // sandboxEntryMode maps find's `%y` type character to fs.FileMode type bits.
 // Walkers test `d.Type()&fs.ModeSymlink != 0` to skip symlinks, so returning 0
-// here would silently disable that guard.
+// for an unrecognized letter would both disable that guard and let the entry
+// look regular: regular `f` is the only spelling that maps to no type bits.
 func sandboxEntryMode(typ string) fs.FileMode {
 	switch typ {
+	case "f":
+		return 0
 	case "d":
 		return fs.ModeDir
 	case "l":
 		return fs.ModeSymlink
+	case "p":
+		return fs.ModeNamedPipe
+	case "s":
+		return fs.ModeSocket
+	case "c":
+		return fs.ModeDevice | fs.ModeCharDevice
+	case "b":
+		return fs.ModeDevice
 	default:
-		return 0
+		return fs.ModeIrregular
 	}
+}
+
+// Move renames a file inside the sandbox with mv — the substrate's own rename,
+// so the bytes never cross the Exec transport. force is passed because the tool
+// above has already decided whether a clobber is allowed.
+//
+// Across filesystems mv copies and then unlinks. If the unlink fails after the
+// copy succeeded, mv reports an error with the destination in place. That is
+// the same partial outcome the host fallback classifies with partialMoveError,
+// so check whether the destination appeared or changed and report it the same
+// way: RecordingTool then records the destination even though the call failed.
+// A failure that left the destination untouched keeps the original error, so a
+// plain permission error is not misdescribed as a partial move.
+func (w *sandboxWorkspace) Move(ctx context.Context, src, dst string) error {
+	before, beforeErr := w.Lstat(ctx, dst)
+	err := w.run(ctx, `mv -f -- "$1" "$2"`, src, dst)
+	if err == nil {
+		return nil
+	}
+	if beforeErr != nil && !errors.Is(beforeErr, fs.ErrNotExist) {
+		return err
+	}
+	after, afterErr := w.Lstat(ctx, dst)
+	if afterErr != nil {
+		return err
+	}
+	if errors.Is(beforeErr, fs.ErrNotExist) || !sameSandboxFile(before, after) {
+		return &partialMoveError{Src: src, Dst: dst, Err: err}
+	}
+	return err
+}
+
+// sameSandboxFile compares the metadata a sandbox stat exposes, used to tell a
+// failed move that created or replaced the destination from one that changed
+// nothing. It is only a heuristic for the force-overwrite case: when dst
+// already existed with identical size, mode, and mtime, the partial move is
+// invisible here (the recorder's content snapshot is the authoritative check).
+func sameSandboxFile(a, b fs.FileInfo) bool {
+	return a.Mode() == b.Mode() && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime())
+}
+
+// Copy duplicates a file inside the sandbox with cp, then sets the source's
+// mode on the destination with chmod --reference: the bytes stay in the
+// substrate, so a large copy costs neither context nor a read/write round trip.
+//
+// chmod --reference rather than cp -p: -p also asks cp to preserve ownership
+// and timestamps, and preserving ownership can fail on a bind-mounted source
+// owned by another uid. GNU cp writes the destination and *then* exits non-zero
+// on the failed preservation, so the tool would report a failed copy even
+// though dst was created or truncated. A separate chmod keeps exactly the
+// documented guarantee — the source's permission mode — and nothing more.
+func (w *sandboxWorkspace) Copy(ctx context.Context, src, dst string) error {
+	return w.run(ctx, `cp -f -- "$1" "$2" && chmod --reference="$1" -- "$2"`, src, dst)
 }
 
 func (w *sandboxWorkspace) MkdirAll(ctx context.Context, p string, perm fs.FileMode) error {

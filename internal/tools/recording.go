@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -148,6 +149,36 @@ func (rt *RecordingTool) Execute(ctx context.Context, args string) (string, erro
 		return result, err
 	}
 
+	if toolName == "move" || toolName == "copy" {
+		return rt.recordTransfer(ctx, dispatch, toolName, args)
+	}
+
+	if toolName == "rmdir" {
+		result, err := rt.inner.Execute(ctx, args)
+		// An empty-only rmdir removes no files, so it needs no evidence. A
+		// recursive rmdir can remove an arbitrary set the recorder cannot
+		// enumerate cheaply, so record an unknown rather than a false
+		// all-clear: a parallel worker editing a file inside the tree must not
+		// see "nothing changed".
+		var params struct {
+			Path      string `json:"path"`
+			Recursive bool   `json:"recursive"`
+		}
+		if json.Unmarshal([]byte(args), &params) == nil && params.Recursive && params.Path != "" {
+			// Reserve the prefix and failure marker before bounding the path:
+			// truncating the assembled string would drop the marker for a long
+			// path, making a failed recursive delete look like a clean one.
+			detail := "rmdir -r "
+			suffix := ""
+			if err != nil {
+				suffix = " (command reported an error)"
+			}
+			budget := 120 - utf8.RuneCountInString(detail) - utf8.RuneCountInString(suffix)
+			rt.tracker.RecordUnknown(dispatch, toolName, detail+boundedRunes(params.Path, budget)+suffix)
+		}
+		return result, err
+	}
+
 	var params struct {
 		FilePath string `json:"filePath"`
 	}
@@ -174,9 +205,18 @@ func (rt *RecordingTool) Execute(ctx context.Context, args string) (string, erro
 	if err != nil {
 		return result, err
 	}
+	rt.recordSnapshot(ctx, dispatch, toolName, ws, abs, before)
+	return result, nil
+}
+
+// recordSnapshot captures abs's after-image and records the change when it
+// differs from before. Single-path tools (write/edit/delete) and the two-path
+// ones (move/copy) both record through here, so the evidence shape cannot
+// diverge between them.
+func (rt *RecordingTool) recordSnapshot(ctx context.Context, dispatch ConflictDispatch, toolName string, ws Workspace, abs string, before conflictSnapshot) {
 	after := captureConflictSnapshot(ctx, ws, abs)
 	if conflictSnapshotsEqual(before, after) {
-		return result, nil
+		return
 	}
 	rt.tracker.RecordChange(FileRecord{
 		DispatchID:    dispatch.ID,
@@ -192,7 +232,67 @@ func (rt *RecordingTool) Execute(ctx context.Context, args string) (string, erro
 		AfterMode:     after.Mode,
 		Known:         before.Known && after.Known,
 	})
+}
+
+// recordTransfer records both ends of a move/copy. One call changes two paths —
+// the source disappears, the destination appears or changes — so a
+// single-path record would report half of what happened and let a parallel
+// worker's write to the source go unseen.
+func (rt *RecordingTool) recordTransfer(ctx context.Context, dispatch ConflictDispatch, toolName, args string) (string, error) {
+	src, dst := transferPaths(args)
+	ws := rt.workspace()
+	if src == "" || dst == "" || ws == nil {
+		return rt.inner.Execute(ctx, args)
+	}
+	absSrc, err := ws.ResolvePath(src)
+	if err != nil {
+		return rt.inner.Execute(ctx, args)
+	}
+	absDst, err := ws.ResolvePath(dst)
+	if err != nil {
+		return rt.inner.Execute(ctx, args)
+	}
+
+	// Both paths in one critical section. The locks are taken in sorted order so
+	// two dispatches moving A→B and B→A cannot deadlock.
+	unlock := lockConflictPathSet(absSrc, absDst)
+	defer unlock()
+
+	beforeSrc := captureConflictSnapshot(ctx, ws, absSrc)
+	beforeDst := captureConflictSnapshot(ctx, ws, absDst)
+	result, err := rt.inner.Execute(ctx, args)
+	if err != nil {
+		// A cross-filesystem move can create the destination and then fail to
+		// remove the source. The destination change is real, so record it even
+		// though the call reports an error; otherwise the next writer sees no
+		// evidence, and a retry without force is refused as a clobber.
+		var partial *partialMoveError
+		if toolName == "move" && errors.As(err, &partial) {
+			rt.recordSnapshot(ctx, dispatch, toolName, ws, absDst, beforeDst)
+		}
+		return result, err
+	}
+	// A copy leaves the source untouched: recording it would report a change
+	// that never happened — and for an unknown snapshot (a special file, or a
+	// file over the hash cap) invent a conflict between two readers of the same
+	// file. Only a move changes the source end.
+	if toolName == "move" {
+		rt.recordSnapshot(ctx, dispatch, toolName, ws, absSrc, beforeSrc)
+	}
+	rt.recordSnapshot(ctx, dispatch, toolName, ws, absDst, beforeDst)
 	return result, nil
+}
+
+// transferPaths reads the path/to pair the move and copy tools share.
+func transferPaths(args string) (src, dst string) {
+	var params struct {
+		Path string `json:"path"`
+		To   string `json:"to"`
+	}
+	if json.Unmarshal([]byte(args), &params) != nil {
+		return "", ""
+	}
+	return params.Path, params.To
 }
 
 type conflictPathLock struct {
@@ -229,6 +329,33 @@ func lockConflictPath(abs string) func() {
 			delete(conflictPathLocks, key)
 		}
 		conflictPathLocksMu.Unlock()
+	}
+}
+
+// lockConflictPathSet takes the per-path lock for every named path, in sorted
+// key order, and returns one release. Sorted acquisition is what keeps two
+// dispatches that touch the same pair of paths in opposite directions from
+// deadlocking.
+func lockConflictPathSet(paths ...string) func() {
+	keys := make([]string, 0, len(paths))
+	seen := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		key := pathKey(normalizeTrackedPath(p))
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	unlocks := make([]func(), 0, len(keys))
+	for _, key := range keys {
+		unlocks = append(unlocks, lockConflictPath(key))
+	}
+	return func() {
+		for i := len(unlocks) - 1; i >= 0; i-- {
+			unlocks[i]()
+		}
 	}
 }
 
@@ -435,12 +562,32 @@ func shellDetail(args string) string {
 	if cmd == "" {
 		return "effects unknown"
 	}
-	runes := []rune(cmd)
-	if len(runes) > 120 {
-		cmd = string(runes[:117]) + "..."
+	return "may mutate: " + boundedDetail(cmd)
+}
+
+// boundedDetail keeps an evidence detail safe for the parent-facing conflict
+// report: at most 120 runes, with invalid UTF-8 (legal in a POSIX path)
+// replaced rather than stored raw. Every caller-supplied fragment that reaches
+// FileRecord.Detail goes through here.
+func boundedDetail(s string) string { return boundedRunes(s, 120) }
+
+// boundedRunes sanitizes s and limits it to max runes, keeping a trailing
+// ellipsis when it truncates. A caller that appends a fixed marker must bound
+// only the variable part and reserve the marker's runes, so the marker cannot
+// be truncated away.
+func boundedRunes(s string, max int) string {
+	if max <= 0 {
+		return ""
 	}
-	if !utf8.ValidString(cmd) {
-		cmd = strings.ToValidUTF8(cmd, "?")
+	if !utf8.ValidString(s) {
+		s = strings.ToValidUTF8(s, "?")
 	}
-	return "may mutate: " + cmd
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	if max <= 3 {
+		return string(runes[:max])
+	}
+	return string(runes[:max-3]) + "..."
 }

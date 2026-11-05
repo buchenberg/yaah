@@ -26,10 +26,12 @@ import (
 //	base64 -d "$t.b64" >> "$t"            # base64 decode, append redirection
 //	chmod "$2" "$t" || exit 1
 //	mv -f -- "$t" "$1"
+//	cp -f -- "$1" "$2" && chmod --reference="$1" -- "$2"  # workspace Copy
 //	[ -e "$1" ] || [ -L "$1" ] || exit 42  # test, || chains
 //	stat -c "$2" -- "$1"                   # GNU stat with a format string
 //	stat -L -c "$2" -- "$1"
 //	rm -f -- "$1"
+//	rmdir -- "$1"                          # workspace Remove of an empty directory
 //	find "$1" -mindepth 1 -maxdepth 1 -printf '%y\0%f\0'
 //	mkdir -p -- "$1" && chmod "$2" "$1"    # && chains
 //
@@ -280,8 +282,12 @@ func (sh *shSession) runSimple(words []string) (string, int) {
 		return sh.cmdChmod(words)
 	case "mv":
 		return sh.cmdMv(words)
+	case "cp":
+		return sh.cmdCp(words)
 	case "rm":
 		return sh.cmdRm(words)
+	case "rmdir":
+		return sh.cmdRmdir(words)
 	case "mkdir":
 		return sh.cmdMkdir(words)
 	case "find":
@@ -585,7 +591,35 @@ func (sh *shSession) cmdCat(words []string) (string, int) {
 }
 
 func (sh *shSession) cmdChmod(words []string) (string, int) {
-	_, ops := operands(words[1:])
+	flags, ops := operands(words[1:])
+	var ref *entry
+	for _, f := range flags {
+		if !strings.HasPrefix(f, "--reference=") {
+			return "", sh.errf("sandboxfake: chmod: unsupported flag %s\n", f)
+		}
+		refPath := strings.TrimPrefix(f, "--reference=")
+		e, err := sh.sb.lookup(sh.ctx, refPath, true)
+		if err != nil {
+			return "", sh.errf("chmod: cannot access '%s': No such file or directory\n", refPath)
+		}
+		ref = e
+	}
+	if ref != nil {
+		// chmod --reference=<file> -- <dest> carries the source's mode to the
+		// destination, the form sandboxWorkspace.Copy emits after cp.
+		if len(ops) == 0 {
+			return "", sh.errf("chmod: missing operand\n")
+		}
+		for _, p := range ops {
+			e, err := sh.sb.lookup(sh.ctx, p, true)
+			if err != nil {
+				return "", sh.errf("chmod: cannot access '%s': No such file or directory\n", p)
+			}
+			e.mode = ref.mode
+			e.modTime = time.Now()
+		}
+		return "", 0
+	}
 	if len(ops) < 2 {
 		return "", sh.errf("chmod: missing operand\n")
 	}
@@ -646,6 +680,74 @@ func (sh *shSession) cmdMv(words []string) (string, int) {
 	return "", 0
 }
 
+// sandboxUmask is the process umask the fake models for plain (non -p)
+// creations, the conventional 022. Tests can therefore tell a umask-masked
+// create from a mode carried by cp -p or chmod --reference.
+const sandboxUmask fs.FileMode = 0o022
+
+// cmdCp copies a file, matching `cp -f -- src dst`: the form
+// sandboxWorkspace.Copy emits before its chmod --reference. A directory is
+// refused the way a real cp without -r refuses it, so the fake cannot accept a
+// copy the substrate would reject.
+//
+// Without -p the mode follows real cp: a new destination is created with the
+// source mode masked by the process umask, while an existing destination is
+// truncated in place and keeps its own mode. That fidelity matters because
+// sandboxWorkspace.Copy relies on the following chmod --reference to restore the
+// exact source mode; a fake that always copied e.mode would let a missing
+// chmod pass its parity test.
+func (sh *shSession) cmdCp(words []string) (string, int) {
+	flags, ops := operands(words[1:])
+	preserve := false
+	for _, f := range flags {
+		switch f {
+		case "-f":
+		case "-p":
+			preserve = true
+		default:
+			return "", sh.errf("sandboxfake: cp: unsupported flag %s\n", f)
+		}
+	}
+	if len(ops) != 2 {
+		return "", sh.errf("cp: missing operand\n")
+	}
+	src, dst := ops[0], ops[1]
+	srcClean, err := sh.sb.resolve(src, sh.cwd)
+	if err != nil {
+		return "", sh.errf("cp: %v\n", err)
+	}
+	e, ok := sh.sb.files[srcClean]
+	if !ok {
+		return "", sh.errf("cp: cannot stat '%s': No such file or directory\n", src)
+	}
+	if e.isDir {
+		return "", sh.errf("cp: -r not specified; omitting directory '%s'\n", src)
+	}
+	dstClean, err := sh.sb.resolve(dst, sh.cwd)
+	if err != nil {
+		return "", sh.errf("cp: %v\n", err)
+	}
+	mode := e.mode
+	if existing, exists := sh.sb.files[dstClean]; exists {
+		if existing.isDir {
+			return "", sh.errf("sandboxfake: cp: destination is a directory\n")
+		}
+		if !preserve {
+			// cp -f truncates an existing destination in place, so its mode
+			// survives even though the content is replaced.
+			mode = existing.mode
+		}
+	} else if !preserve {
+		// A fresh destination gets the source mode minus the umask.
+		mode = (e.mode & fs.ModePerm) &^ sandboxUmask
+	}
+	if parent := path.Dir(dstClean); !sh.sb.dirExists(parent) {
+		return "", sh.errf("cp: cannot create regular file '%s': No such file or directory\n", dst)
+	}
+	sh.sb.files[dstClean] = &entry{mode: mode, data: append([]byte(nil), e.data...), modTime: time.Now()}
+	return "", 0
+}
+
 func (sh *shSession) cmdRm(words []string) (string, int) {
 	flags, ops := operands(words[1:])
 	force, recursive := false, false
@@ -679,6 +781,35 @@ func (sh *shSession) cmdRm(words []string) (string, int) {
 		}
 		sh.sb.removeLocked(clean)
 	}
+	return "", 0
+}
+
+func (sh *shSession) cmdRmdir(words []string) (string, int) {
+	flags, ops := operands(words[1:])
+	if len(flags) != 0 {
+		return "", sh.errf("sandboxfake: rmdir: unsupported flag %s\n", flags[0])
+	}
+	if len(ops) != 1 {
+		return "", sh.errf("rmdir: missing operand\n")
+	}
+	clean, err := sh.sb.resolve(ops[0], sh.cwd)
+	if err != nil {
+		return "", sh.errf("rmdir: %v\n", err)
+	}
+	if clean == "/" {
+		return "", sh.errf("rmdir: failed to remove '/': Device or resource busy\n")
+	}
+	e, ok := sh.sb.files[clean]
+	if !ok {
+		return "", sh.errf("rmdir: failed to remove '%s': No such file or directory\n", ops[0])
+	}
+	if !e.isDir {
+		return "", sh.errf("rmdir: failed to remove '%s': Not a directory\n", ops[0])
+	}
+	if len(sh.sb.children(clean)) != 0 {
+		return "", sh.errf("rmdir: failed to remove '%s': Directory not empty\n", ops[0])
+	}
+	delete(sh.sb.files, clean)
 	return "", 0
 }
 

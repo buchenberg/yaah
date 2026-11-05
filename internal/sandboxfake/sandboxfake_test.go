@@ -574,3 +574,56 @@ func TestRelPathRequiresRootBoundary(t *testing.T) {
 		t.Fatalf("changes = %+v, want only inside.txt", changes)
 	}
 }
+
+// TestCpModeAndChmodReference pins the fake's cp fidelity: without -p a fresh
+// destination is masked by the umask and an overwritten destination keeps its
+// mode, so sandboxWorkspace.Copy's following chmod --reference is what restores
+// the exact source mode. A fake that always copied the source mode would let a
+// missing or broken chmod pass the workspace parity test.
+func TestCpModeAndChmodReference(t *testing.T) {
+	s := newCreated(t)
+	ctx := context.Background()
+	if err := s.WriteFile(ctx, "/workspace/src", []byte("payload"), 0o666); err != nil {
+		t.Fatalf("seed source: %v", err)
+	}
+
+	if res := runScript(t, s, `cp -f -- "$1" "$2"`, nil, "/workspace/src", "/workspace/new"); res.ExitCode != 0 {
+		t.Fatalf("cp create: exit %d: %s", res.ExitCode, res.Stderr)
+	}
+	e, err := s.lookup(ctx, "/workspace/new", false)
+	if err != nil {
+		t.Fatalf("lookup created file: %v", err)
+	}
+	if e.mode.Perm() != 0o644 {
+		t.Errorf("created mode = %o, want 644 (0666 masked by umask 022)", e.mode.Perm())
+	}
+
+	if err := s.WriteFile(ctx, "/workspace/dst", []byte("old"), 0o600); err != nil {
+		t.Fatalf("seed destination: %v", err)
+	}
+	if res := runScript(t, s, `cp -f -- "$1" "$2"`, nil, "/workspace/src", "/workspace/dst"); res.ExitCode != 0 {
+		t.Fatalf("cp overwrite: exit %d: %s", res.ExitCode, res.Stderr)
+	}
+	e, err = s.lookup(ctx, "/workspace/dst", false)
+	if err != nil {
+		t.Fatalf("lookup overwritten file: %v", err)
+	}
+	if e.mode.Perm() != 0o600 {
+		t.Errorf("overwritten mode = %o, want 600 (the destination's mode survives cp -f)", e.mode.Perm())
+	}
+
+	if res := runScript(t, s, `chmod --reference="$1" -- "$2"`, nil, "/workspace/src", "/workspace/new"); res.ExitCode != 0 {
+		t.Fatalf("chmod --reference: exit %d: %s", res.ExitCode, res.Stderr)
+	}
+	e, err = s.lookup(ctx, "/workspace/new", false)
+	if err != nil {
+		t.Fatalf("lookup chmodded file: %v", err)
+	}
+	if e.mode.Perm() != 0o666 {
+		t.Errorf("chmod --reference mode = %o, want 666 (the source's mode)", e.mode.Perm())
+	}
+
+	if res := runScript(t, s, `chmod --reference="$1"`, nil, "/workspace/src"); res.ExitCode == 0 {
+		t.Error("chmod --reference without a destination must fail, as GNU chmod does")
+	}
+}

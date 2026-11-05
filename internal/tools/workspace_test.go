@@ -667,15 +667,18 @@ func TestSandboxWorkspace_StatParsesInBandOutput(t *testing.T) {
 func TestSandboxWorkspace_NonZeroExitIsAnError(t *testing.T) {
 	sb := sandboxfake.New()
 	ws := newSandboxWS(t, sb)
-	// rm -f on a directory refuses without -r, which is how a remove surfaces
-	// a real in-band failure instead of a canned one.
-	if err := sb.MkdirAll("/workspace/f.txt", 0o755); err != nil {
+	// rmdir on a non-empty directory refuses, which is how a remove surfaces a
+	// real in-band failure instead of a canned one.
+	if err := sb.MkdirAll("/workspace/dir", 0o755); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+	if err := sb.WriteFile(context.Background(), "/workspace/dir/keep.txt", []byte("x"), 0o644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
 
-	if err := ws.Remove(context.Background(), "/workspace/f.txt"); err == nil {
+	if err := ws.Remove(context.Background(), "/workspace/dir"); err == nil {
 		t.Fatal("a non-zero exit must surface as an error")
-	} else if !strings.Contains(err.Error(), "Is a directory") {
+	} else if !strings.Contains(err.Error(), "not empty") {
 		t.Errorf("error should carry stderr, got %v", err)
 	}
 }
@@ -818,6 +821,151 @@ func TestSandboxWorkspace_StatReportsNotExistAndTypes(t *testing.T) {
 	}
 	if suid.Mode().Perm() != 0o755 {
 		t.Errorf("Perm = %v, want 0755", suid.Mode().Perm())
+	}
+}
+
+// TestSandboxMode_TypeBits pins every non-regular `stat -c %F` spelling to its
+// fs.FileMode type bits. Move/copy gate on IsRegular(); if a FIFO, socket, or
+// device came back as plain permission bits that gate would let it through and
+// cp could block forever on a FIFO or stream a device without end.
+func TestSandboxMode_TypeBits(t *testing.T) {
+	cases := []struct {
+		fileType string
+		typed    func(fs.FileMode) bool
+		desc     string
+	}{
+		{"regular file", func(m fs.FileMode) bool { return m == 0o644 }, "regular"},
+		{"regular empty file", func(m fs.FileMode) bool { return m == 0o644 }, "regular"},
+		{"directory", func(m fs.FileMode) bool { return m.IsDir() }, "directory"},
+		{"symbolic link", func(m fs.FileMode) bool { return m&fs.ModeSymlink != 0 }, "symlink"},
+		{"fifo", func(m fs.FileMode) bool { return m&fs.ModeNamedPipe != 0 }, "FIFO"},
+		{"socket", func(m fs.FileMode) bool { return m&fs.ModeSocket != 0 }, "socket"},
+		{"character special file", func(m fs.FileMode) bool {
+			return m&fs.ModeDevice != 0 && m&fs.ModeCharDevice != 0
+		}, "character device"},
+		{"block special file", func(m fs.FileMode) bool {
+			return m&fs.ModeDevice != 0 && m&fs.ModeCharDevice == 0
+		}, "block device"},
+		{"weird file", func(m fs.FileMode) bool { return m&fs.ModeIrregular != 0 }, "irregular"},
+		{"door", func(m fs.FileMode) bool { return m&fs.ModeIrregular != 0 }, "irregular"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			mode := sandboxMode(0o644, tc.fileType)
+			if !tc.typed(mode) {
+				t.Errorf("sandboxMode(%q) = %v, missing the %s type bits", tc.fileType, mode, tc.desc)
+			}
+			wantRegular := tc.desc == "regular"
+			if got := mode.IsRegular(); got != wantRegular {
+				t.Errorf("sandboxMode(%q).IsRegular() = %v, want %v", tc.fileType, got, wantRegular)
+			}
+		})
+	}
+}
+
+// TestSandboxEntryMode_TypeChars pins find's %y letters to the same type bits,
+// so a directory walk sees a FIFO or device as non-regular too.
+func TestSandboxEntryMode_TypeChars(t *testing.T) {
+	cases := []struct {
+		typ  string
+		want fs.FileMode
+	}{
+		{"f", 0},
+		{"d", fs.ModeDir},
+		{"l", fs.ModeSymlink},
+		{"p", fs.ModeNamedPipe},
+		{"s", fs.ModeSocket},
+		{"c", fs.ModeDevice | fs.ModeCharDevice},
+		{"b", fs.ModeDevice},
+		{"?", fs.ModeIrregular},
+	}
+	for _, tc := range cases {
+		if got := sandboxEntryMode(tc.typ); got != tc.want {
+			t.Errorf("sandboxEntryMode(%q) = %v, want %v", tc.typ, got, tc.want)
+		}
+	}
+}
+
+// TestSandboxWorkspace_MoveErrorClassification pins the sandbox half of the
+// partial move contract: mv across a filesystem boundary copies and then
+// unlinks, so an unlink failure leaves dst in place after mv reports an error.
+// That must be a partialMoveError so RecordingTool records the destination; a
+// failure that left dst untouched must stay a plain error, so a permission
+// problem is not misdescribed as a partial move.
+func TestSandboxWorkspace_MoveErrorClassification(t *testing.T) {
+	runMove := func(t *testing.T, dstBefore, dstAfter goatherdsandbox.ExecResult) error {
+		t.Helper()
+		sb := sandboxfake.New()
+		ws := newSandboxWS(t, sb)
+		stats := 0
+		sb.ExecHook = func(req goatherdsandbox.ExecRequest) (goatherdsandbox.ExecResult, error) {
+			var script string
+			if len(req.Args) > 1 {
+				script = req.Args[1]
+			}
+			switch {
+			case strings.Contains(script, "mv -f"):
+				return goatherdsandbox.ExecResult{ExitCode: 1, Stderr: "mv: cannot remove: Permission denied\n"}, nil
+			case strings.Contains(script, "stat"):
+				stats++
+				if stats == 1 {
+					return dstBefore, nil
+				}
+				return dstAfter, nil
+			default:
+				return goatherdsandbox.ExecResult{}, nil
+			}
+		}
+		return ws.Move(context.Background(), "/workspace/src.txt", "/workspace/dst.txt")
+	}
+
+	t.Run("created destination is partial", func(t *testing.T) {
+		err := runMove(t,
+			goatherdsandbox.ExecResult{ExitCode: 42}, // destination absent before mv
+			goatherdsandbox.ExecResult{ExitCode: 0, Stdout: "regular file|7|644|1700000000\n"})
+		var partial *partialMoveError
+		if !errors.As(err, &partial) {
+			t.Fatalf("Move error = %v, want *partialMoveError", err)
+		}
+		if partial.Src != "/workspace/src.txt" || partial.Dst != "/workspace/dst.txt" {
+			t.Errorf("partial paths = %s -> %s, want /workspace/src.txt -> /workspace/dst.txt", partial.Src, partial.Dst)
+		}
+	})
+
+	t.Run("unchanged destination stays a plain error", func(t *testing.T) {
+		unchanged := goatherdsandbox.ExecResult{ExitCode: 0, Stdout: "regular file|7|644|1700000000\n"}
+		err := runMove(t, unchanged, unchanged)
+		var partial *partialMoveError
+		if errors.As(err, &partial) {
+			t.Fatalf("Move error = %v; a failure that did not change dst must not claim a partial move", err)
+		}
+		if err == nil {
+			t.Fatal("Move must report the failed mv")
+		}
+	})
+}
+
+// TestWorkspace_RemoveAllRefusesRoot pins the defense-in-depth guard: the tool
+// refuses the workspace root first, but the workspace primitive refuses it too
+// so a future caller cannot wipe the tree with one recursive call.
+func TestWorkspace_RemoveAllRefusesRoot(t *testing.T) {
+	dir := t.TempDir()
+	pv := NewPathValidator(dir, false, nil)
+	pv.WorkDir = pv.WorkspaceRoot
+	ws := newLocalWorkspace(pv)
+	if err := ws.RemoveAll(context.Background(), dir); err == nil {
+		t.Error("host RemoveAll must refuse the workspace root")
+	}
+	if err := ws.RemoveAll(context.Background(), string(filepath.Separator)); err == nil {
+		t.Error("host RemoveAll must refuse the filesystem root")
+	}
+
+	sbWS := newSandboxWS(t, nil)
+	if err := sbWS.RemoveAll(context.Background(), "/workspace"); err == nil {
+		t.Error("sandbox RemoveAll must refuse the workspace root")
+	}
+	if err := sbWS.RemoveAll(context.Background(), "/"); err == nil {
+		t.Error("sandbox RemoveAll must refuse the container root")
 	}
 }
 
