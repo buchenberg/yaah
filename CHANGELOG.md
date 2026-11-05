@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.141.1](https://github.com/buchenberg/yaah/compare/v0.141.0...v0.141.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* address PR review round 2 (discard classification, log throttle, data.json regen) ([3e60732](https://github.com/buchenberg/yaah/commit/3e607328974c08955c58b3446d3797fed57353a6))
+* address PR review round 3 (self-contained pin rationale, nil-guarantee seam) ([78d92da](https://github.com/buchenberg/yaah/commit/78d92da0086c69233fabe9be221e246ecf38fc78))
+* **recovery:** zombie scope retirement + models.dev catalog snapshot (yaah-95ri.7, yaah-rzyg p1) ([e06d120](https://github.com/buchenberg/yaah/commit/e06d120ae53c1287b694316179c41f4544b2bff9))
+
 ## [0.141.0](https://github.com/buchenberg/yaah/compare/v0.140.0...v0.141.0) (2026-11-05)
 
 
