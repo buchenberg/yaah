@@ -10,7 +10,8 @@ stays open, a wait costs zero model turns: prefer it to repeatedly asking
 - `time:<duration>` — for example `time:90s`, `time:5m`.
 - `command:<cmd>` — run a shell command; it fires on exit zero by default.
 - `http:<url>` — probe a URL; it fires on any 2xx by default.
-- `file:<glob>` — wait for a file to exist or match content.
+- `file:<glob>` — wait for a file to exist or match content. Patterns are
+  workspace-relative; root-anchored or absolute patterns are refused.
 
 `until` refines the polling sources. For `command`: `exit_zero` (the
 default), `exit:<n>`, `regex:<re>`, or `contains:<text>`. For `http`:

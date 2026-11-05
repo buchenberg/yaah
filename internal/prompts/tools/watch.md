@@ -7,7 +7,8 @@ when the wait fits inside one turn; use `watch` when it may take longer.
 
 - `arm` — create a watch. `on` is required and uses the same source
   vocabulary as `wait_for`: `job:<id>`, `process:<id>`, `time:<duration>`,
-  `command:<cmd>`, `http:<url>`, or `file:<glob>`. `until` is the same
+  `command:<cmd>`, `http:<url>`, or `file:<glob>` (workspace-relative; a
+  root-anchored pattern is refused). `until` is the same
   optional condition set as `wait_for`. `id` optionally names the watch
   (a generated `wN` is used otherwise). `expires_in_seconds` bounds how long
   it stays armed (default 86400, maximum 604800). `interval_seconds` sets the

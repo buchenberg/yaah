@@ -114,6 +114,13 @@ func wakeGlob(ctx context.Context, ws Workspace, pattern string) ([]string, erro
 	if pattern == "" {
 		return nil, fmt.Errorf("empty file pattern")
 	}
+	// File predicates are workspace-relative. A root-anchored pattern is
+	// rejected here rather than left to ResolvePath: on Windows "/" is
+	// drive-relative and Join would silently rewind it to the workspace,
+	// making the pattern mean something it does not say.
+	if strings.HasPrefix(pattern, "/") || filepath.VolumeName(pattern) != "" {
+		return nil, fmt.Errorf("file pattern %q is root-anchored; file predicates are workspace-relative", pattern)
+	}
 	if !hasGlobMeta(pattern) {
 		resolved, err := ws.ResolvePath(pattern)
 		if err != nil {
@@ -192,11 +199,9 @@ func hasGlobMeta(pattern string) bool {
 // prefix) keeps dotfile patterns intact: ".*" has no literal root, so its
 // magic part is ".*", not "*".
 //
-// A root-anchored pattern such as "/*.log" keeps "/" rather than being
-// silently rewound to the workspace. ResolvePath then refuses it as outside
-// the workspace (or accepts it when the workspace contains that path), which
-// is the containment rule every file tool follows. File predicates are
-// workspace-relative by design; the error is the honest answer.
+// The caller rejects root-anchored patterns before calling this: file
+// predicates are workspace-relative, and resolving a drive-relative "/" on
+// Windows would silently rewind it to the workspace.
 func splitGlob(pattern string) (root, magic string, err error) {
 	parts := strings.Split(pattern, "/")
 	i := 0
