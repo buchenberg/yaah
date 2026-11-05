@@ -8,8 +8,19 @@ import (
 	"testing"
 )
 
+// wakeTestWorkspace builds a real workspace the way a session does:
+// NewPathValidator canonicalizes the root (macOS /var → /private/var,
+// Windows 8.3 names → long names), and WorkDir points at that same spelling
+// so relative paths and the containment check agree.
+func wakeTestWorkspace(t *testing.T) (string, Workspace) {
+	t.Helper()
+	pv := NewPathValidator(t.TempDir(), false, nil)
+	pv.WorkDir = pv.WorkspaceRoot
+	return pv.WorkspaceRoot, newLocalWorkspace(pv)
+}
+
 func TestWakeGlobRelativeAndExact(t *testing.T) {
-	dir := t.TempDir()
+	dir, ws := wakeTestWorkspace(t)
 	if err := os.MkdirAll(filepath.Join(dir, "ci"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -17,7 +28,6 @@ func TestWakeGlobRelativeAndExact(t *testing.T) {
 	if err := os.WriteFile(green, []byte("state: green\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ws := newLocalWorkspace(&PathValidator{WorkspaceRoot: dir, WorkDir: dir})
 
 	matches, err := wakeGlob(context.Background(), ws, "ci/*")
 	if err != nil {
@@ -53,12 +63,11 @@ func TestWakeGlobRelativeAndExact(t *testing.T) {
 }
 
 func TestWakeDepsReadFileAndExec(t *testing.T) {
-	dir := t.TempDir()
+	dir, ws := wakeTestWorkspace(t)
 	path := filepath.Join(dir, "note.txt")
 	if err := os.WriteFile(path, []byte("hello wake\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ws := newLocalWorkspace(&PathValidator{WorkspaceRoot: dir, WorkDir: dir})
 	deps := NewWakeDeps(ws, nil, nil)
 
 	data, err := deps.ReadFile(context.Background(), "note.txt")
@@ -79,9 +88,11 @@ func TestWakeDepsReadFileAndExec(t *testing.T) {
 }
 
 func TestWakeDepsRespectWorkspaceContainment(t *testing.T) {
-	dir := t.TempDir()
-	ws := newLocalWorkspace(&PathValidator{WorkspaceRoot: dir})
+	_, ws := wakeTestWorkspace(t)
 	if _, err := wakeGlob(context.Background(), ws, "../*"); err == nil {
 		t.Fatal("wakeGlob escaped the workspace root")
+	}
+	if _, err := NewWakeDeps(ws, nil, nil).ReadFile(context.Background(), "../outside"); err == nil {
+		t.Fatal("ReadFile escaped the workspace root")
 	}
 }
