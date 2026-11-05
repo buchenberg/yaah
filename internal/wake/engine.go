@@ -2,8 +2,8 @@ package wake
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -86,10 +86,10 @@ const (
 // evaluate runs one predicate check. A non-nil terminal error means the
 // predicate can never succeed (unknown job, missing dependency, malformed
 // query); a nil error with fired=false means "not yet".
-func (d Deps) evaluate(ctx context.Context, spec Spec, start time.Time) (fired bool, evidence string, terminal error) {
+func (d Deps) evaluate(ctx context.Context, spec Spec, start time.Time) (fired bool, evidence Evidence, terminal error) {
 	src, target, cond, err := parseSpec(spec)
 	if err != nil {
-		return false, "", err
+		return false, Evidence{}, err
 	}
 	switch src {
 	case SourceJob:
@@ -105,77 +105,72 @@ func (d Deps) evaluate(ctx context.Context, spec Spec, start time.Time) (fired b
 	case SourceFile:
 		return d.evalFile(ctx, target, cond)
 	default:
-		return false, "", fmt.Errorf("unknown predicate source %q", src)
+		return false, Evidence{}, fmt.Errorf("unknown predicate source %q", src)
 	}
 }
 
-func (d Deps) evalJob(id string) (bool, string, error) {
+func (d Deps) evalJob(id string) (bool, Evidence, error) {
 	if d.Jobs == nil {
-		return false, "", fmt.Errorf("job predicates are not available in this session")
+		return false, Evidence{}, fmt.Errorf("job predicates are not available in this session")
 	}
 	st, ok := d.Jobs.Status(id)
 	if !ok {
-		return false, "", fmt.Errorf("unknown job_id %q: it was never dispatched in this session, or its finished record was reaped", id)
+		return false, Evidence{}, fmt.Errorf("unknown job_id %q: it was never dispatched in this session, or its finished record was reaped", id)
 	}
 	if st.StillRunning {
-		return false, fmt.Sprintf("job %s is still running (%s)", id, time.Duration(st.DurationMs)*time.Millisecond), nil
+		ev := Evidence{Kind: "job", Status: "running", Detail: fmt.Sprintf("job %s is still running", id)}
+		if st.DurationMs > 0 {
+			ev.Detail += fmt.Sprintf(" (%s)", time.Duration(st.DurationMs)*time.Millisecond)
+		}
+		return false, ev, nil
 	}
-	ev := jobEvidence{BackgroundJobStatus: st}
+	ev := Evidence{Kind: "job", Status: st.Status, Detail: fmt.Sprintf("job %s %s", id, st.Status)}
+	if st.Error != "" {
+		ev.Detail += ": " + st.Error
+	}
 	if result, ok := d.Jobs.Result(id); ok {
 		ev.Result = clip(result, evidenceCap)
 	}
-	data, err := json.Marshal(ev)
-	if err != nil {
-		return true, fmt.Sprintf("job %s is %s", id, st.Status), nil
-	}
-	return true, string(data), nil
+	return true, ev, nil
 }
 
-// jobEvidence is the JSON payload returned when a job predicate fires: the
-// terminal snapshot plus the sub-agent's final output, so the waiter has the
-// result rather than only a status label.
-type jobEvidence struct {
-	jobs.BackgroundJobStatus
-	Result string `json:"result,omitempty"`
-}
-
-func (d Deps) evalProcess(ctx context.Context, id string) (bool, string, error) {
+func (d Deps) evalProcess(ctx context.Context, id string) (bool, Evidence, error) {
 	if d.Processes == nil {
-		return false, "", fmt.Errorf("process predicates are not available in this session")
+		return false, Evidence{}, fmt.Errorf("process predicates are not available in this session")
 	}
 	if err := ctx.Err(); err != nil {
-		return false, "", err
+		return false, Evidence{}, err
 	}
 	p := d.Processes.Get(id)
 	if p == nil {
-		return false, "", fmt.Errorf("unknown process id %q: start one with background_process and use its id", id)
+		return false, Evidence{}, fmt.Errorf("unknown process id %q: start one with background_process and use its id", id)
 	}
 	status := p.Status()
 	if status == "running" {
-		return false, fmt.Sprintf("process %s is still running", id), nil
+		return false, Evidence{Kind: "process", Status: status, Detail: fmt.Sprintf("process %s is still running", id)}, nil
 	}
 	logs := p.Logs()
 	if logs == "" {
 		logs = "(no output)"
 	}
-	return true, fmt.Sprintf("process %s is %s; output tail:\n%s", id, status, tail(logs, evidenceCap)), nil
+	return true, Evidence{Kind: "process", Status: status, Detail: "output tail:", Excerpt: tail(logs, evidenceCap)}, nil
 }
 
-func (d Deps) evalTime(target string, start time.Time) (bool, string, error) {
+func (d Deps) evalTime(target string, start time.Time) (bool, Evidence, error) {
 	dur, err := time.ParseDuration(target)
 	if err != nil {
-		return false, "", fmt.Errorf("time predicate %q: %w", target, err)
+		return false, Evidence{}, fmt.Errorf("time predicate %q: %w", target, err)
 	}
 	elapsed := d.now().Sub(start)
 	if elapsed >= dur {
-		return true, fmt.Sprintf("waited %s (target %s)", elapsed.Round(time.Millisecond), dur), nil
+		return true, Evidence{Kind: "time", Status: "elapsed", Detail: fmt.Sprintf("waited %s (target %s)", elapsed.Round(time.Millisecond), dur)}, nil
 	}
-	return false, fmt.Sprintf("waited %s of %s", elapsed.Round(time.Millisecond), dur), nil
+	return false, Evidence{Kind: "time", Status: "waiting", Detail: fmt.Sprintf("waited %s of %s", elapsed.Round(time.Millisecond), dur)}, nil
 }
 
-func (d Deps) evalCommand(ctx context.Context, command string, cond condition) (bool, string, error) {
+func (d Deps) evalCommand(ctx context.Context, command string, cond condition) (bool, Evidence, error) {
 	if d.Exec == nil {
-		return false, "", fmt.Errorf("command predicates are not available in this session")
+		return false, Evidence{}, fmt.Errorf("command predicates are not available in this session")
 	}
 	// Each attempt is bounded independently: a hung command must not consume
 	// the caller's whole wait budget, and a non-zero exit is the common case
@@ -183,15 +178,17 @@ func (d Deps) evalCommand(ctx context.Context, command string, cond condition) (
 	attempt, cancel := context.WithTimeout(ctx, commandAttemptTimeout)
 	defer cancel()
 	res, err := d.Exec(attempt, command)
-	ev := fmt.Sprintf("exit=%d\n%s", res.ExitCode, tail(res.Output, evidenceCap))
+	code := res.ExitCode
+	ev := Evidence{Kind: "command", ExitCode: &code, Excerpt: tail(res.Output, evidenceCap)}
 	if attempt.Err() != nil {
 		// This attempt hit its own bound (or the caller's). That is not a
 		// reason to abort the whole wait: keep polling until the caller's
 		// timeout, and say why this attempt was killed.
-		return false, "command attempt interrupted (" + attempt.Err().Error() + ")\n" + ev, nil
+		ev.Detail = "command attempt interrupted (" + attempt.Err().Error() + ")"
+		return false, ev, nil
 	}
 	if err != nil && res.ExitCode < 0 {
-		return false, "", fmt.Errorf("command could not run: %w", err)
+		return false, Evidence{}, fmt.Errorf("command could not run: %w", err)
 	}
 	switch cond.kind {
 	case condExitZero:
@@ -203,13 +200,13 @@ func (d Deps) evalCommand(ctx context.Context, command string, cond condition) (
 	case condOutputContains:
 		return strings.Contains(res.Output, cond.text), ev, nil
 	default:
-		return false, "", fmt.Errorf("unsupported command condition")
+		return false, Evidence{}, fmt.Errorf("unsupported command condition")
 	}
 }
 
-func (d Deps) evalHTTP(ctx context.Context, url string, cond condition) (bool, string, error) {
+func (d Deps) evalHTTP(ctx context.Context, url string, cond condition) (bool, Evidence, error) {
 	if d.HTTP == nil {
-		return false, "", fmt.Errorf("http predicates are not available in this session")
+		return false, Evidence{}, fmt.Errorf("http predicates are not available in this session")
 	}
 	attempt, cancel := context.WithTimeout(ctx, httpAttemptTimeout)
 	defer cancel()
@@ -217,9 +214,9 @@ func (d Deps) evalHTTP(ctx context.Context, url string, cond condition) (bool, s
 	if err != nil {
 		// Network errors are expected while a service is starting; report
 		// them as evidence and keep polling until the caller's bound.
-		return false, "request error: " + clip(err.Error(), evidenceCap), nil
+		return false, Evidence{Kind: "http", Detail: "request error: " + clip(err.Error(), evidenceCap)}, nil
 	}
-	ev := fmt.Sprintf("HTTP %d\n%s", res.Status, tail(res.Body, evidenceCap))
+	ev := Evidence{Kind: "http", Status: strconv.Itoa(res.Status), Excerpt: tail(res.Body, evidenceCap)}
 	switch cond.kind {
 	case condStatus:
 		return res.Status == cond.status, ev, nil
@@ -230,28 +227,33 @@ func (d Deps) evalHTTP(ctx context.Context, url string, cond condition) (bool, s
 	case condBodyContains:
 		return res.Status < 400 && strings.Contains(res.Body, cond.text), ev, nil
 	default:
-		return false, "", fmt.Errorf("unsupported http condition")
+		return false, Evidence{}, fmt.Errorf("unsupported http condition")
 	}
 }
 
-func (d Deps) evalFile(ctx context.Context, pattern string, cond condition) (bool, string, error) {
+func (d Deps) evalFile(ctx context.Context, pattern string, cond condition) (bool, Evidence, error) {
 	if d.Glob == nil {
-		return false, "", fmt.Errorf("file predicates are not available in this session")
+		return false, Evidence{}, fmt.Errorf("file predicates are not available in this session")
 	}
 	paths, err := d.Glob(ctx, pattern)
 	if err != nil {
-		return false, "", fmt.Errorf("file predicate %q: %w", pattern, err)
+		return false, Evidence{}, fmt.Errorf("file predicate %q: %w", pattern, err)
 	}
 	if len(paths) == 0 {
-		return false, fmt.Sprintf("no files match %q", pattern), nil
+		return false, Evidence{Kind: "file", Status: "no_match", Detail: fmt.Sprintf("no files match %q", pattern)}, nil
 	}
-	summary := fmt.Sprintf("%d file(s) match %q: %s", len(paths), pattern, strings.Join(head(paths, 5), ", "))
+	ev := Evidence{
+		Kind:         "file",
+		Status:       "matched",
+		MatchedPaths: head(paths, 5),
+		Detail:       fmt.Sprintf("%d file(s) match %q", len(paths), pattern),
+	}
 	switch cond.kind {
 	case condExists:
-		return true, summary, nil
+		return true, ev, nil
 	case condFileContains, condFileRegex:
 		if d.ReadFile == nil && d.ReadFileLimit == nil {
-			return false, "", fmt.Errorf("file content conditions need a workspace reader")
+			return false, Evidence{}, fmt.Errorf("file content conditions need a workspace reader")
 		}
 		sampled := paths
 		truncated := false
@@ -270,15 +272,19 @@ func (d Deps) evalFile(ctx context.Context, pattern string, cond condition) (boo
 				matched = cond.re.MatchString(text)
 			}
 			if matched {
-				return true, fmt.Sprintf("%s matched %q:\n%s", p, condLabel(cond), clip(text, evidenceCap)), nil
+				ev.Detail += " (" + condLabel(cond) + ")"
+				ev.Excerpt = clip(text, evidenceCap)
+				return true, ev, nil
 			}
 		}
+		ev.Status = "no_match"
+		ev.Detail += "; none matched " + condLabel(cond)
 		if truncated {
-			summary += fmt.Sprintf(" (inspected the first %d of %d files)", fileSampleCap, len(paths))
+			ev.Detail += fmt.Sprintf(" (inspected the first %d of %d files)", fileSampleCap, len(paths))
 		}
-		return false, summary + "; none matched " + condLabel(cond), nil
+		return false, ev, nil
 	default:
-		return false, "", fmt.Errorf("unsupported file condition")
+		return false, Evidence{}, fmt.Errorf("unsupported file condition")
 	}
 }
 

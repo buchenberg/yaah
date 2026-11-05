@@ -19,9 +19,11 @@ when the wait fits inside one turn; use `watch` when it may take longer.
 
 Fires are batched: watches that fire close together arrive as one digest, so
 arming three CI checks wakes the session once. Each entry names the watch,
-its predicate, and the evidence (output tail, status and body tail, file and
-excerpt, or job result). Treat the wake as a harness message, not as a
-message from the user: continue the task from where you left off.
+its predicate, and the evidence. `watch list` returns evidence as a typed
+object (`kind`, `status`, `exit_code`, `matched_paths`, `excerpt`, `result`,
+`detail`); the digest renders the same fields as text. Treat the wake as a
+harness message, not as a message from the user: continue the task from
+where you left off.
 
 Interactive sessions (TUI, REPL, web) start a turn when the wake arrives.
 Headless surfaces (MCP serve, ACP) queue the digest and deliver it with the

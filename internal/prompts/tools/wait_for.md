@@ -29,10 +29,12 @@ To keep waiting after a timeout, call `wait_for` again with `handle` (and
 omit `on`/`until`, or repeat them — they must agree with the handle). The
 handle preserves the wait's original start, so elapsed time does not reset.
 
-The result carries the predicate's evidence, not just a boolean: command
-output tail, HTTP status and body tail, process output tail, job status and
-the sub-agent's result, or the matched file and excerpt. On success read that
-evidence and continue; do not poll the same thing again.
+The result carries a typed `evidence` object, not just a boolean. Its
+fields are `kind`, `status`, `exit_code`, `matched_paths`, `excerpt`,
+`result` and `detail`: command output tail, HTTP status and body tail,
+process output tail, job status and the sub-agent's result, or the matched
+file and excerpt. `detail` carries the human-readable summary. On success
+read that evidence and continue; do not poll the same thing again.
 
 A `command` predicate reruns the command on every attempt, so it is for cheap
 status probes, not long builds — use `background_process` plus a

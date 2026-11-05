@@ -297,7 +297,7 @@ func TestEngineTime(t *testing.T) {
 	d := Deps{Now: func() time.Time { return now }}
 	fired, ev, err := d.evaluate(context.Background(), Spec{On: "time:30s"}, now.Add(-31*time.Second))
 	if err != nil || !fired {
-		t.Fatalf("elapsed time predicate: fired=%v err=%v evidence=%q", fired, err, ev)
+		t.Fatalf("elapsed time predicate: fired=%v err=%v evidence=%+v", fired, err, ev)
 	}
 	fired, _, err = d.evaluate(context.Background(), Spec{On: "time:30s"}, now)
 	if err != nil || fired {
@@ -316,7 +316,7 @@ func TestEngineCommand(t *testing.T) {
 	for _, until := range []string{"", "exit_zero", "regex:PASS", "contains:PASS"} {
 		fired, ev, err := d.evaluate(context.Background(), Spec{On: "command:make", Until: until}, now)
 		if err != nil || !fired {
-			t.Errorf("until %q: fired=%v err=%v evidence=%q", until, fired, err, ev)
+			t.Errorf("until %q: fired=%v err=%v evidence=%+v", until, fired, err, ev)
 		}
 	}
 	fired, _, err := d.evaluate(context.Background(), Spec{On: "command:make", Until: "exit:2"}, now)
@@ -351,12 +351,12 @@ func TestEngineFile(t *testing.T) {
 		"/w/ci-green": "state: green\n",
 	})
 	fired, ev, err := d.evaluate(context.Background(), Spec{On: "file:ci*", Until: "exists"}, now)
-	if err != nil || !fired || !strings.Contains(ev, "/w/ci-green") {
-		t.Fatalf("exists: fired=%v err=%v evidence=%q", fired, err, ev)
+	if err != nil || !fired || !strings.Contains(ev.Render(), "/w/ci-green") {
+		t.Fatalf("exists: fired=%v err=%v evidence=%+v", fired, err, ev)
 	}
 	fired, ev, err = d.evaluate(context.Background(), Spec{On: "file:ci*", Until: "contains:green"}, now)
-	if err != nil || !fired || !strings.Contains(ev, "state: green") {
-		t.Fatalf("contains: fired=%v err=%v evidence=%q", fired, err, ev)
+	if err != nil || !fired || !strings.Contains(ev.Excerpt, "state: green") {
+		t.Fatalf("contains: fired=%v err=%v evidence=%+v", fired, err, ev)
 	}
 	fired, _, err = d.evaluate(context.Background(), Spec{On: "file:ci*", Until: "contains:red"}, now)
 	if err != nil || fired {
@@ -400,8 +400,8 @@ func TestEngineJobIncludesResult(t *testing.T) {
 	if err != nil || !fired {
 		t.Fatalf("job: fired=%v err=%v", fired, err)
 	}
-	if !strings.Contains(ev, "the report body") {
-		t.Errorf("job evidence omits the result: %q", ev)
+	if !strings.Contains(ev.Result, "the report body") {
+		t.Errorf("job evidence omits the result: %+v", ev)
 	}
 	if _, _, err := d.evaluate(context.Background(), Spec{On: "job:missing"}, now); err == nil {
 		t.Error("unknown job id was not a terminal error")
@@ -415,7 +415,7 @@ func TestEngineProcess(t *testing.T) {
 	}}}
 	fired, ev, err := d.evaluate(context.Background(), Spec{On: "process:proc-1"}, now)
 	if err != nil || !fired {
-		t.Fatalf("process: fired=%v err=%v evidence=%q", fired, err, ev)
+		t.Fatalf("process: fired=%v err=%v evidence=%+v", fired, err, ev)
 	}
 	if _, _, err := d.evaluate(context.Background(), Spec{On: "process:nope"}, now); err == nil {
 		t.Error("unknown process id was not a terminal error")
@@ -431,7 +431,7 @@ func TestManagerWaitFires(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Wait: %v", err)
 	}
-	if !res.Fired || res.Evidence == "" {
+	if !res.Fired || res.Evidence == nil {
 		t.Fatalf("Wait = %+v, want fired with evidence", res)
 	}
 }
@@ -450,7 +450,7 @@ func TestManagerWaitTimeoutThenResume(t *testing.T) {
 	if !res.TimedOut || res.Fired || res.Handle == "" {
 		t.Fatalf("Wait = %+v, want a timeout with a handle", res)
 	}
-	if res.Evidence == "" {
+	if res.Evidence == nil {
 		t.Fatal("timed-out wait lost the last attempt's evidence")
 	}
 
@@ -668,7 +668,7 @@ func TestManagerRehydrateReportsMissedWakes(t *testing.T) {
 	store := newFakeStore()
 	now := time.Now()
 	_ = store.SaveWatch("sess-1", WatchRecord{
-		ID: "w1", On: "time:1m", State: StateFired, Evidence: "fired while away",
+		ID: "w1", On: "time:1m", State: StateFired, Evidence: Evidence{Kind: "watch", Detail: "fired while away"},
 		ArmedAt: now.Add(-2 * time.Minute).UnixNano(), FiredAt: now.UnixNano(),
 	})
 	_ = store.SaveWatch("sess-1", WatchRecord{

@@ -42,7 +42,7 @@ func (m *Manager) Wait(ctx context.Context, req WaitRequest) (Result, error) {
 	elapsed := func() int64 { return m.deps.now().Sub(start).Milliseconds() }
 	// lastEvidence is reported with a timeout or interruption, so a caller
 	// that resumes the wait still sees what the last attempt observed.
-	var lastEvidence string
+	var lastEvidence Evidence
 
 loop:
 	for {
@@ -57,16 +57,16 @@ loop:
 					Fired:     true,
 					Source:    string(src),
 					On:        spec.On,
-					Evidence:  evidence,
+					Evidence:  &evidence,
 					ElapsedMs: elapsed(),
 				}, nil
 			}
-			lastEvidence = fmt.Sprintf("job %s is still running", target)
+			lastEvidence = Evidence{Kind: "job", Status: "running", Detail: fmt.Sprintf("job %s is still running", target)}
 			break // the wait context ended with the job still running
 		}
 
 		fired, evidence, terminal := m.deps.evaluate(waitCtx, spec, start)
-		if evidence != "" {
+		if !evidence.IsZero() {
 			lastEvidence = evidence
 		}
 		if terminal != nil {
@@ -80,7 +80,7 @@ loop:
 				Fired:     true,
 				Source:    string(src),
 				On:        spec.On,
-				Evidence:  evidence,
+				Evidence:  &evidence,
 				ElapsedMs: elapsed(),
 			}, nil
 		}
@@ -107,9 +107,11 @@ loop:
 	res := Result{
 		Source:    string(src),
 		On:        spec.On,
-		Evidence:  lastEvidence,
 		ElapsedMs: elapsed(),
 		Handle:    encodeHandle(spec, start),
+	}
+	if !lastEvidence.IsZero() {
+		res.Evidence = &lastEvidence
 	}
 	if ctx.Err() != nil {
 		res.Interrupted = true

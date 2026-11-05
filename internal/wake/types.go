@@ -33,7 +33,7 @@ type WatchRecord struct {
 	On         string
 	Until      string
 	State      string
-	Evidence   string
+	Evidence   Evidence
 	ArmedAt    int64 // unix nanoseconds
 	ExpiresAt  int64 // unix nanoseconds; 0 means no expiry
 	FiredAt    int64 // unix nanoseconds; 0 until fired
@@ -74,15 +74,15 @@ type WaitRequest struct {
 // Interrupted are distinct so a caller abort is never reported as a normal
 // timeout (the same distinction subagent_jobs wait keeps).
 type Result struct {
-	Fired       bool   `json:"fired"`
-	Source      string `json:"source,omitempty"`
-	On          string `json:"on"`
-	Evidence    string `json:"evidence,omitempty"`
-	ElapsedMs   int64  `json:"elapsed_ms"`
-	TimedOut    bool   `json:"timed_out,omitempty"`
-	Interrupted bool   `json:"interrupted,omitempty"`
-	Handle      string `json:"handle,omitempty"`
-	Notes       string `json:"notes,omitempty"`
+	Fired       bool      `json:"fired"`
+	Source      string    `json:"source,omitempty"`
+	On          string    `json:"on"`
+	Evidence    *Evidence `json:"evidence,omitempty"`
+	ElapsedMs   int64     `json:"elapsed_ms"`
+	TimedOut    bool      `json:"timed_out,omitempty"`
+	Interrupted bool      `json:"interrupted,omitempty"`
+	Handle      string    `json:"handle,omitempty"`
+	Notes       string    `json:"notes,omitempty"`
 }
 
 // ArmRequest is one watch arm request.
@@ -96,14 +96,14 @@ type ArmRequest struct {
 
 // WatchInfo is the serializable snapshot the watch tool reports.
 type WatchInfo struct {
-	ID         string `json:"id"`
-	On         string `json:"on"`
-	Until      string `json:"until,omitempty"`
-	State      string `json:"state"`
-	Evidence   string `json:"evidence,omitempty"`
-	ArmedAt    int64  `json:"armed_at"`
-	ExpiresAt  int64  `json:"expires_at,omitempty"`
-	IntervalMs int64  `json:"interval_ms,omitempty"`
+	ID         string    `json:"id"`
+	On         string    `json:"on"`
+	Until      string    `json:"until,omitempty"`
+	State      string    `json:"state"`
+	Evidence   *Evidence `json:"evidence,omitempty"`
+	ArmedAt    int64     `json:"armed_at"`
+	ExpiresAt  int64     `json:"expires_at,omitempty"`
+	IntervalMs int64     `json:"interval_ms,omitempty"`
 }
 
 // Manager owns the blocking waits and the armed watches for one session.
@@ -143,14 +143,14 @@ type armedWatch struct {
 	cancel   context.CancelFunc
 
 	state    string
-	evidence string
+	evidence Evidence
 	firedAt  time.Time
 }
 
 type firedWatch struct {
 	id       string
 	spec     Spec
-	evidence string
+	evidence Evidence
 	missed   bool
 	// w is the live record the fire came from. Matching it on flush keeps a
 	// fired watch from deleting a same-id replacement armed after it.

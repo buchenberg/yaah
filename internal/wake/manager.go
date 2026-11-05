@@ -275,11 +275,11 @@ func (m *Manager) Rehydrate(ctx context.Context) error {
 		src, _, _, perr := parseSpec(spec)
 		switch {
 		case perr != nil:
-			missed = append(missed, firedWatch{id: row.ID, spec: spec, evidence: "the persisted predicate is no longer valid: " + perr.Error(), missed: true})
+			missed = append(missed, firedWatch{id: row.ID, spec: spec, evidence: Evidence{Kind: "watch", Status: "dropped", Detail: "the persisted predicate is no longer valid: " + perr.Error()}, missed: true})
 		case src == SourceJob || src == SourceProcess:
-			missed = append(missed, firedWatch{id: row.ID, spec: spec, evidence: fmt.Sprintf("%s ids are process-local; this watch could not be re-armed after the restart", src), missed: true})
+			missed = append(missed, firedWatch{id: row.ID, spec: spec, evidence: Evidence{Kind: "watch", Status: "dropped", Detail: fmt.Sprintf("%s ids are process-local; this watch could not be re-armed after the restart", src)}, missed: true})
 		case row.ExpiresAt > 0 && now.After(time.Unix(0, row.ExpiresAt)):
-			missed = append(missed, firedWatch{id: row.ID, spec: spec, evidence: "the watch expired while the session was down", missed: true})
+			missed = append(missed, firedWatch{id: row.ID, spec: spec, evidence: Evidence{Kind: "watch", Status: "expired", Detail: "the watch expired while the session was down"}, missed: true})
 		default:
 			start := time.Unix(0, row.ArmedAt)
 			expires := time.Unix(0, row.ExpiresAt)
@@ -311,7 +311,7 @@ func (m *Manager) Rehydrate(ctx context.Context) error {
 				// cancelling one.
 				missed = append(missed, firedWatch{
 					id: w.id, spec: spec,
-					evidence: fmt.Sprintf("the session's watch limit (%d) was already met; this watch was not re-armed", m.maxWatches),
+					evidence: Evidence{Kind: "watch", Status: "dropped", Detail: fmt.Sprintf("the session's watch limit (%d) was already met; this watch was not re-armed", m.maxWatches)},
 					missed:   true,
 				})
 				continue
@@ -368,7 +368,7 @@ func (m *Manager) startWatch(w *armedWatch) {
 func (m *Manager) runWatch(ctx context.Context, w *armedWatch) {
 	src, target, _, err := parseSpec(w.spec)
 	if err != nil {
-		m.fire(w, "watch dropped: "+err.Error(), false)
+		m.fire(w, Evidence{Kind: "watch", Status: "dropped", Detail: err.Error()}, false)
 		return
 	}
 
@@ -381,7 +381,7 @@ func (m *Manager) runWatch(ctx context.Context, w *armedWatch) {
 			select {
 			case <-ctx.Done():
 				if !m.deps.now().Before(w.expires) {
-					m.fire(w, fmt.Sprintf("watch %s expired before its %s predicate elapsed", w.id, target), false)
+					m.fire(w, Evidence{Kind: "watch", Status: "expired", Detail: fmt.Sprintf("watch %s expired before its %s predicate elapsed", w.id, target)}, false)
 				}
 				return
 			case <-m.deps.after(wait):
@@ -392,7 +392,7 @@ func (m *Manager) runWatch(ctx context.Context, w *armedWatch) {
 			m.fire(w, evidence, false)
 			return
 		}
-		m.fire(w, "watch expired before its predicate fired", false)
+		m.fire(w, Evidence{Kind: "watch", Status: "expired", Detail: "watch expired before its predicate fired"}, false)
 		return
 	}
 
@@ -400,7 +400,7 @@ func (m *Manager) runWatch(ctx context.Context, w *armedWatch) {
 	if src == SourceJob && m.deps.Jobs != nil {
 		st, ok := m.deps.Jobs.Wait(ctx, target)
 		if !ok {
-			m.fire(w, fmt.Sprintf("watch dropped: unknown job_id %q", target), false)
+			m.fire(w, Evidence{Kind: "watch", Status: "dropped", Detail: fmt.Sprintf("unknown job_id %q", target)}, false)
 			return
 		}
 		if !st.StillRunning {
@@ -408,7 +408,7 @@ func (m *Manager) runWatch(ctx context.Context, w *armedWatch) {
 			m.fire(w, evidence, false)
 			return
 		}
-		m.fire(w, "watch expired before the job finished", false)
+		m.fire(w, Evidence{Kind: "watch", Status: "expired", Detail: "watch expired before the job finished"}, false)
 		return
 	}
 
@@ -422,11 +422,11 @@ func (m *Manager) runWatch(ctx context.Context, w *armedWatch) {
 		if ctx.Err() != nil {
 			// An evaluation that observed the deadline can surface it as a
 			// terminal error; expiry is the honest label, not "dropped".
-			m.fire(w, "watch expired before its predicate fired", false)
+			m.fire(w, Evidence{Kind: "watch", Status: "expired", Detail: "watch expired before its predicate fired"}, false)
 			return
 		}
 		if terminal != nil {
-			m.fire(w, "watch dropped: "+terminal.Error(), false)
+			m.fire(w, Evidence{Kind: "watch", Status: "dropped", Detail: terminal.Error()}, false)
 			return
 		}
 		delay := interval
@@ -438,7 +438,7 @@ func (m *Manager) runWatch(ctx context.Context, w *armedWatch) {
 		}
 		select {
 		case <-ctx.Done():
-			m.fire(w, "watch expired before its predicate fired", false)
+			m.fire(w, Evidence{Kind: "watch", Status: "expired", Detail: "watch expired before its predicate fired"}, false)
 			return
 		case <-m.deps.after(delay):
 		}
@@ -450,7 +450,7 @@ func (m *Manager) runWatch(ctx context.Context, w *armedWatch) {
 // batching digest. A watch that is cancelled between firing and delivery is
 // still delivered: the predicate did fire, and silently dropping it would
 // lose the fact the orchestrator was waiting on.
-func (m *Manager) fire(w *armedWatch, evidence string, missed bool) {
+func (m *Manager) fire(w *armedWatch, evidence Evidence, missed bool) {
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
@@ -606,7 +606,11 @@ func digestText(pending []firedWatch) string {
 			b.WriteString(" [fired while the session was away]")
 		}
 		b.WriteString(": ")
-		b.WriteString(clip(strings.ReplaceAll(p.evidence, "\n", "\n  "), 800))
+		rendered := p.evidence.Render()
+		if rendered == "" {
+			rendered = "no evidence"
+		}
+		b.WriteString(clip(strings.ReplaceAll(rendered, "\n", "\n  "), 800))
 		b.WriteString("\n")
 	}
 	b.WriteString("This is a harness wake, not a message from the user. Continue the task from where you left off; do not repeat polling that this wake replaces.")
@@ -638,9 +642,12 @@ func infoOf(w *armedWatch) WatchInfo {
 		On:         w.spec.On,
 		Until:      w.spec.Until,
 		State:      w.state,
-		Evidence:   w.evidence,
 		ArmedAt:    w.start.UnixNano(),
 		IntervalMs: w.interval.Milliseconds(),
+	}
+	if !w.evidence.IsZero() {
+		ev := w.evidence
+		info.Evidence = &ev
 	}
 	if !w.expires.IsZero() {
 		info.ExpiresAt = w.expires.UnixNano()

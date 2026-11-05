@@ -16,14 +16,6 @@ type Clock interface {
 	AfterFunc(d time.Duration, f func()) Timer
 }
 
-type realClock struct{}
-
-func (realClock) Now() time.Time                         { return time.Now() }
-func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
-func (realClock) AfterFunc(d time.Duration, f func()) Timer {
-	return time.AfterFunc(d, f)
-}
-
 // after and afterFunc fall back to the real clock when Deps carries no Clock,
 // so existing callers (and tests that only pin Now) keep working.
 func (d Deps) after(t time.Duration) <-chan time.Time {
