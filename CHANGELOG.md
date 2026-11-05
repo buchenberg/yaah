@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.137.1](https://github.com/buchenberg/yaah/compare/v0.137.0...v0.137.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* **memory:** clamp NUbatch alongside NBatch; test asserts the clamp took (yaah-x58j) ([72b468d](https://github.com/buchenberg/yaah/commit/72b468dfe616a815c9363993d77d97008bee6d48))
+* **memory:** clamp the gguf decode window to the model's train context (yaah-x58j) ([05512eb](https://github.com/buchenberg/yaah/commit/05512ebc08f859a6406e74559f773671dcf258f5))
+* **memory:** expose TrainContext from the embedder; drop the test's second model load (yaah-x58j) ([8265696](https://github.com/buchenberg/yaah/commit/8265696ba8e745e199ddbdf1d7286c55fbf188a5))
+* **memory:** install the silent llama log callback before the backend scan ([87a64ca](https://github.com/buchenberg/yaah/commit/87a64ca7ca158ccd956f2df49091a4a606662493))
+* **memory:** install the silent llama log callback before the backend scan ([f80bd28](https://github.com/buchenberg/yaah/commit/f80bd28f375ec141cbbe6d73c49ecb3dd3ac3215))
+* **memory:** level-aware llama log hook — capture abort evidence (yaah-x58j) ([eff609a](https://github.com/buchenberg/yaah/commit/eff609a61ebb8ab2c3a263a2884b67d1c2da126f))
+* **memory:** review pass on the gguf silencing (yaah-x58j) ([edd5322](https://github.com/buchenberg/yaah/commit/edd5322693217c0d02bedd60ab5c044dfb5ae659))
+* **memory:** review round 2 on the gguf guard (yaah-x58j) ([7cffa48](https://github.com/buchenberg/yaah/commit/7cffa48fc1efc96e8f3f96f3df0f100d3abcc814))
+* **memory:** review round 5 on the gguf logging (yaah-x58j) ([332a796](https://github.com/buchenberg/yaah/commit/332a796e64337e379a8eec403e52567d59430b08))
+
+
+### Tests
+
+* **memory:** a malformed YAAH_GGUF_PROBE_TIMEOUT fails loudly (yaah-x58j) ([3d31cb5](https://github.com/buchenberg/yaah/commit/3d31cb5708d2dacae2b35696ab08cb418de08ebb))
+* **memory:** drop the unused probe embedding (staticcheck SA4006) ([b1c7551](https://github.com/buchenberg/yaah/commit/b1c7551790f08b08039c431dfba0408b96954d26))
+* **memory:** review round 3 on the silent-load guard (yaah-x58j) ([a32f472](https://github.com/buchenberg/yaah/commit/a32f472f604220699fc5b6222121d52cb933dad3))
+* **memory:** review round 4 on the silent-load guard (yaah-x58j) ([f604b8e](https://github.com/buchenberg/yaah/commit/f604b8e1aeec013df4e5ba3851ad66676c5b3bc4))
+
 ## [0.137.0](https://github.com/buchenberg/yaah/compare/v0.136.0...v0.137.0) (2026-11-05)
 
 
