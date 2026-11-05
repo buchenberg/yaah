@@ -71,8 +71,11 @@ func TestGGUFSilentLoad(t *testing.T) {
 	deadline := 2 * time.Minute
 	if v := os.Getenv("YAAH_GGUF_PROBE_TIMEOUT"); v != "" {
 		d, perr := time.ParseDuration(v)
-		if perr != nil || d <= 0 {
-			t.Fatalf("YAAH_GGUF_PROBE_TIMEOUT=%q is not a positive duration: %v", v, perr)
+		switch {
+		case perr != nil:
+			t.Fatalf("YAAH_GGUF_PROBE_TIMEOUT=%q is not a duration: %v", v, perr)
+		case d <= 0:
+			t.Fatalf("YAAH_GGUF_PROBE_TIMEOUT=%q must be positive", v)
 		}
 		deadline = d
 	}

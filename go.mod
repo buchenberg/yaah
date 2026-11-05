@@ -10,6 +10,7 @@ require (
 	github.com/buchenberg/goatherd-runtime/sandbox/seatbelt v0.1.0
 	github.com/buchenberg/goatherd-runtime/sandbox/winacl v0.1.1
 	github.com/buchenberg/tviewmd v0.3.1
+	github.com/ebitengine/purego v0.10.0
 	github.com/gdamore/tcell/v2 v2.13.10
 	github.com/hybridgroup/yzma v1.31.0
 	github.com/lsferreira42/figlet-go v0.0.2-beta
@@ -32,7 +33,6 @@ require (
 
 require (
 	github.com/buchenberg/goatherd-croft v0.9.2-0.20261031191238-a6d5f72a9b04 // indirect
-	github.com/ebitengine/purego v0.10.0 // indirect
 	github.com/jupiterrider/ffi v0.8.0 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
 )

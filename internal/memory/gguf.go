@@ -163,11 +163,23 @@ var llamaLogFile *os.File
 // original source) is dropped; WARN/ERROR append to ~/.yaah/llama.log so
 // field failures (a GGML_ASSERT abort among them) stay diagnosable.
 func llamaLogHook() {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
+	// The same home resolution the rest of the package uses (YAAH_HOME
+	// for sandboxed/relocated homes), with the directory created — an
+	// ENOENT on ~/.yaah would otherwise silently drop every diagnostic.
+	home := os.Getenv("YAAH_HOME")
+	if home == "" {
+		userHome, uerr := os.UserHomeDir()
+		if uerr != nil {
+			llama.LogSet(llama.LogSilent())
+			return
+		}
+		home = filepath.Join(userHome, ".yaah")
 	}
-	f, err := os.OpenFile(filepath.Join(home, ".yaah", "llama.log"),
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		llama.LogSet(llama.LogSilent())
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(home, "llama.log"),
 		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		// Nowhere to write the diagnostics — drop everything rather than
@@ -225,9 +237,6 @@ func llamaLevelName(level int32) string {
 func loadGGUF(ctx context.Context, libPath, modelPath string) (func(context.Context, string) (Embedding, error), int, error) {
 	if modelPath == "" {
 		return nil, 0, fmt.Errorf("gguf embed: model_path is required")
-	}
-	if llamaLoadErr != nil {
-		return nil, 0, llamaLoadErr
 	}
 	llamaOnce.Do(func() {
 		// llama.Load binds logSetFunc, so LogSet can only run after it —
