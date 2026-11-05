@@ -13,6 +13,6 @@ Symlinks are skipped, so a search cannot wander outside the workspace. A
 bounded heap keeps the lexicographically smallest 1000 matches, so a huge tree
 does not accumulate every match; the kept page is sorted before output. When
 either the match cap or the result-byte cap trims the list, a single suffix
-marker reports the total matches and, when relevant, how many rows were kept.
-This is a read-only tool: use `glob` when you only need names, and `find` when
-size or modification age is part of the query.
+marker reports the total matches; it does not claim a row count for rows the
+byte cap removed. This is a read-only tool: use `glob` when you only need
+names, and `find` when size or modification age is part of the query.

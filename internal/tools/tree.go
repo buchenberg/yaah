@@ -296,6 +296,22 @@ type treeStats struct {
 	Dirs  int
 }
 
+// treeSourceRemovalError distinguishes a complete cross-device copy whose
+// source cleanup failed from a partial copy. The destination holds every
+// source byte, so callers must keep it rather than roll it back.
+type treeSourceRemovalError struct {
+	Src   string
+	Dst   string
+	Stats treeStats
+	Err   error
+}
+
+func (e *treeSourceRemovalError) Error() string {
+	return fmt.Sprintf("copied %s to %s but could not remove the source: %v", e.Src, e.Dst, e.Err)
+}
+
+func (e *treeSourceRemovalError) Unwrap() error { return e.Err }
+
 func copyWorkspaceTree(ctx context.Context, ws Workspace, src, dst string) (treeStats, error) {
 	info, err := ws.Lstat(ctx, src)
 	if err != nil {
@@ -388,15 +404,16 @@ func replaceTreeMove(ctx context.Context, ws Workspace, src, dst string) (treeSt
 	}
 	stats, err := moveWorkspaceTree(ctx, ws, src, dst)
 	if err != nil {
-		// The move may have copied the whole source to dst before failing to
-		// remove the last source entry. In that case dst can be the only
-		// surviving copy of the removed files: never delete it to restore the
-		// backup. Keep both and report them instead.
-		if _, statErr := ws.Lstat(ctx, dst); statErr == nil {
-			return stats, fmt.Errorf("move failed (%v); new destination kept at %s, old destination backup at %s; inspect before retrying", err, dst, backup)
-		} else if !errors.Is(statErr, fs.ErrNotExist) {
-			return stats, fmt.Errorf("move failed (%v); check destination %s and old destination backup %s: %w", err, dst, backup, statErr)
+		var removal *treeSourceRemovalError
+		if errors.As(err, &removal) {
+			// The copy is complete but source cleanup failed. dst may hold the
+			// only surviving copy of files already removed from src, so keep
+			// it and the old destination backup rather than rolling either back.
+			return stats, fmt.Errorf("move copied to %s but could not remove source %s (%v); new destination kept, old destination backup at %s; inspect before retrying", dst, src, removal.Err, backup)
 		}
+		// A copy that failed before completing leaves src intact, so the
+		// partial destination is safe to clear before restoring the old tree.
+		_ = ws.RemoveAll(ctx, dst)
 		if restoreErr := ws.Move(ctx, backup, dst); restoreErr != nil {
 			return stats, fmt.Errorf("move failed (%v); old destination backup at %s; restore failed: %w", err, backup, restoreErr)
 		}
@@ -446,7 +463,7 @@ func moveWorkspaceTree(ctx context.Context, ws Workspace, src, dst string) (tree
 		return stats, fmt.Errorf("rename failed (%v); cross-device copy also failed: %w", err, cerr)
 	}
 	if rerr := ws.RemoveAll(ctx, src); rerr != nil {
-		return stats, fmt.Errorf("copied %s to %s but could not remove the source: %w", src, dst, rerr)
+		return stats, &treeSourceRemovalError{Src: src, Dst: dst, Stats: stats, Err: rerr}
 	}
 	return stats, nil
 }

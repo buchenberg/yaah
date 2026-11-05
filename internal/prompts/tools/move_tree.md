@@ -11,7 +11,9 @@ symlinks inside the tree move too), then removes the backup; if the move fails
 the backup is restored. The source and destination must not overlap: a
 destination inside the source or an ancestor of the source is refused.
 `mkdir_p` creates missing parent directories of `to`; otherwise the parent must
-already exist.
+already exist. If the move fails before completing, the backup is restored; if
+a complete cross-device copy cannot remove the source, both the new destination
+and the old backup are kept and named in the error so neither copy is lost.
 
 A same-filesystem rename moves the tree as-is, including symlinks and special
 entries (they are moved, not followed). The copy fallback used for a

@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/buchenberg/yaah/internal/prompts"
 )
@@ -191,17 +192,33 @@ func (t *FindTool) Execute(ctx context.Context, args string) (string, error) {
 	if total <= findMaxResults && len(out) <= toolResultMaxBytes {
 		return out, nil
 	}
-	// A 1000-row page almost always exceeds the byte cap, so the count must
-	// live in the suffix marker rather than a prefix branch that can never
-	// fit. Replace truncateResult's generic marker so only one appears.
-	marker := fmt.Sprintf("\n...[truncated: %d matches total", total)
-	if total > findMaxResults {
-		marker += fmt.Sprintf("; showing the first %d", findMaxResults)
+	// A 1000-row page almost always exceeds the byte cap, so report the
+	// truthful total in a single suffix marker. The row count is deliberately
+	// omitted: it would describe rows the byte cap removed.
+	marker := fmt.Sprintf("\n...[truncated: %d matches total]...", total)
+	body := out
+	if capped := truncateResult(out); strings.HasSuffix(capped, truncationMarker) {
+		body = strings.TrimSuffix(capped, truncationMarker)
 	}
-	marker += "]..."
-	capped := truncateResult(out)
-	if strings.HasSuffix(capped, truncationMarker) {
-		return strings.TrimSuffix(capped, truncationMarker) + marker, nil
+	return fitSuffix(body, marker), nil
+}
+
+// fitSuffix trims body on a rune and preferably a line boundary so body plus
+// suffix stays within the tool result cap; the suffix survives intact.
+func fitSuffix(body, suffix string) string {
+	if len(body)+len(suffix) <= toolResultMaxBytes {
+		return body + suffix
 	}
-	return out + marker, nil
+	budget := toolResultMaxBytes - len(suffix)
+	if budget < 0 {
+		budget = 0
+	}
+	cut := min(budget, len(body))
+	for cut > 0 && cut < len(body) && !utf8.RuneStart(body[cut]) {
+		cut--
+	}
+	if i := strings.LastIndexByte(body[:cut], '\n'); i >= 0 {
+		cut = i
+	}
+	return body[:cut] + suffix
 }

@@ -485,6 +485,13 @@ func (w *sandboxWorkspace) Move(ctx context.Context, src, dst string) error {
 		Cwd:     w.root,
 	})
 	if execErr != nil {
+		// A transport error can still follow an applied move; classify the
+		// destination before returning so RecordingTool does not miss it.
+		after, afterErr := w.Lstat(ctx, dst)
+		if afterErr == nil &&
+			(errors.Is(beforeErr, fs.ErrNotExist) || (beforeErr == nil && !sameSandboxFile(before, after))) {
+			return &partialMoveError{Src: src, Dst: dst, Err: execErr}
+		}
 		return execErr
 	}
 	moveErr := fmt.Errorf("exit %d: %s", res.ExitCode, strings.TrimSpace(res.Stderr))
@@ -510,13 +517,19 @@ func (w *sandboxWorkspace) Move(ctx context.Context, src, dst string) error {
 	return moveErr
 }
 
-// isCrossDeviceMoveError inspects only the diagnostic suffix, not the whole
-// message: mv includes both paths, and a path may itself contain the phrase.
+// isCrossDeviceMoveError inspects the diagnostic after the last ": ", not the
+// whole message: mv includes both paths, and a path may itself contain the
+// phrase. Matching the reason rather than the suffix keeps a trailing
+// "(os error 18)" or a different implementation's wording recognisable.
 func isCrossDeviceMoveError(stderr string) bool {
 	s := strings.ToLower(strings.TrimSpace(stderr))
-	return strings.HasSuffix(s, "invalid cross-device link") ||
-		strings.HasSuffix(s, "cross-device link") ||
-		strings.HasSuffix(s, "cross device link")
+	if i := strings.LastIndex(s, ": "); i >= 0 {
+		s = s[i+2:]
+	}
+	return strings.Contains(s, "cross-device link") ||
+		strings.Contains(s, "cross device link") ||
+		strings.Contains(s, "cross-filesystem") ||
+		strings.Contains(s, "cross filesystem")
 }
 
 // sameSandboxFile compares the metadata a sandbox stat exposes, used to tell a

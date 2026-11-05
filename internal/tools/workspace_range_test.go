@@ -98,6 +98,8 @@ func TestIsCrossDeviceMoveError(t *testing.T) {
 	}{
 		{"mv: cannot move 'a' to 'b': Invalid cross-device link", true},
 		{"mv: cannot move 'a' to 'b': cross-device link", true},
+		{"mv: cannot move 'a' to 'b': Invalid cross-device link (os error 18)", true},
+		{"mv: cannot move 'a' to 'b': cross-filesystem move", true},
 		{"mv: cannot move 'cross-device' to 'b': Permission denied", false},
 		{"mv: cannot move 'a' to 'b': No such file or directory", false},
 	} {

@@ -124,10 +124,14 @@ type partialTreeMoveWorkspace struct {
 	Workspace
 	source     string
 	failRemove string
+	moveErr    error
 }
 
 func (w partialTreeMoveWorkspace) Move(ctx context.Context, src, dst string) error {
 	if src == w.source {
+		if w.moveErr != nil {
+			return w.moveErr
+		}
 		return fmt.Errorf("%w: simulated", errCrossDevice)
 	}
 	return w.Workspace.Move(ctx, src, dst)
@@ -229,6 +233,40 @@ func TestMoveTreeForceKeepsNewDestinationWhenSourceRemovalFails(t *testing.T) {
 	old, readErr := os.ReadFile(filepath.Join(backup, "old.txt"))
 	if readErr != nil || string(old) != "old" {
 		t.Fatalf("backup content = %q, %v", old, readErr)
+	}
+}
+
+func TestMoveTreeForceRestoresBackupWhenCopyFails(t *testing.T) {
+	dir, base := treeWorkspace(t)
+	src := filepath.Join(dir, "src")
+	seedTree(t, src)
+	if err := os.Symlink("top.txt", filepath.Join(src, "link")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	dst := filepath.Join(dir, "dst")
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dst, "old.txt"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ws := partialTreeMoveWorkspace{
+		Workspace: base,
+		source:    src,
+		moveErr:   fmt.Errorf("%w: simulated", errCrossDevice),
+	}
+	if _, err := replaceTreeMove(context.Background(), ws, src, dst); err == nil {
+		t.Fatal("failed cross-device copy reported success")
+	}
+	data, readErr := os.ReadFile(filepath.Join(dst, "old.txt"))
+	if readErr != nil || string(data) != "old" {
+		t.Fatalf("old destination was not restored: %q, %v", data, readErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(dst, "top.txt")); !os.IsNotExist(statErr) {
+		t.Fatalf("partial copy was left at the destination: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(src, "top.txt")); statErr != nil {
+		t.Fatalf("copy failure damaged the source: %v", statErr)
 	}
 }
 
