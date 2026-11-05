@@ -213,6 +213,34 @@ agents:
 	}
 }
 
+func TestLoad_embeddingPathsExpandTilde(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("YAAH_HOME", tmp)
+
+	configContent := `
+embedding:
+  backend: gguf
+  model_path: ~/.yaah/embedding/model.gguf
+  lib_path: ~/.yaah/embedding
+`
+	if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(configContent), 0o644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	home, _ := os.UserHomeDir()
+	if want := filepath.Join(home, ".yaah/embedding/model.gguf"); cfg.Embedding.ModelPath != want {
+		t.Errorf("ModelPath = %q, want %q (tilde expanded)", cfg.Embedding.ModelPath, want)
+	}
+	if want := filepath.Join(home, ".yaah/embedding"); cfg.Embedding.LibPath != want {
+		t.Errorf("LibPath = %q, want %q (tilde expanded)", cfg.Embedding.LibPath, want)
+	}
+}
+
 func TestLoad_shepherdTracePathDefaultsToHome(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("YAAH_HOME", tmp)

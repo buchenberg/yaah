@@ -699,6 +699,12 @@ func Load() (*Config, error) {
 	if cfg.Agent.Default.RetainedWorktreeRoot != "" {
 		cfg.Agent.Default.RetainedWorktreeRoot = expandHomeDir(cfg.Agent.Default.RetainedWorktreeRoot)
 	}
+	if cfg.Embedding.ModelPath != "" {
+		cfg.Embedding.ModelPath = expandHomeDir(cfg.Embedding.ModelPath)
+	}
+	if cfg.Embedding.LibPath != "" {
+		cfg.Embedding.LibPath = expandHomeDir(cfg.Embedding.LibPath)
+	}
 
 	normalizeWorkspace(&cfg.Workspace)
 
