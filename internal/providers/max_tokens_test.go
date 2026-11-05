@@ -55,7 +55,14 @@ func TestOpenAIClientEffectiveMaxTokens(t *testing.T) {
 	if got := client.OutputTokenCeiling(types.ChatRequest{Model: "gpt-3.5-turbo"}); got != 4096 {
 		t.Errorf("gpt-3.5-turbo OutputTokenCeiling = %d, want 4096", got)
 	}
-	if got := client.OutputTokenCeiling(types.ChatRequest{Model: "gpt-4.1"}); got != 0 {
-		t.Errorf("gpt-4.1 OutputTokenCeiling = %d, want 0 (must not match gpt-4)", got)
+	// gpt-4.1 resolves through the models.dev snapshot to its own provider
+	// limit (32768) — and must never inherit gpt-4's entry (8192): dots are
+	// not prefix boundaries. The snapshot value is pinned so a regeneration
+	// that changes it is a reviewed decision, not silent drift.
+	if got := client.OutputTokenCeiling(types.ChatRequest{Model: "gpt-4.1"}); got != 32768 {
+		t.Errorf("gpt-4.1 OutputTokenCeiling = %d, want 32768 (its own snapshot entry)", got)
+	}
+	if got := client.OutputTokenCeiling(types.ChatRequest{Model: "gpt-4"}); got == 32768 {
+		t.Errorf("gpt-4 OutputTokenCeiling = 32768: it matched gpt-4.1's entry; dots must not blur the family")
 	}
 }
