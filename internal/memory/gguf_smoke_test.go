@@ -136,9 +136,9 @@ func TestGGUF_ClampDecodeWindowToTrainContext(t *testing.T) {
 	}
 	lib, model := os.Getenv("YAAH_GGUF_LIB"), os.Getenv("YAAH_GGUF_MODEL")
 	e := NewGGUFEmbedder(lib, model, "search_query: ", "search_document: ")
-	emb, err := e.Embed(context.Background(), "clamp probe")
-	if err != nil {
-		t.Fatalf("probe embed: %v", err)
+	// The probe forces the lazy load; its vector is unused.
+	if _, perr := e.Embed(context.Background(), "clamp probe"); perr != nil {
+		t.Fatalf("probe embed: %v", perr)
 	}
 
 	// Assert the clamp actually took: the window must be the model's own
@@ -166,7 +166,7 @@ func TestGGUF_ClampDecodeWindowToTrainContext(t *testing.T) {
 	if got := llama.Tokenize(llama.ModelGetVocab(m), long, true, true); int32(len(got)) <= int32(window) {
 		t.Fatalf("fixture under-exercises the clamp: %d tokens <= window %d", len(got), window)
 	}
-	emb, err = e.Embed(context.Background(), long)
+	emb, err := e.Embed(context.Background(), long)
 	if err != nil {
 		t.Fatalf("over-window embed must not abort: %v", err)
 	}

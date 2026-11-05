@@ -54,14 +54,26 @@ var configShowCmd = &cobra.Command{
 			cmd.Println("  (none configured — run 'yaah config edit' to add one)")
 		}
 
-		// Embedding (semantic memory search). The enablement condition
-		// mirrors embedderFor: search is live only when both provider and
-		// model are set AND the provider resolves in the providers map, so
-		// a half-configured or dangling stanza must say so rather than
-		// report "configured".
+		// Embedding (semantic memory search). The enablement condition is
+		// EmbeddingSearchLive — the same predicate embedderFor gates on and
+		// the TUI pane displays — so the status here cannot drift from
+		// runtime behavior. A half-configured or dangling stanza must say
+		// so rather than report "configured".
 		cmd.Println()
 		cmd.Println("[embedding]")
 		switch {
+		case cfg.Embedding.Backend == config.EmbeddingBackendGGUF:
+			cmd.Printf("  backend:    %s\n", cfg.Embedding.Backend)
+			cmd.Printf("  model_path: %s\n", orNotSet(cfg.Embedding.ModelPath))
+			if cfg.Embedding.LibPath != "" {
+				cmd.Printf("  lib_path:   %s\n", cfg.Embedding.LibPath)
+			}
+			if !cfg.EmbeddingSearchLive() {
+				cmd.Println("  (model_path not set — semantic memory search disabled)")
+			}
+		case cfg.Embedding.Backend != "" && cfg.Embedding.Backend != config.EmbeddingBackendHTTP:
+			cmd.Printf("  backend:  %s\n", cfg.Embedding.Backend)
+			cmd.Printf("  (unknown backend — want %q or %q; semantic memory search disabled)\n", config.EmbeddingBackendHTTP, config.EmbeddingBackendGGUF)
 		case cfg.Embedding.Provider == "" && cfg.Embedding.Model == "":
 			cmd.Println("  (not configured — semantic memory search disabled)")
 		case cfg.Embedding.Provider == "" || cfg.Embedding.Model == "":
@@ -71,7 +83,7 @@ var configShowCmd = &cobra.Command{
 		default:
 			cmd.Printf("  provider: %s\n", cfg.Embedding.Provider)
 			cmd.Printf("  model:    %s\n", cfg.Embedding.Model)
-			if _, ok := cfg.Providers[cfg.Embedding.Provider]; !ok {
+			if !cfg.EmbeddingSearchLive() {
 				cmd.Printf("  (provider %s not found in [providers] — semantic memory search disabled)\n", cfg.Embedding.Provider)
 			}
 		}

@@ -166,32 +166,39 @@ it does not need quoting. Use '--' when the text begins with a dash:
 // embedderFor builds the configured embedder without touching a DB.
 // Separated from attachEmbedder so the provider→embedder field mapping
 // can be tested directly (it was once shipped with model and API key
-// swapped, silently breaking semantic search).
+// swapped, silently breaking semantic search). Enablement is decided by
+// config.EmbeddingSearchLive — the same predicate the TUI info pane and
+// `yaah config` display — so status cannot drift from runtime behavior.
 func embedderFor(cfg *config.Config) (memory.Embedder, bool) {
+	if !cfg.EmbeddingSearchLive() {
+		warnEmbedderDisabled(cfg)
+		return nil, false
+	}
 	if cfg.Embedding.Backend == config.EmbeddingBackendGGUF {
-		if cfg.Embedding.ModelPath == "" {
-			fmt.Fprintf(os.Stderr, "warning: embedding backend %q requires embedding.model_path\n", config.EmbeddingBackendGGUF)
-			return nil, false
-		}
 		return memory.NewGGUFEmbedder(cfg.Embedding.LibPath, cfg.Embedding.ModelPath, cfg.Embedding.QueryPrefix, cfg.Embedding.DocumentPrefix), true
 	}
-	if cfg.Embedding.Backend != "" && cfg.Embedding.Backend != config.EmbeddingBackendHTTP {
-		fmt.Fprintf(os.Stderr, "warning: unknown embedding backend %q (want %q or %q)\n", cfg.Embedding.Backend, config.EmbeddingBackendHTTP, config.EmbeddingBackendGGUF)
-		return nil, false
-	}
-	if cfg.Embedding.Provider == "" || cfg.Embedding.Model == "" {
-		return nil, false
-	}
-	p, ok := cfg.Providers[cfg.Embedding.Provider]
-	if !ok {
-		fmt.Fprintf(os.Stderr, "warning: embedding provider %q not found in providers\n", cfg.Embedding.Provider)
-		return nil, false
-	}
+	// EmbeddingSearchLive guarantees the provider resolves here.
 	// Resolve ${VAR} placeholders — provider_resolve does this for LLM
 	// providers; the embedder path must too or literal placeholders
 	// reach the endpoint.
-	p = config.Resolve(p)
+	p := config.Resolve(cfg.Providers[cfg.Embedding.Provider])
 	return memory.NewEmbedder(p.BaseURL, p.APIKey, cfg.Embedding.Model, nil), true
+}
+
+// warnEmbedderDisabled diagnoses a disabled embedder on stderr. Silent
+// for an absent or half-set http stanza — no embedder is a legitimate
+// opt-out — while a backend or provider that is named but not honored is
+// a misconfiguration worth reporting.
+func warnEmbedderDisabled(cfg *config.Config) {
+	e := cfg.Embedding
+	switch {
+	case e.Backend == config.EmbeddingBackendGGUF && e.ModelPath == "":
+		fmt.Fprintf(os.Stderr, "warning: embedding backend %q requires embedding.model_path\n", config.EmbeddingBackendGGUF)
+	case e.Backend != "" && e.Backend != config.EmbeddingBackendHTTP && e.Backend != config.EmbeddingBackendGGUF:
+		fmt.Fprintf(os.Stderr, "warning: unknown embedding backend %q (want %q or %q)\n", e.Backend, config.EmbeddingBackendHTTP, config.EmbeddingBackendGGUF)
+	case e.Backend != config.EmbeddingBackendGGUF && e.Provider != "" && e.Model != "":
+		fmt.Fprintf(os.Stderr, "warning: embedding provider %q not found in providers\n", e.Provider)
+	}
 }
 
 // attachEmbedder resolves the configured embedding provider and sets the

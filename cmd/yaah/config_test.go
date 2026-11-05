@@ -40,9 +40,11 @@ func TestConfigShow_printsConfig(t *testing.T) {
 // TestConfigShow_printsEmbeddingSection pins the #316 regression: the
 // top-level embedding: stanza must render as an [embedding] section,
 // both when configured and when absent. The section must also report
-// embedderFor's real enablement condition: a half-set stanza or a
-// provider missing from the providers map means semantic search is
-// disabled, and the output must say so instead of implying "configured".
+// the real enablement condition (config.EmbeddingSearchLive, the
+// predicate embedderFor gates on): a half-set stanza, a provider
+// missing from the providers map, or a gguf backend without model_path
+// means semantic search is disabled, and the output must say so instead
+// of implying "configured".
 func TestConfigShow_printsEmbeddingSection(t *testing.T) {
 	runConfigShow := func(t *testing.T, configYAML string) string {
 		t.Helper()
@@ -127,6 +129,29 @@ func TestConfigShow_printsEmbeddingSection(t *testing.T) {
 			if !strings.Contains(output, want) {
 				t.Errorf("config show output missing %q\ngot:\n%s", want, output)
 			}
+		}
+	})
+
+	t.Run("gguf configured", func(t *testing.T) {
+		output := runConfigShow(t, "embedding:\n  backend: gguf\n  model_path: /models/nomic.gguf\n")
+		for _, want := range []string{"backend:    gguf", "model_path: /models/nomic.gguf"} {
+			if !strings.Contains(output, want) {
+				t.Errorf("config show output missing %q\ngot:\n%s", want, output)
+			}
+		}
+		// The gguf backend is live from model_path alone — no provider or
+		// model needed, and no disabled-note.
+		for _, unwanted := range []string{"(not configured", "(incomplete", "(model_path not set", "not found in [providers]"} {
+			if strings.Contains(output, unwanted) {
+				t.Errorf("live gguf embedding must not print %q\ngot:\n%s", unwanted, output)
+			}
+		}
+	})
+
+	t.Run("gguf without model_path", func(t *testing.T) {
+		output := runConfigShow(t, "embedding:\n  backend: gguf\n")
+		if !strings.Contains(output, "(model_path not set — semantic memory search disabled)") {
+			t.Errorf("gguf without model_path should say so\ngot:\n%s", output)
 		}
 	})
 }
