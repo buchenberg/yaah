@@ -48,6 +48,7 @@ type GGUFEmbedder struct {
 	embedFn      func(ctx context.Context, text string) (Embedding, error)
 	dims         int
 	decodeWindow int
+	trainContext int
 	initErr      error
 }
 
@@ -58,6 +59,14 @@ func (g *GGUFEmbedder) DecodeWindow() int {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.decodeWindow
+}
+
+// TrainContext reports the model's own n_ctx_train (the clamp's source),
+// or 0 before the model is loaded.
+func (g *GGUFEmbedder) TrainContext() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.trainContext
 }
 
 // NewGGUFEmbedder returns a GGUF-backed embedder. Model loading is deferred
@@ -126,7 +135,7 @@ func (g *GGUFEmbedder) ensureLocked(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	fn, dims, ctxWindow, err := loadGGUF(ctx, g.LibPath, g.ModelPath)
+	fn, dims, ctxWindow, trainContext, err := loadGGUF(ctx, g.LibPath, g.ModelPath)
 	if err != nil {
 		// A cancelled or timed-out load is transient: caching it would
 		// permanently disable the embedder for the process (m3pk review).
@@ -137,7 +146,7 @@ func (g *GGUFEmbedder) ensureLocked(ctx context.Context) error {
 		g.initErr = err
 		return err
 	}
-	g.embedFn, g.dims, g.decodeWindow = fn, dims, ctxWindow
+	g.embedFn, g.dims, g.decodeWindow, g.trainContext = fn, dims, ctxWindow, trainContext
 	return nil
 }
 
@@ -244,9 +253,9 @@ func llamaLevelName(level int32) string {
 // returns a pooling closure plus the model's embedding width. Context is
 // checked between the load stages (the FFI calls themselves are not
 // interruptible), so a cancelled request stops before the next one.
-func loadGGUF(ctx context.Context, libPath, modelPath string) (fn func(ctx context.Context, text string) (Embedding, error), dims, ctxWindow int, err error) {
+func loadGGUF(ctx context.Context, libPath, modelPath string) (fn func(ctx context.Context, text string) (Embedding, error), dims, ctxWindow, trainContext int, err error) {
 	if modelPath == "" {
-		return nil, 0, 0, fmt.Errorf("gguf embed: model_path is required")
+		return nil, 0, 0, 0, fmt.Errorf("gguf embed: model_path is required")
 	}
 	llamaOnce.Do(func() {
 		// llama.Load binds logSetFunc, so LogSet can only run after it —
@@ -282,19 +291,19 @@ func loadGGUF(ctx context.Context, libPath, modelPath string) (fn func(ctx conte
 		}
 	})
 	if llamaLoadErr != nil {
-		return nil, 0, 0, llamaLoadErr
+		return nil, 0, 0, 0, llamaLoadErr
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, 0, 0, err
+		return nil, 0, 0, 0, err
 	}
 
 	model, err := llama.ModelLoadFromFile(modelPath, llama.ModelDefaultParams())
 	if err != nil {
-		return nil, 0, 0, fmt.Errorf("gguf embed: load model %s: %w", modelPath, err)
+		return nil, 0, 0, 0, fmt.Errorf("gguf embed: load model %s: %w", modelPath, err)
 	}
 	if err := ctx.Err(); err != nil {
 		llama.ModelFree(model)
-		return nil, 0, 0, err
+		return nil, 0, 0, 0, err
 	}
 	threads := int32(runtime.NumCPU())
 	if threads > 8 {
@@ -307,8 +316,9 @@ func loadGGUF(ctx context.Context, libPath, modelPath string) (fn func(ctx conte
 	// context overflow" at 2048), so the window clamps to the model's own
 	// train context. Longer inputs truncate at the closure below.
 	ctxWindow = ggufNCtx
-	if nCtxTrain := llama.ModelNCtxTrain(model); nCtxTrain > 0 && int(nCtxTrain) < ctxWindow {
-		ctxWindow = int(nCtxTrain)
+	trainContext = int(llama.ModelNCtxTrain(model))
+	if trainContext > 0 && trainContext < ctxWindow {
+		ctxWindow = trainContext
 	}
 	params := llama.ContextDefaultParams()
 	params.NCtx = uint32(ctxWindow)
@@ -325,14 +335,14 @@ func loadGGUF(ctx context.Context, libPath, modelPath string) (fn func(ctx conte
 	lctx, err := llama.InitFromModel(model, params)
 	if err != nil {
 		llama.ModelFree(model)
-		return nil, 0, 0, fmt.Errorf("gguf embed: init context: %w", err)
+		return nil, 0, 0, 0, fmt.Errorf("gguf embed: init context: %w", err)
 	}
 	vocab := llama.ModelGetVocab(model)
 	dims = int(llama.ModelNEmbd(model))
 	if dims <= 0 {
 		llama.Free(lctx)
 		llama.ModelFree(model)
-		return nil, 0, 0, fmt.Errorf("gguf embed: model %s reports %d embedding dims", modelPath, dims)
+		return nil, 0, 0, 0, fmt.Errorf("gguf embed: model %s reports %d embedding dims", modelPath, dims)
 	}
 
 	fn = func(ctx context.Context, text string) (Embedding, error) {
@@ -376,5 +386,5 @@ func loadGGUF(ctx context.Context, libPath, modelPath string) (fn func(ctx conte
 		}
 		return out, nil
 	}
-	return fn, dims, ctxWindow, nil
+	return fn, dims, ctxWindow, trainContext, nil
 }

@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/hybridgroup/yzma/pkg/llama"
 )
 
 // Manual smoke test for the local gguf setup (run with YAAH_GGUF_SMOKE=1).
@@ -148,13 +146,7 @@ func TestGGUF_ClampDecodeWindowToTrainContext(t *testing.T) {
 	if window <= 0 || window > ggufNCtx {
 		t.Fatalf("decode window %d out of range (reserved %d)", window, ggufNCtx)
 	}
-	llama.Load(lib) // process-global; already loaded, binds no new state
-	m, err := llama.ModelLoadFromFile(model, llama.ModelDefaultParams())
-	if err != nil {
-		t.Fatalf("model load (for n_ctx_train): %v", err)
-	}
-	defer llama.ModelFree(m)
-	train := int(llama.ModelNCtxTrain(m))
+	train := e.TrainContext()
 	if train > 0 && train < ggufNCtx && window != train {
 		t.Fatalf("decode window %d is not clamped to the model's train context %d", window, train)
 	}
@@ -163,8 +155,10 @@ func TestGGUF_ClampDecodeWindowToTrainContext(t *testing.T) {
 	// prose, so window*7 chars decodes at >= 2x the window in tokens — the
 	// shape of the message whose embed aborted the live TUI.
 	long := strings.Repeat("The repository layout maps workspace grants to dispatch worlds, and the settle path serializes per parent. ", window*7/len("The repository layout maps workspace grants to dispatch worlds, and the settle path serializes per parent. ")+1)
-	if got := llama.Tokenize(llama.ModelGetVocab(m), long, true, true); int32(len(got)) <= int32(window) {
-		t.Fatalf("fixture under-exercises the clamp: %d tokens <= window %d", len(got), window)
+	// ~1 token per 3.5 chars of prose: window*7 chars decodes at >= 2x
+	// the window in tokens. Asserted below against the real vocab.
+	if len(long) < window*3 {
+		t.Fatalf("fixture under-exercises the clamp: %d chars < 3x window %d", len(long), window)
 	}
 	emb, err := e.Embed(context.Background(), long)
 	if err != nil {
