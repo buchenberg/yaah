@@ -97,12 +97,10 @@ type Unadopted struct {
 type Quarantined struct {
 	// Owner is the trace owner the kernel refused to recover.
 	Owner string
-	// Path and Repo are the owner's recorded worktree and repository,
-	// when its fork record carried an address. The worktree is left on
-	// disk — it may hold the only copy of unmerged work — and listed
-	// here, never deleted.
+	// Path is the owner's recorded worktree, when its fork record
+	// carried an address. The worktree is left on disk — it may hold the
+	// only copy of unmerged work — and listed here, never deleted.
 	Path string
-	Repo string
 }
 
 type Report struct {
@@ -237,7 +235,7 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 	for _, owner := range stats.Quarantined {
 		q := Quarantined{Owner: owner}
 		if info, ok := paths[owner]; ok {
-			q.Path, q.Repo = info.path, info.repo
+			q.Path = info.path
 		}
 		report.Quarantined = append(report.Quarantined, q)
 	}

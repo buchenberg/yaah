@@ -188,7 +188,11 @@ func printShepherdReport(w io.Writer, report *recovery.Report) {
 		fmt.Fprintf(w, "  unadopted %s — scope %s; not a registered worktree of its repository\n", u.Path, u.ScopeID)
 	}
 	for _, q := range report.Quarantined {
-		fmt.Fprintf(w, "  quarantined %s — scope %s; the trace's lifecycle records contradict, the scope is not recovered — the worktree is left on disk\n", q.Path, q.Owner)
+		if q.Path != "" {
+			fmt.Fprintf(w, "  quarantined %s — scope %s; the trace's lifecycle records contradict, the scope is not recovered — the worktree is left on disk\n", q.Path, q.Owner)
+			continue
+		}
+		fmt.Fprintf(w, "  quarantined %s — scope %s; the trace's lifecycle records contradict, the scope is not recovered (it recorded no worktree)\n", q.Owner, q.Owner)
 	}
 }
 
