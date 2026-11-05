@@ -405,11 +405,13 @@ func replaceTreeMove(ctx context.Context, ws Workspace, src, dst string) (treeSt
 	stats, err := moveWorkspaceTree(ctx, ws, src, dst)
 	if err != nil {
 		var removal *treeSourceRemovalError
-		if errors.As(err, &removal) {
+		var partial *partialMoveError
+		if errors.As(err, &removal) || errors.As(err, &partial) {
 			// The copy is complete but source cleanup failed. dst may hold the
 			// only surviving copy of files already removed from src, so keep
 			// it and the old destination backup rather than rolling either back.
-			return stats, fmt.Errorf("move copied to %s but could not remove source %s (%v); new destination kept, old destination backup at %s; inspect before retrying", dst, src, removal.Err, backup)
+			stats = countWorkspaceTree(ctx, ws, dst)
+			return stats, fmt.Errorf("move created %s but could not remove source %s (%v); new destination kept, old destination backup at %s; inspect before retrying", dst, src, err, backup)
 		}
 		// A copy that failed before completing leaves src intact, so the
 		// partial destination is safe to clear before restoring the old tree.
