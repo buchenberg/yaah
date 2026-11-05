@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -55,8 +56,10 @@ func TestMkdirTool_existingDirectoryIsUntouched(t *testing.T) {
 		t.Fatalf("stat directory: %v", err)
 	}
 	// The host MkdirAll leaves an existing directory alone; the tool must not
-	// chmod it as a side effect of an idempotent call.
-	if perm := info.Mode().Perm(); perm != 0o700 {
+	// chmod it as a side effect of an idempotent call. Windows maps modes to
+	// 0777/0666 rather than preserving the POSIX bits, so the assertion only
+	// applies where the mode is meaningful.
+	if perm := info.Mode().Perm(); runtime.GOOS != "windows" && perm != 0o700 {
 		t.Errorf("existing directory mode = %o, want 700", perm)
 	}
 }

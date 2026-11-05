@@ -153,6 +153,27 @@ func (rt *RecordingTool) Execute(ctx context.Context, args string) (string, erro
 		return rt.recordTransfer(ctx, dispatch, toolName, args)
 	}
 
+	if toolName == "rmdir" {
+		result, err := rt.inner.Execute(ctx, args)
+		// An empty-only rmdir removes no files, so it needs no evidence. A
+		// recursive rmdir can remove an arbitrary set the recorder cannot
+		// enumerate cheaply, so record an unknown rather than a false
+		// all-clear: a parallel worker editing a file inside the tree must not
+		// see "nothing changed".
+		var params struct {
+			Path      string `json:"path"`
+			Recursive bool   `json:"recursive"`
+		}
+		if json.Unmarshal([]byte(args), &params) == nil && params.Recursive && params.Path != "" {
+			detail := "rmdir -r " + params.Path
+			if err != nil {
+				detail += " (command reported an error)"
+			}
+			rt.tracker.RecordUnknown(dispatch, toolName, detail)
+		}
+		return result, err
+	}
+
 	var params struct {
 		FilePath string `json:"filePath"`
 	}

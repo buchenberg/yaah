@@ -110,6 +110,66 @@ func TestRecordingTool_PartialMoveRecordsDestination(t *testing.T) {
 	}
 }
 
+// TestRecordingTool_RecursiveRmdirRecordsUnknown pins the no-false-all-clear
+// rule for the most destructive new call: a recursive rmdir cannot enumerate
+// the files it removed without walking the tree first, so it must record an
+// explicit unknown. A parallel worker editing a file inside the tree then sees
+// evidence instead of "nothing changed".
+func TestRecordingTool_RecursiveRmdirRecordsUnknown(t *testing.T) {
+	tracker := &ConflictTracker{}
+	inner := &recordingTestTool{name: "rmdir", fn: func(context.Context, string) (string, error) {
+		return "Removed directory tree /workspace/tree", nil
+	}}
+	rt := NewRecordingTool(inner, tracker)
+
+	if _, err := rt.Execute(WithConflictDispatch(context.Background(), "worker", ConflictLaneShared),
+		`{"path":"/workspace/tree","recursive":true}`); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	report := tracker.DetectAndResetReport()
+	if report == nil || len(report.Unknown) != 1 {
+		t.Fatalf("report = %+v, want one unknown entry", report)
+	}
+	if !strings.Contains(report.Unknown[0].Detail, "rmdir -r /workspace/tree") {
+		t.Errorf("unknown detail = %q, want the recursive path", report.Unknown[0].Detail)
+	}
+
+	// A failed recursive removal may still have deleted part of the tree, so it
+	// records the unknown too, matching a failed shell command.
+	inner.fn = func(context.Context, string) (string, error) {
+		return "", errors.New("permission denied")
+	}
+	if _, err := rt.Execute(WithConflictDispatch(context.Background(), "worker", ConflictLaneShared),
+		`{"path":"/workspace/tree","recursive":true}`); err == nil {
+		t.Fatal("expected the fake rmdir to fail")
+	}
+	report = tracker.DetectAndResetReport()
+	if report == nil || len(report.Unknown) != 1 {
+		t.Fatalf("failed recursive rmdir report = %+v, want one unknown entry", report)
+	}
+	if !strings.Contains(report.Unknown[0].Detail, "reported an error") {
+		t.Errorf("unknown detail = %q, want the failure noted", report.Unknown[0].Detail)
+	}
+}
+
+// TestRecordingTool_EmptyRmdirNotRecorded pins the other half: removing an
+// empty directory touches no file, so it is not conflict evidence.
+func TestRecordingTool_EmptyRmdirNotRecorded(t *testing.T) {
+	tracker := &ConflictTracker{}
+	inner := &recordingTestTool{name: "rmdir", fn: func(context.Context, string) (string, error) {
+		return "Removed directory /workspace/empty", nil
+	}}
+	rt := NewRecordingTool(inner, tracker)
+
+	if _, err := rt.Execute(WithConflictDispatch(context.Background(), "worker", ConflictLaneShared),
+		`{"path":"/workspace/empty"}`); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if report := tracker.DetectAndResetReport(); report != nil {
+		t.Fatalf("report = %+v, want no evidence for an empty rmdir", report)
+	}
+}
+
 func TestRecordingTool_ForwardsDangerClassifier(t *testing.T) {
 	rt := NewRecordingTool(&BashTool{}, nil)
 	if !rt.IsDangerous(`{"command":"echo hi"}`) {

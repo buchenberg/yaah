@@ -354,7 +354,7 @@ func (w *localWorkspace) Remove(_ context.Context, path string) error {
 // root: recursive removal is the one call where a path bug would be
 // unrecoverable, and the tool layer's guard should not be the only one.
 func (w *localWorkspace) RemoveAll(_ context.Context, path string) error {
-	if isRootPath(path) || (w.pv != nil && path == w.pv.WorkspaceRoot) {
+	if isRootPath(path) || (w.pv != nil && w.pv.WorkspaceRoot != "" && sameHostPath(path, w.pv.WorkspaceRoot)) {
 		return fmt.Errorf("refusing to remove the workspace root %s", path)
 	}
 	return os.RemoveAll(path)
@@ -364,6 +364,24 @@ func (w *localWorkspace) RemoveAll(_ context.Context, path string) error {
 // root such as "C:\" on Windows.
 func isRootPath(p string) bool {
 	return filepath.Clean(p) == filepath.VolumeName(p)+string(filepath.Separator)
+}
+
+// sameHostPath compares two host paths after resolving symlinks, so a caller
+// that passes /var/... matches the /private/var/... root the validator stores,
+// and a Windows short name matches its long form. Case is folded on Windows,
+// where the filesystem is case-insensitive.
+func sameHostPath(a, b string) bool {
+	if resolved, err := filepath.EvalSymlinks(a); err == nil {
+		a = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(b); err == nil {
+		b = resolved
+	}
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
 
 func (w *localWorkspace) MkdirAll(_ context.Context, path string, perm fs.FileMode) error {

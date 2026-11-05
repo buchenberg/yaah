@@ -112,9 +112,10 @@ func (ct *ConflictTracker) RecordChange(rec FileRecord) {
 	ct.mu.Unlock()
 }
 
-// RecordUnknown records a successful shell command that may have changed
-// files. The tracker cannot name the paths, so this is an explicit unknown
-// rather than a false all-clear.
+// RecordUnknown records a mutation whose changed paths the tracker could not
+// observe: a shell command, or a recursive rmdir that removed a tree. The
+// tracker cannot name the paths, so this is an explicit unknown rather than a
+// false all-clear.
 func (ct *ConflictTracker) RecordUnknown(dispatch ConflictDispatch, toolName, detail string) {
 	rec := FileRecord{
 		DispatchID:    dispatch.ID,

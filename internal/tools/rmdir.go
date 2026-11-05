@@ -102,14 +102,24 @@ func (t *RmdirTool) Execute(ctx context.Context, args string) (string, error) {
 // The validator's root is checked when one is present (a legacy host workspace
 // has no WorkDir), and WorkDir covers an injected sandbox.
 func atWorkspaceRoot(ws Workspace, pv *PathValidator, resolved string) bool {
-	if pv != nil && pv.WorkspaceRoot != "" && wsPathClean(ws, resolved) == wsPathClean(ws, pv.WorkspaceRoot) {
+	if pv != nil && pv.WorkspaceRoot != "" && sameWorkspacePath(ws, resolved, pv.WorkspaceRoot) {
 		return true
 	}
-	if root := wsPathClean(ws, ws.WorkDir()); root != "" && root != "." && wsPathClean(ws, resolved) == root {
+	if root := ws.WorkDir(); root != "" && root != "." && sameWorkspacePath(ws, resolved, root) {
 		return true
 	}
 	if ws.Local() {
 		return isRootPath(resolved)
 	}
 	return path.Clean(resolved) == "/"
+}
+
+// sameWorkspacePath compares two paths with the workspace's own semantics:
+// host paths resolve symlinks and fold case on Windows, sandbox paths are
+// lexical POSIX paths.
+func sameWorkspacePath(ws Workspace, a, b string) bool {
+	if ws.Local() {
+		return sameHostPath(a, b)
+	}
+	return wsPathClean(ws, a) == wsPathClean(ws, b)
 }
