@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.138.0](https://github.com/buchenberg/yaah/compare/v0.137.2...v0.138.0) (2026-11-05)
+
+
+### Features
+
+* **agent:** extract TraceSink/ScopeSource seam across engine config surfaces (yaah-uo1z) ([daf55e4](https://github.com/buchenberg/yaah/commit/daf55e45955f08f02d46cc5f70a9a79fb49b3c87))
+* **budget:** raise the dispatch iteration ceiling to 100 ([425296d](https://github.com/buchenberg/yaah/commit/425296d7252e49cae702e567f306b653dcbc275d))
+* **llm:** own the engine LLM seam - StreamChunk in internal/types, injected heartbeat (yaah-9rcg) ([252f0f6](https://github.com/buchenberg/yaah/commit/252f0f6da4f941284a36202383b3c66b368202dc))
+* **runner:** split runner.go god file into concern-named files (yaah-spam) ([e33f8d4](https://github.com/buchenberg/yaah/commit/e33f8d4c4c2cf736dd15096e9864ae39845cc59d))
+* **tools:** extract internal/tools/substrate, slice 1 of 3 (yaah-5d85) ([ca3bd3d](https://github.com/buchenberg/yaah/commit/ca3bd3db839a3ce54240df2bc0d380cc34025bb1))
+* **wiring:** decompose buildLoopInfra into focused constructors (yaah-mp04) ([3ca4043](https://github.com/buchenberg/yaah/commit/3ca404389b3bc43d53a2ad84297381fd3a976ec7))
+* **xpxz:** modularization wave 1 — runner.go split, tool substrate extraction, buildLoopInfra decomposition ([ce33cd4](https://github.com/buchenberg/yaah/commit/ce33cd4ad4608ad5fc562fb43eb8a512f541666c))
+* **xpxz:** wave 2 - trace-scope seam and engine LLM seam (yaah-uo1z yaah-9rcg) ([6cb3d34](https://github.com/buchenberg/yaah/commit/6cb3d34d9c68358301bc98304e49c69b752210e4))
+
+
+### Bug Fixes
+
+* **llm:** default SessionIDFn/Heartbeat on the client reuse path; harden trace-sink nil test (yaah-9RCG yaah-UO1Z review) ([b14293b](https://github.com/buchenberg/yaah/commit/b14293bfdcab834aecfe6775cbbd239f050d5b8b))
+* **llm:** default the client seams on every reuse path (review round 2) ([a8b1519](https://github.com/buchenberg/yaah/commit/a8b1519ed82fc9f37a0e7edccdf71dd835a50b1f))
+* **runner:** pin shipped-role budgets to the bumped developer limits ([e7519b8](https://github.com/buchenberg/yaah/commit/e7519b828901254c961262b1826325f6189d79d0))
+* **xpxz:** address review round 1 - formatBytes overflow guard, stage comment accuracy, stale role budget docs ([42168a1](https://github.com/buchenberg/yaah/commit/42168a1677e20cf5570cc51b11354064bff403b6))
+
+
+### Documentation
+
+* **subagents:** correct developer timeout to the shipped built-in 900s ([c8ae662](https://github.com/buchenberg/yaah/commit/c8ae662d45ed3fabb463aeb05da8a81db74488ff))
+
 ## [0.137.2](https://github.com/buchenberg/yaah/compare/v0.137.1...v0.137.2) (2026-11-05)
 
 
