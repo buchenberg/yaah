@@ -362,6 +362,15 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 			SessionUpdate: UpdateAgentMessageChunk,
 			Content:       textContent("[" + e.Notice + "]"),
 		})
+	case *agent.WakeEvent:
+		// A watch fired between turns. ACP has no client-side prompt for
+		// harness-initiated turns in v1, so the wake appears as one agent
+		// message line; the injected prompt itself rides the next turn.
+		line := strings.SplitN(e.Text, "\n", 2)[0]
+		send(sessionID, ChunkUpdate{
+			SessionUpdate: UpdateAgentMessageChunk,
+			Content:       textContent("[" + line + "]"),
+		})
 	case *agent.DoneEvent:
 		// End-of-turn usage: the context occupancy mirrors the
 		// control.ContextInfo path, and the _meta bag carries the

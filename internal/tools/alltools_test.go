@@ -25,6 +25,8 @@ func allBuiltinTools() []Tool {
 		&SkillTool{},
 		&SubAgentJobsTool{},
 		&SupervisorTool{},
+		&WaitForTool{},
+		&WatchTool{},
 	}
 	all = append(all, &TodoWriteTool{})
 	for name := range leafTools {

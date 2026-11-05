@@ -260,6 +260,10 @@ func runWeb(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("session: %w", err)
 	}
 	defer sess.Close()
+	// Rehydrate durable watches before the first client connects; a wake
+	// with no view attached is queued as a follow-up, not lost. The
+	// idle-wake requester is installed per connection, once a view exists.
+	sess.Start()
 
 	token := webToken
 	if token == "" {
@@ -383,6 +387,10 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 	ws.sess.SetView(v)
 	ws.sess.SetCtrlCh(ctrlCh)
 	ws.mu.Unlock()
+	// A watch that fires while no prompt is running starts its own turn and
+	// streams to this client. Installed only once a view exists: an idle
+	// wake with no connected client would run unheard.
+	ws.sess.SetWakeTurnRequester(ws.sess.StartWakeTurn)
 
 	// Send meta and current todo state to the newly-connected client.
 	v.SendConnect()

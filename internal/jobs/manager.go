@@ -63,6 +63,10 @@ type backgroundJob struct {
 	status   string
 	err      error
 	duration time.Duration
+	// result is the runner's final text, retained so a wait/watch predicate
+	// can return the sub-agent's output as evidence instead of only a
+	// status label.
+	result string
 }
 
 // worldSnapshot reads the job's resolved dispatch world under the same lock
@@ -434,6 +438,7 @@ func (m *BackgroundJobs) run(job *backgroundJob, jobCtx context.Context, jobCanc
 		job.status = BGStatusCompleted
 	}
 	job.err = runErr
+	job.result = result
 	job.mu.Unlock()
 
 	if span != nil && span.IsRecording() {
@@ -502,6 +507,21 @@ func (m *BackgroundJobs) Status(id string) (BackgroundJobStatus, bool) {
 		return BackgroundJobStatus{}, false
 	}
 	return j.snapshot(), true
+}
+
+// Result returns the job's final output text and whether the job is known.
+// While the job is still running the result is empty. It is the evidence a
+// wait/watch predicate reports on completion.
+func (m *BackgroundJobs) Result(id string) (string, bool) {
+	m.mu.Lock()
+	j, ok := m.jobs[id]
+	m.mu.Unlock()
+	if !ok {
+		return "", false
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.result, true
 }
 
 // List returns snapshots of all known jobs, newest first.

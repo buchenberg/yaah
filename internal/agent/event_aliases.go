@@ -20,6 +20,7 @@ type CompactionDoneEvent = events.CompactionDoneEvent
 type EscalationEvent = events.EscalationEvent
 type TitleSetEvent = events.TitleSetEvent
 type ModeChangedEvent = events.ModeChangedEvent
+type WakeEvent = events.WakeEvent
 
 // Hook types
 type HookEmitter = events.HookEmitter

@@ -317,6 +317,11 @@ func (v *sseView) HandleEvent(evt agent.Event) {
 		// compaction notices. The header's mode badge is updated
 		// separately by SetSessionMode.
 		we = sseWireEvent{Type: "ctrl.status", Text: e.Notice}
+	case *agent.WakeEvent:
+		// A watch fired between turns. The status line carries the digest's
+		// first line; the model receives the full evidence in the injected
+		// prompt, which the next turn streams as a normal assistant reply.
+		we = sseWireEvent{Type: "ctrl.status", Text: "watch fired: " + firstLine(e.Text)}
 	default:
 		// Deliberately unmatched events emit no wire frame — the
 		// previous fallthrough wrote an empty {"type":""} SSE event

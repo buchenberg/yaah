@@ -3,6 +3,7 @@ package yaah
 import (
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/buchenberg/yaah/internal/agent"
@@ -112,6 +113,10 @@ func (v *terminalView) HandleEvent(evt agent.Event) {
 			fmt.Fprintf(os.Stderr, "  %s %s\n", Dim("→"), e.Suggestion)
 		}
 		fmt.Fprintln(os.Stderr)
+	case *agent.WakeEvent:
+		// A watch woke the session between prompts: show the digest's first
+		// line so the output that follows has a visible trigger.
+		fmt.Fprintf(os.Stderr, "\n  %s %s\n", Dim("watch:"), firstLine(e.Text))
 	case *agent.DoneEvent:
 		v.stopOnce.Do(v.spin.Stop)
 		if v.streamed {
@@ -119,6 +124,22 @@ func (v *terminalView) HandleEvent(evt agent.Event) {
 			fmt.Fprintln(os.Stderr)
 		}
 	}
+}
+
+// firstLine returns s's first non-empty line, bounded for a status row. It
+// is the UI's one-line projection of a possibly multi-line wake digest.
+func firstLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if len(line) > 160 {
+			line = line[:157] + "..."
+		}
+		return line
+	}
+	return ""
 }
 
 // worldSuffix renders the per-dispatch world for a sub-agent border: empty

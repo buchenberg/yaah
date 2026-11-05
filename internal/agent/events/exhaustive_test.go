@@ -28,6 +28,7 @@ func allEvents() []events.Event {
 		&events.EscalationEvent{},
 		&events.TitleSetEvent{},
 		&events.ModeChangedEvent{},
+		&events.WakeEvent{},
 		&events.DoneEvent{},
 		&events.CompactionStartedEvent{},
 		&events.CompactionDoneEvent{},

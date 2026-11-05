@@ -76,6 +76,13 @@ func startREPL() error {
 		return err
 	}
 	defer sess.Close()
+	// A watch that fires while the prompt is idle starts its own turn. The
+	// REPL's stdin scan stays blocked; the wake turn writes to the terminal
+	// view installed here, and each user prompt replaces it. The requester
+	// policy is the driver's, not the session's.
+	sess.SetView(newTerminalView())
+	sess.SetWakeTurnRequester(sess.StartWakeTurn)
+	sess.Start()
 
 	fmt.Fprintf(os.Stderr, "\n  %s %s/%s\n", Dim("provider:"), sess.ProviderName(), sess.ModelName())
 	printWorldBanner(sess.WorldStatus())

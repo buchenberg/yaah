@@ -108,6 +108,18 @@ func (t *App) AddPrompt(input string) {
 	t.App.SetFocus(t.Input)
 }
 
+// addWakePrompt records a harness wake in the conversation stream. It runs
+// from the event queue, not the input handler, so it deliberately does not
+// steal focus the way AddPrompt does.
+func (t *App) addWakePrompt(text string) {
+	t.conversationLog = append(t.conversationLog, convItem{
+		text:     t.Theme.Tag(t.Theme.User, tview.Escape(promptDisplay(text))),
+		isPrompt: true,
+		prompt:   text,
+	})
+	t.markDirty()
+}
+
 // addAssistantResponse stores raw markdown in the conversation log.
 // Markdown is rendered at display time via renderMarkdown, which produces
 // valid tview tags — no raw brackets survive to confuse SetDynamicColors.

@@ -242,6 +242,11 @@ func (d *DB) DeleteSession(id string) error {
 	if _, err := tx.Exec(`DELETE FROM trace_owners WHERE parent_session = ?`, id); err != nil {
 		return fmt.Errorf("delete trace owners: %w", err)
 	}
+	// Armed watches belong to the conversation: deleting it must not leave
+	// rows a future resume could re-arm.
+	if _, err := tx.Exec(`DELETE FROM session_watches WHERE session_id = ?`, id); err != nil {
+		return fmt.Errorf("delete session watches: %w", err)
+	}
 	res, err := tx.Exec(`DELETE FROM sessions WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("delete session: %w", err)

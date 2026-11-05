@@ -97,6 +97,9 @@ func runOneShotWith(cmd *cobra.Command, prompt string, opts SessionOptions) erro
 	tv := newTerminalView()
 	tv.start()
 	sess.SetView(tv)
+	// One-shot has no idle turn: a missed wake queues and is injected at the
+	// next between-turn boundary of the single run.
+	sess.Start()
 	response, streamed, err := sess.RunPrompt(context.Background(), prompt)
 	if err != nil {
 		return fmt.Errorf("agent error: %w", err)
