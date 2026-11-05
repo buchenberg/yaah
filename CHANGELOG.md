@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.141.0](https://github.com/buchenberg/yaah/compare/v0.140.0...v0.141.0) (2026-11-05)
+
+
+### Features
+
+* **acp:** yaah/wake notification for idle watch fires (yaah-95ri.15) ([f9493ba](https://github.com/buchenberg/yaah/commit/f9493baf03e0a7843dbfa8185681893c4092715f))
+* **config:** gate idle wake turns per session (yaah-95ri.16) ([ed2e4a1](https://github.com/buchenberg/yaah/commit/ed2e4a12e457a313381c27464f8319c4c43e7aec))
+* **wake:** follow-up hardening for wait/watch (yaah-95ri.9-.16) ([9900c0c](https://github.com/buchenberg/yaah/commit/9900c0cc691544e14e3bc3b01d7bb0412b753ad9))
+* **wake:** OTel spans and hook events for wait/watch (yaah-95ri.10) ([528e564](https://github.com/buchenberg/yaah/commit/528e564152366d41587c5124a4e4b64f6b61e152))
+* **wake:** per-source poll ceilings and a clock seam (yaah-95ri.12) ([066d6f1](https://github.com/buchenberg/yaah/commit/066d6f12946dc5ebfe92e1c8eeddc544acd30746))
+* **wake:** typed evidence envelope for wait/watch (yaah-95ri.9) ([7576fc0](https://github.com/buchenberg/yaah/commit/7576fc0a48ece0175fa0a6d86ad48855d2e52b17))
+* **wake:** watch ownership claim and last-resume-wins delivery (yaah-95ri.11) ([38dc758](https://github.com/buchenberg/yaah/commit/38dc758ad72fafc9cf6128cbb56e467f96fc2aa5))
+
+
+### Bug Fixes
+
+* **wake:** address follow-up review findings ([421106e](https://github.com/buchenberg/yaah/commit/421106e2302ecae29d9bc4b750b843a2ad0e679c))
+* **wake:** do not re-release an already-delivered digest ([d9aa2f0](https://github.com/buchenberg/yaah/commit/d9aa2f0aca8fa5b5ccf23a8d69b21ae2bf3e484f))
+* **wake:** forget delivered markers on reuse and normal delivery ([3b12c38](https://github.com/buchenberg/yaah/commit/3b12c38b68f20b7a75c99228a6d9b4a664424e55))
+* **wake:** release undelivered fire leases on close ([d2cbca5](https://github.com/buchenberg/yaah/commit/d2cbca5a5e6d796d0e77dd684e0cb093455319de))
+* **wake:** snapshot rehydrated watch info before the poller starts ([43e7561](https://github.com/buchenberg/yaah/commit/43e7561c791f8362236f54998fa59068455d1ffa))
+
+
+### Documentation
+
+* **wake:** record the predicate-schema decision (yaah-95ri.13) ([8647966](https://github.com/buchenberg/yaah/commit/86479667b5819e6fa87bef53eeb17b1a20901d49))
+* **wake:** settle HTTP predicate isolation posture (yaah-95ri.14) ([2374b3b](https://github.com/buchenberg/yaah/commit/2374b3b478f54c2401fdf95af1cb833075ef2178))
+
 ## [0.140.0](https://github.com/buchenberg/yaah/compare/v0.139.0...v0.140.0) (2026-11-05)
 
 
