@@ -31,9 +31,12 @@ next turn, because they have no client-initiated prompt to run.
 
 Watches persist in the session database. On `--resume` they are re-armed with
 their original armed time; one that fired while the session was down is
-reported as a missed wake. `job:` and `process:` watches cannot survive a
-restart because those ids are process-local, so they are reported as missed
-and must be re-armed if still needed.
+reported as a missed wake. A resume claims the session's watches (last resume
+wins): a process that loses the claim cannot deliver a fire, so two processes
+do not double-wake. Delivered watches are removed from the store; the
+`watch.fire` hook event is the durable history. `job:` and `process:` watches
+cannot survive a restart because those ids are process-local, so they are
+reported as missed and must be re-armed if still needed.
 
 Guardrails: at most 32 armed watches per session, auto-expiry, and bounded
 evidence. Arming a `command` watch is dangerous and may require approval;

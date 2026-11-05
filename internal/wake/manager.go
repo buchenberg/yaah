@@ -3,6 +3,7 @@ package wake
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -47,6 +48,14 @@ func NewManager(opts Options) *Manager {
 	}
 	if m.deps.Now == nil {
 		m.deps.Now = time.Now
+	}
+	m.ownerID = opts.OwnerID
+	if m.ownerID == "" {
+		m.ownerID = fmt.Sprintf("pid-%d", os.Getpid())
+	}
+	m.leaseDuration = opts.LeaseDuration
+	if m.leaseDuration <= 0 {
+		m.leaseDuration = DefaultLeaseDuration
 	}
 	return m
 }
@@ -184,6 +193,8 @@ func (m *Manager) Arm(req ArmRequest) (WatchInfo, error) {
 		start:    now,
 		expires:  now.Add(expiresIn),
 		interval: interval,
+		owner:    m.ownerID,
+		lease:    now.Add(m.leaseDuration),
 		state:    StateArmed,
 	}
 	m.watches[id] = w
@@ -263,11 +274,14 @@ func (m *Manager) Rehydrate(ctx context.Context) error {
 	if m.store == nil {
 		return nil
 	}
-	rows, err := m.store.ListWatches(m.sessionID)
+	now := m.deps.now()
+	// Claim every row before rebuilding it. Last resume wins: a later
+	// process takes over, and this process's ClaimFire calls then fail, so
+	// two processes cannot both deliver the same watch.
+	rows, err := m.store.ClaimWatches(m.sessionID, m.ownerID, now.Add(m.leaseDuration).UnixNano())
 	if err != nil {
 		return err
 	}
-	now := m.deps.now()
 	var missed []firedWatch
 	for _, row := range rows {
 		spec := Spec{On: row.On, Until: row.Until}
@@ -296,6 +310,8 @@ func (m *Manager) Rehydrate(ctx context.Context) error {
 				start:    start,
 				expires:  expires,
 				interval: interval,
+				owner:    m.ownerID,
+				lease:    now.Add(m.leaseDuration),
 				state:    StateArmed,
 			}
 			m.mu.Lock()
@@ -332,6 +348,8 @@ func (m *Manager) Rehydrate(ctx context.Context) error {
 				id:       missed[i].id,
 				spec:     missed[i].spec,
 				start:    now,
+				owner:    m.ownerID,
+				lease:    now.Add(m.leaseDuration),
 				state:    StateFired,
 				evidence: missed[i].evidence,
 				firedAt:  now,
@@ -471,26 +489,42 @@ func (m *Manager) fire(w *armedWatch, evidence Evidence, missed bool) {
 		return
 	}
 	cur, ok := m.watches[w.id]
-	if !ok || cur != w {
+	if !ok || cur != w || cur.state == StateFired {
 		// Cancelled (or already delivered and reaped): a poller that was
 		// mid-evaluation must not resurrect it with a spurious digest.
 		m.mu.Unlock()
 		return
 	}
-	if cur.state == StateFired {
+	m.mu.Unlock()
+
+	// Claim the fire in the store before delivering. A process that lost the
+	// last-resume race gets false here; it drops the watch instead of
+	// duplicating the wake the current owner will deliver. A store error is
+	// treated as best-effort success: a duplicate is better than a lost wake.
+	if m.store != nil {
+		claimed, err := m.store.ClaimFire(m.sessionID, w.id, m.ownerID, m.deps.now().UnixNano(), MarshalEvidence(evidence))
+		if err == nil && !claimed {
+			m.remove(w.id)
+			return
+		}
+	}
+
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return
+	}
+	cur, ok = m.watches[w.id]
+	if !ok || cur != w || cur.state == StateFired {
 		m.mu.Unlock()
 		return
 	}
 	w.state = StateFired
 	w.evidence = evidence
 	w.firedAt = m.deps.now()
-	rec := recordOf(w) // under m.mu
 	info := infoOf(w)
 	m.mu.Unlock()
 
-	if m.store != nil {
-		_ = m.store.SaveWatch(m.sessionID, rec)
-	}
 	m.observeWatchFired(info, missed)
 	m.enqueue(firedWatch{id: w.id, spec: w.spec, evidence: evidence, missed: missed, w: w})
 }
@@ -642,9 +676,13 @@ func recordOf(w *armedWatch) WatchRecord {
 		Evidence:   w.evidence,
 		ArmedAt:    w.start.UnixNano(),
 		IntervalMs: w.interval.Milliseconds(),
+		Owner:      w.owner,
 	}
 	if !w.expires.IsZero() {
 		rec.ExpiresAt = w.expires.UnixNano()
+	}
+	if !w.lease.IsZero() {
+		rec.LeaseUntil = w.lease.UnixNano()
 	}
 	if !w.firedAt.IsZero() {
 		rec.FiredAt = w.firedAt.UnixNano()

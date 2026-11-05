@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 )
@@ -19,6 +20,8 @@ type SessionWatch struct {
 	ExpiresAt  int64
 	FiredAt    int64
 	IntervalMs int64
+	Owner      string
+	LeaseUntil int64
 }
 
 // SaveSessionWatch inserts or replaces one watch row.
@@ -28,8 +31,8 @@ func (d *DB) SaveSessionWatch(sessionID string, w SessionWatch) error {
 	}
 	_, err := d.sql.Exec(`
 		INSERT INTO session_watches
-			(session_id, id, on_spec, until_spec, state, evidence, armed_at, expires_at, fired_at, interval_ms)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			(session_id, id, on_spec, until_spec, state, evidence, armed_at, expires_at, fired_at, interval_ms, owner, lease_until)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(session_id, id) DO UPDATE SET
 			on_spec = excluded.on_spec,
 			until_spec = excluded.until_spec,
@@ -38,8 +41,10 @@ func (d *DB) SaveSessionWatch(sessionID string, w SessionWatch) error {
 			armed_at = excluded.armed_at,
 			expires_at = excluded.expires_at,
 			fired_at = excluded.fired_at,
-			interval_ms = excluded.interval_ms`,
-		sessionID, w.ID, w.On, w.Until, w.State, w.Evidence, w.ArmedAt, w.ExpiresAt, w.FiredAt, w.IntervalMs)
+			interval_ms = excluded.interval_ms,
+			owner = excluded.owner,
+			lease_until = excluded.lease_until`,
+		sessionID, w.ID, w.On, w.Until, w.State, w.Evidence, w.ArmedAt, w.ExpiresAt, w.FiredAt, w.IntervalMs, w.Owner, w.LeaseUntil)
 	if err != nil {
 		return fmt.Errorf("save session watch %s: %w", w.ID, err)
 	}
@@ -50,7 +55,7 @@ func (d *DB) SaveSessionWatch(sessionID string, w SessionWatch) error {
 // first. The caller owns the slice.
 func (d *DB) ListSessionWatches(sessionID string) ([]SessionWatch, error) {
 	rows, err := d.sql.Query(`
-		SELECT id, on_spec, until_spec, state, evidence, armed_at, expires_at, fired_at, interval_ms
+		SELECT id, on_spec, until_spec, state, evidence, armed_at, expires_at, fired_at, interval_ms, owner, lease_until
 		FROM session_watches
 		WHERE session_id = ?
 		ORDER BY armed_at, id`, sessionID)
@@ -58,19 +63,62 @@ func (d *DB) ListSessionWatches(sessionID string) ([]SessionWatch, error) {
 		return nil, fmt.Errorf("list session watches: %w", err)
 	}
 	defer rows.Close()
+	return scanSessionWatches(rows)
+}
 
-	var out []SessionWatch
-	for rows.Next() {
-		var w SessionWatch
-		if err := rows.Scan(&w.ID, &w.On, &w.Until, &w.State, &w.Evidence, &w.ArmedAt, &w.ExpiresAt, &w.FiredAt, &w.IntervalMs); err != nil {
-			return nil, fmt.Errorf("scan session watch: %w", err)
-		}
-		out = append(out, w)
+// ClaimSessionWatches makes owner the owner of every watch for the session
+// and returns the claimed set. Last resume wins: a newer process takes over
+// and the older process's eventual fires are rejected by ClaimSessionWatchFire.
+// The UPDATE and SELECT share a transaction so the returned set is the one
+// this owner claimed.
+func (d *DB) ClaimSessionWatches(sessionID, owner string, leaseUntil int64) ([]SessionWatch, error) {
+	tx, err := d.sql.BeginTx(context.Background(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin watch claim: %w", err)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate session watches: %w", err)
+	defer tx.Rollback()
+	if _, err := tx.Exec(
+		`UPDATE session_watches SET owner = ?, lease_until = ? WHERE session_id = ?`,
+		owner, leaseUntil, sessionID); err != nil {
+		return nil, fmt.Errorf("claim session watches: %w", err)
+	}
+	rows, err := tx.Query(`
+		SELECT id, on_spec, until_spec, state, evidence, armed_at, expires_at, fired_at, interval_ms, owner, lease_until
+		FROM session_watches
+		WHERE session_id = ?
+		ORDER BY armed_at, id`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("list claimed watches: %w", err)
+	}
+	out, err := scanSessionWatches(rows)
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit watch claim: %w", err)
 	}
 	return out, nil
+}
+
+// ClaimSessionWatchFire transitions an armed watch owned by owner to fired.
+// It reports false when another process owns the row or it is no longer
+// armed, so a process that lost the last-resume race cannot deliver a wake
+// the current owner is responsible for.
+func (d *DB) ClaimSessionWatchFire(sessionID, id, owner string, firedAt int64, evidence string) (bool, error) {
+	res, err := d.sql.Exec(`
+		UPDATE session_watches
+		SET state = 'fired', fired_at = ?, evidence = ?, owner = ?
+		WHERE session_id = ? AND id = ? AND owner = ? AND state = 'armed'`,
+		firedAt, evidence, owner, sessionID, id, owner)
+	if err != nil {
+		return false, fmt.Errorf("claim watch fire %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("claim watch fire %s: %w", id, err)
+	}
+	return n > 0, nil
 }
 
 // DeleteSessionWatch removes one watch row. An unknown id is a no-op.
@@ -90,6 +138,21 @@ func (d *DB) DeleteSessionWatches(sessionID string) error {
 		return fmt.Errorf("delete session watches: %w", err)
 	}
 	return nil
+}
+
+func scanSessionWatches(rows *sql.Rows) ([]SessionWatch, error) {
+	var out []SessionWatch
+	for rows.Next() {
+		var w SessionWatch
+		if err := rows.Scan(&w.ID, &w.On, &w.Until, &w.State, &w.Evidence, &w.ArmedAt, &w.ExpiresAt, &w.FiredAt, &w.IntervalMs, &w.Owner, &w.LeaseUntil); err != nil {
+			return nil, fmt.Errorf("scan session watch: %w", err)
+		}
+		out = append(out, w)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate session watches: %w", err)
+	}
+	return out, nil
 }
 
 // countSessionWatches is a test seam: the repo tests assert row ownership

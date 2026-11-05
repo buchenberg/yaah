@@ -709,11 +709,94 @@ func (s *fakeStore) ListWatches(sessionID string) ([]WatchRecord, error) {
 	return out, nil
 }
 
+func (s *fakeStore) ClaimWatches(sessionID, owner string, leaseUntil int64) ([]WatchRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]WatchRecord, 0, len(s.rows))
+	for id, r := range s.rows {
+		r.Owner = owner
+		r.LeaseUntil = leaseUntil
+		s.rows[id] = r
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+func (s *fakeStore) ClaimFire(sessionID, id, owner string, firedAt int64, evidence string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.rows[id]
+	if !ok || r.Owner != owner || r.State != StateArmed {
+		return false, nil
+	}
+	r.State = StateFired
+	r.FiredAt = firedAt
+	r.Evidence = ParseEvidence(evidence)
+	r.Owner = owner
+	s.rows[id] = r
+	return true, nil
+}
+
 func (s *fakeStore) DeleteWatch(sessionID, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.rows, id)
 	return nil
+}
+
+// TestManagerDropsFireItNoLongerOwns simulates a second process resuming the
+// session and claiming the watches: the first process's stale poller must not
+// deliver a duplicate wake.
+func TestManagerDropsFireItNoLongerOwns(t *testing.T) {
+	store := newFakeStore()
+	wakes := make(chan string, 1)
+	m := NewManager(Options{
+		SessionID:    "sess",
+		Deps:         Deps{Now: time.Now},
+		Store:        store,
+		OwnerID:      "process-a",
+		DigestWindow: 10 * time.Millisecond,
+		OnWake:       func(s string) { wakes <- s },
+	})
+	defer m.Close()
+
+	info, err := m.Arm(ArmRequest{On: "time:10ms", ExpiresIn: time.Second})
+	if err != nil {
+		t.Fatalf("Arm: %v", err)
+	}
+	// A newer resume claims the row before the poller fires.
+	store.mu.Lock()
+	row := store.rows[info.ID]
+	row.Owner = "process-b"
+	store.rows[info.ID] = row
+	store.mu.Unlock()
+
+	select {
+	case got := <-wakes:
+		t.Fatalf("lost-ownership fire was delivered: %q", got)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestManagerRehydrateClaimsRows(t *testing.T) {
+	store := newFakeStore()
+	_ = store.SaveWatch("sess", WatchRecord{
+		ID: "w1", On: "time:1h", State: StateArmed, Owner: "old",
+		ArmedAt: time.Now().UnixNano(), ExpiresAt: time.Now().Add(time.Hour).UnixNano(),
+	})
+	m := NewManager(Options{
+		SessionID: "sess", Deps: Deps{Now: time.Now}, Store: store, OwnerID: "new",
+	})
+	defer m.Close()
+	if err := m.Rehydrate(context.Background()); err != nil {
+		t.Fatalf("Rehydrate: %v", err)
+	}
+	store.mu.Lock()
+	owner := store.rows["w1"].Owner
+	store.mu.Unlock()
+	if owner != "new" {
+		t.Fatalf("rehydrate left owner %q, want new", owner)
+	}
 }
 
 func TestManagerPersistsAndDeletesOnDelivery(t *testing.T) {

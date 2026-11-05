@@ -25,6 +25,8 @@ func (s wakeStore) SaveWatch(sessionID string, rec wake.WatchRecord) error {
 		ExpiresAt:  rec.ExpiresAt,
 		FiredAt:    rec.FiredAt,
 		IntervalMs: rec.IntervalMs,
+		Owner:      rec.Owner,
+		LeaseUntil: rec.LeaseUntil,
 	})
 }
 
@@ -33,6 +35,26 @@ func (s wakeStore) ListWatches(sessionID string) ([]wake.WatchRecord, error) {
 	if err != nil {
 		return nil, err
 	}
+	return toWakeRecords(rows), nil
+}
+
+func (s wakeStore) ClaimWatches(sessionID, owner string, leaseUntil int64) ([]wake.WatchRecord, error) {
+	rows, err := s.db.ClaimSessionWatches(sessionID, owner, leaseUntil)
+	if err != nil {
+		return nil, err
+	}
+	return toWakeRecords(rows), nil
+}
+
+func (s wakeStore) ClaimFire(sessionID, id, owner string, firedAt int64, evidence string) (bool, error) {
+	return s.db.ClaimSessionWatchFire(sessionID, id, owner, firedAt, evidence)
+}
+
+func (s wakeStore) DeleteWatch(sessionID, id string) error {
+	return s.db.DeleteSessionWatch(sessionID, id)
+}
+
+func toWakeRecords(rows []memory.SessionWatch) []wake.WatchRecord {
 	out := make([]wake.WatchRecord, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, wake.WatchRecord{
@@ -45,11 +67,9 @@ func (s wakeStore) ListWatches(sessionID string) ([]wake.WatchRecord, error) {
 			ExpiresAt:  r.ExpiresAt,
 			FiredAt:    r.FiredAt,
 			IntervalMs: r.IntervalMs,
+			Owner:      r.Owner,
+			LeaseUntil: r.LeaseUntil,
 		})
 	}
-	return out, nil
-}
-
-func (s wakeStore) DeleteWatch(sessionID, id string) error {
-	return s.db.DeleteSessionWatch(sessionID, id)
+	return out
 }

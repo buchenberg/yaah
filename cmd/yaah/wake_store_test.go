@@ -23,6 +23,7 @@ func TestWakeStoreRoundTripsEvidence(t *testing.T) {
 			Kind: "command", ExitCode: &code, Excerpt: "ok\n", Detail: "probe",
 		},
 		ArmedAt: 1, ExpiresAt: 2, FiredAt: 3, IntervalMs: 4,
+		Owner: "worker", LeaseUntil: 5,
 	}
 	if err := store.SaveWatch("sess", rec); err != nil {
 		t.Fatalf("SaveWatch: %v", err)
@@ -37,6 +38,9 @@ func TestWakeStoreRoundTripsEvidence(t *testing.T) {
 	ev := rows[0].Evidence
 	if ev.Kind != "command" || ev.ExitCode == nil || *ev.ExitCode != 0 || ev.Excerpt != "ok\n" {
 		t.Fatalf("round-tripped evidence = %+v", ev)
+	}
+	if rows[0].Owner != "worker" || rows[0].LeaseUntil != 5 {
+		t.Fatalf("round-tripped ownership = owner %q lease %d", rows[0].Owner, rows[0].LeaseUntil)
 	}
 
 	// A prose-era row (the column was plain text before the envelope) is

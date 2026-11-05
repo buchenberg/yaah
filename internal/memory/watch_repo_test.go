@@ -68,3 +68,56 @@ func TestSessionWatchesRoundTripAndOwnership(t *testing.T) {
 		t.Fatalf("sess-b count after bulk delete = %d, err=%v", n, err)
 	}
 }
+
+func TestSessionWatchClaimAndFire(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+
+	_ = db.SaveSessionWatch("sess", SessionWatch{ID: "w1", On: "time:1h", State: "armed", Owner: "old"})
+	_ = db.SaveSessionWatch("sess", SessionWatch{ID: "w2", On: "time:1h", State: "armed", Owner: "old"})
+
+	// Last resume wins: the new owner takes over every row.
+	rows, err := db.ClaimSessionWatches("sess", "new", 999)
+	if err != nil {
+		t.Fatalf("ClaimSessionWatches: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("claimed rows = %d, want 2", len(rows))
+	}
+	for _, row := range rows {
+		if row.Owner != "new" || row.LeaseUntil != 999 {
+			t.Fatalf("claimed row = %+v", row)
+		}
+	}
+
+	// The old owner can no longer fire.
+	ok, err := db.ClaimSessionWatchFire("sess", "w1", "old", 100, "old evidence")
+	if err != nil || ok {
+		t.Fatalf("old owner claimed fire: ok=%v err=%v", ok, err)
+	}
+	// The current owner can.
+	ok, err = db.ClaimSessionWatchFire("sess", "w1", "new", 200, "new evidence")
+	if err != nil || !ok {
+		t.Fatalf("new owner claim: ok=%v err=%v", ok, err)
+	}
+	// A second fire after the row is fired is refused.
+	ok, err = db.ClaimSessionWatchFire("sess", "w1", "new", 300, "again")
+	if err != nil || ok {
+		t.Fatalf("second fire claim: ok=%v err=%v", ok, err)
+	}
+
+	rows, err = db.ListSessionWatches("sess")
+	if err != nil {
+		t.Fatalf("ListSessionWatches: %v", err)
+	}
+	for _, row := range rows {
+		if row.ID == "w1" {
+			if row.State != "fired" || row.Evidence != "new evidence" || row.FiredAt != 200 {
+				t.Fatalf("w1 after fire = %+v", row)
+			}
+		}
+	}
+}

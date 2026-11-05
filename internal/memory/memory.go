@@ -411,6 +411,8 @@ func (d *DB) migrate() error {
 		expires_at  INTEGER NOT NULL DEFAULT 0,
 		fired_at    INTEGER NOT NULL DEFAULT 0,
 		interval_ms INTEGER NOT NULL DEFAULT 0,
+		owner       TEXT NOT NULL DEFAULT '',
+		lease_until INTEGER NOT NULL DEFAULT 0,
 		PRIMARY KEY (session_id, id)
 	);
 
@@ -555,6 +557,10 @@ func (d *DB) migrate() error {
 		// rows read as build and no backfill (and no schema-version bump)
 		// is needed — nothing has to run exactly once.
 		{"sessions", "mode", "ALTER TABLE sessions ADD COLUMN mode TEXT DEFAULT ''"},
+		// Watch ownership: a resumed process claims the session's watches,
+		// and a fire is delivered only by the owner that claims it.
+		{"session_watches", "owner", "ALTER TABLE session_watches ADD COLUMN owner TEXT NOT NULL DEFAULT ''"},
+		{"session_watches", "lease_until", "ALTER TABLE session_watches ADD COLUMN lease_until INTEGER NOT NULL DEFAULT 0"},
 	}
 	for _, s := range steps {
 		if err := d.ensureColumn(s.table, s.column, s.ddl); err != nil {

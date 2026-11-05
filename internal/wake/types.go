@@ -20,10 +20,11 @@ const (
 	DefaultWaitTimeout = 15 * time.Minute
 	MaxWaitTimeout     = 24 * time.Hour
 
-	DefaultDigestWindow = 1500 * time.Millisecond
-	DefaultMaxWatches   = 32
-	DefaultWatchExpiry  = 24 * time.Hour
-	MaxWatchExpiry      = 7 * 24 * time.Hour
+	DefaultDigestWindow  = 1500 * time.Millisecond
+	DefaultMaxWatches    = 32
+	DefaultWatchExpiry   = 24 * time.Hour
+	MaxWatchExpiry       = 7 * 24 * time.Hour
+	DefaultLeaseDuration = 5 * time.Minute
 )
 
 // WatchRecord is the durable half of an armed watch. The manager owns the
@@ -38,6 +39,8 @@ type WatchRecord struct {
 	ExpiresAt  int64 // unix nanoseconds; 0 means no expiry
 	FiredAt    int64 // unix nanoseconds; 0 until fired
 	IntervalMs int64
+	Owner      string
+	LeaseUntil int64 // unix nanoseconds; informational last-claim lease
 }
 
 // Store persists watches so they survive a session restart. Implementations
@@ -47,6 +50,13 @@ type Store interface {
 	SaveWatch(sessionID string, rec WatchRecord) error
 	ListWatches(sessionID string) ([]WatchRecord, error)
 	DeleteWatch(sessionID, id string) error
+	// ClaimWatches makes owner the owner of every watch for the session and
+	// returns the claimed set. Last resume wins: a later claim takes over,
+	// and the previous owner's ClaimFire calls then fail.
+	ClaimWatches(sessionID, owner string, leaseUntil int64) ([]WatchRecord, error)
+	// ClaimFire transitions an armed watch owned by owner to fired and
+	// reports whether this owner still owned it.
+	ClaimFire(sessionID, id, owner string, firedAt int64, evidence string) (bool, error)
 }
 
 // Observer receives lifecycle notifications for tracing and hook emission.
@@ -65,11 +75,16 @@ type Observer interface {
 
 // Options configures a Manager. Zero values take the defaults above.
 type Options struct {
-	SessionID     string
-	Deps          Deps
-	Store         Store
-	OnWake        func(string)
-	Observer      Observer
+	SessionID string
+	Deps      Deps
+	Store     Store
+	OnWake    func(string)
+	Observer  Observer
+	// OwnerID identifies this process in the watch store. Empty uses the
+	// process id. LeaseDuration is informational; the next resume claims
+	// regardless (last resume wins).
+	OwnerID       string
+	LeaseDuration time.Duration
 	DigestWindow  time.Duration
 	MaxWatches    int
 	DefaultExpiry time.Duration
@@ -133,8 +148,10 @@ type Manager struct {
 	defaultExpiry time.Duration
 	maxExpiry     time.Duration
 
-	onWake   func(string)
-	observer Observer
+	onWake        func(string)
+	observer      Observer
+	ownerID       string
+	leaseDuration time.Duration
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -157,6 +174,8 @@ type armedWatch struct {
 	expires  time.Time
 	interval time.Duration
 	cancel   context.CancelFunc
+	owner    string
+	lease    time.Time
 
 	state    string
 	evidence Evidence
