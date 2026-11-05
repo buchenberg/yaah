@@ -34,7 +34,10 @@ func TestBulkFilesDryRunDoesNotMutate(t *testing.T) {
 	src := filepath.Join(dir, "src")
 	seedBulk(t, src)
 	tool := &BulkFilesTool{WS: ws}
-	out, err := tool.Execute(context.Background(), `{"action":"copy","pattern":"*.txt","path":"`+src+`","to":"`+filepath.Join(dir, "out")+`","dry_run":true}`)
+	out, err := tool.Execute(context.Background(), mustJSON(t, map[string]any{
+		"action": "copy", "pattern": "*.txt", "path": src,
+		"to": filepath.Join(dir, "out"), "dry_run": true,
+	}))
 	if err != nil {
 		t.Fatalf("dry run: %v", err)
 	}
@@ -58,7 +61,9 @@ func TestBulkFilesCopyPreservesRelativePath(t *testing.T) {
 	seedBulk(t, src)
 	tool := &BulkFilesTool{WS: ws}
 	to := filepath.Join(dir, "out")
-	out, err := tool.Execute(context.Background(), `{"action":"copy","pattern":"**/*.txt","path":"`+src+`","to":"`+to+`","mkdir_p":true}`)
+	out, err := tool.Execute(context.Background(), mustJSON(t, map[string]any{
+		"action": "copy", "pattern": "**/*.txt", "path": src, "to": to, "mkdir_p": true,
+	}))
 	if err != nil {
 		t.Fatalf("copy: %v (%s)", err, out)
 	}
@@ -77,7 +82,9 @@ func TestBulkFilesDeleteAndFailureReporting(t *testing.T) {
 	src := filepath.Join(dir, "src")
 	seedBulk(t, src)
 	tool := &BulkFilesTool{WS: ws}
-	if _, err := tool.Execute(context.Background(), `{"action":"delete","pattern":"*.txt","path":"`+src+`"}`); err != nil {
+	if _, err := tool.Execute(context.Background(), mustJSON(t, map[string]any{
+		"action": "delete", "pattern": "*.txt", "path": src,
+	})); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	for _, rel := range []string{"a.txt", "b.txt", "sub/c.txt"} {
@@ -104,7 +111,9 @@ func TestBulkFilesDeleteAndFailureReporting(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(to, "a.txt"), []byte("existing"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := tool.Execute(context.Background(), `{"action":"copy","pattern":"*.txt","path":"`+src+`","to":"`+to+`"}`)
+	out, err := tool.Execute(context.Background(), mustJSON(t, map[string]any{
+		"action": "copy", "pattern": "*.txt", "path": src, "to": to,
+	}))
 	if err == nil {
 		t.Fatalf("bulk copy with an existing destination reported success: %s", out)
 	}

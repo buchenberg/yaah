@@ -36,7 +36,8 @@ func TestCopyTree(t *testing.T) {
 	src := filepath.Join(dir, "src")
 	seedTree(t, src)
 	tool := &CopyTreeTool{WS: ws}
-	args := `{"path":"` + src + `","to":"` + filepath.Join(dir, "dst", "nested") + `","mkdir_p":true}`
+	nestedDst := filepath.Join(dir, "dst", "nested")
+	args := mustJSON(t, map[string]any{"path": src, "to": nestedDst, "mkdir_p": true})
 	out, err := tool.Execute(context.Background(), args)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -67,7 +68,8 @@ func TestCopyTreeRefusesSymlink(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 	tool := &CopyTreeTool{WS: ws}
-	if _, err := tool.Execute(context.Background(), `{"path":"`+src+`","to":"`+filepath.Join(dir, "dst")+`"}`); err == nil {
+	dst := filepath.Join(dir, "dst")
+	if _, err := tool.Execute(context.Background(), mustJSON(t, map[string]any{"path": src, "to": dst})); err == nil {
 		t.Fatal("copy_tree followed a symlink")
 	}
 }
@@ -78,7 +80,7 @@ func TestMoveTree(t *testing.T) {
 	seedTree(t, src)
 	dst := filepath.Join(dir, "dst")
 	tool := &MoveTreeTool{WS: ws}
-	out, err := tool.Execute(context.Background(), `{"path":"`+src+`","to":"`+dst+`"}`)
+	out, err := tool.Execute(context.Background(), mustJSON(t, map[string]any{"path": src, "to": dst}))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -99,7 +101,8 @@ func TestCopyTreeRefusesDestinationInsideSource(t *testing.T) {
 	src := filepath.Join(dir, "src")
 	seedTree(t, src)
 	tool := &CopyTreeTool{WS: ws}
-	if _, err := tool.Execute(context.Background(), `{"path":"`+src+`","to":"`+filepath.Join(src, "copy")+`"}`); err == nil {
+	inside := filepath.Join(src, "copy")
+	if _, err := tool.Execute(context.Background(), mustJSON(t, map[string]any{"path": src, "to": inside})); err == nil {
 		t.Fatal("copy_tree allowed a destination inside its source")
 	}
 }
@@ -112,7 +115,7 @@ func TestCopyToolMkdirP(t *testing.T) {
 	}
 	tool := &CopyTool{WS: ws}
 	dst := filepath.Join(dir, "deep", "nested", "b.txt")
-	if _, err := tool.Execute(context.Background(), `{"path":"`+src+`","to":"`+dst+`","mkdir_p":true}`); err != nil {
+	if _, err := tool.Execute(context.Background(), mustJSON(t, map[string]any{"path": src, "to": dst, "mkdir_p": true})); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	data, err := os.ReadFile(dst)

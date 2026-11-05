@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -30,8 +31,12 @@ func TestLocalWorkspaceAppendAndReadRange(t *testing.T) {
 	if string(data) != "one\ntwo\n" {
 		t.Fatalf("appended content = %q", data)
 	}
-	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o644 {
-		t.Fatalf("append changed the existing mode: %v %v", info, err)
+	if runtime.GOOS != "windows" {
+		// Windows does not model Unix permission bits; the host open path is
+		// still O_APPEND, so there is nothing portable to assert there.
+		if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o644 {
+			t.Fatalf("append changed the existing mode: %v %v", info, err)
+		}
 	}
 
 	got, err := ws.ReadRange(context.Background(), path, 2, 4)

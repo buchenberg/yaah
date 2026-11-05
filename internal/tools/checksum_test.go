@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,7 +29,7 @@ func TestChecksumToolHashesAndCompares(t *testing.T) {
 	want := fmt.Sprintf("%x", sha256.Sum256([]byte("hello\n")))
 
 	tool := &ChecksumTool{WS: ws}
-	out, err := tool.Execute(context.Background(), `{"paths":["`+a+`"]}`)
+	out, err := tool.Execute(context.Background(), mustJSON(t, map[string]any{"paths": []string{a}}))
 	if err != nil {
 		t.Fatalf("hash: %v", err)
 	}
@@ -38,14 +37,14 @@ func TestChecksumToolHashesAndCompares(t *testing.T) {
 		t.Fatalf("hash output = %q", out)
 	}
 
-	out, err = tool.Execute(context.Background(), `{"paths":["`+a+`","`+b+`"],"compare":true}`)
+	out, err = tool.Execute(context.Background(), mustJSON(t, map[string]any{"paths": []string{a, b}, "compare": true}))
 	if err != nil {
 		t.Fatalf("compare equal: %v", err)
 	}
 	if !strings.Contains(out, "equal: true") {
 		t.Fatalf("compare equal output = %q", out)
 	}
-	out, err = tool.Execute(context.Background(), `{"paths":["`+a+`","`+c+`"],"compare":true}`)
+	out, err = tool.Execute(context.Background(), mustJSON(t, map[string]any{"paths": []string{a, c}, "compare": true}))
 	if err != nil {
 		t.Fatalf("compare different: %v", err)
 	}
@@ -60,9 +59,9 @@ func TestChecksumToolValidation(t *testing.T) {
 	_ = os.WriteFile(a, []byte("x"), 0o644)
 	tool := &ChecksumTool{WS: ws}
 	for _, args := range []string{
-		`{"paths":[]}`,
-		`{"paths":["` + a + `","` + a + `","` + a + `"],"compare":true}`,
-		`{"paths":["` + dir + `"]}`,
+		mustJSON(t, map[string]any{"paths": []string{}}),
+		mustJSON(t, map[string]any{"paths": []string{a, a, a}, "compare": true}),
+		mustJSON(t, map[string]any{"paths": []string{dir}}),
 	} {
 		if _, err := tool.Execute(context.Background(), args); err == nil {
 			t.Errorf("checksum accepted %s", args)
@@ -72,8 +71,8 @@ func TestChecksumToolValidation(t *testing.T) {
 	for i := range many {
 		many[i] = a
 	}
-	args, _ := json.Marshal(map[string]any{"paths": many})
-	if _, err := tool.Execute(context.Background(), string(args)); err == nil {
+	args := mustJSON(t, map[string]any{"paths": many})
+	if _, err := tool.Execute(context.Background(), args); err == nil {
 		t.Error("checksum accepted more than the batch limit")
 	}
 }

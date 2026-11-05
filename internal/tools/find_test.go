@@ -46,11 +46,11 @@ func TestFindFiltersByNameSizeTypeAndAge(t *testing.T) {
 	}
 	tool := &FindTool{WS: ws}
 
-	out, err := tool.Execute(context.Background(), `{"path":"`+dir+`","name":"*.go","type":"file"}`)
+	out, err := tool.Execute(context.Background(), mustJSON(t, map[string]any{"path": dir, "name": "*.go", "type": "file"}))
 	if err != nil {
 		t.Fatalf("name/type: %v", err)
 	}
-	for _, want := range []string{"small.go", "large.go", "old.go", "nested/deep.go"} {
+	for _, want := range []string{"small.go", "large.go", "old.go", filepath.Join("nested", "deep.go")} {
 		if !strings.Contains(out, want) {
 			t.Errorf("result %q missing %s", out, want)
 		}
@@ -59,7 +59,7 @@ func TestFindFiltersByNameSizeTypeAndAge(t *testing.T) {
 		t.Errorf("result included a non-.go file: %q", out)
 	}
 
-	out, err = tool.Execute(context.Background(), `{"path":"`+dir+`","min_size":100}`)
+	out, err = tool.Execute(context.Background(), mustJSON(t, map[string]any{"path": dir, "min_size": 100}))
 	if err != nil {
 		t.Fatalf("min_size: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestFindFiltersByNameSizeTypeAndAge(t *testing.T) {
 		t.Errorf("min_size result = %q", out)
 	}
 
-	out, err = tool.Execute(context.Background(), `{"path":"`+dir+`","older_than":"24h"}`)
+	out, err = tool.Execute(context.Background(), mustJSON(t, map[string]any{"path": dir, "older_than": "24h"}))
 	if err != nil {
 		t.Fatalf("older_than: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestFindFiltersByNameSizeTypeAndAge(t *testing.T) {
 		t.Errorf("older_than result = %q", out)
 	}
 
-	out, err = tool.Execute(context.Background(), `{"path":"`+dir+`","type":"dir"}`)
+	out, err = tool.Execute(context.Background(), mustJSON(t, map[string]any{"path": dir, "type": "dir"}))
 	if err != nil {
 		t.Fatalf("type dir: %v", err)
 	}
