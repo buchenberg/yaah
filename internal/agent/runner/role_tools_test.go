@@ -10,10 +10,11 @@ import (
 )
 
 // subAgentToolSet is the full set of names a role may declare: the built-in
-// leaf tools plus the names buildSubAgentRegistry wires itself (delegate and
-// the memory trio). Session-only tools such as skill, plan, or todowrite are
-// not registered for sub-agents, so a role that names one is asking for a tool
-// that will be silently dropped.
+// leaf tools plus the names buildSubAgentRegistry wires itself. This validates
+// names, not runtime availability: the memory tools are only registered when
+// the dispatch has a DB, and memory_update only for the consolidator. The
+// consolidator rule is enforced below because it is visible in the role file;
+// the DB condition depends on the session and cannot be audited statically.
 func subAgentToolSet() map[string]bool {
 	known := map[string]bool{
 		"delegate":      true,
@@ -27,21 +28,34 @@ func subAgentToolSet() map[string]bool {
 	return known
 }
 
-// fileMutationTools are the tools that can change a file's contents or
-// location. A role carrying any of them should also carry the directory pair
-// (mkdir/rmdir) and the transfer pair (move/copy), or it can create a file but
-// not tidy up or rename it after the fact.
-var fileMutationTools = []string{"write", "edit", "patch", "replace", "delete", "move", "copy"}
+// leafFileMutationTools are the leaf tools that mutate a specific path. Shell
+// and git are deliberately excluded: they can change files too, but the roles
+// that carry them (analyst, reviewer, tester, checker, security_auditor) use
+// them to inspect a repository and are read-only by role contract. This rule
+// ensures a role given the leaf file tools can also manage the directories and
+// transfers it creates; it is not a general "cannot mutate" proof.
+var leafFileMutationTools = []string{"write", "edit", "patch", "replace", "delete", "move", "copy"}
 
 var fileDirectoryTools = []string{"mkdir", "rmdir", "move", "copy"}
 
 // TestRoleToolBelts_ValidAndComplete audits every built-in and project role:
-// each declared tool must be one a sub-agent can actually receive, names must
-// not repeat, and a role that mutates files must carry the full file-management
-// set this repo ships (mkdir, rmdir, move, copy).
+// each declared name must be registerable (its runtime availability may still
+// depend on the session), names must not repeat, memory_update is
+// consolidator-only, and a role carrying a leaf file-mutation tool must carry
+// the full file-management set this repo ships (mkdir, rmdir, move, copy).
 func TestRoleToolBelts_ValidAndComplete(t *testing.T) {
+	builtin := BuiltinRoleFiles()
+	if len(builtin) == 0 {
+		t.Fatal("no built-in role files embedded; the audit would skip half its scope")
+	}
+	for _, name := range []string{"analyst.md", "developer.md", "reviewer.md", "tester.md"} {
+		if _, ok := builtin[name]; !ok {
+			t.Errorf("built-in role %q is missing from the embedded set", name)
+		}
+	}
+
 	reg := subagent.NewRoleRegistry()
-	if err := reg.LoadBytes(BuiltinRoleFiles()); err != nil {
+	if err := reg.LoadBytes(builtin); err != nil {
 		t.Fatalf("load built-in roles: %v", err)
 	}
 	projectRoles := filepath.Join("..", "..", "..", ".agents", "roles")
@@ -61,12 +75,15 @@ func TestRoleToolBelts_ValidAndComplete(t *testing.T) {
 			if !known[name] {
 				t.Errorf("role %q declares %q, which no sub-agent registry can register", role, name)
 			}
+			if name == "memory_update" && def.DisplayName != "consolidator" {
+				t.Errorf("role %q declares memory_update, which buildSubAgentRegistry registers only for the consolidator", role)
+			}
 			if seen[name] {
 				t.Errorf("role %q declares %q more than once", role, name)
 			}
 			seen[name] = true
 		}
-		if !hasAnyTool(seen, fileMutationTools) {
+		if !hasAnyTool(seen, leafFileMutationTools) {
 			continue
 		}
 		for _, name := range fileDirectoryTools {

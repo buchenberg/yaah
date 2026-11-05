@@ -169,7 +169,7 @@ func (rt *RecordingTool) Execute(ctx context.Context, args string) (string, erro
 			if err != nil {
 				detail += " (command reported an error)"
 			}
-			rt.tracker.RecordUnknown(dispatch, toolName, detail)
+			rt.tracker.RecordUnknown(dispatch, toolName, boundedDetail(detail))
 		}
 		return result, err
 	}
@@ -557,12 +557,20 @@ func shellDetail(args string) string {
 	if cmd == "" {
 		return "effects unknown"
 	}
-	runes := []rune(cmd)
+	return "may mutate: " + boundedDetail(cmd)
+}
+
+// boundedDetail keeps an evidence detail safe for the parent-facing conflict
+// report: at most 120 runes, with invalid UTF-8 (legal in a POSIX path)
+// replaced rather than stored raw. Every caller-supplied fragment that reaches
+// FileRecord.Detail goes through here.
+func boundedDetail(s string) string {
+	if !utf8.ValidString(s) {
+		s = strings.ToValidUTF8(s, "?")
+	}
+	runes := []rune(s)
 	if len(runes) > 120 {
-		cmd = string(runes[:117]) + "..."
+		s = string(runes[:117]) + "..."
 	}
-	if !utf8.ValidString(cmd) {
-		cmd = strings.ToValidUTF8(cmd, "?")
-	}
-	return "may mutate: " + cmd
+	return s
 }

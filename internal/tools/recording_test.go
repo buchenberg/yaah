@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 type recordingTestTool struct {
@@ -167,6 +168,54 @@ func TestRecordingTool_EmptyRmdirNotRecorded(t *testing.T) {
 	}
 	if report := tracker.DetectAndResetReport(); report != nil {
 		t.Fatalf("report = %+v, want no evidence for an empty rmdir", report)
+	}
+}
+
+// TestRecordingTool_RecursiveRmdirDetailBounded pins the conflict-report
+// hardening: a long or non-UTF-8 path must not reach FileRecord.Detail raw.
+func TestRecordingTool_RecursiveRmdirDetailBounded(t *testing.T) {
+	tracker := &ConflictTracker{}
+	inner := &recordingTestTool{name: "rmdir", fn: func(context.Context, string) (string, error) {
+		return "Removed directory tree", nil
+	}}
+	rt := NewRecordingTool(inner, tracker)
+
+	longPath := "/workspace/" + strings.Repeat("a", 300)
+	args, err := json.Marshal(map[string]any{"path": longPath, "recursive": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.Execute(WithConflictDispatch(context.Background(), "worker", ConflictLaneShared), string(args)); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	report := tracker.DetectAndResetReport()
+	if report == nil || len(report.Unknown) != 1 {
+		t.Fatalf("report = %+v, want one unknown entry", report)
+	}
+	detail := report.Unknown[0].Detail
+	if n := utf8.RuneCountInString(detail); n > 120 {
+		t.Errorf("detail length = %d runes, want <= 120: %q", n, detail)
+	}
+	if !strings.HasPrefix(detail, "rmdir -r ") {
+		t.Errorf("detail = %q, want the rmdir -r prefix preserved", detail)
+	}
+}
+
+func TestBoundedDetail_TruncatesAndSanitizes(t *testing.T) {
+	long := boundedDetail(strings.Repeat("x", 300))
+	if n := utf8.RuneCountInString(long); n != 120 {
+		t.Errorf("truncated length = %d runes, want 120", n)
+	}
+	if !strings.HasSuffix(long, "...") {
+		t.Errorf("truncated detail = %q, want a trailing ellipsis", long)
+	}
+
+	got := boundedDetail("ok\xffbad")
+	if !utf8.ValidString(got) {
+		t.Errorf("sanitized detail is not valid UTF-8: %q", got)
+	}
+	if got != "ok?bad" {
+		t.Errorf("sanitized detail = %q, want invalid bytes replaced with '?'", got)
 	}
 }
 
