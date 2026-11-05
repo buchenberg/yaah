@@ -62,7 +62,10 @@ func (g *GGUFEmbedder) DecodeWindow() int {
 }
 
 // TrainContext reports the model's own n_ctx_train (the clamp's source),
-// or 0 before the model is loaded.
+// or 0 when the model is not yet loaded — which is also what a model
+// that reports no n_ctx_train returns, so "unloaded" and "no train
+// context reported" are not distinguishable through this accessor; both
+// leave the clamped window at the reserved default.
 func (g *GGUFEmbedder) TrainContext() int {
 	g.mu.Lock()
 	defer g.mu.Unlock()
