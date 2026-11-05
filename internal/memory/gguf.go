@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"runtime"
@@ -106,13 +107,28 @@ func (g *GGUFEmbedder) ensureLocked(ctx context.Context) error {
 	if g.initErr != nil {
 		return g.initErr
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	fn, dims, err := loadGGUF(ctx, g.LibPath, g.ModelPath)
 	if err != nil {
+		// A cancelled or timed-out load is transient: caching it would
+		// permanently disable the embedder for the process (m3pk review).
+		// Real load failures are sticky; context errors retry next call.
+		if isContextErr(err) {
+			return err
+		}
 		g.initErr = err
 		return err
 	}
 	g.embedFn, g.dims = fn, dims
 	return nil
+}
+
+// isContextErr reports whether err is a context cancellation or deadline
+// rather than a real load failure.
+func isContextErr(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // llamaOnce guards process-global llama.cpp state (library load + init).

@@ -16,6 +16,9 @@ func TestGGUFSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Embed: %v", err)
 	}
+	if len(emb) < 3 {
+		t.Fatalf("embedding too short to log: %d dims", len(emb))
+	}
 	t.Logf("dims=%d first3=%v", len(emb), emb[:3])
 	q, err := e.EmbedQuery(context.Background(), "hello world")
 	if err != nil {

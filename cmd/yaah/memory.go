@@ -252,18 +252,6 @@ func embedderModel(e memory.Embedder) string {
 	return ""
 }
 
-// checkEmbedderAtStartup probes the configured embedder once and returns
-// whether it answered. It never fails startup: an unreachable embedder
-// degrades memory search to its keyword path, which is worth exactly one
-// warning — repeated warnings per session would be noise, so callers invoke
-// this once at wiring time. A session with no embedding stanza configured
-// warns nothing: there is no embedder to be unreachable.
-// checkEmbedderAtStartup probes the already-attached embedder once per
-// session (yaah-ka6): a configured-but-down embedder warns here once rather
-// than degrading recall silently. It never refuses the session. The probe
-// runs against the attached instance, not a config-rebuilt one -- for the
-// gguf backend a second instance would load the model twice and leak the
-// probe's copy (ka6 review).
 func checkEmbedderAtStartup(e memory.Embedder, cfg *config.Config) bool {
 	if e == nil {
 		return false
@@ -275,7 +263,7 @@ func checkEmbedderAtStartup(e memory.Embedder, cfg *config.Config) bool {
 		done <- probeEmbedder(ctx, e)
 	}()
 	warn := func(err error) {
-		slog.Warn(probeFailureLabel(e, err, cfg),
+		slog.Warn(probeFailureLabel(e, err),
 			"provider", cfg.Embedding.Provider, "model", embedderModel(e), "err", err)
 	}
 	select {
@@ -300,7 +288,7 @@ func checkEmbedderAtStartup(e memory.Embedder, cfg *config.Config) bool {
 
 // probeFailureLabel classifies a probe failure so the warning never calls an
 // auth error, a 404, or a slow-but-alive server "unreachable" (ka6 review).
-func probeFailureLabel(e memory.Embedder, err error, cfg *config.Config) string {
+func probeFailureLabel(e memory.Embedder, err error) string {
 	head := "embedder at " + embedderLabel(e)
 	tail := " -- semantic memory search will fall back to keyword"
 	var netErr net.Error

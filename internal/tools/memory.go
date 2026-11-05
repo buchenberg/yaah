@@ -97,7 +97,8 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 			// Partial semantic page: union with FTS so rows the vector path
 			// paged out are not silently dropped (shq review). Vector hits
 			// lead, deduped by id, capped at TopK, labeled per row.
-			lines := []string{RetrievalHybrid}
+			var lines []string
+			kwRows := 0
 			seen := make(map[string]bool, len(vecResults))
 			for _, r := range vecResults {
 				seen[r.ID] = true
@@ -110,10 +111,16 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 						continue
 					}
 					seen[e.ID] = true
+					kwRows++
 					lines = append(lines, entryLine(e.ID, e.Tags, e.Scope, e.Text, e.CreatedAt, nil, "keyword"))
 				}
 			}
-			return strings.Join(lines, "\n"), nil
+			// The hybrid label appears only when keyword actually contributed.
+			header := RetrievalSemantic
+			if kwRows > 0 {
+				header = RetrievalHybrid
+			}
+			return header + "\n" + strings.Join(lines, "\n"), nil
 		}
 	}
 	path := RetrievalLabel(params.Query, params.Tag, hasEmbedder, vecErr, len(vecResults))

@@ -68,6 +68,30 @@ func TestGGUF_DimsMismatchRefused(t *testing.T) {
 	}
 }
 
+// yaah-m3pk review: a cancelled/timed-out load must not be cached — one
+// transient timeout would otherwise disable the embedder for the whole
+// process, silently degrading semantic search to keyword-only.
+func TestGGUF_CancelledLoadNotCached(t *testing.T) {
+	g := NewGGUFEmbedder("", "model.gguf", "", "")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := g.ensureLocked(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ensureLocked(cancelled) = %v, want context.Canceled", err)
+	}
+	if g.initErr != nil {
+		t.Fatalf("cancellation cached as initErr %v; embedder would be permanently disabled", g.initErr)
+	}
+}
+
+func TestGGUF_IsContextErr(t *testing.T) {
+	if !isContextErr(context.Canceled) || !isContextErr(context.DeadlineExceeded) {
+		t.Error("isContextErr must recognize both context errors")
+	}
+	if isContextErr(errors.New("model corrupt")) {
+		t.Error("isContextErr must not classify real load failures as transient")
+	}
+}
+
 func TestGGUF_EmptyModelPathRefused(t *testing.T) {
 	g := NewGGUFEmbedder("", "", "", "")
 	_, err := g.Embed(context.Background(), "x")
