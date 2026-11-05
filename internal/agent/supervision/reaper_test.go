@@ -2,6 +2,7 @@ package supervision
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -153,5 +154,139 @@ func TestReapOnceLedgerClearsWhenScopeReturnsToLive(t *testing.T) {
 	}
 	if _, ok := mgr.Get("scope:returns"); ok {
 		t.Fatal("scope survived past restarted grace period")
+	}
+}
+
+// TestReapOnceSweepsResumedScopeWithoutGrace pins failure mode two of
+// yaah-95ri.7: a scope startup recovery re-admitted from the trace is
+// swept on the first pass, not after a grace window it never earned. Its
+// unbridged clock started before the process did, and nothing in this
+// process will ever bridge it, so waiting only keeps dead work holding
+// the dispatch cap.
+func TestReapOnceSweepsResumedScopeWithoutGrace(t *testing.T) {
+	r, mgr, _, rootID := newReaperFixture(t)
+	forkChild(t, mgr, rootID, "resumed-dead")
+	r.SetResumed([]string{"scope:resumed-dead"})
+
+	now := time.Now()
+	reaped, stale, _ := r.ReapOnce(now)
+	if reaped != 1 || stale != 0 {
+		t.Fatalf("first pass: reaped=%d stale=%d, want 1/0 — a resumed scope is past grace from the start", reaped, stale)
+	}
+	if _, ok := mgr.Get("scope:resumed-dead"); ok {
+		t.Fatal("resumed scope survived the first pass")
+	}
+	// And the ledger forgets it: a retired scope must not leave a resumed
+	// entry behind in a set that is never re-seeded.
+	if r.resumed["scope:resumed-dead"] {
+		t.Error("the resumed ledger still tracks a retired scope")
+	}
+}
+
+// TestReapOnceSparesResumedLiveScopes pins the exemptions that still
+// apply to a resumed scope: the session's own root (which a --resume
+// reattaches and keeps working under) and a rehydrated proposal awaiting
+// settlement (whose scope must stay active on purpose).
+func TestReapOnceSparesResumedLiveScopes(t *testing.T) {
+	r, mgr, _, rootID := newReaperFixture(t)
+	forkChild(t, mgr, rootID, "resumed-proposal")
+	r.SetResumed([]string{rootID, "scope:resumed-proposal"})
+	r.SetPendingSource(func() []string { return []string{"scope:resumed-proposal"} })
+
+	now := time.Now()
+	for i := range 3 {
+		reaped, _, _ := r.ReapOnce(now.Add(time.Duration(i) * time.Minute))
+		if reaped != 0 {
+			t.Fatalf("pass %d: reaped %d, want 0 — a live exemption outranks a resumed entry", i+1, reaped)
+		}
+	}
+	if _, ok := mgr.Get(rootID); !ok {
+		t.Fatal("the session's own root was reaped")
+	}
+	if _, ok := mgr.Get("scope:resumed-proposal"); !ok {
+		t.Fatal("a resumed scope awaiting settlement was reaped")
+	}
+}
+
+// TestStartSweepsResumedScopesBeforeTheFirstTick pins the case that made
+// dispatch dead for a whole process (yaah-95ri.7): the sweep must happen
+// at startup, not one interval later. The reaper's first tick is minutes
+// away, and a session may not have that long before its first dispatch is
+// refused by a cap full of resumed scopes.
+func TestStartSweepsResumedScopesBeforeTheFirstTick(t *testing.T) {
+	r, mgr, _, rootID := newReaperFixture(t)
+	forkChild(t, mgr, rootID, "resumed-at-startup")
+	r.SetResumed([]string{"scope:resumed-at-startup"})
+
+	r.Start()
+
+	if _, ok := mgr.Get("scope:resumed-at-startup"); ok {
+		t.Fatal("Start must sweep resumed scopes before the first tick")
+	}
+}
+
+// TestReapOnceRefusedDiscardRecordedOnce pins failure mode three of
+// yaah-95ri.7: a scope the kernel refuses to discard is named once and
+// never retried. The refusal comes from the trace's own reconstructed
+// tree, so a retry cannot succeed — and an endless retry loop is what
+// left the parent unable to close while the UI kept listing the scope.
+func TestReapOnceRefusedDiscardRecordedOnce(t *testing.T) {
+	r, mgr, _, rootID := newReaperFixture(t)
+	forkChild(t, mgr, rootID, "tree-rejected")
+	r.SetResumed([]string{"scope:tree-rejected"})
+
+	attempts := 0
+	r.discard = func(string) error {
+		attempts++
+		return errors.New("scope is not reachable from the tree")
+	}
+
+	now := time.Now()
+	for i := range 4 {
+		reaped, _, _ := r.ReapOnce(now.Add(time.Duration(i) * time.Minute))
+		if reaped != 0 {
+			t.Fatalf("pass %d: reaped %d, want 0 — the discard was refused", i+1, reaped)
+		}
+	}
+	if attempts != 1 {
+		t.Fatalf("discard attempts = %d, want 1 — a refused scope must not be retried in a loop", attempts)
+	}
+	// Nothing is fabricated: the scope keeps whatever record it had.
+	if _, ok := mgr.Get("scope:tree-rejected"); !ok {
+		t.Fatal("a refused scope must keep its record")
+	}
+	if r.resumed["scope:tree-rejected"] {
+		t.Error("a refused scope must leave the resumed ledger — it is refused, not resumed")
+	}
+}
+
+// TestReapOnceReapsDeadSubtreeChildFirst pins the tree half of
+// yaah-95ri.7: a resumed subtree is swept whole and children-first — a
+// parent discarded while its child is still active is refused, which would
+// leave the parent permanent and the child orphaned under it.
+func TestReapOnceReapsDeadSubtreeChildFirst(t *testing.T) {
+	r, mgr, _, rootID := newReaperFixture(t)
+	mid, err := mgr.Fork(rootID, "sub-mid", nil)
+	if err != nil {
+		t.Fatalf("fork mid: %v", err)
+	}
+	leaf, err := mgr.Fork(mid.ID(), "sub-leaf", nil)
+	if err != nil {
+		t.Fatalf("fork leaf: %v", err)
+	}
+	// Deepest-first: the resumed set is unordered on purpose.
+	r.SetResumed([]string{mid.ID(), leaf.ID()})
+
+	reaped, _, _ := r.ReapOnce(time.Now())
+	if reaped != 2 {
+		t.Fatalf("reaped = %d, want 2 — a dead subtree is reaped whole", reaped)
+	}
+	for _, id := range []string{leaf.ID(), mid.ID()} {
+		if _, ok := mgr.Get(id); ok {
+			t.Fatalf("%s survived the resume sweep", id)
+		}
+	}
+	if _, ok := mgr.Get(rootID); !ok {
+		t.Fatal("this session's root was reaped")
 	}
 }

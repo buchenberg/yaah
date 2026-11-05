@@ -566,6 +566,12 @@ type loopInfraStage struct {
 	reaper        *supervision.Reaper
 	egressBroker  *egress.Broker
 
+	// resumedScopes is the scope-ID set startup recovery re-admitted from
+	// the trace (yaah-95ri.7): nothing runs under them in this process, so
+	// the dispatch cap skips them and the reaper retires them on its
+	// startup pass. Nil when recovery adopted nothing.
+	resumedScopes map[string]bool
+
 	worldStatus worldinfo.Status
 	taskTool    *tools.DelegateTool
 }
@@ -786,6 +792,16 @@ func buildShepherdInfra(st *loopInfraStage, cfg *config.Config, ws *workspaceSta
 				tracingReady = false
 			} else {
 				mgr = recovered
+				// Resumed scopes (yaah-95ri.7): recovery runs before this
+				// process forks anything, so every ACTIVE scope it handed
+				// back was re-admitted from the trace and has no loop
+				// behind it. The set rides the stage to the two consumers
+				// that must not mistake "the trace says active" for
+				// "something is running": the dispatch cap (a trace full of
+				// crashed dispatches must not refuse every new dispatch)
+				// and the scope reaper (they are past grace from the
+				// start).
+				st.resumedScopes = recovery.ResumedIDs(report.Resumed)
 				printRecoveryReport(report)
 				printRecoveryStats(&stats)
 			}
@@ -995,6 +1011,7 @@ func buildDelegateTool(st *loopInfraStage, cfg *config.Config, lc *sessionConfig
 		RootScopeID:           st.rootScopeID,
 		Runs:                  st.runs,
 		ScopeManager:          st.scopeMgr,
+		ResumedScopes:         st.resumedScopes,
 		TraceStore:            pipeline.TraceSinkOf(st.traceStore),
 		GuardCheck:            supervisorSvcGuardCheck(st.supervisorSvc),
 		ResolveProviderByName: resolveProviderByName,
@@ -1028,6 +1045,21 @@ func startScopeReaper(st *loopInfraStage) {
 	// close.
 	st.reaper = supervision.NewReaper(st.scopeMgr, st.runs, st.rootScopeID, 0)
 	st.reaper.SetPendingSource(st.taskTool.LiveDispatchScopeIDs)
+	// Resumed scopes (yaah-95ri.7): recovery re-admitted them from the
+	// trace, nothing in this process runs under them, and their unbridged
+	// clock predates the process — so the reaper's startup pass retires
+	// them instead of granting a grace window that would leave the
+	// dispatch cap holding dead work. A resumed scope the pending source
+	// reports live (a rehydrated proposal awaiting settlement) is still
+	// spared.
+	if len(st.resumedScopes) > 0 {
+		ids := make([]string, 0, len(st.resumedScopes))
+		for id := range st.resumedScopes {
+			ids = append(ids, id)
+		}
+		slices.Sort(ids)
+		st.reaper.SetResumed(ids)
+	}
 	st.reaper.Start()
 }
 

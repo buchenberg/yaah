@@ -93,6 +93,13 @@ type DelegateToolOpts struct {
 	// jobs.DefaultMaxDispatchScopes (yaah-95ri.4).
 	MaxDispatchScopes int
 
+	// ResumedScopes is the scope-ID set startup recovery re-admitted from
+	// the trace (yaah-95ri.7). They hold no loop in this process, so the
+	// dispatch cap must not count them (jobs.DispatchScopeCount) — dead
+	// work from a crashed run must never refuse a live dispatch. Nil when
+	// no recovery adopted anything.
+	ResumedScopes map[string]bool
+
 	// TraceStore is the session's Shepherd trace store (plan 07, H4):
 	// the sub-agent loops' shepherd_trace middleware writes through it.
 	// Nil when tracing is off.
@@ -169,6 +176,7 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 		runs:                  opts.Runs,
 		scopeManager:          opts.ScopeManager,
 		maxDispatchScopes:     opts.MaxDispatchScopes,
+		resumedScopes:         opts.ResumedScopes,
 		traceStore:            opts.TraceStore,
 		guardCheck:            opts.GuardCheck,
 		resolveProviderByName: opts.ResolveProviderByName,
@@ -208,6 +216,7 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 			RepoPath:          repoPath,
 			ScopeManager:      opts.ScopeManager,
 			MaxDispatchScopes: opts.MaxDispatchScopes,
+			ResumedScopes:     opts.ResumedScopes,
 			RootScopeID:       opts.RootScopeID,
 			SessionID:         opts.SessionID,
 			WorktreeRoot:      opts.RetainedWorktreeRoot,

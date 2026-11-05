@@ -25,6 +25,14 @@ func printRecoveryReport(report *recovery.Report) {
 	}
 	fmt.Fprintln(os.Stderr)
 
+	// Resumed scopes (yaah-95ri.7): active, but with no run behind them.
+	// Worth one line — it is the difference between "the trace remembers
+	// this work" and "this work is still running", and the two used to be
+	// conflated all the way into the dispatch cap.
+	if n := len(report.Resumed); n > 0 {
+		fmt.Fprintf(os.Stderr, "shepherd recovery: %d scope(s) resumed from the trace (%s); no loop runs under them, so the reaper retires them and they do not count against the dispatch cap\n", n, recovery.ResumedExecution)
+	}
+
 	for _, o := range report.Orphans {
 		fmt.Fprintf(os.Stderr, "warning: orphaned worktree left on disk (scope %s): %s (%s) — it may hold unmerged work; it is never deleted automatically\n", o.ScopeID, o.Path, formatSize(o.Size))
 	}

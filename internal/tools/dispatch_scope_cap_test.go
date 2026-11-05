@@ -65,6 +65,29 @@ func TestDispatchScopeCapExceededNilManager(t *testing.T) {
 	}
 }
 
+// TestDispatchScopeCapExceededIgnoresResumedScopes pins the container /
+// worktree lane's half of yaah-95ri.7: the scopes startup recovery
+// re-admitted from the trace hold no loop in this process, so they must
+// not be the reason a live dispatch is refused after a crash.
+func TestDispatchScopeCapExceededIgnoresResumedScopes(t *testing.T) {
+	mgr, rootID := capTestManager(t)
+	rt := RetainedRuntime{ScopeManager: mgr, RootScopeID: rootID, MaxDispatchScopes: 2}
+	for _, id := range []string{"filler-1", "filler-2"} {
+		if _, err := mgr.Fork(rootID, id, nil); err != nil {
+			t.Fatalf("fork %s: %v", id, err)
+		}
+	}
+	// At the cap while every filler looks live (root + 2 fillers = 3 >= 2).
+	if err := dispatchScopeCapExceeded(rt); err == nil {
+		t.Fatal("precondition: the cap must refuse while the fillers count")
+	}
+	// The same tree, with the fillers marked as resumed: capacity is free.
+	rt.ResumedScopes = map[string]bool{"scope:filler-1": true, "scope:filler-2": true}
+	if err := dispatchScopeCapExceeded(rt); err != nil {
+		t.Fatalf("resumed scopes must not consume the cap, got %v", err)
+	}
+}
+
 func TestRetainedRuntimePendingProposalScopeIDsNilSafe(t *testing.T) {
 	rt := RetainedRuntime{}
 	if got := rt.PendingProposalScopeIDs(); got != nil {

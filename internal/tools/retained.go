@@ -75,6 +75,13 @@ type RetainedRuntime struct {
 	// provisioning into a saturated scope tree (yaah-95ri.4).
 	MaxDispatchScopes int
 
+	// ResumedScopes is the scope-ID set startup recovery re-admitted from
+	// the trace (yaah-95ri.7). Those scopes hold no loop and provision no
+	// world in this process, so the dispatch cap must not count them —
+	// dead work from a crashed run must never refuse a live dispatch. Nil
+	// means none.
+	ResumedScopes map[string]bool
+
 	// inFlight tracks container/worktree dispatch scopes between fork and
 	// teardown/seal. The scope reaper's live-set includes them: an
 	// in-flight dispatch may legitimately run longer than the reaper's
