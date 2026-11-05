@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.140.0](https://github.com/buchenberg/yaah/compare/v0.139.0...v0.140.0) (2026-11-05)
+
+
+### Features
+
+* **tools:** event-driven wait_for/watch wakeups (yaah-95ri.8) ([deb016e](https://github.com/buchenberg/yaah/commit/deb016ec7e63841215dd0ed65eef4ad4b99fc20d))
+
+
+### Bug Fixes
+
+* address wake/watch review findings ([56b595a](https://github.com/buchenberg/yaah/commit/56b595af0fc08660d4e0e6e0de153bf1ee7d2036))
+* bound digest teardown and keep root-anchored globs ([5e0cf78](https://github.com/buchenberg/yaah/commit/5e0cf7823d5e519e4516a61b2bca135cdc8d0bf6))
+* **tools:** reject root-anchored file predicates explicitly ([00326b2](https://github.com/buchenberg/yaah/commit/00326b2cb27031877bbe917bee14129d9e7cb772))
+
+
+### Tests
+
+* **tools:** pin the root-anchored file pattern refusal ([0cb8100](https://github.com/buchenberg/yaah/commit/0cb8100fbaada2ceb0ce5c9a48cc48f19a361dd5))
+
 ## [0.139.0](https://github.com/buchenberg/yaah/compare/v0.138.0...v0.139.0) (2026-11-05)
 
 
