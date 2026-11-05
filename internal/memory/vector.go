@@ -21,6 +21,24 @@ type Embedder interface {
 	Embed(ctx context.Context, text string) (Embedding, error)
 }
 
+// QueryEmbedder is an optional interface for embedders that treat query
+// text differently from document text (e.g. nomic-style search_query:/
+// search_document: prefixes). Callers embedding a search query should use
+// embedQuery, which falls back to Embed for plain embedders.
+type QueryEmbedder interface {
+	Embedder
+	EmbedQuery(ctx context.Context, text string) (Embedding, error)
+}
+
+// embedQuery embeds search/query text with the embedder's query-side
+// treatment when it has one, falling back to Embed otherwise.
+func embedQuery(ctx context.Context, e Embedder, text string) (Embedding, error) {
+	if q, ok := e.(QueryEmbedder); ok {
+		return q.EmbedQuery(ctx, text)
+	}
+	return e.Embed(ctx, text)
+}
+
 // HTTPEmbedder calls an OpenAI-compatible /v1/embeddings endpoint. It
 // works with llama-server, Ollama, and provider APIs. Zero values are
 // usable (http.DefaultClient, timeout defaults).

@@ -349,6 +349,12 @@ func buildToolRegistry(cfg *config.Config, opts SessionOptions, ws *workspaceSta
 	// under a spurious warning.
 	if db != nil {
 		st.embedderAttached = attachEmbedder(db, cfg)
+		// One probe per session (yaah-ka6): a configured-but-down embedder
+		// warns once here rather than degrading recall to keyword matching
+		// silently. It never refuses the session.
+		if st.embedderAttached {
+			checkEmbedderAtStartup(db.Embedder(), cfg)
+		}
 	}
 
 	// Memory tools (yaah-zx18). The readers and the writers gate separately,

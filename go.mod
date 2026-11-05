@@ -11,6 +11,7 @@ require (
 	github.com/buchenberg/goatherd-runtime/sandbox/winacl v0.1.1
 	github.com/buchenberg/tviewmd v0.3.1
 	github.com/gdamore/tcell/v2 v2.13.10
+	github.com/hybridgroup/yzma v1.31.0
 	github.com/lsferreira42/figlet-go v0.0.2-beta
 	github.com/navidys/tvxwidgets v0.14.0
 	github.com/rivo/tview v0.42.0
@@ -31,6 +32,8 @@ require (
 
 require (
 	github.com/buchenberg/goatherd-croft v0.9.2-0.20261031191238-a6d5f72a9b04 // indirect
+	github.com/ebitengine/purego v0.10.0 // indirect
+	github.com/jupiterrider/ffi v0.8.0 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
 )
 
@@ -105,7 +108,6 @@ require (
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
-	google.golang.org/api v0.247.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/grpc v1.81.1 // indirect

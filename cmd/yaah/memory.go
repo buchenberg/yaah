@@ -1,8 +1,12 @@
 package yaah
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -163,7 +167,18 @@ it does not need quoting. Use '--' when the text begins with a dash:
 // Separated from attachEmbedder so the provider→embedder field mapping
 // can be tested directly (it was once shipped with model and API key
 // swapped, silently breaking semantic search).
-func embedderFor(cfg *config.Config) (*memory.HTTPEmbedder, bool) {
+func embedderFor(cfg *config.Config) (memory.Embedder, bool) {
+	if cfg.Embedding.Backend == config.EmbeddingBackendGGUF {
+		if cfg.Embedding.ModelPath == "" {
+			fmt.Fprintf(os.Stderr, "warning: embedding backend %q requires embedding.model_path\n", config.EmbeddingBackendGGUF)
+			return nil, false
+		}
+		return memory.NewGGUFEmbedder(cfg.Embedding.LibPath, cfg.Embedding.ModelPath, cfg.Embedding.QueryPrefix, cfg.Embedding.DocumentPrefix), true
+	}
+	if cfg.Embedding.Backend != "" && cfg.Embedding.Backend != config.EmbeddingBackendHTTP {
+		fmt.Fprintf(os.Stderr, "warning: unknown embedding backend %q (want %q or %q)\n", cfg.Embedding.Backend, config.EmbeddingBackendHTTP, config.EmbeddingBackendGGUF)
+		return nil, false
+	}
 	if cfg.Embedding.Provider == "" || cfg.Embedding.Model == "" {
 		return nil, false
 	}
@@ -188,6 +203,103 @@ func attachEmbedder(db *memory.DB, cfg *config.Config) bool {
 	}
 	db.SetEmbedder(e)
 	return true
+}
+
+// embedProbeSyncWait bounds how long startup waits on the startup probe
+// before letting the session continue. A probe still pending after this
+// long is finished in the background: a cold embedder (a GGUF model or an
+// HTTP server still loading one) is alive but slow, and a false
+// "unreachable" warning is worse than a late, accurate one (ka6 review).
+var embedProbeSyncWait = 5 * time.Second
+
+// embedProbeTimeout bounds the probe overall -- long enough to outlast the
+// HTTP embedder's own per-call timeout, so the probe cannot declare
+// "unreachable" a server the client would have waited for (ka6 review).
+var embedProbeTimeout = 30 * time.Second
+
+// probeEmbedder issues one cheap embed call so an unreachable embedding
+// server is visible at startup instead of showing up as an unexplained
+// absence of semantic results later (yaah-ka6). A nil embedder has nothing
+// to probe.
+func probeEmbedder(ctx context.Context, e memory.Embedder) error {
+	if e == nil {
+		return nil
+	}
+	_, err := e.Embed(ctx, "ping")
+	return err
+}
+
+// embedderLabel names the embedder target for warnings: endpoint for the
+// http backend, model file for in-process gguf (yaah-ka6 probe messages).
+func embedderLabel(e memory.Embedder) string {
+	switch t := e.(type) {
+	case *memory.HTTPEmbedder:
+		return t.BaseURL
+	case *memory.GGUFEmbedder:
+		return t.ModelPath
+	}
+	return fmt.Sprintf("%T", e)
+}
+
+// embedderModel names the embedding model for warnings alongside the label.
+func embedderModel(e memory.Embedder) string {
+	switch t := e.(type) {
+	case *memory.HTTPEmbedder:
+		return t.Model
+	case *memory.GGUFEmbedder:
+		return t.ModelPath
+	}
+	return ""
+}
+
+func checkEmbedderAtStartup(e memory.Embedder, cfg *config.Config) bool {
+	if e == nil {
+		return false
+	}
+	done := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), embedProbeTimeout)
+		defer cancel()
+		done <- probeEmbedder(ctx, e)
+	}()
+	warn := func(err error) {
+		slog.Warn(probeFailureLabel(e, err),
+			"provider", cfg.Embedding.Provider, "model", embedderModel(e), "err", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			warn(err)
+			return false
+		}
+		slog.Debug("memory: embedder reachable", "addr", embedderLabel(e), "model", embedderModel(e))
+		return true
+	case <-time.After(embedProbeSyncWait):
+		// Still probing: continue without a verdict and let the background
+		// goroutine warn if the probe ultimately fails.
+		go func() {
+			if err := <-done; err != nil {
+				warn(err)
+			}
+		}()
+		return true
+	}
+}
+
+// probeFailureLabel classifies a probe failure so the warning never calls an
+// auth error, a 404, or a slow-but-alive server "unreachable" (ka6 review).
+func probeFailureLabel(e memory.Embedder, err error) string {
+	head := "embedder at " + embedderLabel(e)
+	tail := " -- semantic memory search will fall back to keyword"
+	var netErr net.Error
+	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) {
+		return head + " did not respond within " + embedProbeTimeout.String() + " (cold start or overloaded)" + tail
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return head + " unreachable" + tail + " (" + urlErr.Err.Error() + ")"
+	}
+	return head + " returned an error -- check embedding provider/model/API key" + tail + " (" + err.Error() + ")"
 }
 
 // initDBEmbedder loads config and attaches the embedder for CLI commands.
