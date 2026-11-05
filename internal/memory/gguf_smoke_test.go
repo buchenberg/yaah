@@ -65,13 +65,16 @@ func TestGGUFSilentLoad(t *testing.T) {
 	// Bounded: a hung FFI/backend call must surface as a probe failure,
 	// not as a run until the outer go-test timeout. The deadline scales
 	// for large models on slow disks via YAAH_GGUF_PROBE_TIMEOUT (a raw
-	// duration; default 2m — a failure from the kill surfaces as
-	// "signal: killed" and names the override, not the load).
+	// duration; default 2m). A malformed override fails loudly: a silent
+	// fallthrough would reproduce exactly the masked "signal: killed"
+	// failure the override exists to prevent.
 	deadline := 2 * time.Minute
 	if v := os.Getenv("YAAH_GGUF_PROBE_TIMEOUT"); v != "" {
-		if d, perr := time.ParseDuration(v); perr == nil && d > 0 {
-			deadline = d
+		d, perr := time.ParseDuration(v)
+		if perr != nil || d <= 0 {
+			t.Fatalf("YAAH_GGUF_PROBE_TIMEOUT=%q is not a positive duration: %v", v, perr)
 		}
+		deadline = d
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
