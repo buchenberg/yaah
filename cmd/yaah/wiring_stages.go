@@ -1277,14 +1277,13 @@ func registerSubAgentTools(st *loopInfraStage, cfg *config.Config, tr *toolRegis
 // assemble seals the registry against the workspace, finishes the prompts,
 // records the session, and builds the agentSession. It owns the last fallible
 // step of a session build — the SetWorkspace gate — so every error it can
-// return is a startup failure the caller's guards must release.
-// assemble sequences the assembly concerns (yaah-mp04): isolated-workspace
+// return is a startup failure the caller's guards must release. It sequences
+// the concern split (yaah-mp04) rather than performing it: isolated-workspace
 // enforcement, prompt assembly, the D4 session-record write, the embedding
-// backfill launch, session construction, and hook wiring. The ordering is a
-// contract — the D4 write must follow the SetWorkspace gate, and the backfill
-// must launch only after the last fallible step — so it is kept visible here
-// rather than hidden inside any one concern. The concerns themselves live in
-// wiring_assemble.go.
+// backfill launch, session construction, and hook wiring (wiring_assemble.go).
+// The ordering is a contract — the D4 write must follow the SetWorkspace gate,
+// and the backfill must launch only after the last fallible step — so it stays
+// visible here rather than hidden inside any one concern.
 func assemble(lc *sessionConfig, opts SessionOptions, ws *workspaceStage, tr *toolRegistryStage, mcps *mcpSkillsStage, loop *loopInfraStage) (*agentSession, error) {
 	if err := enforceIsolatedWorkspace(ws, tr); err != nil {
 		return nil, err
