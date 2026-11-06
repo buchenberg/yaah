@@ -1,4 +1,4 @@
-package tools
+package substrate
 
 import (
 	"os"
@@ -25,8 +25,8 @@ func TestAtomicWriteFile_preservesMode(t *testing.T) {
 	if err := os.WriteFile(path, []byte("original"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := atomicWriteFile(path, []byte("rewritten"), 0o644); err != nil {
-		t.Fatalf("atomicWriteFile: %v", err)
+	if err := AtomicWriteFile(path, []byte("rewritten"), 0o644); err != nil {
+		t.Fatalf("AtomicWriteFile: %v", err)
 	}
 	st, err := os.Stat(path)
 	if err != nil {
@@ -49,8 +49,8 @@ func TestAtomicWriteFile_preservesMode(t *testing.T) {
 func TestAtomicWriteFile_newFileUsesPerm(t *testing.T) {
 	requirePOSIXPerms(t)
 	path := filepath.Join(t.TempDir(), "new.txt")
-	if err := atomicWriteFile(path, []byte("x"), 0o600); err != nil {
-		t.Fatalf("atomicWriteFile: %v", err)
+	if err := AtomicWriteFile(path, []byte("x"), 0o600); err != nil {
+		t.Fatalf("AtomicWriteFile: %v", err)
 	}
 	st, err := os.Stat(path)
 	if err != nil {
@@ -62,13 +62,13 @@ func TestAtomicWriteFile_newFileUsesPerm(t *testing.T) {
 }
 
 // TestAtomicWriteFile_createsMissingDirs pins the #310 regression: a write
-// into a non-existent nested directory must succeed — atomicWriteFile
+// into a non-existent nested directory must succeed — AtomicWriteFile
 // creates the parent chain before the temp file — instead of failing with
 // "atomic write: create temp: ... no such file or directory".
 func TestAtomicWriteFile_createsMissingDirs(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "a", "b", "c", "file.txt")
-	if err := atomicWriteFile(path, []byte("nested"), 0o600); err != nil {
-		t.Fatalf("atomicWriteFile into missing nested dirs: %v", err)
+	if err := AtomicWriteFile(path, []byte("nested"), 0o600); err != nil {
+		t.Fatalf("AtomicWriteFile into missing nested dirs: %v", err)
 	}
 
 	t.Run("content", func(t *testing.T) {
@@ -99,8 +99,8 @@ func TestAtomicWriteFile_leavesNoTempFiles(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "file.txt")
 	for i := 0; i < 5; i++ {
-		if err := atomicWriteFile(path, []byte("content"), 0o644); err != nil {
-			t.Fatalf("atomicWriteFile: %v", err)
+		if err := AtomicWriteFile(path, []byte("content"), 0o644); err != nil {
+			t.Fatalf("AtomicWriteFile: %v", err)
 		}
 	}
 	entries, err := os.ReadDir(dir)

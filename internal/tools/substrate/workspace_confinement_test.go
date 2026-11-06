@@ -1,4 +1,4 @@
-package tools
+package substrate
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 )
 
 // confinedTestWorkspace builds a confined workspace rooted at root.
-func confinedTestWorkspace(root string, backend containment.Backend, place containment.Placement) *localWorkspace {
+func confinedTestWorkspace(root string, backend containment.Backend, place containment.Placement) *LocalWorkspace {
 	pv := NewPathValidator(root, false, nil)
 	pv.WorkDir = pv.WorkspaceRoot
 	return NewConfinedLocalWorkspace(pv, backend, place,

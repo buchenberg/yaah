@@ -1,10 +1,9 @@
-package tools
+package substrate
 
 import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -32,9 +31,9 @@ func TestLocalWorkspace_ResolvePathUsesValidator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolvePath: %v", err)
 	}
-	want, err := resolvePathWithPV(pv, "sub/file.txt")
+	want, err := ResolvePathWithPV(pv, "sub/file.txt")
 	if err != nil {
-		t.Fatalf("resolvePathWithPV: %v", err)
+		t.Fatalf("ResolvePathWithPV: %v", err)
 	}
 	if got != want {
 		t.Errorf("local workspace resolution = %q, want %q (must match the validator)", got, want)
@@ -180,7 +179,7 @@ func TestLocalWorkspace_ExecHonoursCwd(t *testing.T) {
 
 func TestWorkspaceOf_FallsBackToLocalValidator(t *testing.T) {
 	dir := t.TempDir()
-	ws := workspaceOf(nil, &PathValidator{WorkDir: dir})
+	ws := WorkspaceOf(nil, &PathValidator{WorkDir: dir})
 
 	if !ws.Local() {
 		t.Error("a nil workspace must fall back to the local filesystem")
@@ -190,193 +189,15 @@ func TestWorkspaceOf_FallsBackToLocalValidator(t *testing.T) {
 	}
 }
 
-// --- registry injection ---
-
-// wsRecorder records what the registry injected.
-type wsRecorder struct {
-	Tool
-	got Workspace
-	pv  *PathValidator
-}
-
-func (r *wsRecorder) Name() string                                    { return "ws-recorder" }
-func (r *wsRecorder) SetWorkspace(ws Workspace)                       { r.got = ws }
-func (r *wsRecorder) SetPathValidator(pv *PathValidator)              { r.pv = pv }
-func (r *wsRecorder) Execute(context.Context, string) (string, error) { return "", nil }
-func (r *wsRecorder) Description() string                             { return "" }
-func (r *wsRecorder) Schema() json.RawMessage                         { return nil }
-
-// TestRegistry_DerivesLocalWorkspaceFromValidator pins the migration behaviour:
-// every existing caller sets only a PathValidator, and migrated tools must still
-// get a working workspace.
-func TestRegistry_DerivesLocalWorkspaceFromValidator(t *testing.T) {
-	reg := NewEmptyRegistry()
-	rec := &wsRecorder{}
-	reg.Register(rec)
-
-	pv := &PathValidator{WorkDir: t.TempDir()}
-	reg.SetPathValidator(pv)
-
-	if rec.pv != pv {
-		t.Error("the validator must still be injected for unmigrated tools")
-	}
-	if rec.got == nil {
-		t.Fatal("a workspace must be derived from the validator")
-	}
-	if !rec.got.Local() {
-		t.Error("the derived workspace must be the local filesystem")
-	}
-	if rec.got.WorkDir() != pv.WorkDir {
-		t.Errorf("derived WorkDir = %q, want %q", rec.got.WorkDir(), pv.WorkDir)
-	}
-
-	// Registering after SetPathValidator also injects.
-	late := &wsRecorder{}
-	reg.Register(late)
-	if late.got == nil {
-		t.Error("a tool registered later must be injected too")
-	}
-}
-
-// TestRegistry_SetWorkspace_RefusesIsolated pins the isolation gate. Selecting a
-// non-local workspace while any built-in tool still touches the host would give
-// the caller a containment guarantee that is not real, so it is refused.
-func TestRegistry_SetWorkspace_RefusesIsolated(t *testing.T) {
-	reg := NewEmptyRegistry()
-	rec := &wsRecorder{}
-	reg.Register(rec)
-	// A host-only tool that can never be isolated, so the gate has something to
-	// find. (Every migratable tool has been migrated, so an unmigrated filesystem
-	// tool is no longer available to use here.)
-	reg.Register(NewLeafTool("go_refactor"))
-	reg.SetPathValidator(&PathValidator{WorkDir: t.TempDir()})
-
-	err := reg.SetWorkspace(newSandboxWS(t, nil))
-	if err == nil {
-		t.Fatal("an isolated workspace must be refused")
-	}
-	if !strings.Contains(err.Error(), "go_refactor") {
-		t.Errorf("error should name the disqualifying tool, got %v", err)
-	}
-	// The refusal must not half-apply: the derived local workspace stays.
-	if rec.got == nil || !rec.got.Local() {
-		t.Error("a refused SetWorkspace must leave the previous workspace in place")
-	}
-}
-
-// TestRegistry_SetWorkspace_AllowsIsolatedWhenClean verifies the gate is precise
-// rather than blanket: a registry holding only migrated tools can be isolated.
-// Without this, isolation would be unreachable even once migration finishes.
-func TestRegistry_SetWorkspace_AllowsIsolatedWhenClean(t *testing.T) {
-	reg := NewEmptyRegistry()
-	reg.Register(NewLeafTool("read"))  // migrated
-	reg.Register(NewLeafTool("write")) // migrated
-
-	if err := reg.SetWorkspace(newSandboxWS(t, nil)); err != nil {
-		t.Fatalf("a registry of migrated tools must accept an isolated workspace: %v", err)
-	}
-}
-
-// TestRegistry_EveryToolIsClassified is what makes the precise gate trustworthy:
-// every registered tool must be a FilesystemTool, a HostOnlyTool, or named in the
-// non-filesystem allowlist. Adding a tool without classifying it fails here,
-// rather than silently becoming an isolation hole.
-func TestRegistry_EveryToolIsClassified(t *testing.T) {
-	// A claim that the tool cannot touch the host. Adding a name here is
-	// deliberate; that is the point.
-	nonFilesystem := map[string]bool{
-		"question":  true,
-		"webfetch":  true,
-		"http":      true,
-		"calculate": true,
-	}
-
-	reg := NewRegistry()
-	if len(reg.tools) == 0 {
-		t.Fatal("no tools registered: the classification check would be vacuous")
-	}
-	for name, tool := range reg.tools {
-		if _, ok := tool.(FilesystemTool); ok {
-			continue
-		}
-		if _, ok := tool.(HostOnlyTool); ok {
-			continue
-		}
-		if !nonFilesystem[name] {
-			t.Errorf("tool %q is neither a FilesystemTool nor a known non-filesystem tool: classify it as one or the other", name)
-		}
-	}
-}
-
-// TestRegistry_SetWorkspace_AcceptsLocal verifies a local workspace is applied
-// to every migrated tool.
-func TestRegistry_SetWorkspace_AcceptsLocal(t *testing.T) {
-	reg := NewEmptyRegistry()
-	rec := &wsRecorder{}
-	reg.Register(rec)
-	reg.SetPathValidator(&PathValidator{WorkDir: t.TempDir()})
-
-	local := newLocalWorkspace(&PathValidator{WorkDir: "/tmp/other"})
-	if err := reg.SetWorkspace(local); err != nil {
-		t.Fatalf("a local workspace must be accepted: %v", err)
-	}
-	if rec.got != local {
-		t.Errorf("workspace = %T, want the supplied local workspace", rec.got)
-	}
-	// The validator stays, because unmigrated tools still use it.
-	if rec.pv == nil {
-		t.Error("the validator must not be cleared by SetWorkspace")
-	}
-}
-
-// TestRegistry_UnmigratedFilesystemTools tracks the migration backlog: migrated
-// tools must not appear, host-only tools must.
-func TestRegistry_UnmigratedFilesystemTools(t *testing.T) {
-	reg := NewRegistry()
-	// Host-only tools are runtime-wired in production, so add one to exercise the
-	// separate reporting path.
-	reg.Register(&RoleTool{})
-	unmigrated := reg.UnmigratedFilesystemTools()
-
-	isUnmigrated := func(name string) bool {
-		for _, n := range unmigrated {
-			if n == name {
-				return true
-			}
-		}
-		return false
-	}
-
-	for _, name := range []string{"read", "write", "edit", "delete", "patch", "bash", "ls", "grep", "glob", "replace", "git", "go_mod", "go_test", "staticcheck", "bisect"} {
-		if isUnmigrated(name) {
-			t.Errorf("%s is migrated and must not be listed as unmigrated", name)
-		}
-	}
-	// Every migratable tool has been migrated. If this ever fails, a new tool was
-	// added without being migrated.
-	if len(unmigrated) != 0 {
-		t.Errorf("unmigrated = %v, want none: all migratable filesystem tools are converted", unmigrated)
-	}
-	// Host-only tools are not migration debt and must not be reported as such.
-	for _, name := range reg.HostOnlyFilesystemTools() {
-		if isUnmigrated(name) {
-			t.Errorf("%s is host-only by design and must not be listed as needing migration", name)
-		}
-	}
-	if len(reg.HostOnlyFilesystemTools()) == 0 {
-		t.Error("expected host-only tools to be reported separately")
-	}
-}
-
 // --- sandbox workspace ---
 
-// newSandboxWS returns a real sandboxWorkspace over an in-memory sandbox, so
+// newSandboxWS returns a real SandboxWorkspace over an in-memory sandbox, so
 // the tests exercise the production implementation rather than a stand-in.
 // The sandbox is created with the workspace root as its workdir, the way an
 // isolated session provisions a container before dispatching tools. Tests
 // that need wire-level behaviour a working filesystem cannot produce pass
 // their own sandbox with an ExecHook registered.
-func newSandboxWS(t *testing.T, sb *sandboxfake.Sandbox) *sandboxWorkspace {
+func newSandboxWS(t *testing.T, sb *sandboxfake.Sandbox) *SandboxWorkspace {
 	t.Helper()
 	if sb == nil {
 		sb = sandboxfake.New()
@@ -386,7 +207,7 @@ func newSandboxWS(t *testing.T, sb *sandboxfake.Sandbox) *sandboxWorkspace {
 			t.Fatalf("create sandbox: %v", err)
 		}
 	}
-	return newSandboxWorkspace(sb, "/workspace")
+	return NewSandboxWorkspace(sb, "/workspace")
 }
 
 func TestSandboxWorkspace_ResolvePathContainment(t *testing.T) {
@@ -432,7 +253,7 @@ func TestSandboxWorkspace_LocalAndShell(t *testing.T) {
 		t.Errorf("shell = (%q, %q), want (sh, -c)", shell, flag)
 	}
 	// An empty root must default rather than produce a relative path.
-	if got := newSandboxWorkspace(sandboxfake.New(), "").WorkDir(); got != "/workspace" {
+	if got := NewSandboxWorkspace(sandboxfake.New(), "").WorkDir(); got != "/workspace" {
 		t.Errorf("default root = %q, want /workspace", got)
 	}
 }
@@ -469,7 +290,7 @@ func TestSandboxWorkspace_WriteFileIsAtomicInBand(t *testing.T) {
 		}
 	}
 	// The first exec creates the target's parent directory (parity with the
-	// host atomicWriteFile's MkdirAll), creates the temp beside the target,
+	// host AtomicWriteFile's MkdirAll), creates the temp beside the target,
 	// and lands the first chunk; the content arrives as a base64 argument
 	// and the parent as a quoted positional.
 	first := execs[0]
@@ -553,7 +374,7 @@ func TestSandboxWorkspace_WriteFileEmptyPayload(t *testing.T) {
 }
 
 // TestSandboxWorkspace_WriteFileCreatesMissingParentDirs pins host parity for
-// new nested paths: the host atomicWriteFile MkdirAlls the target's parent,
+// new nested paths: the host AtomicWriteFile MkdirAlls the target's parent,
 // so the sandbox write must script the same — the first exec mkdir -p's the
 // parent (as a quoted positional, never spliced into the script text) and the
 // write lands instead of failing at the mktemp step.
@@ -768,7 +589,7 @@ func TestSandboxWorkspace_ExecNonZeroExitIsAnError(t *testing.T) {
 
 	res, err := ws.Exec(context.Background(), ExecRequest{Command: "go", Args: []string{"build"}})
 	if err == nil {
-		t.Fatal("a non-zero exit must surface as an error, matching localWorkspace")
+		t.Fatal("a non-zero exit must surface as an error, matching LocalWorkspace")
 	}
 	if err.Error() != "exit status 3" {
 		t.Errorf("error = %q, want the bounded %q that carries no command output", err.Error(), "exit status 3")
@@ -889,7 +710,7 @@ func TestSandboxEntryMode_TypeChars(t *testing.T) {
 // TestSandboxWorkspace_MoveErrorClassification pins the sandbox half of the
 // partial move contract: mv across a filesystem boundary copies and then
 // unlinks, so an unlink failure leaves dst in place after mv reports an error.
-// That must be a partialMoveError so RecordingTool records the destination; a
+// That must be a PartialMoveError so RecordingTool records the destination; a
 // failure that left dst untouched must stay a plain error, so a permission
 // problem is not misdescribed as a partial move.
 func TestSandboxWorkspace_MoveErrorClassification(t *testing.T) {
@@ -923,9 +744,9 @@ func TestSandboxWorkspace_MoveErrorClassification(t *testing.T) {
 		err := runMove(t,
 			goatherdsandbox.ExecResult{ExitCode: 42}, // destination absent before mv
 			goatherdsandbox.ExecResult{ExitCode: 0, Stdout: "regular file|7|644|1700000000\n"})
-		var partial *partialMoveError
+		var partial *PartialMoveError
 		if !errors.As(err, &partial) {
-			t.Fatalf("Move error = %v, want *partialMoveError", err)
+			t.Fatalf("Move error = %v, want *PartialMoveError", err)
 		}
 		if partial.Src != "/workspace/src.txt" || partial.Dst != "/workspace/dst.txt" {
 			t.Errorf("partial paths = %s -> %s, want /workspace/src.txt -> /workspace/dst.txt", partial.Src, partial.Dst)
@@ -935,7 +756,7 @@ func TestSandboxWorkspace_MoveErrorClassification(t *testing.T) {
 	t.Run("unchanged destination stays a plain error", func(t *testing.T) {
 		unchanged := goatherdsandbox.ExecResult{ExitCode: 0, Stdout: "regular file|7|644|1700000000\n"}
 		err := runMove(t, unchanged, unchanged)
-		var partial *partialMoveError
+		var partial *PartialMoveError
 		if errors.As(err, &partial) {
 			t.Fatalf("Move error = %v; a failure that did not change dst must not claim a partial move", err)
 		}
@@ -1031,7 +852,7 @@ func TestWalkWorkspaceVisitsRoot(t *testing.T) {
 	collect := func(root string) []string {
 		t.Helper()
 		var visited []string
-		err := walkWorkspace(context.Background(), ws, root, func(_ string, d fs.DirEntry, err error) error {
+		err := WalkWorkspace(context.Background(), ws, root, func(_ string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -1039,7 +860,7 @@ func TestWalkWorkspaceVisitsRoot(t *testing.T) {
 			return nil
 		})
 		if err != nil {
-			t.Fatalf("walkWorkspace(%s): %v", root, err)
+			t.Fatalf("WalkWorkspace(%s): %v", root, err)
 		}
 		return visited
 	}
@@ -1078,7 +899,7 @@ func TestWalkWorkspaceDoesNotDescendSymlinkRoot(t *testing.T) {
 
 	ws := newLocalWorkspace(NewPathValidator(dir, false, nil))
 	var visited []string
-	err := walkWorkspace(context.Background(), ws, link, func(_ string, d fs.DirEntry, err error) error {
+	err := WalkWorkspace(context.Background(), ws, link, func(_ string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -1089,7 +910,7 @@ func TestWalkWorkspaceDoesNotDescendSymlinkRoot(t *testing.T) {
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("walkWorkspace: %v", err)
+		t.Fatalf("WalkWorkspace: %v", err)
 	}
 	if len(visited) != 1 || visited[0] != "link" {
 		t.Errorf("visited %v, want only the symlink root with no descent", visited)
@@ -1120,7 +941,7 @@ func TestSandboxWorkspace_ExecTransportErrorReportsExitMinusOne(t *testing.T) {
 // trimming must not collapse the root to an empty prefix, which would disable
 // containment entirely.
 func TestSandboxWorkspace_RootSlashContainsWholeContainer(t *testing.T) {
-	ws := newSandboxWorkspace(sandboxfake.New(), "/")
+	ws := NewSandboxWorkspace(sandboxfake.New(), "/")
 
 	if ws.root != "/" {
 		t.Fatalf("root = %q, want %q", ws.root, "/")
@@ -1156,10 +977,10 @@ func TestSandboxWorkspace_ExecDefaultsCwdToRoot(t *testing.T) {
 }
 
 func TestRequireLocal(t *testing.T) {
-	if err := requireLocal(newLocalWorkspace(nil), "powershell"); err != nil {
+	if err := RequireLocal(newLocalWorkspace(nil), "powershell"); err != nil {
 		t.Errorf("a local workspace must be accepted: %v", err)
 	}
-	err := requireLocal(newSandboxWS(t, nil), "powershell")
+	err := RequireLocal(newSandboxWS(t, nil), "powershell")
 	if err == nil {
 		t.Fatal("a sandbox workspace must be rejected for host-only tools")
 	}
@@ -1202,7 +1023,7 @@ func TestWorkspaceParity_LocalVsSandbox(t *testing.T) {
 	if err := sb.WriteFile(ctx, "/workspace/weird\nname.txt", []byte("x"), 0o644); err != nil {
 		t.Fatalf("seed sandbox newline file: %v", err)
 	}
-	boxed := newSandboxWorkspace(sb, "/workspace")
+	boxed := NewSandboxWorkspace(sb, "/workspace")
 
 	for _, tc := range []struct {
 		name string

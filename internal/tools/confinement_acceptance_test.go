@@ -44,10 +44,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 	"github.com/buchenberg/goatherd-runtime/sandbox/landlock"
 )
 
+// confinedTestWorkspace mirrors the substrate test helper (test helpers do not
+// cross packages): a confined local workspace rooted at root.
+func confinedTestWorkspace(root string, backend containment.Backend, place containment.Placement) *localWorkspace {
+	pv := NewPathValidator(root, false, nil)
+	pv.WorkDir = pv.WorkspaceRoot
+	return NewConfinedLocalWorkspace(pv, backend, place,
+		confinement.NetworkPolicy{Mode: confinement.NetAllowAll})
+}
 func TestConfinedBuild_Acceptance(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("Landlock is Linux-only")
