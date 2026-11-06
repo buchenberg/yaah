@@ -148,9 +148,16 @@ func TestSubAgentRowsContainmentSplit(t *testing.T) {
 		ReportWorld:         "worktree",
 	}
 	got := SubAgentRows(s, thp)
-	for _, want := range []string{"Containment:", "paddock", "Paddock:", "Seatbelt · native-syscall-deny"} {
+	for _, want := range []string{"Containment:", "Seatbelt"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("output missing %q:\n%s", want, got)
+		}
+	}
+	// The Paddock row is gone: the Containment row names the mechanism, and
+	// neither the placement vocabulary nor the enforcement tier leaks.
+	for _, ban := range []string{"Paddock:", "paddock", "native-syscall-deny"} {
+		if strings.Contains(got, ban) {
+			t.Errorf("output leaks %q:\n%s", ban, got)
 		}
 	}
 	if strings.Contains(got, "jail") || strings.Contains(got, "Jail") {
@@ -162,11 +169,26 @@ func TestSubAgentRowsContainmentSplit(t *testing.T) {
 	s.JailTier = ""
 	s.JailWhy = "no paddock backend on this host"
 	unavailable := SubAgentRows(s, thp)
-	if !strings.Contains(unavailable, "unavailable · no paddock backend on this host") {
-		t.Fatalf("refusal reason missing:\n%s", unavailable)
+	if !strings.Contains(unavailable, "Unavailable") {
+		t.Fatalf("unavailable containment is not a single word:\n%s", unavailable)
+	}
+	for _, ban := range []string{"unavailable ·", "unavailable on this host", "no paddock backend"} {
+		if strings.Contains(unavailable, ban) {
+			t.Errorf("output leaks the multi-word refusal %q:\n%s", ban, unavailable)
+		}
 	}
 	if strings.Contains(unavailable, "jail") || strings.Contains(unavailable, "Jail") {
 		t.Fatalf("public metaphor leaks the jail wording on the unavailable path:\n%s", unavailable)
+	}
+
+	// The fail-closed placement is a single word too.
+	s.ContainmentResolved = "refused"
+	refused := SubAgentRows(s, thp)
+	if !strings.Contains(refused, "Refused") {
+		t.Fatalf("refused containment is not a single word:\n%s", refused)
+	}
+	if strings.Contains(refused, "fail closed") || strings.Contains(refused, "refused (") {
+		t.Errorf("output leaks the multi-word refusal:\n%s", refused)
 	}
 
 	// The leak guard must also cover the producer strings, not just the
@@ -195,8 +217,13 @@ func TestSubAgentRowsCroftLane(t *testing.T) {
 		ReportWorld:         "container",
 	}
 	got := SubAgentRows(s, thp)
-	if !strings.Contains(got, "Containment:") || !strings.Contains(got, "croft") {
+	if !strings.Contains(got, "Containment:") || !strings.Contains(got, "Croft") {
 		t.Fatalf("croft lane does not name the container boundary:\n%s", got)
+	}
+	// The croft lane carries its own boundary: the host jail backend must not
+	// leak into it, and no Paddock row is shown.
+	if strings.Contains(got, "Landlock") {
+		t.Fatalf("host jail backend named on the croft lane:\n%s", got)
 	}
 	if strings.Contains(got, "Paddock:") {
 		t.Fatalf("paddock row shown on a lane that carries its own boundary:\n%s", got)

@@ -424,6 +424,33 @@ func (s Status) ContainmentLine() string {
 	}
 }
 
+// ContainmentMechanism names the containment mechanism in force for the
+// resolved proposal lane by its implementation, always as a single word:
+// "Croft" when dispatches are contained by the croft container world, else
+// the host jail backend ("WinACL", "Landlock", "Seatbelt") when the paddock
+// placement is in force, "Unavailable" when the host cannot establish the
+// paddock, and "Refused" for the fail-closed placement. Every other
+// placement keeps ContainmentLine's one-word vocabulary ("advisory",
+// "off").
+func (s Status) ContainmentMechanism() string {
+	if s.ProposalWorld == "container" {
+		return "Croft"
+	}
+	if s.ContainmentResolved == "paddock" {
+		if s.JailOK {
+			if s.JailName != "" {
+				return s.JailName
+			}
+			return "paddock"
+		}
+		return "Unavailable"
+	}
+	if s.ContainmentResolved == "refused" {
+		return "Refused"
+	}
+	return s.ContainmentLine()
+}
+
 // PaddockLine renders the host paddock ("Seatbelt · native-syscall-deny"),
 // returning "" when the resolved world makes it irrelevant: the croft
 // container lane carries its own boundary, a substitute for the paddock.

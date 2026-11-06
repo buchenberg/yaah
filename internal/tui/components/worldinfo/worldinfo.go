@@ -37,8 +37,9 @@ func AgentRows(s worldstatus.Status, th *colors.Theme) string {
 }
 
 // SubAgentRows returns the dispatch/containment rows folded into the
-// Sub-agents section: containment (with its effective resolution), the jail
-// backend the host actually provides, dispatch world, and network posture.
+// Sub-agents section: containment named by the mechanism in force ("WinACL",
+// "Landlock", "Seatbelt", "Croft" — always a single word), dispatch world, and
+// network posture.
 // The zero Status means the session never populated the posture, so the rows
 // are omitted entirely.
 func SubAgentRows(s worldstatus.Status, th *colors.Theme) string {
@@ -47,10 +48,7 @@ func SubAgentRows(s worldstatus.Status, th *colors.Theme) string {
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "  Containment: %s\n", th.Tag(th.Detail, s.ContainmentLine()))
-	if paddock := s.PaddockLine(); paddock != "" {
-		fmt.Fprintf(&b, "  Paddock: %s\n", th.Tag(th.Detail, paddock))
-	}
+	fmt.Fprintf(&b, "  Containment: %s\n", th.Tag(th.Detail, s.ContainmentMechanism()))
 
 	network := s.Network
 	if s.Network == "broker" {
