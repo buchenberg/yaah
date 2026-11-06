@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.143.2](https://github.com/buchenberg/yaah/compare/v0.143.1...v0.143.2) (2026-11-06)
+
+
+### Bug Fixes
+
+* **substrate:** clone the Data map in SetBaseline (PR [#808](https://github.com/buchenberg/yaah/issues/808) review round 2) ([e24b52e](https://github.com/buchenberg/yaah/commit/e24b52ef6bd281314228ad9b36546d4f66d30fb9))
+* **substrate:** defensive copies on the exported sandbox seams (PR [#808](https://github.com/buchenberg/yaah/issues/808) review) ([34a16d4](https://github.com/buchenberg/yaah/commit/34a16d4045da58e5171eb34d01ff005b2123f9fb))
+
+
+### Code Refactoring
+
+* **tools:** move retained-dispatch lane into internal/dispatch (yaah-5d85, slice 3/3) ([443b450](https://github.com/buchenberg/yaah/commit/443b45047833cf0048fa56c01933a2018b75d619))
+* **tools:** move retained-dispatch lane into internal/dispatch (yaah-5d85, slice 3/3) ([ffe20fa](https://github.com/buchenberg/yaah/commit/ffe20faf8277d8eac8d6dafd729529e7e0433e9b))
+
 ## [0.143.1](https://github.com/buchenberg/yaah/compare/v0.143.0...v0.143.1) (2026-11-06)
 
 
