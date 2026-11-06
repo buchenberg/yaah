@@ -284,3 +284,37 @@ func TestSkillSearch_NonFiniteScoreIsNotAMatch(t *testing.T) {
 		t.Fatalf("a computed non-finite score is not an embed failure: %q", out)
 	}
 }
+
+// queryTrackingEmbedder implements QueryEmbedder and records which side
+// skillSearch reaches: the query must go through EmbedQuery (query-side
+// treatment), documents through Embed (document-side treatment).
+type queryTrackingEmbedder struct {
+	queryCalls    []string
+	documentCalls []string
+}
+
+func (q *queryTrackingEmbedder) Embed(_ context.Context, text string) (memory.Embedding, error) {
+	q.documentCalls = append(q.documentCalls, text)
+	return memory.Embedding{0, 1}, nil
+}
+
+func (q *queryTrackingEmbedder) EmbedQuery(_ context.Context, text string) (memory.Embedding, error) {
+	q.queryCalls = append(q.queryCalls, text)
+	return memory.Embedding{1, 0}, nil
+}
+
+// TestSkillSearch_QueryUsesEmbedQuery pins that skill search embeds its query
+// through the query-side treatment. It once called Embed directly, which on
+// the http backend now applies the document prefix — sending the query as
+// "search_document: <query>" instead of "search_query: <query>".
+func TestSkillSearch_QueryUsesEmbedQuery(t *testing.T) {
+	emb := &queryTrackingEmbedder{}
+	skillSearch(context.Background(), emb, "database", skillSearchFixture())
+
+	if len(emb.queryCalls) != 1 || emb.queryCalls[0] != "database" {
+		t.Fatalf("query must be embedded via EmbedQuery once with the raw text, got %v", emb.queryCalls)
+	}
+	if len(emb.documentCalls) != 2 {
+		t.Fatalf("documents must be embedded via Embed (name: description), got %v", emb.documentCalls)
+	}
+}

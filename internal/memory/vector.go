@@ -24,15 +24,17 @@ type Embedder interface {
 // QueryEmbedder is an optional interface for embedders that treat query
 // text differently from document text (e.g. nomic-style search_query:/
 // search_document: prefixes). Callers embedding a search query should use
-// embedQuery, which falls back to Embed for plain embedders.
+// EmbedQuery, which falls back to Embed for plain embedders.
 type QueryEmbedder interface {
 	Embedder
 	EmbedQuery(ctx context.Context, text string) (Embedding, error)
 }
 
-// embedQuery embeds search/query text with the embedder's query-side
-// treatment when it has one, falling back to Embed otherwise.
-func embedQuery(ctx context.Context, e Embedder, text string) (Embedding, error) {
+// EmbedQuery embeds search/query text with the embedder's query-side
+// treatment when it has one, falling back to Embed otherwise. Callers
+// outside this package (e.g. skill search) use it to embed a query without
+// reaching for Embed, which carries the document-side prefix.
+func EmbedQuery(ctx context.Context, e Embedder, text string) (Embedding, error) {
 	if q, ok := e.(QueryEmbedder); ok {
 		return q.EmbedQuery(ctx, text)
 	}
