@@ -12,7 +12,7 @@ import (
 // skill earns its keep (skill_usage), where it came from
 // (skill_provenance), and every mutation ever applied to it
 // (skill_ledger). The tables themselves are created by the schema v3
-// migration in memory.go.
+// migration in migrate.go.
 
 // SkillUsage is the usage record for one skill: use_count counts loads
 // that were applied to the task, view_count counts inspections that did

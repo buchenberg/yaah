@@ -991,8 +991,9 @@ runs, not the record they share.
 
 ## Semantic memory search
 
-Files: `internal/memory/vector.go`, `internal/memory/memory.go`,
-`internal/memory/message_repo.go`, `internal/tools/memory.go`
+Files: `internal/memory/vector.go`, `internal/memory/memory_vector.go`,
+`internal/memory/memory_search.go`, `internal/memory/message_repo.go`,
+`internal/tools/memory.go`
 
 yaah optionally stores vector embeddings alongside memory entries and session
 messages, enabling semantic search via cosine similarity. The system works in
