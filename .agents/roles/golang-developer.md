@@ -16,19 +16,26 @@ contract:
     - { name: findings,       kind: interpretation }
 tools:
   - read
+  - tail
   - write
+  - append
   - edit
   - delete
   - mkdir
   - rmdir
   - move
   - copy
+  - copy_tree
+  - move_tree
+  - bulk_files
   - replace
   - patch
   - grep
   - glob
+  - find
   - ls
   - file_info
+  - checksum
   - powershell
   - bash
   - json_query
