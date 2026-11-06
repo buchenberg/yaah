@@ -947,6 +947,48 @@ fidelity, and retention contract.
 
 ---
 
+## Run record (protocol-neutral tasks)
+
+Files: `internal/runs/runs.go`, `internal/runs/state.go`
+
+A run is a unit of work a caller starts and can poll until it settles: the
+shared shape behind yaah's task-style surfaces. The MCP serve concurrency
+work (yaah-okj0 Phase A) and the A2A adapter (Phase B) both project onto it,
+so the record is deliberately protocol-neutral (yaah-okj0.1). Four
+constraints keep the two protocols honest; review Phase A and Phase B work
+against them:
+
+1. **No protocol types in the record.** Nothing in `internal/runs` knows
+   about MCP progress tokens, JSON-RPC ids, A2A task objects, or artifact
+   parts. Adapters encode a `Run` into their own wire shape at the edge; the
+   record never stores a protocol spelling, so the two protocols cannot
+   disagree about what a run is.
+2. **`State` is THE enum.** MCP `tasks/get` and A2A `tasks/get` both read it
+   and translate at the edge; neither keeps a second copy of lifecycle state.
+   The six values are `queued`, `working`, `input_required`, `completed`,
+   `failed`, and `cancelled`; `input_required` is a live state, not a
+   terminal one.
+3. **Pending keys are stable for the run's lifetime.** Both protocols dedupe
+   input requests across polls (MCP `inputRequests`, A2A input-required); a
+   re-minted key would read as a second question, so `Pending.Key` is minted
+   once and answered by the same key.
+4. **The record persists in the memory DB (`internal/memory`), next to
+   sessions — not in a process map.** A run that was live when the process
+   died is reported failed/interrupted, never working. (Constraint only;
+   persistence lands with Phase A.)
+
+The zero value is a queued, live run: `StateQueued` is the iota zero, so a
+record that was minted but never started reads as live, and `Terminal()` is
+true only for the three settle states. Helpers are minimal on purpose —
+`Terminal()`, `PendingByKey(key)`, and `DuplicatePendingKeys()` (a uniqueness
+guard; it refuses to guess which duplicate is real). There is no state
+machine and no transition validation: those belong to the surfaces that drive
+runs, not the record they share.
+
+---
+
+---
+
 ## Semantic memory search
 
 Files: `internal/memory/vector.go`, `internal/memory/memory.go`,
