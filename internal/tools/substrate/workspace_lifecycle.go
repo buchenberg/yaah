@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -200,13 +201,16 @@ func (s *SessionSandbox) Sandbox() goatherdsandbox.Sandbox { return s.sb }
 // SetBaseline records the state a session's diffs and apply-out are measured
 // against. The D1 bootstrap sets it at session start; a dispatch that seeds a
 // container from a captured state sets it to that state. It takes ownership of
-// a copy: later mutation of the caller's state cannot move the anchor.
+// a copy: the top-level fields and the Data map are copied, so later mutation
+// of the caller's state (including Data entries) cannot move the anchor.
+// Nested values inside Data remain shared.
 func (s *SessionSandbox) SetBaseline(state *shepherdtrace.WorkspaceState) {
 	if state == nil {
 		s.baseline = nil
 		return
 	}
 	st := *state
+	st.Data = maps.Clone(state.Data)
 	s.baseline = &st
 }
 
