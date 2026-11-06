@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.146.1](https://github.com/buchenberg/yaah/compare/v0.146.0...v0.146.1) (2026-11-06)
+
+
+### Code Refactoring
+
+* split internal/memory/memory.go (1533 lines) into 6 focused files ([b3d9071](https://github.com/buchenberg/yaah/commit/b3d90718ffe18c8740869ed921377cb299ab3804))
+
+
+### Documentation
+
+* fix stale references to the deleted memory.go ([c31ee0e](https://github.com/buchenberg/yaah/commit/c31ee0ee70a747e66e563d4d8db8e19bae7d0c39))
+
 ## [0.146.0](https://github.com/buchenberg/yaah/compare/v0.145.0...v0.146.0) (2026-11-06)
 
 
