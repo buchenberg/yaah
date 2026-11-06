@@ -124,6 +124,70 @@ func TestHTTPEmbedderEmbed(t *testing.T) {
 	}
 }
 
+func TestHTTPEmbedderAppliesPrefixes(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Input string `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		got = append(got, body.Input)
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"embedding": []float64{0.1, 0.2}}},
+		})
+	}))
+	defer srv.Close()
+
+	e := &HTTPEmbedder{BaseURL: srv.URL, QueryPrefix: "search_query: ", DocumentPrefix: "search_document: "}
+	if _, err := e.Embed(context.Background(), "fact"); err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	if _, err := e.EmbedQuery(context.Background(), "query"); err != nil {
+		t.Fatalf("EmbedQuery: %v", err)
+	}
+	want := []string{"search_document: fact", "search_query: query"}
+	if len(got) != len(want) {
+		t.Fatalf("got %d calls %q, want %d", len(got), got, len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("call %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestHTTPEmbedderEmptyPrefixesNoOp(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Input string `json:"input"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		got = body.Input
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"embedding": []float64{0.1}}},
+		})
+	}))
+	defer srv.Close()
+
+	e := &HTTPEmbedder{BaseURL: srv.URL}
+	if _, err := e.Embed(context.Background(), "raw text"); err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	if got != "raw text" {
+		t.Errorf("input = %q, want %q (empty prefixes must be a no-op)", got, "raw text")
+	}
+}
+
+func TestHTTPEmbedderSatisfiesQueryEmbedder(t *testing.T) {
+	var e Embedder = &HTTPEmbedder{}
+	if _, ok := e.(QueryEmbedder); !ok {
+		t.Fatal("*HTTPEmbedder must satisfy QueryEmbedder")
+	}
+}
+
 func TestHTTPEmbedderEmbedError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

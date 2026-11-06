@@ -146,7 +146,7 @@ func (d *DB) SearchMemoryVectorScopedDiag(ctx context.Context, query string, lim
 	if embedder == nil {
 		return nil, nil
 	}
-	qEmb, err := embedQuery(ctx, embedder, query)
+	qEmb, err := EmbedQuery(ctx, embedder, query)
 	if err != nil {
 		d.recordEmbedFailure("search_memory_vector", err)
 		return nil, &embedError{err: err}

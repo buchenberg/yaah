@@ -285,7 +285,7 @@ func skillSearch(ctx context.Context, emb memory.Embedder, query string, found [
 		return keywordSearch(query, found, searchText)
 	}
 
-	qEmb, err := emb.Embed(ctx, query)
+	qEmb, err := memory.EmbedQuery(ctx, emb, query)
 	if err != nil {
 		// Keyword recall still works; label the path so a miss is not read as
 		// "no such skill" when the semantic path was simply down.

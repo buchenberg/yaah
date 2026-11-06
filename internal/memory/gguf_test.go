@@ -121,7 +121,7 @@ func TestEmbedQuery_FallsBackToEmbed(t *testing.T) {
 	if _, ok := e.(QueryEmbedder); ok {
 		t.Fatal("plainEmbedder must not satisfy QueryEmbedder")
 	}
-	if _, err := embedQuery(context.Background(), e, "q"); err != nil {
+	if _, err := EmbedQuery(context.Background(), e, "q"); err != nil {
 		t.Fatalf("embedQuery must fall back to Embed, got: %v", err)
 	}
 }
