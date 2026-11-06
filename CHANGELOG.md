@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.143.3](https://github.com/buchenberg/yaah/compare/v0.143.2...v0.143.3) (2026-11-06)
+
+
+### Code Refactoring
+
+* **cmd:** split the assemble wiring stage into focused concerns (yaah-mp04) ([ca1fd4f](https://github.com/buchenberg/yaah/commit/ca1fd4ff9b990872f4a01731d940f3a22247dde2))
+
+
+### Documentation
+
+* **cmd:** fold assemble's two doc paragraphs into one (PR [#810](https://github.com/buchenberg/yaah/issues/810) review) ([093703a](https://github.com/buchenberg/yaah/commit/093703a37c232eb83b45afd3a53645d0c2757c19))
+
 ## [0.143.2](https://github.com/buchenberg/yaah/compare/v0.143.1...v0.143.2) (2026-11-06)
 
 
