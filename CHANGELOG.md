@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.145.0](https://github.com/buchenberg/yaah/compare/v0.144.0...v0.145.0) (2026-11-06)
+
+
+### Features
+
+* **runs:** protocol-neutral run record (yaah-okj0.1) ([9642d9b](https://github.com/buchenberg/yaah/commit/9642d9bc40b87cd589a93ebd034f31c594ccecaf))
+* **runs:** protocol-neutral run record for task-style surfaces (yaah-okj0.1) ([c223a7f](https://github.com/buchenberg/yaah/commit/c223a7fa9eab698345ac3e0c8dcabda01120347c))
+
+
+### Documentation
+
+* **architecture:** run record section — the four neutrality constraints (yaah-okj0.1) ([ee7baa1](https://github.com/buchenberg/yaah/commit/ee7baa1ea732cae308c472de1f97a3de2173e9b6))
+* **code-organization:** name internal/runs in the package tree (parity) ([195a591](https://github.com/buchenberg/yaah/commit/195a5912b162a6d8318b2a7ce7b45ebbc7d9be11))
+
 ## [0.144.0](https://github.com/buchenberg/yaah/compare/v0.143.3...v0.144.0) (2026-11-06)
 
 
