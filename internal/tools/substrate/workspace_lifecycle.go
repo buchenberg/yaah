@@ -199,12 +199,21 @@ func (s *SessionSandbox) Sandbox() goatherdsandbox.Sandbox { return s.sb }
 
 // SetBaseline records the state a session's diffs and apply-out are measured
 // against. The D1 bootstrap sets it at session start; a dispatch that seeds a
-// container from a captured state sets it to that state.
-func (s *SessionSandbox) SetBaseline(state *shepherdtrace.WorkspaceState) { s.baseline = state }
+// container from a captured state sets it to that state. It takes ownership of
+// a copy: later mutation of the caller's state cannot move the anchor.
+func (s *SessionSandbox) SetBaseline(state *shepherdtrace.WorkspaceState) {
+	if state == nil {
+		s.baseline = nil
+		return
+	}
+	st := *state
+	s.baseline = &st
+}
 
 // DenyPatterns returns the copy-in deny policy the session started with. Seal
-// and apply-out filter the same paths the copy-in excluded.
-func (s *SessionSandbox) DenyPatterns() []string { return s.deny }
+// and apply-out filter the same paths the copy-in excluded. The returned slice
+// is a copy: mutating it cannot change the sandbox's policy.
+func (s *SessionSandbox) DenyPatterns() []string { return append([]string(nil), s.deny...) }
 
 // Root returns the workspace root inside the sandbox.
 func (s *SessionSandbox) Root() string { return s.ws.Root() }

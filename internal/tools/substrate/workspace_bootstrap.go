@@ -617,9 +617,9 @@ func (s *SessionSandbox) FilterEffectChanges(changes []effect.Change) []effect.C
 	return s.filterEffectChanges(changes)
 }
 
-// SetDeny replaces the sandbox's deny rule list. Test-facing seam for the
-// dispatch lane's delta tests.
-func (s *SessionSandbox) SetDeny(deny []string) { s.deny = deny }
+// SetDeny replaces the sandbox's deny rule list (copy semantics, same as
+// SetDenyPatterns). Test-facing seam for the dispatch lane's delta tests.
+func (s *SessionSandbox) SetDeny(deny []string) { s.SetDenyPatterns(deny) }
 
 // CopyOut is the exported face of copyOut for the dispatch lane's delta tests.
 func (s *SessionSandbox) CopyOut(ctx context.Context, hostDir string) error {
