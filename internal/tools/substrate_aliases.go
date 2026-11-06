@@ -87,8 +87,6 @@ var (
 	errCrossDevice         = substrate.ErrCrossDevice
 	isCrossDeviceMoveError = substrate.IsCrossDeviceMoveError
 	sameHostPath           = substrate.SameHostPath
-	withinRoot             = substrate.WithinRoot
-	drivePath              = substrate.DrivePath
 	walkWorkspace          = substrate.WalkWorkspace
 )
 

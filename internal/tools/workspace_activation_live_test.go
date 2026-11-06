@@ -214,7 +214,7 @@ func TestLive_ActivatedSession(t *testing.T) {
 	// backend produces such a patch and ApplyOut now copies changed paths out
 	// instead; see yaah bead yaah-vlwm for that change and the mode-fidelity
 	// gap it records.
-	cur, err := ss.sb.Capture(ctx)
+	cur, err := ss.Sandbox().Capture(ctx)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}

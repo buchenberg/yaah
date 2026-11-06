@@ -29,6 +29,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/dispatch"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/tools"
 )
@@ -137,7 +138,7 @@ type DelegateToolOpts struct {
 	// runtime then creates one per report dispatch, and the runner runs the
 	// sub-agent's tools inside it. Nil leaves every dispatch on the worktree
 	// (or the session's own substrate).
-	DispatchWorlds *tools.DispatchWorlds
+	DispatchWorlds *dispatch.DispatchWorlds
 }
 
 // NewDelegateTool builds the planner's DelegateTool: it resolves the advertised
@@ -207,7 +208,7 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 		if repoPath == "" {
 			repoPath, _ = os.Getwd()
 		}
-		proposals, warnings := tools.LoadProposalRegistry(repoPath, opts.ScopeManager, opts.RootScopeID, opts.SessionID)
+		proposals, warnings := dispatch.LoadProposalRegistry(repoPath, opts.ScopeManager, opts.RootScopeID, opts.SessionID)
 		for _, warning := range warnings {
 			slog.Warn("proposal rehydration", "warning", warning)
 		}

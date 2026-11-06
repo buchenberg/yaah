@@ -9,8 +9,8 @@ import (
 	"text/tabwriter"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	"github.com/buchenberg/yaah/internal/dispatch"
 	"github.com/buchenberg/yaah/internal/memory"
-	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/spf13/cobra"
 )
 
@@ -193,10 +193,10 @@ func aggregateConflicts(slice shepherdtrace.Slice, session string, legacyParents
 				continue
 			}
 			switch rec.Envelope.SchemaRef {
-			case tools.SchemaProposalSealed, "goatherd.merge.proposed.v1":
+			case dispatch.SchemaProposalSealed, "goatherd.merge.proposed.v1":
 				sessionsSeen[resolved] = true
 				report.SealedProposals++
-			case tools.SchemaProposalConflict:
+			case dispatch.SchemaProposalConflict:
 				sessionsSeen[resolved] = true
 				report.Conflicts++
 				sessionConflicts[resolved] = true

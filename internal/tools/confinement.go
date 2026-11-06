@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/buchenberg/yaah/internal/tools/substrate"
 )
 
 // confinement.go holds the retained lane's environment redirect. A confined
@@ -18,7 +20,8 @@ import (
 // is the sub-agent's intended writes only.
 
 // confinementScratchName is the in-worktree directory the redirect points at.
-const confinementScratchName = ".yaah-scratch"
+// The value lives in substrate so the dispatch lane scrubs the same directory.
+const confinementScratchName = substrate.ConfinementScratchName
 
 // ConfinementScratchEnv creates the redirect scratch beneath workdir and returns
 // the environment that points housekeeping writes into it, covering the common
@@ -282,8 +285,5 @@ func defaultGoModCache() string {
 // excludes housekeeping writes. Best-effort: a leftover scratch shows up in the
 // delta, which is cosmetic, not a hazard.
 func ScrubConfinementScratch(workdir string) {
-	if workdir == "" {
-		return
-	}
-	_ = os.RemoveAll(filepath.Join(workdir, confinementScratchName))
+	substrate.ScrubConfinementScratch(workdir)
 }

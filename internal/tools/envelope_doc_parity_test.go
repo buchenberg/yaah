@@ -32,9 +32,6 @@ var resultEnvelopeDocs = []struct {
 	typ reflect.Type
 	doc string
 }{
-	{reflect.TypeOf(proposalEnvelope{}), "proposal"},
-	{reflect.TypeOf(proposalListEnvelope{}), "proposal"},
-	{reflect.TypeOf(proposalSummary{}), "proposal"},
 	{reflect.TypeOf(jobListEnvelope{}), "subagent_jobs"},
 	{reflect.TypeOf(cancelEnvelope{}), "subagent_jobs"},
 	{reflect.TypeOf(waitEnvelope{}), "subagent_jobs"},
