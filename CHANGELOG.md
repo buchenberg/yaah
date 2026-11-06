@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.146.0](https://github.com/buchenberg/yaah/compare/v0.145.0...v0.146.0) (2026-11-06)
+
+
+### Features
+
+* **memory:** apply query/document prefixes on the http embedder ([541a5b8](https://github.com/buchenberg/yaah/commit/541a5b8160c0d0da30ef1981136c14d843aa9277))
+* **memory:** apply query/document prefixes on the http embedder ([d4487d2](https://github.com/buchenberg/yaah/commit/d4487d2fa48284e36429dc42a488a33da6dcfbea))
+
+
+### Bug Fixes
+
+* **tools:** embed skill-search queries via EmbedQuery ([42c60ab](https://github.com/buchenberg/yaah/commit/42c60abf6fd0c01dd816015dba36e1e02a35a832))
+
 ## [0.145.0](https://github.com/buchenberg/yaah/compare/v0.144.0...v0.145.0) (2026-11-06)
 
 
