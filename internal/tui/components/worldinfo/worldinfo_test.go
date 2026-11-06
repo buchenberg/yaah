@@ -164,31 +164,34 @@ func TestSubAgentRowsContainmentSplit(t *testing.T) {
 		t.Fatalf("public metaphor leaks the jail wording:\n%s", got)
 	}
 
-	s.JailOK = false
-	s.JailName = ""
-	s.JailTier = ""
-	s.JailWhy = "no paddock backend on this host"
-	unavailable := SubAgentRows(s, thp)
-	if !strings.Contains(unavailable, "Unavailable") {
-		t.Fatalf("unavailable containment is not a single word:\n%s", unavailable)
+	// A backend name that is not a single word falls back to the placement
+	// word rather than breaking the one-word contract.
+	s.JailName = "Experimental Sandbox v2"
+	multiword := SubAgentRows(s, thp)
+	if !strings.Contains(multiword, "paddock") {
+		t.Fatalf("multi-word backend name did not fall back to the placement word:\n%s", multiword)
 	}
-	for _, ban := range []string{"unavailable ·", "unavailable on this host", "no paddock backend"} {
-		if strings.Contains(unavailable, ban) {
-			t.Errorf("output leaks the multi-word refusal %q:\n%s", ban, unavailable)
-		}
-	}
-	if strings.Contains(unavailable, "jail") || strings.Contains(unavailable, "Jail") {
-		t.Fatalf("public metaphor leaks the jail wording on the unavailable path:\n%s", unavailable)
+	if strings.Contains(multiword, "Experimental") {
+		t.Errorf("multi-word backend name leaks into the row:\n%s", multiword)
 	}
 
-	// The fail-closed placement is a single word too.
+	// The fail-closed placement (paddock requested, host cannot jail) is a
+	// single word too.
+	s.JailName = "Seatbelt"
+	s.JailOK = false
+	s.JailWhy = "no paddock backend on this host"
 	s.ContainmentResolved = "refused"
 	refused := SubAgentRows(s, thp)
 	if !strings.Contains(refused, "Refused") {
 		t.Fatalf("refused containment is not a single word:\n%s", refused)
 	}
-	if strings.Contains(refused, "fail closed") || strings.Contains(refused, "refused (") {
-		t.Errorf("output leaks the multi-word refusal:\n%s", refused)
+	for _, ban := range []string{"fail closed", "refused (", "no paddock backend"} {
+		if strings.Contains(refused, ban) {
+			t.Errorf("output leaks the multi-word refusal %q:\n%s", ban, refused)
+		}
+	}
+	if strings.Contains(refused, "jail") || strings.Contains(refused, "Jail") {
+		t.Fatalf("public metaphor leaks the jail wording on the refused path:\n%s", refused)
 	}
 
 	// The leak guard must also cover the producer strings, not just the

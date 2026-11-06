@@ -428,22 +428,21 @@ func (s Status) ContainmentLine() string {
 // resolved proposal lane by its implementation, always as a single word:
 // "Croft" when dispatches are contained by the croft container world, else
 // the host jail backend ("WinACL", "Landlock", "Seatbelt") when the paddock
-// placement is in force, "Unavailable" when the host cannot establish the
-// paddock, and "Refused" for the fail-closed placement. Every other
-// placement keeps ContainmentLine's one-word vocabulary ("advisory",
-// "off").
+// placement is in force. resolvedContainment only places "paddock" when the
+// jail probe passed, so the backend is established on that branch; a backend
+// name that is not a single word falls back to the placement word
+// "paddock". "Refused" covers the fail-closed placement (paddock requested,
+// host cannot jail). Every other placement keeps ContainmentLine's one-word
+// vocabulary ("advisory", "off").
 func (s Status) ContainmentMechanism() string {
 	if s.ProposalWorld == "container" {
 		return "Croft"
 	}
 	if s.ContainmentResolved == "paddock" {
-		if s.JailOK {
-			if s.JailName != "" {
-				return s.JailName
-			}
-			return "paddock"
+		if fields := strings.Fields(s.JailName); len(fields) == 1 {
+			return fields[0]
 		}
-		return "Unavailable"
+		return "paddock"
 	}
 	if s.ContainmentResolved == "refused" {
 		return "Refused"

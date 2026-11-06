@@ -255,7 +255,7 @@ func TestContainmentMechanism(t *testing.T) {
 		{name: "croft lane names the container boundary", s: Status{ProposalWorld: "container"}, want: "Croft"},
 		{name: "paddock placement names the host backend", s: Status{ContainmentResolved: "paddock", JailOK: true, JailName: "WinACL"}, want: "WinACL"},
 		{name: "paddock placement without a backend name falls back", s: Status{ContainmentResolved: "paddock", JailOK: true}, want: "paddock"},
-		{name: "paddock placement the host cannot establish is one word", s: Status{ContainmentResolved: "paddock", JailOK: false, JailWhy: "no paddock backend on this host"}, want: "Unavailable"},
+		{name: "multi-word backend name falls back to the placement word", s: Status{ContainmentResolved: "paddock", JailOK: true, JailName: "Experimental Sandbox v2"}, want: "paddock"},
 		{name: "advisory keeps the placement vocabulary", s: Status{Containment: "auto", ContainmentResolved: "advisory"}, want: "advisory"},
 		{name: "off keeps the placement vocabulary", s: Status{Containment: "off", ContainmentResolved: "off"}, want: "off"},
 		{name: "refused placement is one word", s: Status{Containment: "paddock", ContainmentResolved: "refused"}, want: "Refused"},
