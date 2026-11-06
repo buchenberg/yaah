@@ -1278,243 +1278,25 @@ func registerSubAgentTools(st *loopInfraStage, cfg *config.Config, tr *toolRegis
 // records the session, and builds the agentSession. It owns the last fallible
 // step of a session build — the SetWorkspace gate — so every error it can
 // return is a startup failure the caller's guards must release.
+// assemble sequences the assembly concerns (yaah-mp04): isolated-workspace
+// enforcement, prompt assembly, the D4 session-record write, the embedding
+// backfill launch, session construction, and hook wiring. The ordering is a
+// contract — the D4 write must follow the SetWorkspace gate, and the backfill
+// must launch only after the last fallible step — so it is kept visible here
+// rather than hidden inside any one concern. The concerns themselves live in
+// wiring_assemble.go.
 func assemble(lc *sessionConfig, opts SessionOptions, ws *workspaceStage, tr *toolRegistryStage, mcps *mcpSkillsStage, loop *loopInfraStage) (*agentSession, error) {
-	cfg := lc.cfg
-
-	// Isolated mode: hand the registry the sandbox workspace only after
-	// every tool is registered. SetWorkspace is the enforcement point — a
-	// refusal fails the session loudly rather than half-isolating it, so
-	// nothing below can believe a contained run is in effect when it is
-	// not. The destroy joins the error: a teardown failure means the
-	// container may still be running.
-	if ws.sessionSandbox != nil {
-		if serr := tr.reg.SetWorkspace(ws.sessionSandbox.Workspace()); serr != nil {
-			// Teardown failure joins the returned error — a destroy that
-			// failed means the container may still be running. The guard
-			// is then stood down: reporting one failure on two channels
-			// (and destroying twice through the once-guard) helps no one.
-			serr = fmt.Errorf("isolated workspace: %w", serr)
-			destroyCtx, cancelDestroy := context.WithTimeout(context.Background(), workspaceSandboxDestroyTimeout)
-			defer cancelDestroy()
-			if derr := ws.sessionSandbox.Destroy(destroyCtx); derr != nil {
-				serr = errors.Join(serr, fmt.Errorf("workspace sandbox teardown: %w", derr))
-			}
-			ws.teardownHandled = true
-			return nil, serr
-		}
+	if err := enforceIsolatedWorkspace(ws, tr); err != nil {
+		return nil, err
 	}
-
 	// The belt's refusal log is complete now: every tool the session was
-	// configured to have but does not. The model is told which are
-	// missing (so it does not call an absent tool and narrate the
-	// failure), and an allowlist name that matched no tool at all is a
-	// typo worth reporting.
+	// configured to have but does not. It feeds both the prompt (the model
+	// is told which are missing) and the session record (D4).
 	beltRemoved := tr.belt.Refused()
-
-	mainPrompt := loop.mainPrompt
-	// The prompt must never advertise a tool that is not registered.
-	// Isolated mode gets the §2.2 delta instead — which names every omitted
-	// tool with its reason, covers the delegate-only story, and explains
-	// the apply_out workflow. The tool sections come after the last
-	// registration, because the belt's list is only final there.
-	if ws.sessionSandbox != nil {
-		slices.Sort(tr.omittedTools)
-		mainPrompt += "\n\n" + prompts.IsolatedWorkspaceGuidance(tr.omittedTools, mcps.omittedMCP, beltRemoved)
-	} else {
-		// The guidance must never advertise a tool the belt excluded.
-		if tr.reg.Get("delegate") != nil {
-			mainPrompt += "\n\n" + prompts.SubAgentToolsGuidance()
-		}
-		// RetainedModeGuidance names the proposal tool, so it is gated on the
-		// same signal as that tool's registration — taskTool.Retained — rather
-		// than on the config key alone. A store-open failure or an
-		// uncapturable root makes the lane unavailable, and advertising
-		// settlement then would promise work the runtime refuses.
-		if loop.taskTool.Retained != nil && tr.reg.Get("proposal") != nil {
-			mainPrompt += "\n\n" + prompts.RetainedModeGuidance()
-		}
-		// The belt notice is a sentence, not a list: the exact set is in
-		// the request's schemas.
-		if len(beltRemoved) > 0 {
-			mainPrompt += "\n\n" + prompts.ToolBeltGuidance(len(beltRemoved))
-		}
-	}
-	if opts.OneShot {
-		mainPrompt += "\n\n" + prompts.OneShotGuidance()
-	}
-	for _, name := range tr.belt.Unknown() {
-		fmt.Fprintf(os.Stderr, "warning: config `agents.default.tools` names unknown tool %q; ignored\n", name)
-	}
-
-	// Decision D4: the workspace substrate and the omitted tool names go
-	// into the session record, so "the model didn't use
-	// background_process" and "the model couldn't" stay distinguishable
-	// for any reader of the transcript. Written only after the
-	// SetWorkspace gate above has passed — a run the gate refused never
-	// started, and must not overwrite the record of the last one that
-	// did. A resume that changed mode overwrites, describing the most
-	// recent actual run.
-	if tr.db != nil {
-		backend := cfg.Workspace.Backend
-		if backend == "" {
-			backend = config.BackendLocal
-		}
-		recorded := append(slices.Clone(tr.omittedTools), mcps.omittedMCP...)
-		recorded = append(recorded, beltRemoved...)
-		slices.Sort(recorded)
-		if werr := tr.db.UpdateSessionWorkspace(loop.sessionID, backend, strings.Join(recorded, ",")); werr != nil {
-			fmt.Fprintf(os.Stderr, "warning: recording workspace metadata: %v\n", werr)
-		}
-	}
-
-	// The last fallible step has passed: the startup ownership guard can
-	// no longer fire, so the embedding backfill can launch without racing
-	// the guard's db.Close. Backfill embeddings for any memory entries
-	// created before the embedding server was configured.
-	if tr.db != nil && tr.embedderAttached {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			n, err := tr.db.ReconcileEmbeddings(ctx)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "warning: embedding backfill: %v\n", err)
-			} else if n > 0 {
-				fmt.Fprintf(os.Stderr, "embedded %d existing memory entries\n", n)
-			}
-		}()
-	}
-
-	// Wrap the provider with OTel instrumentation if enabled.
-	provider := wrapProviderWithOtel(lc.provider, lc.otelActive, cfg.Observability.Otel.Verbose)
-
-	wakeCtx, wakeCancel := context.WithCancel(context.Background())
-	sess := &agentSession{
-		wakeCtx:        wakeCtx,
-		wakeCancel:     wakeCancel,
-		cfg:            cfg,
-		opts:           opts,
-		provider:       provider,
-		providerName:   lc.providerName,
-		modelName:      lc.modelName,
-		systemPrompt:   loop.systemPrompt,
-		mainPrompt:     mainPrompt,
-		toolReg:        tr.reg,
-		db:             tr.db,
-		mcpClients:     mcps.mcpClients,
-		mcpInfos:       mcps.mcpInfos,
-		mcpToolNames:   mcps.mcpToolNames,
-		procMgr:        mcps.procMgr,
-		sessionID:      loop.sessionID,
-		messages:       loop.messages,
-		msgIdx:         loop.msgIdx,
-		mode:           loop.mode,
-		otelShutdown:   lc.otelShutdown,
-		tracker:        loop.tracker,
-		backgroundJobs: loop.backgroundJobs,
-		wakeMgr:        loop.wakeMgr,
-		wakeHooks:      loop.wakeHooks,
-		sessionSandbox: ws.sessionSandbox,
-		worldStatus:    loop.worldStatus,
-		cwd:            ws.cwd,
-		steerCh:        loop.steerCh,
-		rootScopeID:    loop.rootScopeID,
-		runs:           loop.runs,
-		scopes:         loop.scopeMgr,
-		traceStore:     loop.traceStore,
-		traceBus:       loop.traceBus,
-		supervisor:     loop.supervisorSvc,
-		reaper:         loop.reaper,
-		egressBroker:   loop.egressBroker,
-		followupCh:     loop.followupCh,
-		closeCh:        make(chan struct{}),
-	}
-	// Attach the wake engine, but do not rehydrate here: durable watches are
-	// resumed by Start, after the driver has installed its view and its
-	// idle-wake policy. Rehydrating during construction would race both.
-	if loop.wakeMgr != nil {
-		sess.wakeMgr = loop.wakeMgr
-		loop.wakeMgr.SetOnWake(sess.deliverWake)
-	}
-	sess.seedRestoredUsage(loop.usage)
-	// Root-scope bridge registration (adoption plan A2/A3): inject into
-	// the root steers the session (its own steering channel); halting it
-	// cancels the session's current run — the supervisor.halt_root
-	// opt-in the SupervisorTool carries. Registered after the session
-	// literal because the cancel is the session's method.
-	if loop.rootScopeID != "" && loop.runs != nil {
-		// The root registers no quiesce signal: its sandbox (in-place
-		// git, or none at all in isolated mode) is never destroyed by a
-		// halt, so there is nothing a still-running prompt could race.
-		loop.runs.Register(loop.rootScopeID, supervision.Run{
-			SteerCh: loop.steerCh,
-			Cancel:  sess.HaltCurrentRun,
-		})
-	}
-
-	// Ask fallback for out-of-workspace access: prompts route through
-	// the session's approval UI (TUI/web) or stdin in plain REPL mode.
-	if ws.pathValidator != nil && (opts.WorkspaceAsk || cfg.Agent.Default.WorkspaceAsk) {
-		ws.pathValidator.AskFn = sess.promptWorkspaceAccess
-	}
-
-	// Attribute completed background sub-agent usage to the session
-	// total (session-scoped, so never lost across turns/runs) and to
-	// the session's sub-agent counter, so orchestrator and sub-agent
-	// spend are separately reportable.
-	loop.backgroundJobs.OnUsage = func(u types.Usage) {
-		sess.mu.Lock()
-		sess.totalUsage.PromptTokens += u.PromptTokens
-		sess.totalUsage.CompletionTokens += u.CompletionTokens
-		sess.totalUsage.TotalTokens += u.TotalTokens
-		sess.totalUsage.CachedPromptTokens += u.CacheTokens()
-		sess.subUsage.PromptTokens += u.PromptTokens
-		sess.subUsage.CompletionTokens += u.CompletionTokens
-		sess.subUsage.TotalTokens += u.TotalTokens
-		sess.subUsage.CachedPromptTokens += u.CacheTokens()
-		sess.flushUsage()
-		// Publish only when idle: while a foreground run is in flight its
-		// totals are not yet folded into totalUsage (only subUsage grows via
-		// onSubUsage), so an Agent = total - sub split would under-count. The
-		// run-end publish covers the foreground; a background completion
-		// between runs is consistent and safe to publish immediately.
-		if !sess.runInFlight {
-			sess.publishUsageLocked()
-		}
-		sess.mu.Unlock()
-	}
-
-	// Session-scoped sub-agent lifecycle events keep the UI's Subagents pane
-	// honest for background jobs that outlive the loop that dispatched them.
-	// While a loop is live its broker hooks win (no duplicate events); once
-	// the loop clears them, these fallbacks deliver the completion directly
-	// to the current view.
-	loop.backgroundJobs.SetSessionHooks(
-		func(id, role, model, prompt string, world jobs.SubAgentWorld) {
-			sess.dispatchEvent(&agent.SubAgentStartEvent{
-				SubAgentID:    id,
-				Role:          role,
-				Model:         model,
-				Prompt:        prompt,
-				World:         world.Resolved,
-				WorldDegraded: world.Degraded,
-				WorldReason:   world.Reason,
-			})
-		},
-		func(id, role, model, prompt, result string, dur time.Duration, err string, world jobs.SubAgentWorld) {
-			sess.dispatchEvent(&agent.SubAgentEndEvent{
-				SubAgentID:    id,
-				Role:          role,
-				Model:         model,
-				Prompt:        prompt,
-				Duration:      dur,
-				Error:         err,
-				Result:        result,
-				World:         world.Resolved,
-				WorldDegraded: world.Degraded,
-				WorldReason:   world.Reason,
-			})
-		},
-	)
-
+	mainPrompt := appendToolGuidance(opts, ws, tr, mcps, loop, beltRemoved)
+	recordSessionWorkspace(lc, tr, mcps, loop, beltRemoved)
+	launchEmbeddingBackfill(tr)
+	sess := newSessionFromStages(lc, opts, ws, tr, mcps, loop, mainPrompt)
+	wireSessionHooks(lc, opts, ws, loop, sess)
 	return sess, nil
 }
