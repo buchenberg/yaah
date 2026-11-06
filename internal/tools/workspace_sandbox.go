@@ -220,6 +220,71 @@ func (w *sandboxWorkspace) WriteFile(ctx context.Context, p string, data []byte,
 	return nil
 }
 
+// appendCreateScript creates the target when missing with an append
+// redirection, never a truncating >, and applies the caller's mode. A writer
+// that loses a create race appends nothing rather than clearing the winner's
+// first chunk. Existing files skip this script entirely, so their mode is
+// preserved.
+const appendCreateScript = `printf '%s' '' >> "$1" || exit 1
+chmod "$2" "$1" || exit 1`
+
+// appendChunkScript appends one decoded chunk. The scratch file avoids a
+// pipeline, matching the write path's in-memory-test compatibility, and is
+// unique per exec so two concurrent appends do not race on a shared .b64.
+const appendChunkScript = `t=$(mktemp -- "$1.XXXXXX") || exit 1
+trap 'rm -f -- "$t"' EXIT
+printf '%s' "$2" > "$t" || exit 1
+base64 -d "$t" >> "$1" || exit 1
+rm -f -- "$t"
+trap - EXIT`
+
+// Append mirrors the host's O_APPEND behavior at the exec level: each chunk
+// opens the target with >>. Concurrent writers do not lose data; chunks from
+// two appends may interleave, which is the same guarantee a POSIX append
+// gives a single write.
+func (w *sandboxWorkspace) Append(ctx context.Context, p string, data []byte, perm fs.FileMode) error {
+	mode := strconv.FormatUint(uint64(perm.Perm()), 8)
+	if _, err := w.Stat(ctx, p); errors.Is(err, fs.ErrNotExist) {
+		if err := w.run(ctx, appendCreateScript, p, mode); err != nil {
+			return fmt.Errorf("sandbox append %s: %w", p, err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("sandbox append %s: %w", p, err)
+	}
+	for off := 0; off < len(data); off += sandboxWriteChunkBytes {
+		end := min(off+sandboxWriteChunkBytes, len(data))
+		if err := w.run(ctx, appendChunkScript, p, base64.StdEncoding.EncodeToString(data[off:end])); err != nil {
+			return fmt.Errorf("sandbox append %s: chunk %d: %w", p, off, err)
+		}
+	}
+	return nil
+}
+
+// ReadRange returns a bounded window. The kernel Sandbox exposes only a
+// whole-file read, so this materializes the file once and slices it; the
+// tools using it still bound what reaches the model. The host implementation
+// seeks instead and never reads outside the requested window.
+func (w *sandboxWorkspace) ReadRange(ctx context.Context, p string, offset, length int64) ([]byte, error) {
+	if offset < 0 {
+		return nil, fmt.Errorf("read range: offset must be non-negative")
+	}
+	if length <= 0 {
+		return []byte{}, nil
+	}
+	data, err := w.sb.ReadFile(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	if offset >= int64(len(data)) {
+		return []byte{}, nil
+	}
+	end := offset + length
+	if end > int64(len(data)) {
+		end = int64(len(data))
+	}
+	return append([]byte(nil), data[offset:end]...), nil
+}
+
 // Stat runs `stat` in the sandbox and maps the result to fs.FileInfo. shepherd's
 // Sandbox interface has no Stat, and adding one just for this would push a
 // POSIX-shaped detail into the kernel; a single in-band call keeps the kernel
@@ -414,21 +479,57 @@ func sandboxEntryMode(typ string) fs.FileMode {
 // plain permission error is not misdescribed as a partial move.
 func (w *sandboxWorkspace) Move(ctx context.Context, src, dst string) error {
 	before, beforeErr := w.Lstat(ctx, dst)
-	err := w.run(ctx, `mv -f -- "$1" "$2"`, src, dst)
-	if err == nil {
+	res, execErr := w.sb.Exec(ctx, goatherdsandbox.ExecRequest{
+		Command: "sh",
+		Args:    []string{"-c", `mv -f -- "$1" "$2"`, "shepherd", src, dst},
+		Cwd:     w.root,
+	})
+	if execErr != nil {
+		// A transport error can still follow an applied move; classify the
+		// destination before returning so RecordingTool does not miss it.
+		after, afterErr := w.Lstat(ctx, dst)
+		if afterErr == nil &&
+			(errors.Is(beforeErr, fs.ErrNotExist) || (beforeErr == nil && !sameSandboxFile(before, after))) {
+			return &partialMoveError{Src: src, Dst: dst, Err: execErr}
+		}
+		return execErr
+	}
+	moveErr := fmt.Errorf("exit %d: %s", res.ExitCode, strings.TrimSpace(res.Stderr))
+	if res.ExitCode == 0 {
 		return nil
 	}
 	if beforeErr != nil && !errors.Is(beforeErr, fs.ErrNotExist) {
-		return err
+		return moveErr
 	}
 	after, afterErr := w.Lstat(ctx, dst)
+	if errors.Is(afterErr, fs.ErrNotExist) && isCrossDeviceMoveError(res.Stderr) {
+		// mv refused across mounts and left no destination behind. Mark it
+		// so move_tree can copy+remove; a partial mv stays an ordinary
+		// error and must not be retried into a merge.
+		return fmt.Errorf("%w: %v", errCrossDevice, moveErr)
+	}
 	if afterErr != nil {
-		return err
+		return moveErr
 	}
 	if errors.Is(beforeErr, fs.ErrNotExist) || !sameSandboxFile(before, after) {
-		return &partialMoveError{Src: src, Dst: dst, Err: err}
+		return &partialMoveError{Src: src, Dst: dst, Err: moveErr}
 	}
-	return err
+	return moveErr
+}
+
+// isCrossDeviceMoveError inspects the diagnostic after the last ": ", not the
+// whole message: mv includes both paths, and a path may itself contain the
+// phrase. Matching the reason rather than the suffix keeps a trailing
+// "(os error 18)" or a different implementation's wording recognisable.
+func isCrossDeviceMoveError(stderr string) bool {
+	s := strings.ToLower(strings.TrimSpace(stderr))
+	if i := strings.LastIndex(s, ": "); i >= 0 {
+		s = s[i+2:]
+	}
+	return strings.Contains(s, "cross-device link") ||
+		strings.Contains(s, "cross device link") ||
+		strings.Contains(s, "cross-filesystem") ||
+		strings.Contains(s, "cross filesystem")
 }
 
 // sameSandboxFile compares the metadata a sandbox stat exposes, used to tell a

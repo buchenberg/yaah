@@ -153,6 +153,36 @@ func (rt *RecordingTool) Execute(ctx context.Context, args string) (string, erro
 		return rt.recordTransfer(ctx, dispatch, toolName, args)
 	}
 
+	if toolName == "copy_tree" || toolName == "move_tree" || toolName == "bulk_files" {
+		result, err := rt.inner.Execute(ctx, args)
+		var params struct {
+			Path    string `json:"path"`
+			To      string `json:"to"`
+			Action  string `json:"action"`
+			Pattern string `json:"pattern"`
+			DryRun  bool   `json:"dry_run"`
+		}
+		if json.Unmarshal([]byte(args), &params) == nil {
+			if toolName == "bulk_files" && params.DryRun {
+				return result, err
+			}
+			detail := toolName
+			if toolName == "bulk_files" {
+				detail += " " + params.Action + " " + params.Pattern
+			} else {
+				detail += " " + params.Path + " -> " + params.To
+			}
+			if err != nil {
+				detail += " (command reported an error)"
+			}
+			// A tree or bulk operation can change an arbitrary set the
+			// recorder cannot enumerate cheaply; record an unknown rather
+			// than let a parallel worker see a false all-clear.
+			rt.tracker.RecordUnknown(dispatch, toolName, boundedRunes(detail, 120))
+		}
+		return result, err
+	}
+
 	if toolName == "rmdir" {
 		result, err := rt.inner.Execute(ctx, args)
 		// An empty-only rmdir removes no files, so it needs no evidence. A

@@ -225,8 +225,8 @@ Built-in tools include:
 
 | Group | Tools |
 |---|---|
-| Files | `read`, `write`, `edit`, `patch`, `delete`, `mkdir`, `rmdir`, `move`, `copy`, `replace`, `json_query`, `file_info` |
-| Search | `grep`, `glob`, `ls` |
+| Files | `read`, `tail`, `write`, `append`, `edit`, `patch`, `delete`, `mkdir`, `rmdir`, `move`, `copy`, `move_tree`, `copy_tree`, `bulk_files`, `replace`, `json_query`, `file_info`, `checksum` |
+| Search | `grep`, `glob`, `find`, `ls` |
 | Shell | `bash`, `powershell` (platform-appropriate) |
 | Version control | `git`, `diff`, `bisect` |
 | Go | `go_outline`, `go_refactor`, `go_test`, `go_mod`, `staticcheck` |

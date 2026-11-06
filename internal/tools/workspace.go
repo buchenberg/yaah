@@ -89,6 +89,14 @@ type Workspace interface {
 	// WriteFile is atomic: a reader never observes a partially written file, and
 	// a crash mid-write cannot truncate the original.
 	WriteFile(ctx context.Context, path string, data []byte, perm fs.FileMode) error
+	// Append adds data to the end of path, creating the file (and applying
+	// perm) when it is missing. The host uses O_APPEND so concurrent writers
+	// do not lose data; a substrate must append rather than rewrite.
+	Append(ctx context.Context, path string, data []byte, perm fs.FileMode) error
+	// ReadRange returns up to length bytes starting at the zero-based byte
+	// offset. A short result means EOF. It exists so tail/checksum-style tools
+	// can read a bounded window without materializing a large file.
+	ReadRange(ctx context.Context, path string, offset, length int64) ([]byte, error)
 
 	Stat(ctx context.Context, path string) (fs.FileInfo, error)
 	// Lstat is Stat without following a final symlink, matching os.Lstat. Walks
@@ -325,6 +333,40 @@ func (w *localWorkspace) ReadFile(_ context.Context, path string) ([]byte, error
 	return os.ReadFile(path)
 }
 
+// Append opens with O_APPEND so two writers cannot overwrite each other's
+// records; each Write is placed at the then-current end of file.
+func (w *localWorkspace) Append(_ context.Context, path string, data []byte, perm fs.FileMode) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// ReadRange seeks to offset and reads at most length bytes. A non-positive
+// length is an empty read, not an error: callers use it to request nothing.
+func (w *localWorkspace) ReadRange(_ context.Context, path string, offset, length int64) ([]byte, error) {
+	if offset < 0 {
+		return nil, fmt.Errorf("read range: offset must be non-negative")
+	}
+	if length <= 0 {
+		return []byte{}, nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return nil, err
+	}
+	return io.ReadAll(io.LimitReader(f, length))
+}
+
 // WriteFile delegates to atomicWriteFile so the crash-safety guarantee
 // (temp file plus rename in the same directory) is preserved exactly.
 func (w *localWorkspace) WriteFile(_ context.Context, path string, data []byte, perm fs.FileMode) error {
@@ -404,6 +446,20 @@ func (e *partialMoveError) Error() string {
 
 func (e *partialMoveError) Unwrap() error { return e.Err }
 
+// errCrossDevice marks a substrate move that refused because the source and
+// destination are on different mounts. A caller may copy+remove only for this
+// error; any other move failure may have left partial state.
+var errCrossDevice = errors.New("cross-device move")
+
+// isCrossDeviceErr recognises the platform's cross-filesystem rename error.
+// Windows reports ERROR_NOT_SAME_DEVICE (17) where Unix reports EXDEV (18).
+func isCrossDeviceErr(err error) bool {
+	if errors.Is(err, errCrossDevice) || errors.Is(err, syscall.EXDEV) {
+		return true
+	}
+	return runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(17))
+}
+
 // Move renames a file on the host. os.Rename moves the directory entry, so the
 // content, the mode, and (within one filesystem) ownership survive without the
 // bytes ever being read — the cheapest exact move available. Across filesystems
@@ -411,11 +467,14 @@ func (e *partialMoveError) Unwrap() error { return e.Err }
 // transparent behavior at the cost of actually reading the bytes.
 func (w *localWorkspace) Move(ctx context.Context, src, dst string) error {
 	err := os.Rename(src, dst)
-	if err == nil || !errors.Is(err, syscall.EXDEV) {
+	if err == nil || !isCrossDeviceErr(err) {
 		return err
 	}
 	if cerr := w.Copy(ctx, src, dst); cerr != nil {
-		return fmt.Errorf("move: cross-filesystem fallback: %w", cerr)
+		// Preserve the rename error too: callers such as move_tree need to
+		// distinguish a cross-device refusal from an arbitrary failure before
+		// deciding whether a copy fallback is safe.
+		return fmt.Errorf("move: cross-filesystem fallback: %v (rename: %w)", cerr, err)
 	}
 	if rerr := os.Remove(src); rerr != nil {
 		return &partialMoveError{Src: src, Dst: dst, Err: rerr}
