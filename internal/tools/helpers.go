@@ -15,40 +15,8 @@ import (
 
 const bashDefaultTimeout = 30 * time.Second
 
-// expandHomeDir replaces a leading ~/ or ~ with the user's home directory.
-func expandHomeDir(path string) string {
-	if strings.HasPrefix(path, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil || home == "" {
-			return path
-		}
-		return filepath.Join(home, path[2:])
-	}
-	if path == "~" {
-		home, err := os.UserHomeDir()
-		if err != nil || home == "" {
-			return path
-		}
-		return home
-	}
-	return path
-}
-
-// resolvePathWithPV resolves a user-supplied path through the PathValidator
-// when one is configured, falling back to expandHomeDir (legacy behaviour).
-// File-accessing tools should call this during Execute instead of
-// expandHomeDir directly.
-func resolvePathWithPV(pv *PathValidator, input string) (string, error) {
-	if pv != nil {
-		return pv.ResolvePath(input)
-	}
-	if input == "" {
-		return ".", nil
-	}
-	return expandHomeDir(input), nil
-}
-
-// rgAvailable checks if ripgrep is on PATH.
+// rgAvailable reports whether ripgrep is on PATH; the grep and glob tools
+// fall back to a pure-Go walk when it is not.
 func rgAvailable() bool {
 	_, err := exec.LookPath("rg")
 	return err == nil

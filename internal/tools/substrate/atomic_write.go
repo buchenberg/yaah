@@ -1,4 +1,4 @@
-package tools
+package substrate
 
 import (
 	"fmt"
@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 )
 
-// atomicWriteFile writes data to path via a temp file in the same
+// AtomicWriteFile writes data to path via a temp file in the same
 // directory followed by a rename, so a crash mid-write can never leave
 // a truncated user file behind (review finding A4 / plan task 7.5).
 // Missing parent directories are created (0o755) so a write into a new
@@ -14,7 +14,7 @@ import (
 // When the file already exists, its permission mode is preserved —
 // perm is only applied for newly created files. The rename is atomic
 // on POSIX and uses MoveFileEx(REPLACE_EXISTING) on Windows.
-func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("atomic write: create dir: %w", err)

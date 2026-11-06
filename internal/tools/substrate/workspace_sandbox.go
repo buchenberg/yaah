@@ -1,4 +1,4 @@
-package tools
+package substrate
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 )
 
-// sandboxWorkspace runs a tool's filesystem and process operations inside an
+// SandboxWorkspace runs a tool's filesystem and process operations inside an
 // isolated substrate via shepherd's Sandbox interface.
 //
 // There is no host path to open: the workspace lives in a snapshot or container,
@@ -31,16 +31,16 @@ import (
 // carries the tool-surface delta (§2.2), and apply_out is the accept seam
 // that lets changes out. Sub-agent inheritance of the sandbox is the plan's
 // step 9 (decision D2).
-type sandboxWorkspace struct {
+type SandboxWorkspace struct {
 	sb goatherdsandbox.Sandbox
 	// root is the containment root inside the sandbox.
 	root string
 }
 
-var _ Workspace = (*sandboxWorkspace)(nil)
+var _ Workspace = (*SandboxWorkspace)(nil)
 
-// newSandboxWorkspace binds a workspace to a sandbox and its container-side root.
-func newSandboxWorkspace(sb goatherdsandbox.Sandbox, root string) *sandboxWorkspace {
+// NewSandboxWorkspace binds a workspace to a sandbox and its container-side root.
+func NewSandboxWorkspace(sb goatherdsandbox.Sandbox, root string) *SandboxWorkspace {
 	if root == "" {
 		root = "/workspace"
 	}
@@ -50,7 +50,7 @@ func newSandboxWorkspace(sb goatherdsandbox.Sandbox, root string) *sandboxWorksp
 		// an empty prefix, which would silently disable containment.
 		root = "/"
 	}
-	return &sandboxWorkspace{sb: sb, root: root}
+	return &SandboxWorkspace{sb: sb, root: root}
 }
 
 // ResolvePath keeps absolute paths and resolves relative ones against the root,
@@ -60,7 +60,7 @@ func newSandboxWorkspace(sb goatherdsandbox.Sandbox, root string) *sandboxWorksp
 // sandbox could still point outside the root. That is a weaker guarantee than the
 // host validator's symlink resolution, and it is bounded by the container: an
 // escape lands elsewhere in the container's own filesystem, not on the host.
-func (w *sandboxWorkspace) ResolvePath(p string) (string, error) {
+func (w *SandboxWorkspace) ResolvePath(p string) (string, error) {
 	if strings.TrimSpace(p) == "" {
 		return "", fmt.Errorf("path is required")
 	}
@@ -78,18 +78,18 @@ func (w *sandboxWorkspace) ResolvePath(p string) (string, error) {
 	return "", fmt.Errorf("path %q escapes the workspace root %q", p, w.root)
 }
 
-func (w *sandboxWorkspace) WorkDir() string { return w.root }
+func (w *SandboxWorkspace) WorkDir() string { return w.root }
 
 // Join always uses POSIX separators: the substrate is Linux by construction.
-func (w *sandboxWorkspace) Join(elem ...string) string { return path.Join(elem...) }
+func (w *SandboxWorkspace) Join(elem ...string) string { return path.Join(elem...) }
 
 // Local is false: this workspace is not the host filesystem.
-func (w *sandboxWorkspace) Local() bool { return false }
+func (w *SandboxWorkspace) Local() bool { return false }
 
 // Shell is always POSIX inside a sandbox; the substrate is Linux by construction.
-func (w *sandboxWorkspace) Shell() (string, string) { return "sh", "-c" }
+func (w *SandboxWorkspace) Shell() (string, string) { return "sh", "-c" }
 
-func (w *sandboxWorkspace) ReadFile(ctx context.Context, p string) ([]byte, error) {
+func (w *SandboxWorkspace) ReadFile(ctx context.Context, p string) ([]byte, error) {
 	return w.sb.ReadFile(ctx, p)
 }
 
@@ -113,7 +113,7 @@ const (
 	// writeFirstScript creates the target's parent directory, creates the
 	// temp file beside the target, lands the first chunk, and prints the
 	// temp's name on stdout. The mkdir -p mirrors the host
-	// atomicWriteFile's MkdirAll, so a write into a new nested path
+	// AtomicWriteFile's MkdirAll, so a write into a new nested path
 	// succeeds on both substrates; the parent arrives as a quoted
 	// positional, never spliced into the script. The EXIT trap removes the
 	// temp and the chunk scratch file on any mid-script failure, and is
@@ -146,7 +146,7 @@ rm -f -- "$2.b64"`
 // created O_EXCL and code inside the sandbox cannot pre-create or symlink a
 // predictable name, and the trap removes it if the write fails part-way.
 // Parent directories ARE created (mkdir -p on the target's parent, passed as
-// a quoted positional): the host atomicWriteFile MkdirAlls the same directory
+// a quoted positional): the host AtomicWriteFile MkdirAlls the same directory
 // before its temp file, so both substrates accept a write into a new nested
 // path and neither diverges on a missing directory.
 //
@@ -157,7 +157,7 @@ rm -f -- "$2.b64"`
 // Sandbox.WriteFile made the same move, for the same reason, and this path
 // must match it to be usable there. Payloads beyond sandboxWriteChunkBytes
 // append across several execs before the single renaming exec.
-func (w *sandboxWorkspace) WriteFile(ctx context.Context, p string, data []byte, perm fs.FileMode) error {
+func (w *SandboxWorkspace) WriteFile(ctx context.Context, p string, data []byte, perm fs.FileMode) error {
 	mode := strconv.FormatUint(uint64(perm.Perm()), 8)
 	first := min(sandboxWriteChunkBytes, len(data))
 
@@ -242,7 +242,7 @@ trap - EXIT`
 // opens the target with >>. Concurrent writers do not lose data; chunks from
 // two appends may interleave, which is the same guarantee a POSIX append
 // gives a single write.
-func (w *sandboxWorkspace) Append(ctx context.Context, p string, data []byte, perm fs.FileMode) error {
+func (w *SandboxWorkspace) Append(ctx context.Context, p string, data []byte, perm fs.FileMode) error {
 	mode := strconv.FormatUint(uint64(perm.Perm()), 8)
 	if _, err := w.Stat(ctx, p); errors.Is(err, fs.ErrNotExist) {
 		if err := w.run(ctx, appendCreateScript, p, mode); err != nil {
@@ -264,7 +264,7 @@ func (w *sandboxWorkspace) Append(ctx context.Context, p string, data []byte, pe
 // whole-file read, so this materializes the file once and slices it; the
 // tools using it still bound what reaches the model. The host implementation
 // seeks instead and never reads outside the requested window.
-func (w *sandboxWorkspace) ReadRange(ctx context.Context, p string, offset, length int64) ([]byte, error) {
+func (w *SandboxWorkspace) ReadRange(ctx context.Context, p string, offset, length int64) ([]byte, error) {
 	if offset < 0 {
 		return nil, fmt.Errorf("read range: offset must be non-negative")
 	}
@@ -289,14 +289,14 @@ func (w *sandboxWorkspace) ReadRange(ctx context.Context, p string, offset, leng
 // Sandbox interface has no Stat, and adding one just for this would push a
 // POSIX-shaped detail into the kernel; a single in-band call keeps the kernel
 // surface smaller. It follows symlinks, matching os.Stat.
-func (w *sandboxWorkspace) Stat(ctx context.Context, p string) (fs.FileInfo, error) {
+func (w *SandboxWorkspace) Stat(ctx context.Context, p string) (fs.FileInfo, error) {
 	return w.stat(ctx, p, true)
 }
 
 // Lstat is Stat without following the final symlink, matching os.Lstat, so a
 // walk can recognise a symlink root and refuse to descend as filepath.WalkDir
 // does.
-func (w *sandboxWorkspace) Lstat(ctx context.Context, p string) (fs.FileInfo, error) {
+func (w *SandboxWorkspace) Lstat(ctx context.Context, p string) (fs.FileInfo, error) {
 	return w.stat(ctx, p, false)
 }
 
@@ -305,7 +305,7 @@ func (w *sandboxWorkspace) Lstat(ctx context.Context, p string) (fs.FileInfo, er
 // differs by mode: os.Stat rejects a dangling symlink (its target is missing),
 // while os.Lstat reports the link, so Stat requires -e and Lstat also accepts
 // -L.
-func (w *sandboxWorkspace) stat(ctx context.Context, p string, follow bool) (fs.FileInfo, error) {
+func (w *SandboxWorkspace) stat(ctx context.Context, p string, follow bool) (fs.FileInfo, error) {
 	const format = "%F|%s|%a|%Y"
 	script := `[ -e "$1" ] || [ -L "$1" ] || exit 42
 stat -c "$2" -- "$1"`
@@ -392,7 +392,7 @@ func sandboxMode(perm uint64, fileType string) fs.FileMode {
 // rm -f: a directory is removed with rmdir (so a non-empty one fails with a
 // clear "Directory not empty"), and a missing path reports fs.ErrNotExist
 // instead of succeeding silently.
-func (w *sandboxWorkspace) Remove(ctx context.Context, p string) error {
+func (w *SandboxWorkspace) Remove(ctx context.Context, p string) error {
 	info, err := w.Lstat(ctx, p)
 	if err != nil {
 		return err
@@ -406,7 +406,7 @@ func (w *sandboxWorkspace) Remove(ctx context.Context, p string) error {
 // RemoveAll deletes a tree inside the sandbox with rm -rf. Like the host
 // implementation it refuses the workspace root, so a path bug cannot wipe the
 // container's working tree in one call.
-func (w *sandboxWorkspace) RemoveAll(ctx context.Context, p string) error {
+func (w *SandboxWorkspace) RemoveAll(ctx context.Context, p string) error {
 	clean := path.Clean(p)
 	if clean == "/" || clean == w.root {
 		return fmt.Errorf("refusing to remove the workspace root %s", clean)
@@ -424,7 +424,7 @@ func (w *sandboxWorkspace) RemoveAll(ctx context.Context, p string) error {
 // This assumes a GNU userland, which Stat already does with `stat -c`; a
 // substrate that has to run `go`, `git`, and `rg` is a full Linux image, not a
 // distroless one, so find -printf is available.
-func (w *sandboxWorkspace) ReadDir(ctx context.Context, p string) ([]fs.DirEntry, error) {
+func (w *SandboxWorkspace) ReadDir(ctx context.Context, p string) ([]fs.DirEntry, error) {
 	out, err := w.runCapture(ctx, `find "$1" -mindepth 1 -maxdepth 1 -printf '%y\0%f\0'`, p)
 	if err != nil {
 		return nil, err
@@ -472,12 +472,12 @@ func sandboxEntryMode(typ string) fs.FileMode {
 //
 // Across filesystems mv copies and then unlinks. If the unlink fails after the
 // copy succeeded, mv reports an error with the destination in place. That is
-// the same partial outcome the host fallback classifies with partialMoveError,
+// the same partial outcome the host fallback classifies with PartialMoveError,
 // so check whether the destination appeared or changed and report it the same
 // way: RecordingTool then records the destination even though the call failed.
 // A failure that left the destination untouched keeps the original error, so a
 // plain permission error is not misdescribed as a partial move.
-func (w *sandboxWorkspace) Move(ctx context.Context, src, dst string) error {
+func (w *SandboxWorkspace) Move(ctx context.Context, src, dst string) error {
 	before, beforeErr := w.Lstat(ctx, dst)
 	res, execErr := w.sb.Exec(ctx, goatherdsandbox.ExecRequest{
 		Command: "sh",
@@ -490,7 +490,7 @@ func (w *sandboxWorkspace) Move(ctx context.Context, src, dst string) error {
 		after, afterErr := w.Lstat(ctx, dst)
 		if afterErr == nil &&
 			(errors.Is(beforeErr, fs.ErrNotExist) || (beforeErr == nil && !sameSandboxFile(before, after))) {
-			return &partialMoveError{Src: src, Dst: dst, Err: execErr}
+			return &PartialMoveError{Src: src, Dst: dst, Err: execErr}
 		}
 		return execErr
 	}
@@ -502,26 +502,26 @@ func (w *sandboxWorkspace) Move(ctx context.Context, src, dst string) error {
 		return moveErr
 	}
 	after, afterErr := w.Lstat(ctx, dst)
-	if errors.Is(afterErr, fs.ErrNotExist) && isCrossDeviceMoveError(res.Stderr) {
+	if errors.Is(afterErr, fs.ErrNotExist) && IsCrossDeviceMoveError(res.Stderr) {
 		// mv refused across mounts and left no destination behind. Mark it
 		// so move_tree can copy+remove; a partial mv stays an ordinary
 		// error and must not be retried into a merge.
-		return fmt.Errorf("%w: %v", errCrossDevice, moveErr)
+		return fmt.Errorf("%w: %v", ErrCrossDevice, moveErr)
 	}
 	if afterErr != nil {
 		return moveErr
 	}
 	if errors.Is(beforeErr, fs.ErrNotExist) || !sameSandboxFile(before, after) {
-		return &partialMoveError{Src: src, Dst: dst, Err: moveErr}
+		return &PartialMoveError{Src: src, Dst: dst, Err: moveErr}
 	}
 	return moveErr
 }
 
-// isCrossDeviceMoveError inspects the diagnostic after the last ": ", not the
+// IsCrossDeviceMoveError inspects the diagnostic after the last ": ", not the
 // whole message: mv includes both paths, and a path may itself contain the
 // phrase. Matching the reason rather than the suffix keeps a trailing
 // "(os error 18)" or a different implementation's wording recognisable.
-func isCrossDeviceMoveError(stderr string) bool {
+func IsCrossDeviceMoveError(stderr string) bool {
 	s := strings.ToLower(strings.TrimSpace(stderr))
 	if i := strings.LastIndex(s, ": "); i >= 0 {
 		s = s[i+2:]
@@ -551,24 +551,24 @@ func sameSandboxFile(a, b fs.FileInfo) bool {
 // on the failed preservation, so the tool would report a failed copy even
 // though dst was created or truncated. A separate chmod keeps exactly the
 // documented guarantee — the source's permission mode — and nothing more.
-func (w *sandboxWorkspace) Copy(ctx context.Context, src, dst string) error {
+func (w *SandboxWorkspace) Copy(ctx context.Context, src, dst string) error {
 	return w.run(ctx, `cp -f -- "$1" "$2" && chmod --reference="$1" -- "$2"`, src, dst)
 }
 
-func (w *sandboxWorkspace) MkdirAll(ctx context.Context, p string, perm fs.FileMode) error {
+func (w *SandboxWorkspace) MkdirAll(ctx context.Context, p string, perm fs.FileMode) error {
 	return w.run(ctx, `mkdir -p -- "$1" && chmod "$2" "$1"`, p, strconv.FormatUint(uint64(perm.Perm()), 8))
 }
 
 // Exec runs a command in the sandbox. The working directory defaults to the
 // workspace root so relative paths behave as they do locally.
 //
-// Errors match localWorkspace.Exec: a command that never ran reports ExitCode
+// Errors match LocalWorkspace.Exec: a command that never ran reports ExitCode
 // -1, and a command that ran but exited non-zero returns an error carrying its
 // status only, like *exec.ExitError's "exit status N". Callers that need the
 // code without the error read ExecResult.ExitCode, which stays
 // >= 0 for any completed command. Without this, every err != nil check in the
 // tool set would treat a failed command as a success in an isolated workspace.
-func (w *sandboxWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResult, error) {
+func (w *SandboxWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResult, error) {
 	cwd := req.Cwd
 	if cwd == "" {
 		cwd = w.root
@@ -591,7 +591,7 @@ func (w *sandboxWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResul
 		out.Stderr = ""
 	}
 	if out.ExitCode != 0 {
-		// Match localWorkspace, whose *exec.ExitError string is just
+		// Match LocalWorkspace, whose *exec.ExitError string is just
 		// "exit status N" and carries no output. Callers already surface the
 		// output themselves (bash, git and bisect append it; go_mod stores it),
 		// so embedding it here would duplicate an unbounded string into every
@@ -603,12 +603,12 @@ func (w *sandboxWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResul
 
 // run executes a shell script with positional arguments and maps a non-zero exit
 // to an error carrying the script's stderr.
-func (w *sandboxWorkspace) run(ctx context.Context, script string, args ...string) error {
+func (w *SandboxWorkspace) run(ctx context.Context, script string, args ...string) error {
 	_, err := w.runCapture(ctx, script, args...)
 	return err
 }
 
-func (w *sandboxWorkspace) runCapture(ctx context.Context, script string, args ...string) (string, error) {
+func (w *SandboxWorkspace) runCapture(ctx context.Context, script string, args ...string) (string, error) {
 	res, err := w.sb.Exec(ctx, goatherdsandbox.ExecRequest{
 		Command: "sh",
 		Args:    append([]string{"-c", script, "shepherd"}, args...),
@@ -653,3 +653,6 @@ func (e sandboxDirEntry) Name() string               { return e.name }
 func (e sandboxDirEntry) IsDir() bool                { return e.mode.IsDir() }
 func (e sandboxDirEntry) Type() fs.FileMode          { return e.mode.Type() }
 func (e sandboxDirEntry) Info() (fs.FileInfo, error) { return nil, fs.ErrInvalid }
+
+// Root returns the containment root inside the sandbox.
+func (w *SandboxWorkspace) Root() string { return w.root }

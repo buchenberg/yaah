@@ -1,4 +1,4 @@
-package tools
+package substrate
 
 import (
 	"bytes"
@@ -138,7 +138,7 @@ type WorkspaceSetter interface {
 	SetWorkspace(ws Workspace)
 }
 
-// localWorkspace is the host filesystem: the default, and what every session
+// LocalWorkspace is the host filesystem: the default, and what every session
 // used before workspaces existed.
 //
 // When a confiner is set, Exec runs commands under the containment jail
@@ -147,7 +147,7 @@ type WorkspaceSetter interface {
 // workspace never carries one, so its commands keep running unconfined; a
 // confiner is attached only on the sub-agent workdir lane (that run's bound
 // world).
-type localWorkspace struct {
+type LocalWorkspace struct {
 	pv *PathValidator
 
 	// confiner, when non-nil, is the syscall-deny backend. nil is the host path:
@@ -174,10 +174,10 @@ type localWorkspace struct {
 	degrade *confinementDowngrade
 }
 
-var _ Workspace = (*localWorkspace)(nil)
+var _ Workspace = (*LocalWorkspace)(nil)
 
-func newLocalWorkspace(pv *PathValidator) *localWorkspace {
-	return &localWorkspace{pv: pv}
+func newLocalWorkspace(pv *PathValidator) *LocalWorkspace {
+	return &LocalWorkspace{pv: pv}
 }
 
 // confinementDowngrade is the record of a workspace that could not be jailed
@@ -219,7 +219,7 @@ func (d *confinementDowngrade) get() (string, bool) {
 
 // ConfinementDegraded reports whether commands in this workspace run unconfined
 // because the backend could not establish its jail, and why.
-func (w *localWorkspace) ConfinementDegraded() (string, bool) { return w.degrade.get() }
+func (w *LocalWorkspace) ConfinementDegraded() (string, bool) { return w.degrade.get() }
 
 // degradedReporter is implemented by workspaces that can lose their jail at
 // run time. Kept separate from Workspace so a remote or container substrate,
@@ -250,8 +250,8 @@ func NewLocalWorkspace(pv *PathValidator) Workspace {
 // fails closed when the host cannot jail, PlacementAuto falls back to advisory,
 // PlacementAdvisory never jails. The orchestrator's workspace is never built
 // this way.
-func NewConfinedLocalWorkspace(pv *PathValidator, backend containment.Backend, placement containment.Placement, network confinement.NetworkPolicy) *localWorkspace {
-	return &localWorkspace{
+func NewConfinedLocalWorkspace(pv *PathValidator, backend containment.Backend, placement containment.Placement, network confinement.NetworkPolicy) *LocalWorkspace {
+	return &LocalWorkspace{
 		pv:        pv,
 		confiner:  backend,
 		placement: placement,
@@ -266,7 +266,7 @@ func NewConfinedLocalWorkspace(pv *PathValidator, backend containment.Backend, p
 // housekeeping scratch stays writable. The legacy single root is the *absence*
 // of a call — not an empty call. Roots are absolute and already checked to
 // live inside the world (ResolveGrants).
-func (w *localWorkspace) WithWritableRoots(roots []string) *localWorkspace {
+func (w *LocalWorkspace) WithWritableRoots(roots []string) *LocalWorkspace {
 	clone := *w
 	clone.writableRoots = append([]string(nil), roots...)
 	clone.narrowed = true
@@ -276,7 +276,7 @@ func (w *localWorkspace) WithWritableRoots(roots []string) *localWorkspace {
 // Confined reports whether this local workspace runs commands under a
 // confinement backend, or is configured to fail closed without one. A client
 // workspace overlay must not bypass either posture.
-func (w *localWorkspace) Confined() bool {
+func (w *LocalWorkspace) Confined() bool {
 	if _, ok := w.degrade.get(); ok {
 		// The jail was requested and could not be established, so commands run on
 		// the host path: reporting "jailed" here would be a lie.
@@ -289,26 +289,26 @@ func (w *localWorkspace) Confined() bool {
 // applied to every confined command (keys here override the process
 // environment). It copies rather than mutating the receiver, so a workspace
 // handed to more than one registry is never altered under another's feet.
-func (w *localWorkspace) WithEnv(env []string) *localWorkspace {
+func (w *LocalWorkspace) WithEnv(env []string) *LocalWorkspace {
 	clone := *w
 	clone.confinedEnv = env
 	return &clone
 }
 
-func (w *localWorkspace) ResolvePath(path string) (string, error) {
-	return resolvePathWithPV(w.pv, path)
+func (w *LocalWorkspace) ResolvePath(path string) (string, error) {
+	return ResolvePathWithPV(w.pv, path)
 }
 
-func (w *localWorkspace) WorkDir() string {
+func (w *LocalWorkspace) WorkDir() string {
 	if w.pv == nil {
 		return ""
 	}
 	return w.pv.WorkDir
 }
 
-func (w *localWorkspace) Local() bool { return true }
+func (w *LocalWorkspace) Local() bool { return true }
 
-func (w *localWorkspace) Join(elem ...string) string { return filepath.Join(elem...) }
+func (w *LocalWorkspace) Join(elem ...string) string { return filepath.Join(elem...) }
 
 // WorkspaceConfined reports whether a workspace declares confinement. The
 // optional interface keeps sandbox implementations free to omit it.
@@ -319,7 +319,7 @@ func WorkspaceConfined(ws Workspace) bool {
 	return false
 }
 
-func (w *localWorkspace) Shell() (string, string) {
+func (w *LocalWorkspace) Shell() (string, string) {
 	if runtime.GOOS != "windows" {
 		return "sh", "-c"
 	}
@@ -329,13 +329,13 @@ func (w *localWorkspace) Shell() (string, string) {
 	return "powershell", "-Command"
 }
 
-func (w *localWorkspace) ReadFile(_ context.Context, path string) ([]byte, error) {
+func (w *LocalWorkspace) ReadFile(_ context.Context, path string) ([]byte, error) {
 	return os.ReadFile(path)
 }
 
 // Append opens with O_APPEND so two writers cannot overwrite each other's
 // records; each Write is placed at the then-current end of file.
-func (w *localWorkspace) Append(_ context.Context, path string, data []byte, perm fs.FileMode) error {
+func (w *LocalWorkspace) Append(_ context.Context, path string, data []byte, perm fs.FileMode) error {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, perm)
 	if err != nil {
 		return err
@@ -349,7 +349,7 @@ func (w *localWorkspace) Append(_ context.Context, path string, data []byte, per
 
 // ReadRange seeks to offset and reads at most length bytes. A non-positive
 // length is an empty read, not an error: callers use it to request nothing.
-func (w *localWorkspace) ReadRange(_ context.Context, path string, offset, length int64) ([]byte, error) {
+func (w *LocalWorkspace) ReadRange(_ context.Context, path string, offset, length int64) ([]byte, error) {
 	if offset < 0 {
 		return nil, fmt.Errorf("read range: offset must be non-negative")
 	}
@@ -367,26 +367,26 @@ func (w *localWorkspace) ReadRange(_ context.Context, path string, offset, lengt
 	return io.ReadAll(io.LimitReader(f, length))
 }
 
-// WriteFile delegates to atomicWriteFile so the crash-safety guarantee
+// WriteFile delegates to AtomicWriteFile so the crash-safety guarantee
 // (temp file plus rename in the same directory) is preserved exactly.
-func (w *localWorkspace) WriteFile(_ context.Context, path string, data []byte, perm fs.FileMode) error {
-	return atomicWriteFile(path, data, perm)
+func (w *LocalWorkspace) WriteFile(_ context.Context, path string, data []byte, perm fs.FileMode) error {
+	return AtomicWriteFile(path, data, perm)
 }
 
-func (w *localWorkspace) Stat(_ context.Context, path string) (fs.FileInfo, error) {
+func (w *LocalWorkspace) Stat(_ context.Context, path string) (fs.FileInfo, error) {
 	return os.Stat(path)
 }
 
 // Lstat mirrors os.Lstat: the link itself, not its target.
-func (w *localWorkspace) Lstat(_ context.Context, path string) (fs.FileInfo, error) {
+func (w *LocalWorkspace) Lstat(_ context.Context, path string) (fs.FileInfo, error) {
 	return os.Lstat(path)
 }
 
-func (w *localWorkspace) ReadDir(_ context.Context, path string) ([]fs.DirEntry, error) {
+func (w *LocalWorkspace) ReadDir(_ context.Context, path string) ([]fs.DirEntry, error) {
 	return os.ReadDir(path)
 }
 
-func (w *localWorkspace) Remove(_ context.Context, path string) error {
+func (w *LocalWorkspace) Remove(_ context.Context, path string) error {
 	// os.Remove already removes a file or an empty directory, which is the
 	// Workspace contract rmdir and delete both rely on.
 	return os.Remove(path)
@@ -395,24 +395,24 @@ func (w *localWorkspace) Remove(_ context.Context, path string) error {
 // RemoveAll deletes a tree, matching os.RemoveAll. It refuses the workspace
 // root: recursive removal is the one call where a path bug would be
 // unrecoverable, and the tool layer's guard should not be the only one.
-func (w *localWorkspace) RemoveAll(_ context.Context, path string) error {
-	if isRootPath(path) || (w.pv != nil && w.pv.WorkspaceRoot != "" && sameHostPath(path, w.pv.WorkspaceRoot)) {
+func (w *LocalWorkspace) RemoveAll(_ context.Context, path string) error {
+	if IsRootPath(path) || (w.pv != nil && w.pv.WorkspaceRoot != "" && SameHostPath(path, w.pv.WorkspaceRoot)) {
 		return fmt.Errorf("refusing to remove the workspace root %s", path)
 	}
 	return os.RemoveAll(path)
 }
 
-// isRootPath reports whether p is a filesystem root: "/" on POSIX, or a volume
+// IsRootPath reports whether p is a filesystem root: "/" on POSIX, or a volume
 // root such as "C:\" on Windows.
-func isRootPath(p string) bool {
+func IsRootPath(p string) bool {
 	return filepath.Clean(p) == filepath.VolumeName(p)+string(filepath.Separator)
 }
 
-// sameHostPath compares two host paths after resolving symlinks, so a caller
+// SameHostPath compares two host paths after resolving symlinks, so a caller
 // that passes /var/... matches the /private/var/... root the validator stores,
 // and a Windows short name matches its long form. Case is folded on Windows,
 // where the filesystem is case-insensitive.
-func sameHostPath(a, b string) bool {
+func SameHostPath(a, b string) bool {
 	if resolved, err := filepath.EvalSymlinks(a); err == nil {
 		a = resolved
 	}
@@ -426,35 +426,35 @@ func sameHostPath(a, b string) bool {
 	return a == b
 }
 
-func (w *localWorkspace) MkdirAll(_ context.Context, path string, perm fs.FileMode) error {
+func (w *LocalWorkspace) MkdirAll(_ context.Context, path string, perm fs.FileMode) error {
 	return os.MkdirAll(path, perm)
 }
 
-// partialMoveError reports a cross-filesystem move that copied the file but
+// PartialMoveError reports a cross-filesystem move that copied the file but
 // could not remove the source. The destination exists, so callers that track
 // changes must record it even though Move returned an error; the message says
 // so, because a plain retry without force will be refused as a clobber.
-type partialMoveError struct {
+type PartialMoveError struct {
 	Src string
 	Dst string
 	Err error
 }
 
-func (e *partialMoveError) Error() string {
+func (e *PartialMoveError) Error() string {
 	return fmt.Sprintf("destination %s was created, but the source %s could not be removed: %v; remove one of the two files before retrying", e.Dst, e.Src, e.Err)
 }
 
-func (e *partialMoveError) Unwrap() error { return e.Err }
+func (e *PartialMoveError) Unwrap() error { return e.Err }
 
-// errCrossDevice marks a substrate move that refused because the source and
+// ErrCrossDevice marks a substrate move that refused because the source and
 // destination are on different mounts. A caller may copy+remove only for this
 // error; any other move failure may have left partial state.
-var errCrossDevice = errors.New("cross-device move")
+var ErrCrossDevice = errors.New("cross-device move")
 
-// isCrossDeviceErr recognises the platform's cross-filesystem rename error.
+// IsCrossDeviceErr recognises the platform's cross-filesystem rename error.
 // Windows reports ERROR_NOT_SAME_DEVICE (17) where Unix reports EXDEV (18).
-func isCrossDeviceErr(err error) bool {
-	if errors.Is(err, errCrossDevice) || errors.Is(err, syscall.EXDEV) {
+func IsCrossDeviceErr(err error) bool {
+	if errors.Is(err, ErrCrossDevice) || errors.Is(err, syscall.EXDEV) {
 		return true
 	}
 	return runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(17))
@@ -465,9 +465,9 @@ func isCrossDeviceErr(err error) bool {
 // bytes ever being read — the cheapest exact move available. Across filesystems
 // (EXDEV) it falls back to Copy plus Remove, matching the sandbox mv's
 // transparent behavior at the cost of actually reading the bytes.
-func (w *localWorkspace) Move(ctx context.Context, src, dst string) error {
+func (w *LocalWorkspace) Move(ctx context.Context, src, dst string) error {
 	err := os.Rename(src, dst)
-	if err == nil || !isCrossDeviceErr(err) {
+	if err == nil || !IsCrossDeviceErr(err) {
 		return err
 	}
 	if cerr := w.Copy(ctx, src, dst); cerr != nil {
@@ -477,7 +477,7 @@ func (w *localWorkspace) Move(ctx context.Context, src, dst string) error {
 		return fmt.Errorf("move: cross-filesystem fallback: %v (rename: %w)", cerr, err)
 	}
 	if rerr := os.Remove(src); rerr != nil {
-		return &partialMoveError{Src: src, Dst: dst, Err: rerr}
+		return &PartialMoveError{Src: src, Dst: dst, Err: rerr}
 	}
 	return nil
 }
@@ -488,7 +488,7 @@ func (w *localWorkspace) Move(ctx context.Context, src, dst string) error {
 // large file copies in fixed-size chunks. The source's mode, including
 // setuid/setgid/sticky, is applied to the temp before the rename. Ownership and
 // extended attributes are not portable across filesystems and are not carried.
-func (w *localWorkspace) Copy(_ context.Context, src, dst string) error {
+func (w *LocalWorkspace) Copy(_ context.Context, src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
@@ -530,7 +530,7 @@ func (w *localWorkspace) Copy(_ context.Context, src, dst string) error {
 // Exec runs a command in the workspace. On the orchestrator's host workspace (no
 // confiner) it runs directly; on a confined workspace it runs under the syscall
 // jail, rooted at the workspace's working directory.
-func (w *localWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResult, error) {
+func (w *LocalWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResult, error) {
 	if w.confiner == nil {
 		if w.placement == containment.PlacementPaddock {
 			// Fail closed: a paddock placement with no backend refuses rather
@@ -590,7 +590,7 @@ func (w *localWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResult,
 // The distinction matters for the operator: telling someone on the default
 // `auto` placement to "set containment: auto" is a no-op, and the real objection
 // there is a declared grant set or an egress rule.
-func (w *localWorkspace) degradeBlocker() string {
+func (w *LocalWorkspace) degradeBlocker() string {
 	switch {
 	case w.placement != containment.PlacementAuto:
 		return fmt.Sprintf("placement %q refuses to run unconfined — set "+
@@ -609,7 +609,7 @@ func (w *localWorkspace) degradeBlocker() string {
 
 // advisoryExec is the unconfined host path — the behaviour every session had
 // before workspaces, and the fallback when no jail is available.
-func (w *localWorkspace) advisoryExec(ctx context.Context, req ExecRequest) (ExecResult, error) {
+func (w *LocalWorkspace) advisoryExec(ctx context.Context, req ExecRequest) (ExecResult, error) {
 	cmd := exec.CommandContext(ctx, req.Command, req.Args...)
 	dir := req.Cwd
 	if dir == "" {
@@ -652,7 +652,7 @@ func (w *localWorkspace) advisoryExec(ctx context.Context, req ExecRequest) (Exe
 // not be established is reported as a launch failure (ExitCode -1) — the command
 // never ran. Retrying unconfined is Exec's decision, not this function's: see
 // degradeBlocker for when an advisory fallback is admissible.
-func (w *localWorkspace) confinedExec(ctx context.Context, req ExecRequest) (ExecResult, error) {
+func (w *LocalWorkspace) confinedExec(ctx context.Context, req ExecRequest) (ExecResult, error) {
 	root := w.WorkDir()
 	roots := w.writableRoots
 	if !w.narrowed {
@@ -673,7 +673,7 @@ func (w *localWorkspace) confinedExec(ctx context.Context, req ExecRequest) (Exe
 		WorkingRoot: root,
 		Cwd:         req.Cwd,
 		Stdin:       req.Stdin,
-		Env:         mergeEnv(os.Environ(), w.confinedEnv),
+		Env:         MergeEnv(os.Environ(), w.confinedEnv),
 	}
 	if dl, ok := ctx.Deadline(); ok {
 		// A passed deadline gives a negative duration; leave Timeout unset
@@ -705,7 +705,7 @@ func (w *localWorkspace) confinedExec(ctx context.Context, req ExecRequest) (Exe
 		if w.narrowed {
 			hint = grantsHint(w.writableRoots, res.Stderr+out.Stdout)
 		} else {
-			hint = confinementHint(res.Stderr, root)
+			hint = ConfinementHint(res.Stderr, root)
 		}
 		if hint != "" {
 			if req.SeparateStreams {
@@ -721,7 +721,7 @@ func (w *localWorkspace) confinedExec(ctx context.Context, req ExecRequest) (Exe
 	return out, nil
 }
 
-// confinementHint explains a failure the jail caused, or "" when the failure
+// ConfinementHint explains a failure the jail caused, or "" when the failure
 // does not look like one. The jail is the boundary, not a bug, and a sub-agent
 // that cannot see why a command failed will retry it (or flail) instead of
 // routing around it — so the message names the boundary and, for the git case,
@@ -738,7 +738,7 @@ func (w *localWorkspace) confinedExec(ctx context.Context, req ExecRequest) (Exe
 // (the raw error still surfaces); a wrong one sends the model to the wrong
 // remedy. The one exception is a snap-packaged toolchain, whose failure names
 // its own cause precisely enough to translate.
-func confinementHint(stderr, root string) string {
+func ConfinementHint(stderr, root string) string {
 	if root == "" {
 		return ""
 	}
@@ -816,12 +816,12 @@ func deniedOutsideRoot(stderr, root string) (string, bool) {
 			// Textual comparison against the spelling yaah passed first: the
 			// message is produced with that spelling, so a /var-rooted worktree
 			// matches here even though the filesystem resolves it to /private/var.
-			if withinRoot(c, cleanRoot) {
+			if WithinRoot(c, cleanRoot) {
 				continue
 			}
 			// Then resolved, for a path whose symlinks do resolve (an escaping
 			// link, or a candidate that already exists).
-			if r, err := filepath.EvalSymlinks(c); err == nil && r != "" && withinRoot(r, resolvedRoot) {
+			if r, err := filepath.EvalSymlinks(c); err == nil && r != "" && WithinRoot(r, resolvedRoot) {
 				continue
 			}
 			return cand, true
@@ -830,7 +830,7 @@ func deniedOutsideRoot(stderr, root string) (string, bool) {
 	return "", false
 }
 
-// withinRoot reports whether p is root or lies beneath it, separator-aware so
+// WithinRoot reports whether p is root or lies beneath it, separator-aware so
 // "/work/wt-other" is not "inside" "/work/wt". Host path rules apply because the
 // message is produced on this host: the hint is only reachable where a kernel
 // jail actually runs (Linux via Landlock, Windows via winacl), since every other
@@ -849,8 +849,8 @@ func deniedOutsideRoot(stderr, root string) (string, bool) {
 // named. An 8.3 short-name spelling stays inexact — it neither matches nor
 // misattributes; the hint is simply not offered, per the "guessing is worse
 // than none" rule above.
-func withinRoot(p, root string) bool {
-	if drivePath(p) || drivePath(root) || runtime.GOOS == "windows" {
+func WithinRoot(p, root string) bool {
+	if DrivePath(p) || DrivePath(root) || runtime.GOOS == "windows" {
 		pp := strings.ReplaceAll(p, "/", `\`)
 		rr := strings.ReplaceAll(root, "/", `\`)
 		lowerP, lowerR := strings.ToLower(pp), strings.ToLower(rr)
@@ -862,11 +862,11 @@ func withinRoot(p, root string) bool {
 	return strings.HasPrefix(p, root+string(filepath.Separator))
 }
 
-// drivePath reports whether s carries a Windows drive-letter prefix
+// DrivePath reports whether s carries a Windows drive-letter prefix
 // ("C:\…", "C:/…") — separator required after the colon, so "a:b:<c", "1:x",
 // and drive-relative "C:foo" spellings never count. The shape case folding and
 // host-independent absoluteness are decided on.
-func drivePath(s string) bool {
+func DrivePath(s string) bool {
 	return len(s) >= 3 && s[1] == ':' && (s[2] == '\\' || s[2] == '/')
 }
 
@@ -876,7 +876,7 @@ func drivePath(s string) bool {
 // (filepath.IsAbs("C:\x") is false off-Windows, and the hint code is pure
 // string matching that both hosts must agree on).
 func absPath(p string) bool {
-	return filepath.IsAbs(p) || drivePath(p)
+	return filepath.IsAbs(p) || DrivePath(p)
 }
 
 // pathCandidates extracts the path-like tokens from one stderr line: quoted
@@ -913,20 +913,20 @@ func pathCandidates(line string) []string {
 	return out
 }
 
-// workspaceOf returns a tool's injected workspace, falling back to a local
+// WorkspaceOf returns a tool's injected workspace, falling back to a local
 // workspace over its validator. The fallback keeps a tool usable when only a
 // PathValidator was set — which unit tests do — and means migrating a tool needs
 // no change to existing construction sites.
-func workspaceOf(ws Workspace, pv *PathValidator) Workspace {
+func WorkspaceOf(ws Workspace, pv *PathValidator) Workspace {
 	if ws != nil {
 		return ws
 	}
 	return newLocalWorkspace(pv)
 }
 
-// shellCommand builds an ExecRequest that runs a shell command string using the
+// ShellCommand builds an ExecRequest that runs a shell command string using the
 // workspace's own shell, so callers never choose a shell themselves.
-func shellCommand(ws Workspace, command string) ExecRequest {
+func ShellCommand(ws Workspace, command string) ExecRequest {
 	shell, flag := ws.Shell()
 	return ExecRequest{
 		Command: shell,
@@ -934,23 +934,23 @@ func shellCommand(ws Workspace, command string) ExecRequest {
 	}
 }
 
-// requireLocal reports a clear error when a tool that only works on the host is
+// RequireLocal reports a clear error when a tool that only works on the host is
 // pointed at an isolated workspace. Failing loudly beats silently running the
 // command somewhere the caller did not intend.
-func requireLocal(ws Workspace, tool string) error {
+func RequireLocal(ws Workspace, tool string) error {
 	if ws != nil && !ws.Local() {
 		return fmt.Errorf("%s: not available in an isolated workspace", tool)
 	}
 	return nil
 }
 
-// walkWorkspace walks a workspace tree depth-first, mirroring
+// WalkWorkspace walks a workspace tree depth-first, mirroring
 // filepath.WalkDir's contract: fn is called for the root and every entry;
 // returning fs.SkipDir from a directory skips its contents, and returning it
 // from a file entry skips the remaining files in that directory. An unreadable
 // directory is reported through fn rather than aborting the walk, so callers
 // keep the error-handling shape they had with WalkDir.
-func walkWorkspace(
+func WalkWorkspace(
 	ctx context.Context,
 	ws Workspace,
 	root string,
@@ -981,7 +981,7 @@ func walkWorkspace(
 }
 
 // walkChildren visits root's entries depth-first. It is separate from
-// walkWorkspace so recursing does not re-stat a directory the caller already
+// WalkWorkspace so recursing does not re-stat a directory the caller already
 // classified.
 func walkChildren(
 	ctx context.Context,

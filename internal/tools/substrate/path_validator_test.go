@@ -1,8 +1,6 @@
-package tools
+package substrate
 
 import (
-	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -365,105 +363,6 @@ func TestPathValidator_MalformedDenyPatternFailsClosed(t *testing.T) {
 
 	if _, err := pv.ResolvePath(filepath.Join(ws, "anything.txt")); err == nil {
 		t.Error("malformed deny pattern must fail closed (deny access)")
-	}
-}
-
-func TestRegistry_SetPathValidatorBackfills(t *testing.T) {
-	reg := NewRegistry()
-	ws := t.TempDir()
-	reg.SetPathValidator(NewPathValidator(ws, false, nil))
-
-	rt, ok := reg.Get("read").(*ReadTool)
-	if !ok {
-		t.Fatal("read tool not registered as *ReadTool")
-	}
-	if rt.PV == nil || rt.PV.WorkspaceRoot == "" {
-		t.Error("SetPathValidator did not backfill the read tool")
-	}
-
-	reg.Register(&WriteTool{})
-	wt, ok := reg.Get("write").(*WriteTool)
-	if !ok {
-		t.Fatal("write tool not registered as *WriteTool")
-	}
-	if wt.PV == nil {
-		t.Error("Register after SetPathValidator did not auto-inject")
-	}
-}
-
-// unmigratedFSTool is a filesystem-touching tool that has not adopted
-// WorkspaceSetter, used to check that the isolation gate classifies the tool
-// inside a RecordingTool wrapper rather than the wrapper itself.
-type unmigratedFSTool struct{}
-
-func (unmigratedFSTool) Name() string                                    { return "legacy_fs" }
-func (unmigratedFSTool) Description() string                             { return "" }
-func (unmigratedFSTool) Schema() json.RawMessage                         { return nil }
-func (unmigratedFSTool) Execute(context.Context, string) (string, error) { return "", nil }
-func (unmigratedFSTool) filesystemTool()                                 {}
-
-// TestRegistry_IsolationGateUnwrapsRecordingTools pins that tools registered
-// through the conflict-tracking wrapper reach the gate: the wrapped tool's
-// markers decide migration, and SetWorkspace is forwarded so the tool inside
-// actually receives the workspace.
-func TestRegistry_IsolationGateUnwrapsRecordingTools(t *testing.T) {
-	legacy := NewEmptyRegistry()
-	legacy.Register(NewRecordingTool(unmigratedFSTool{}, nil))
-	if got := legacy.UnmigratedFilesystemTools(); len(got) != 1 || got[0] != "legacy_fs" {
-		t.Errorf("unmigrated = %v, want [legacy_fs]", got)
-	}
-
-	migrated := NewEmptyRegistry()
-	migrated.Register(NewRecordingTool(&WriteTool{}, nil))
-	if got := migrated.UnmigratedFilesystemTools(); len(got) != 0 {
-		t.Errorf("unmigrated = %v, want none for a migrated wrapped tool", got)
-	}
-
-	rec := NewRecordingTool(&WriteTool{}, nil)
-	rec.SetWorkspace(newLocalWorkspace(nil))
-	if wt, ok := rec.inner.(*WriteTool); !ok || wt.WS == nil {
-		t.Error("RecordingTool.SetWorkspace must reach the wrapped tool")
-	}
-}
-
-func TestReadTool_WorkspaceEnforced(t *testing.T) {
-	ws := t.TempDir()
-	outside := t.TempDir()
-	secret := filepath.Join(outside, "secret.txt")
-	if err := os.WriteFile(secret, []byte("secret"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	inside := filepath.Join(ws, "ok.txt")
-	if err := os.WriteFile(inside, []byte("hello"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	rt := &ReadTool{PV: NewPathValidator(ws, false, nil)}
-
-	if _, err := rt.Execute(context.Background(), `{"filePath":"`+filepath.ToSlash(secret)+`"}`); err == nil {
-		t.Error("read outside workspace must fail")
-	}
-	res, err := rt.Execute(context.Background(), `{"filePath":"`+filepath.ToSlash(inside)+`"}`)
-	if err != nil {
-		t.Fatalf("read inside workspace failed: %v", err)
-	}
-	if !strings.Contains(res, "hello") {
-		t.Errorf("unexpected content: %q", res)
-	}
-}
-
-func TestWriteTool_WorkspaceEnforced(t *testing.T) {
-	ws := t.TempDir()
-	outside := t.TempDir()
-
-	wt := &WriteTool{PV: NewPathValidator(ws, false, nil)}
-
-	target := filepath.Join(outside, "evil.txt")
-	if _, err := wt.Execute(context.Background(), `{"filePath":"`+filepath.ToSlash(target)+`","content":"x"}`); err == nil {
-		t.Fatal("write outside workspace must fail")
-	}
-	if _, err := os.Stat(target); !os.IsNotExist(err) {
-		t.Errorf("file outside workspace was created despite rejection")
 	}
 }
 

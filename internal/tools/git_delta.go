@@ -392,7 +392,7 @@ func manifestChange(ctx context.Context, ss *SessionSandbox, c effect.Change, re
 	// Read the path that was validated, not the backend's raw spelling: a
 	// backend may report an absolute path or a relative one, but both resolve
 	// to the same workspace-relative p after the guard above.
-	data, err := ss.sb.ReadFile(ctx, path.Join(ss.ws.root, p))
+	data, err := ss.sb.ReadFile(ctx, path.Join(ss.ws.Root(), p))
 	if err != nil {
 		return DeltaChange{}, fmt.Errorf("git delta: %s: read post-image: %w", c.Path, err)
 	}
@@ -411,10 +411,10 @@ func manifestChange(ctx context.Context, ss *SessionSandbox, c effect.Change, re
 // a path is misbehaving; trimming it to a relative path would silently settle a
 // file from elsewhere in the container.
 func manifestPath(ss *SessionSandbox, p string) (string, error) {
-	if strings.HasPrefix(p, "/") && ss.ws.root != "/" {
-		prefix := strings.TrimSuffix(ss.ws.root, "/") + "/"
+	if strings.HasPrefix(p, "/") && ss.ws.Root() != "/" {
+		prefix := strings.TrimSuffix(ss.ws.Root(), "/") + "/"
 		if !strings.HasPrefix(p, prefix) {
-			return "", fmt.Errorf("git delta: change path %q is outside the workspace root %q", p, ss.ws.root)
+			return "", fmt.Errorf("git delta: change path %q is outside the workspace root %q", p, ss.ws.Root())
 		}
 	}
 	return ss.rootRel(p), nil

@@ -1,4 +1,4 @@
-package tools
+package substrate
 
 import (
 	"context"
@@ -39,7 +39,7 @@ func (unconfinableBackend) Launch(string, containment.LaunchRequest) (containmen
 
 // echoWorkspaceHealth runs the workspace's own shell printing a marker, so a
 // test asserts the fallback actually executed a command rather than a no-op.
-func echoWorkspaceHealth(t *testing.T, ws *localWorkspace) ExecResult {
+func echoWorkspaceHealth(t *testing.T, ws *LocalWorkspace) ExecResult {
 	t.Helper()
 	shell, flag := ws.Shell()
 	res, err := ws.Exec(context.Background(), ExecRequest{Command: shell, Args: []string{flag, "echo advisory"}})

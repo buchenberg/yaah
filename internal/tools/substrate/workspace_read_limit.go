@@ -1,4 +1,4 @@
-package tools
+package substrate
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 // primitive next to the Workspace implementation makes the exemption in
 // enforcement_test.go honest. Substrates that cannot bound a read simply do
 // not implement it; the caller falls back to a full read plus a cap.
-func (w *localWorkspace) ReadFileLimit(_ context.Context, path string, max int) ([]byte, error) {
+func (w *LocalWorkspace) ReadFileLimit(_ context.Context, path string, max int) ([]byte, error) {
 	if max <= 0 {
 		return []byte{}, nil
 	}

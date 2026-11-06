@@ -301,7 +301,7 @@ func bootstrapSession(ctx context.Context, ss *SessionSandbox, src string, deny 
 	if err != nil {
 		return err
 	}
-	if err := copyTreeIn(ctx, ss.sb, src, ss.ws.root, deny, plan); err != nil {
+	if err := copyTreeIn(ctx, ss.sb, src, ss.ws.Root(), deny, plan); err != nil {
 		return fmt.Errorf("workspace: copy-in: %w", err)
 	}
 	base, err := ss.sb.Capture(ctx)
@@ -491,7 +491,7 @@ func (s *SessionSandbox) copyOut(ctx context.Context, hostDir string) error {
 			continue
 		}
 		host := filepath.Join(hostDir, filepath.FromSlash(rel))
-		sbPath := path.Join(s.ws.root, rel)
+		sbPath := path.Join(s.ws.Root(), rel)
 		data, rerr := s.sb.ReadFile(ctx, sbPath)
 		switch {
 		case rerr == nil:
@@ -584,6 +584,6 @@ func (s *SessionSandbox) copyOut(ctx context.Context, hostDir string) error {
 // relative to the workspace root: snapshot-style backends report absolute
 // in-sandbox paths, git-style backends report workdir-relative ones.
 func (s *SessionSandbox) rootRel(p string) string {
-	p = strings.TrimPrefix(p, s.ws.root+"/")
+	p = strings.TrimPrefix(p, s.ws.Root()+"/")
 	return strings.TrimPrefix(p, "/")
 }
