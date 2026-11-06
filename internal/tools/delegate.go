@@ -303,8 +303,8 @@ func (t *DelegateTool) classifyRunnerResult(result string, err error, role strin
 		note := ""
 		var runErr *retainedRunError
 		if errors.As(err, &runErr) {
-			cause = runErr.cause
-			note = runErr.note
+			cause = runErr.Cause()
+			note = runErr.Note()
 		}
 		partial := retainedNote(result, note)
 		switch {

@@ -148,11 +148,8 @@ func TestSessionSandbox_SupportsEffects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("capture: %v", err)
 	}
-	plain := &SessionSandbox{
-		sb:       &noEffectsSandbox{Sandbox: fake},
-		ws:       newSandboxWorkspace(fake, "/"),
-		baseline: &base,
-	}
+	plain := newSessionSandbox(&noEffectsSandbox{Sandbox: fake}, "/")
+	plain.SetBaseline(&base)
 	if plain.SupportsEffects() {
 		t.Error("a backend without EffectChanges must not be reported as supporting effects")
 	}
@@ -171,7 +168,7 @@ func TestSessionSandbox_EffectChangesRequiresBaseline(t *testing.T) {
 	// Without a bootstrap there is no anchor to diff against, so there is no
 	// meaningful change set — the same precondition ApplyOut and
 	// DiffSinceBaseline already enforce.
-	ss := &SessionSandbox{sb: &effectSandbox{Sandbox: sandboxfake.New(), changes: sampleChanges()}}
+	ss := newSessionSandbox(&effectSandbox{Sandbox: sandboxfake.New(), changes: sampleChanges()}, "/")
 	if _, err := ss.EffectChanges(context.Background()); err == nil {
 		t.Fatal("EffectChanges without a baseline must fail")
 	} else if !strings.Contains(err.Error(), "baseline") {

@@ -18,7 +18,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/cwdpath"
-	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/buchenberg/yaah/internal/dispatch"
 )
 
 func newAgentSession() (*agentSession, error) {
@@ -292,7 +292,7 @@ func wireSubAgentNetwork(sc config.SubAgentConfig) (confinement.NetworkPolicy, *
 // trailing-dot entry does exactly what it looks like. Without this an exact-host
 // allowlist silently never matches.
 func normalizeBrokerHosts(hosts []string) []string {
-	return tools.NormalizeBrokerHosts(hosts)
+	return dispatch.NormalizeBrokerHosts(hosts)
 }
 
 // retainedLaneActive decides whether NewDelegateTool should build the retained

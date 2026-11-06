@@ -41,6 +41,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/dispatch"
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/memory"
@@ -938,7 +939,7 @@ type dispatchPosture struct {
 	workspace    tools.Workspace
 	spillDir     string
 	network      confinement.NetworkPolicy
-	worlds       *tools.DispatchWorlds
+	worlds       *dispatch.DispatchWorlds
 	retainedLane bool
 }
 
@@ -985,7 +986,7 @@ func wireDispatchPosture(st *loopInfraStage, cfg *config.Config, opts SessionOpt
 	// state. In a container session both report and proposal lanes use a
 	// sibling; a host session keeps the host-settled GitDelta path.
 	if runtime.GOOS == "linux" && cfg.Workspace.Containerd.Image != "" {
-		posture.worlds = &tools.DispatchWorlds{
+		posture.worlds = &dispatch.DispatchWorlds{
 			Config: cfg.Workspace,
 			Opener: tools.OpenContainerdWorkspaceSandbox,
 			Deny:   ws.deny,
@@ -1206,7 +1207,7 @@ func registerSubAgentTools(st *loopInfraStage, cfg *config.Config, tr *toolRegis
 			// back out. Passing that same registry here keeps the two halves
 			// on one session, so under `web`/`acp-serve` a session can
 			// neither see nor settle another session's proposals.
-			tr.reg.Register(&tools.ProposalTool{Proposals: st.taskTool.Retained.Proposals})
+			tr.reg.Register(&dispatch.ProposalTool{Proposals: st.taskTool.Retained.Proposals})
 		} else {
 			tr.belt.Know("proposal")
 		}

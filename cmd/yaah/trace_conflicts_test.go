@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	"github.com/buchenberg/yaah/internal/dispatch"
 	"github.com/buchenberg/yaah/internal/memory"
-	"github.com/buchenberg/yaah/internal/tools"
 )
 
 func TestTraceConflictsAggregate(t *testing.T) {
@@ -48,9 +48,9 @@ func TestTraceConflictsAggregate(t *testing.T) {
 
 	appendFact("sub-a1", "yaah.subagent.usage.v1", "subagent:usage", shepherdtrace.Capture, map[string]any{"lane": "retained", "parent_session": "sess-a"})
 	appendFact("sub-a2", "yaah.subagent.usage.v1", "subagent:usage:2", shepherdtrace.Capture, map[string]any{"lane": "shared", "parent_session": "sess-a"})
-	appendFact("sess-a", tools.SchemaProposalSealed, "proposal", shepherdtrace.Declaration, map[string]any{"proposal_id": "p1"})
+	appendFact("sess-a", dispatch.SchemaProposalSealed, "proposal", shepherdtrace.Declaration, map[string]any{"proposal_id": "p1"})
 	appendFact("sub-a1", "goatherd.merge.proposed.v1", "merge:proposed", shepherdtrace.Declaration, map[string]any{"proposal_id": "p1"})
-	appendFact("sess-a", tools.SchemaProposalConflict, "conflict", shepherdtrace.Declaration, map[string]any{
+	appendFact("sess-a", dispatch.SchemaProposalConflict, "conflict", shepherdtrace.Declaration, map[string]any{
 		"kind": "same_path_divergent", "paths": []string{"a.txt", "b.txt"}, "proposals": []string{"p1", "p2"},
 	})
 	appendFact("sub-b1", "yaah.subagent.usage.v1", "subagent:usage", shepherdtrace.Capture, map[string]any{"lane": "shared", "parent_session": "sess-b"})
@@ -66,7 +66,7 @@ func TestTraceConflictsAggregate(t *testing.T) {
 	}
 	appendFact("sub-old", "yaah.subagent.usage.v1", "subagent:usage:old", shepherdtrace.Capture, map[string]any{"lane": "shared"})
 	appendFact("sub-unmapped", "yaah.subagent.usage.v1", "subagent:usage:unmapped", shepherdtrace.Capture, map[string]any{"lane": "shared"})
-	appendFact("sess-b", tools.SchemaProposalConflict, "conflict", shepherdtrace.Declaration, map[string]any{
+	appendFact("sess-b", dispatch.SchemaProposalConflict, "conflict", shepherdtrace.Declaration, map[string]any{
 		"kind": "delete_modify", "paths": []string{"a.txt"}, "proposals": []string{"p3", "p4"},
 	})
 	store.Close(context.Background())

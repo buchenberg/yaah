@@ -36,6 +36,7 @@ yaah/
 │   ├── config/                 # config load/validate
 │   ├── control/                # control-plane message types
 │   ├── cwdpath/                # cwd canonicalization
+│   ├── dispatch/               # retained-dispatch lane: proposals, git delta, dispatch worlds
 │   ├── doctor/                 # diagnostics
 │   ├── instructions/           # AGENTS.md/CLAUDE.md discovery
 │   ├── jail/                   # per-platform containment selection

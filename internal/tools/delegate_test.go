@@ -429,7 +429,7 @@ func TestExecute_LaneForRoleRouting(t *testing.T) {
 		if res != "default" {
 			t.Errorf("report lane must return the runner text, got %q", res)
 		}
-		if got := rt.Proposals.summaries(); got != "No open proposals." {
+		if got := rt.Proposals.Summaries(); got != "No open proposals." {
 			t.Errorf("report lane must not register a proposal, got %q", got)
 		}
 		wd := runner.workdirFor(t, 0)
@@ -456,7 +456,7 @@ func TestExecute_LaneForRoleRouting(t *testing.T) {
 		if wd := runner.workdirFor(t, 0); wd != "" {
 			t.Errorf("shared lane must not provision a worktree, got %q", wd)
 		}
-		if got := rt.Proposals.summaries(); got != "No open proposals." {
+		if got := rt.Proposals.Summaries(); got != "No open proposals." {
 			t.Errorf("shared lane must not register a proposal, got %q", got)
 		}
 	})
@@ -694,7 +694,7 @@ func TestDelegate_ClassifyGenericErrorCarriesPartial(t *testing.T) {
 	partial := strings.Repeat("report body\n", 400) // 4.8 KiB, under the cap
 	note := "the report dispatch could not discard its isolated scope; it left the worktree at /tmp/wt/scratch"
 
-	got, err := tool.classifyRunnerResult(partial, &retainedRunError{cause: errors.New("max iterations reached"), note: note}, "reviewer", 30*time.Second, context.Background())
+	got, err := tool.classifyRunnerResult(partial, newRetainedRunError(errors.New("max iterations reached"), note), "reviewer", 30*time.Second, context.Background())
 	if err == nil {
 		t.Fatal("a generic runner error must stay an error")
 	}
@@ -741,7 +741,7 @@ func TestDelegate_ClassifyGenericErrorKeepsHeadAndNoteOfOversizedPartial(t *test
 	partial := strings.Repeat("report body\n", 2000) // ~24 KiB, past toolResultMaxBytes
 	note := "the report dispatch could not discard its isolated scope; it left the worktree at /tmp/wt/scratch"
 
-	_, err := tool.classifyRunnerResult(partial, &retainedRunError{cause: errors.New("max iterations reached"), note: note}, "reviewer", 30*time.Second, context.Background())
+	_, err := tool.classifyRunnerResult(partial, newRetainedRunError(errors.New("max iterations reached"), note), "reviewer", 30*time.Second, context.Background())
 	if err == nil {
 		t.Fatal("a generic runner error must stay an error")
 	}
@@ -769,7 +769,7 @@ func TestDelegate_ClassifyGenericErrorBoundsAnOversizedNote(t *testing.T) {
 	note := "provisioning failed: " + strings.Repeat("provider diagnostics ", 400) +
 		"it left the worktree at /tmp/wt/scratch"
 
-	_, err := tool.classifyRunnerResult("", &retainedRunError{cause: errors.New("max iterations reached"), note: note}, "reviewer", 30*time.Second, context.Background())
+	_, err := tool.classifyRunnerResult("", newRetainedRunError(errors.New("max iterations reached"), note), "reviewer", 30*time.Second, context.Background())
 	if err == nil {
 		t.Fatal("a generic runner error must stay an error")
 	}

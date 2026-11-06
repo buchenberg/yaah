@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/buchenberg/yaah/internal/tools/substrate"
 )
 
 // Tool-result policy: truncation and multi-step outcomes live here and
@@ -35,31 +37,24 @@ import (
 // error's own diagnostic stays untruncated.
 const (
 	// toolResultMaxBytes caps the success detail a single tool call returns.
-	toolResultMaxBytes = 8192
+	toolResultMaxBytes = substrate.ToolResultMaxBytes
 	// commandOutputMaxBytes caps raw command output (stdout/stderr) returned
 	// by shell tools. The agent loop's outer cap may cut this further and
 	// spill the full text to disk.
 	commandOutputMaxBytes = 1 << 20 // 1 MiB
 	// truncationMarker is the only marker tools append when they cap
 	// success output.
-	truncationMarker = "\n...[truncated]..."
+	truncationMarker = substrate.TruncationMarker
 	// tailTruncationMarker prefixes text kept from the END of an over-long
 	// payload: what was lost came before the kept text, not after. Both
 	// markers are the only ones tools append when they cap output.
-	tailTruncationMarker = "...[earlier text truncated]..."
+	tailTruncationMarker = substrate.TailTruncationMarker
 )
 
 // truncateAt caps s at max bytes on a UTF-8 rune boundary and appends
 // truncationMarker when it cuts. max <= 0 means no cap.
 func truncateAt(s string, max int) string {
-	if max <= 0 || len(s) <= max {
-		return s
-	}
-	cut := max
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut] + truncationMarker
+	return substrate.TruncateAt(s, max)
 }
 
 // truncateResult caps s at toolResultMaxBytes on a UTF-8 rune boundary and
@@ -73,14 +68,7 @@ func truncateResult(s string) string {
 // end with the worktree path they are reporting, so a note that must fit a
 // budget keeps its tail, not its head.
 func keepTail(s string, max int) string {
-	if max <= 0 || len(s) <= max {
-		return s
-	}
-	cut := len(s) - max
-	for cut < len(s) && !utf8.RuneStart(s[cut]) {
-		cut++
-	}
-	return tailTruncationMarker + s[cut:]
+	return substrate.KeepTail(s, max)
 }
 
 // truncateOutput caps raw command output at commandOutputMaxBytes on a UTF-8
