@@ -55,6 +55,12 @@ type HTTPEmbedder struct {
 	// Client is the HTTP client used. When nil, a default client with a
 	// 30-second timeout is used.
 	Client *http.Client
+	// QueryPrefix and DocumentPrefix are optional asymmetric prefixes
+	// applied to search-query and document text respectively (nomic-style
+	// "search_query: " / "search_document: "). Empty means no prefix
+	// (symmetric models), matching the previous behavior.
+	QueryPrefix    string
+	DocumentPrefix string
 }
 
 // DefaultEmbeddingTimeout is the HTTP request timeout used when Client is nil.
@@ -96,9 +102,23 @@ func (e *HTTPEmbedder) url(path string) string {
 	return base + path
 }
 
-// Embed calls POST /v1/embeddings with the given text and returns the
-// float32 embedding vector from the first data element.
+// Embed embeds document text, applying DocumentPrefix when set. It calls
+// POST /v1/embeddings and returns the float32 embedding vector from the
+// first data element.
 func (e *HTTPEmbedder) Embed(ctx context.Context, text string) (Embedding, error) {
+	return e.embed(ctx, e.DocumentPrefix+text)
+}
+
+// EmbedQuery embeds search-query text, applying QueryPrefix when set. It
+// satisfies QueryEmbedder, so search paths prefer it over Embed for
+// nomic-style asymmetric prefixes.
+func (e *HTTPEmbedder) EmbedQuery(ctx context.Context, text string) (Embedding, error) {
+	return e.embed(ctx, e.QueryPrefix+text)
+}
+
+// embed POSTs /v1/embeddings with the given (already-prefixed) text and
+// returns the float32 embedding vector from the first data element.
+func (e *HTTPEmbedder) embed(ctx context.Context, text string) (Embedding, error) {
 	body := struct {
 		Model string `json:"model"`
 		Input string `json:"input"`
