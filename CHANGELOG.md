@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.142.0](https://github.com/buchenberg/yaah/compare/v0.141.1...v0.142.0) (2026-11-06)
+
+
+### Features
+
+* **tools:** add append and ranged-read workspace primitives ([bba2f6b](https://github.com/buchenberg/yaah/commit/bba2f6bf60a12625b3ab64cc94854ace069b9186))
+* **tools:** add file operation cluster ([7d78cd9](https://github.com/buchenberg/yaah/commit/7d78cd9c52876cd9640f47550dd63bf6b3103845))
+* **tools:** add file operation cluster (append, tail, tree, checksum, find, bulk) ([64b7038](https://github.com/buchenberg/yaah/commit/64b7038034ad2e73b405393fa431a82ad2b62d3a))
+
+
+### Bug Fixes
+
+* **tools:** address file-tools review findings ([c531731](https://github.com/buchenberg/yaah/commit/c5317319122b968441ef11fccccb2305fc3a159c))
+* **tools:** address fourth review round ([5a8624e](https://github.com/buchenberg/yaah/commit/5a8624e1155ef805abf6c384d1afd121da7e0980))
+* **tools:** address second review round ([45ed6f9](https://github.com/buchenberg/yaah/commit/45ed6f9cf9c516c3d685b47fe6432d002dcf658a))
+* **tools:** address third review round ([0a846b3](https://github.com/buchenberg/yaah/commit/0a846b3da3e75de289737d8e2609fc53631aba21))
+* **tools:** keep complete destination on partial move errors ([73c54a0](https://github.com/buchenberg/yaah/commit/73c54a05830dfef2362403f2903a2b4c0a8b1895))
+
+
+### Tests
+
+* **tools:** keep file-tool arguments portable to Windows ([228db2b](https://github.com/buchenberg/yaah/commit/228db2bef08011c6c65cdc31c36cb5c407792540))
+
 ## [0.141.1](https://github.com/buchenberg/yaah/compare/v0.141.0...v0.141.1) (2026-11-05)
 
 
