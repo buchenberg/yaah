@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.144.0](https://github.com/buchenberg/yaah/compare/v0.143.3...v0.144.0) (2026-11-06)
+
+
+### Features
+
+* **tui:** name the containment mechanism in the infopane ([4ab2cba](https://github.com/buchenberg/yaah/commit/4ab2cbafb7549122262c69ad1956471c86867758))
+
+
+### Bug Fixes
+
+* **tui:** enforce the one-word contract on every containment path ([bb9b225](https://github.com/buchenberg/yaah/commit/bb9b22558a1c5c2c4a9f4932f3198cf61e32cbec))
+
 ## [0.143.3](https://github.com/buchenberg/yaah/compare/v0.143.2...v0.143.3) (2026-11-06)
 
 
