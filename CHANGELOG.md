@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.143.1](https://github.com/buchenberg/yaah/compare/v0.143.0...v0.143.1) (2026-11-06)
+
+
+### Code Refactoring
+
+* **tools:** move workspace/path-validator port into substrate (yaah-5d85, slice 2/3) ([126a7de](https://github.com/buchenberg/yaah/commit/126a7de576d47ab571c8a81da461fe4a250bbec9))
+* **tools:** move workspace/path-validator port into substrate (yaah-5d85, slice 2/3) ([4a03476](https://github.com/buchenberg/yaah/commit/4a034761b253c4586f3da2795dfac10e3fcef932))
+
+
+### Documentation
+
+* **plans:** add modularization wave 2 plan (yaah-5d85) ([e4e30ad](https://github.com/buchenberg/yaah/commit/e4e30ade16416ebcacd359d05fc4dc80f2a75ba0))
+
 ## [0.143.0](https://github.com/buchenberg/yaah/compare/v0.142.0...v0.143.0) (2026-11-06)
 
 
