@@ -298,6 +298,19 @@ func checkEmbedderAtStartup(e memory.Embedder, cfg *config.Config) bool {
 	}
 }
 
+// ensureVectorIndexAtStartup reconciles the vec0 vector index against the
+// configured embedder's width, bounded so a cold or slow embedder cannot
+// block startup past the sync-probe window. Best-effort: a failure here only
+// means vector search falls back to the brute-force scan until the write/
+// reconcile paths create the index lazily.
+func ensureVectorIndexAtStartup(db *memory.DB) {
+	ctx, cancel := context.WithTimeout(context.Background(), embedProbeSyncWait)
+	defer cancel()
+	if _, err := db.EnsureVectorIndex(ctx); err != nil {
+		slog.Warn("memory: vector index ensure failed", "err", err)
+	}
+}
+
 // probeFailureLabel classifies a probe failure so the warning never calls an
 // auth error, a 404, or a slow-but-alive server "unreachable" (ka6 review).
 func probeFailureLabel(e memory.Embedder, err error) string {

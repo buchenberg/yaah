@@ -992,8 +992,8 @@ runs, not the record they share.
 ## Semantic memory search
 
 Files: `internal/memory/vector.go`, `internal/memory/memory_vector.go`,
-`internal/memory/memory_search.go`, `internal/memory/message_repo.go`,
-`internal/tools/memory.go`
+`internal/memory/memory_search.go`, `internal/memory/vec.go`,
+`internal/memory/message_repo.go`, `internal/tools/memory.go`
 
 yaah optionally stores vector embeddings alongside memory entries and session
 messages, enabling semantic search via cosine similarity. The system works in
@@ -1020,6 +1020,12 @@ column. Embeddings are serialized as little-endian
 float32 arrays. At startup, `ReconcileEmbeddings` backfills entries that
 were created before the embedding provider was configured.
 
+The `memory.embedding` BLOB is mirrored into a `memory_vec` `vec0` virtual
+table (the bundled `sqlite-vec` extension, CGo-free) that serves the
+nearest-neighbour search. The BLOB stays the source of truth; `vec0` is a
+derived index that is built lazily and recreated when the embedding width
+changes (a model swap).
+
 ### 3. Embed-on-save
 
 - **memory**: `MemoryAddTool.Execute` calls `AddMemoryDedup`, then
@@ -1034,11 +1040,18 @@ were created before the embedding provider was configured.
 
 ### 4. Search (`SearchMemoryVector` / `SearchMessagesVector`)
 
-1. Embed the query via `d.Embedder().Embed(ctx, query)`
-2. Scan all rows with non-null `embedding`
-3. Compute `CosineSimilarity` between the query embedding and each stored
-   embedding (brute-force scan)
-4. Sort descending by score, return top-K
+`SearchMemoryVector` embeds the query (`EmbedQuery`, applying the query-side
+prefix for nomic-style models) and runs a `vec0` nearest-neighbour query over
+`memory_vec`, joining back to `memory` for the entry fields. `vec0`'s cosine
+distance equals `1 - CosineSimilarity`, so the score is inverted to match.
+`scope` and `superseded_by` are `vec0` metadata columns, so the KNN `k` counts
+only rows matching those predicates. When `memory_vec` has not been created
+yet (the embedder only became reachable after startup), the path falls back to
+the pre-index brute-force scan: scan all non-null `embedding` rows and compute
+`CosineSimilarity` in Go.
+
+`SearchMessagesVector` still uses the brute-force scan over `messages.embedding`
+(a `messages_vec` index is a follow-up).
 
 ### 5. Tool dispatch
 
@@ -1081,8 +1094,10 @@ func CosineSimilarity(a, b []float32) float32 {
 }
 ```
 
-With a 768-dimension embedding (nomic-embed-text) and hundreds of entries,
-a full scan completes in under a millisecond — no ANN index needed.
+`vec0` stores vectors as little-endian float32 BLOBs — the same encoding as the
+`embedding` column — and applies its cosine metric over the indexed set. The
+brute-force scan remains as the fallback for the pre-index window and for
+stores too small to need the index.
 
 ## Hook events
 

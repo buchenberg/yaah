@@ -92,6 +92,10 @@ func (d *DB) EmbedMemoryAsync(id, text string) <-chan struct{} {
 		}
 		if _, err := d.sql.Exec(`UPDATE memory SET embedding = ? WHERE id = ?`, EncodeEmbedding(emb), id); err != nil {
 			slog.Warn("memory: store embedding failed", "op", "embed_memory", "id", id, "err", err)
+			return
+		}
+		if err := d.mirrorVec(id, emb); err != nil {
+			slog.Warn("memory: mirror vec0 failed", "op", "embed_memory", "id", id, "err", err)
 		}
 	}()
 	return done
@@ -159,14 +163,20 @@ var ErrMemoryNotFound = errors.New("memory not found")
 // tools surfaced, and a silent no-op delete let truncated IDs report
 // "deleted" while the row — and its duplicates — accumulated (#328).
 func (d *DB) DeleteMemory(id string) error {
-	result, err := d.sql.Exec(`DELETE FROM memory WHERE id = ?`, id)
+	var rowid int64
+	err := d.sql.QueryRow(`SELECT rowid FROM memory WHERE id = ?`, id).Scan(&rowid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: %s", ErrMemoryNotFound, id)
+	}
 	if err != nil {
 		return err
 	}
-	n, _ := result.RowsAffected()
-	if n == 0 {
-		return fmt.Errorf("%w: %s", ErrMemoryNotFound, id)
+	if _, err := d.sql.Exec(`DELETE FROM memory WHERE id = ?`, id); err != nil {
+		return err
 	}
+	// Remove the vec0 row too: a lingering row would attach to whatever
+	// memory row later reuses this rowid, surfacing a stale vector.
+	d.deleteVecByRowID(rowid)
 	return nil
 }
 

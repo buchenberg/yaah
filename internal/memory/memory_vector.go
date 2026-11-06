@@ -99,6 +99,9 @@ func (d *DB) ReembedStaleEmbeddings(ctx context.Context) (int, error) {
 			slog.Warn("memory: store embedding failed", "op", "reembed_stale", "id", r.id, "err", err)
 			continue
 		}
+		if err := d.mirrorVec(r.id, emb); err != nil {
+			slog.Warn("memory: mirror vec0 failed", "op", "reembed_stale", "id", r.id, "err", err)
+		}
 		reembedded++
 	}
 	return reembedded, nil
@@ -152,6 +155,36 @@ func (d *DB) SearchMemoryVectorScopedDiag(ctx context.Context, query string, lim
 		return nil, &embedError{err: err}
 	}
 
+	// Indexed path when the vec0 table exists, brute-force scan otherwise
+	// (the index is created lazily, so an embedder that only became
+	// reachable after startup still serves the scan path).
+	var results []VectorResult
+	if d.vecIndexPresent() {
+		results, err = d.searchVecIndex(ctx, qEmb, limit, scope)
+	} else {
+		results, err = d.searchVectorScan(ctx, qEmb, query, limit, scope)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().Unix()
+	ids := make([]string, len(results))
+	for i := range results {
+		results[i].AccessCount++
+		results[i].AccessedAt = now
+		ids[i] = results[i].ID
+	}
+	d.bumpAccessCountIDs(ids, now)
+
+	return results, nil
+}
+
+// searchVectorScan is the pre-vec0 brute-force path: it scans every row with
+// a non-null embedding and scores by cosine similarity in Go, degrading
+// stale-width rows to keyword overlap (yaah-shq). Kept as the fallback when
+// the vec0 index has not been created yet.
+func (d *DB) searchVectorScan(ctx context.Context, qEmb Embedding, query string, limit int, scope string) ([]VectorResult, error) {
 	vecSQL := `
 		SELECT id, text, tags, source, scope, created_at, COALESCE(accessed_at, 0), access_count, COALESCE(embedding, '')
 		FROM memory
@@ -161,7 +194,7 @@ func (d *DB) SearchMemoryVectorScopedDiag(ctx context.Context, query string, lim
 		vecSQL += ` AND scope = ?`
 		vecArgs = append(vecArgs, scope)
 	}
-	rows, err := d.sql.Query(vecSQL, vecArgs...)
+	rows, err := d.sql.QueryContext(ctx, vecSQL, vecArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -262,15 +295,6 @@ func (d *DB) SearchMemoryVectorScopedDiag(ctx context.Context, query string, lim
 		results = append(results, keywordResults...)
 	}
 
-	now := time.Now().Unix()
-	ids := make([]string, len(results))
-	for i := range results {
-		results[i].AccessCount++
-		results[i].AccessedAt = now
-		ids[i] = results[i].ID
-	}
-	d.bumpAccessCountIDs(ids, now)
-
 	return results, nil
 }
 
@@ -338,6 +362,9 @@ func (d *DB) ReconcileEmbeddings(ctx context.Context) (int, error) {
 		if _, err := d.sql.Exec(`UPDATE memory SET embedding = ? WHERE id = ?`, EncodeEmbedding(emb), r.id); err != nil {
 			slog.Warn("memory: store embedding failed", "op", "reconcile_embeddings", "id", r.id, "err", err)
 			continue
+		}
+		if err := d.mirrorVec(r.id, emb); err != nil {
+			slog.Warn("memory: mirror vec0 failed", "op", "reconcile_embeddings", "id", r.id, "err", err)
 		}
 		updated++
 	}

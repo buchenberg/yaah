@@ -359,6 +359,10 @@ func buildToolRegistry(cfg *config.Config, opts SessionOptions, ws *workspaceSta
 		// silently. It never refuses the session.
 		if st.embedderAttached {
 			checkEmbedderAtStartup(db.Embedder(), cfg)
+			// Reconcile the vec0 vector index against the embedder's width so
+			// a model swap recreates the table before the first search; the
+			// write/reconcile paths retry lazily if this is still unreachable.
+			ensureVectorIndexAtStartup(db)
 		}
 	}
 
