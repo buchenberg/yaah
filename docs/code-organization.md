@@ -53,6 +53,7 @@ yaah/
 │   ├── repl/                   # REPL history and slash commands
 │   ├── retention/              # kernel-first session eviction + GC sweep
 │   ├── rolefile/               # role frontmatter parsing/validation
+│   ├── runs/                   # protocol-neutral run/task record (task-style surfaces)
 │   ├── sandboxfake/            # in-memory sandbox test double
 │   ├── sessions/               # engine-level session registry
 │   ├── skills/                 # SKILL.md discovery/parsing
