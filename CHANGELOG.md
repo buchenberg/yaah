@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.143.0](https://github.com/buchenberg/yaah/compare/v0.142.0...v0.143.0) (2026-11-06)
+
+
+### Features
+
+* **roles:** grant PR [#802](https://github.com/buchenberg/yaah/issues/802) file-tool cluster to developer roles ([e99dd96](https://github.com/buchenberg/yaah/commit/e99dd96c7037d699516d636d9c8d51600290418c))
+* **roles:** grant PR [#802](https://github.com/buchenberg/yaah/issues/802) file-tool cluster to developer roles ([afbebf0](https://github.com/buchenberg/yaah/commit/afbebf0d415c51f055501c8c5a95ae48eb09681e))
+
 ## [0.142.0](https://github.com/buchenberg/yaah/compare/v0.141.1...v0.142.0) (2026-11-06)
 
 
