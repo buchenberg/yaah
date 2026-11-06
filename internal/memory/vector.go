@@ -24,15 +24,17 @@ type Embedder interface {
 // QueryEmbedder is an optional interface for embedders that treat query
 // text differently from document text (e.g. nomic-style search_query:/
 // search_document: prefixes). Callers embedding a search query should use
-// embedQuery, which falls back to Embed for plain embedders.
+// EmbedQuery, which falls back to Embed for plain embedders.
 type QueryEmbedder interface {
 	Embedder
 	EmbedQuery(ctx context.Context, text string) (Embedding, error)
 }
 
-// embedQuery embeds search/query text with the embedder's query-side
-// treatment when it has one, falling back to Embed otherwise.
-func embedQuery(ctx context.Context, e Embedder, text string) (Embedding, error) {
+// EmbedQuery embeds search/query text with the embedder's query-side
+// treatment when it has one, falling back to Embed otherwise. Callers
+// outside this package (e.g. skill search) use it to embed a query without
+// reaching for Embed, which carries the document-side prefix.
+func EmbedQuery(ctx context.Context, e Embedder, text string) (Embedding, error) {
 	if q, ok := e.(QueryEmbedder); ok {
 		return q.EmbedQuery(ctx, text)
 	}
@@ -55,6 +57,12 @@ type HTTPEmbedder struct {
 	// Client is the HTTP client used. When nil, a default client with a
 	// 30-second timeout is used.
 	Client *http.Client
+	// QueryPrefix and DocumentPrefix are optional asymmetric prefixes
+	// applied to search-query and document text respectively (nomic-style
+	// "search_query: " / "search_document: "). Empty means no prefix
+	// (symmetric models), matching the previous behavior.
+	QueryPrefix    string
+	DocumentPrefix string
 }
 
 // DefaultEmbeddingTimeout is the HTTP request timeout used when Client is nil.
@@ -96,9 +104,23 @@ func (e *HTTPEmbedder) url(path string) string {
 	return base + path
 }
 
-// Embed calls POST /v1/embeddings with the given text and returns the
-// float32 embedding vector from the first data element.
+// Embed embeds document text, applying DocumentPrefix when set. It calls
+// POST /v1/embeddings and returns the float32 embedding vector from the
+// first data element.
 func (e *HTTPEmbedder) Embed(ctx context.Context, text string) (Embedding, error) {
+	return e.embed(ctx, e.DocumentPrefix+text)
+}
+
+// EmbedQuery embeds search-query text, applying QueryPrefix when set. It
+// satisfies QueryEmbedder, so search paths prefer it over Embed for
+// nomic-style asymmetric prefixes.
+func (e *HTTPEmbedder) EmbedQuery(ctx context.Context, text string) (Embedding, error) {
+	return e.embed(ctx, e.QueryPrefix+text)
+}
+
+// embed POSTs /v1/embeddings with the given (already-prefixed) text and
+// returns the float32 embedding vector from the first data element.
+func (e *HTTPEmbedder) embed(ctx context.Context, text string) (Embedding, error) {
 	body := struct {
 		Model string `json:"model"`
 		Input string `json:"input"`

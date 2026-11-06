@@ -23,8 +23,10 @@ func TestEmbedderFor_fieldMapping(t *testing.T) {
 			},
 		},
 		Embedding: config.EmbeddingConfig{
-			Provider: "lmstudio",
-			Model:    "nomic-embed-text",
+			Provider:       "lmstudio",
+			Model:          "nomic-embed-text",
+			QueryPrefix:    "search_query: ",
+			DocumentPrefix: "search_document: ",
 		},
 	}
 
@@ -44,6 +46,9 @@ func TestEmbedderFor_fieldMapping(t *testing.T) {
 	}
 	if h.Model != "nomic-embed-text" {
 		t.Errorf("Model = %q; want nomic-embed-text (model/api-key swap regression)", h.Model)
+	}
+	if h.QueryPrefix != "search_query: " || h.DocumentPrefix != "search_document: " {
+		t.Errorf("prefixes = %q/%q, want the configured nomic prefixes (http path must carry them too)", h.QueryPrefix, h.DocumentPrefix)
 	}
 }
 

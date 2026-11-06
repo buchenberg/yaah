@@ -182,7 +182,12 @@ func embedderFor(cfg *config.Config) (memory.Embedder, bool) {
 	// providers; the embedder path must too or literal placeholders
 	// reach the endpoint.
 	p := config.Resolve(cfg.Providers[cfg.Embedding.Provider])
-	return memory.NewEmbedder(p.BaseURL, p.APIKey, cfg.Embedding.Model, nil), true
+	e := memory.NewEmbedder(p.BaseURL, p.APIKey, cfg.Embedding.Model, nil)
+	// nomic-style asymmetric prefixes apply on the http path too, so the
+	// crash-prone in-process gguf backend is no longer required to get them.
+	e.QueryPrefix = cfg.Embedding.QueryPrefix
+	e.DocumentPrefix = cfg.Embedding.DocumentPrefix
+	return e, true
 }
 
 // warnEmbedderDisabled diagnoses a disabled embedder on stderr. Silent

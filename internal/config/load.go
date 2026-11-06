@@ -502,8 +502,9 @@ type EmbeddingConfig struct {
 	LibPath string `yaml:"lib_path"`
 
 	// QueryPrefix and DocumentPrefix are the asymmetric prefixes applied
-	// by the gguf backend for nomic-style models:
-	// "search_query: " and "search_document: ". Empty for symmetric models.
+	// for nomic-style models: "search_query: " and "search_document: ".
+	// Applied by both the gguf and http backends. Empty for symmetric
+	// models.
 	QueryPrefix    string `yaml:"query_prefix"`
 	DocumentPrefix string `yaml:"document_prefix"`
 }
