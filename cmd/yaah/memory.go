@@ -36,7 +36,6 @@ with single spaces. Use '--' when the query itself begins with a dash:
 	Example: "  yaah memory search workspace sandbox policy\n  yaah memory search -- --strict handling",
 	Args:    cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		query := strings.Join(args, " ")
 		db, err := memory.OpenDefault()
 		if err != nil {
 			return fmt.Errorf("open database: %w", err)
@@ -44,65 +43,101 @@ with single spaces. Use '--' when the query itself begins with a dash:
 		defer db.Close()
 		initDBEmbedder(db)
 
-		// The CLI is the inspection view: it spans every tier unless asked to
-		// narrow. The agent tool defaults to global for a different reason —
-		// an unwidened recall there must not pull in another session's
-		// working context.
-		scope, err := memory.NormalizeScopeFilter(cliScopeFlag(cmd))
-		if err != nil {
-			return err
-		}
+		return searchMemoryCLI(cmd, db, strings.Join(args, " "))
+	},
+}
 
-		// Try vector search first, fall back to FTS5. Name the path so a
-		// degraded semantic recall is distinguishable from a true miss
-		// (yaah-17s); the label formatter is shared with the agent tool so the
-		// two front-ends cannot drift.
-		hasEmbedder := db.Embedder() != nil
-		attemptVector := query != "" && hasEmbedder
-		var vecResults []memory.VectorResult
-		var vecErr error
-		if attemptVector {
-			vecResults, vecErr = db.SearchMemoryVectorScopedDiag(cmd.Context(), query, 10, scope)
-			if vecErr == nil && len(vecResults) > 0 {
-				cmd.Printf("%s\nFound %d result(s):\n\n", tools.RetrievalSemantic, len(vecResults))
-				for _, r := range vecResults {
-					cmd.Printf("  %s  (score: %.2f)\n", Bold(r.Text), r.Score)
-					cmd.Printf("        id: %s\n", Dim(r.ID))
-					if r.Tags != "" && r.Tags != "null" {
-						cmd.Printf("        tags: %s\n", Dim(r.Tags))
-					}
-					cmd.Printf("        %s\n", Dim(fmt.Sprintf("source: %s | scope: %s | created: %s", r.Source, r.Scope,
-						time.Unix(r.CreatedAt, 0).Format("2006-01-02 15:04"))))
+// searchMemoryCLI renders one `yaah memory search` page against db. Split out of
+// the cobra RunE so every output path can be pinned without a configured
+// embedder: the CLI is the inspection view, and a dropped dimension note is
+// invisible exactly when the vector path found nothing (PR #824 review).
+func searchMemoryCLI(cmd *cobra.Command, db *memory.DB, query string) error {
+	// The CLI is the inspection view: it spans every tier unless asked to
+	// narrow. The agent tool defaults to global for a different reason —
+	// an unwidened recall there must not pull in another session's
+	// working context.
+	scope, err := memory.NormalizeScopeFilter(cliScopeFlag(cmd))
+	if err != nil {
+		return err
+	}
+
+	// Try vector search first, fall back to FTS5. Name the path so a
+	// degraded semantic recall is distinguishable from a true miss
+	// (yaah-17s); the label formatter is shared with the agent tool so the
+	// two front-ends cannot drift.
+	hasEmbedder := db.Embedder() != nil
+	attemptVector := query != "" && hasEmbedder
+	var vecResults []memory.VectorResult
+	var vecErr error
+	var report memory.VectorSearchReport
+	// note names the rows a vector search could not compare at their stored
+	// embedding width. It is computed before the page-size branch because every
+	// path below can carry that omission: a store whose only stale rows share no
+	// word with the query yields zero vector hits, falls through to keyword
+	// search, and would report a plain miss — the exact silent omission the note
+	// exists to fix. This mirrors internal/tools/memory.go (shq review).
+	var note string
+	if attemptVector {
+		report, vecErr = db.SearchMemoryVectorScopedReport(cmd.Context(), query, 10, scope)
+		vecResults = report.Hits
+		note = tools.DimMismatchNote(report)
+		if vecErr == nil && len(vecResults) > 0 {
+			// Rows a previous embedding model left at another width come
+			// back keyword-scored, so the path label and the closing note
+			// have to say so (yaah-shq).
+			cmd.Printf("%s\nFound %d result(s):\n\n", tools.VectorPageLabel(vecResults), len(vecResults))
+			for _, r := range vecResults {
+				cmd.Printf("  %s  (score: %.2f)\n", Bold(r.Text), r.Score)
+				cmd.Printf("        id: %s\n", Dim(r.ID))
+				if r.Tags != "" && r.Tags != "null" {
+					cmd.Printf("        tags: %s\n", Dim(r.Tags))
 				}
-				return nil
+				cmd.Printf("        %s\n", Dim(fmt.Sprintf("source: %s | scope: %s | created: %s", r.Source, r.Scope,
+					time.Unix(r.CreatedAt, 0).Format("2006-01-02 15:04"))))
 			}
-		}
-
-		// Print the path before the keyword call so a store error still carries
-		// the degradation reason that led here.
-		cmd.Printf("%s\n", tools.RetrievalLabel(query, "", hasEmbedder, vecErr, len(vecResults)))
-		results, err := db.SearchMemoryScoped(query, 10, "", scope)
-		if err != nil {
-			return fmt.Errorf("search: %w", err)
-		}
-
-		if len(results) == 0 {
-			cmd.Println("No matching memories found.")
+			printDimNote(cmd, note)
 			return nil
 		}
+	}
 
-		cmd.Printf("Found %d result(s):\n\n", len(results))
-		for _, r := range results {
-			cmd.Printf("  %s\n", Bold(r.Text))
-			cmd.Printf("        id: %s\n", Dim(r.ID))
-			if r.Tags != "" && r.Tags != "null" {
-				cmd.Printf("        tags: %s\n", Dim(r.Tags))
-			}
-			cmd.Printf("        %s\n", Dim(fmt.Sprintf("source: %s | scope: %s | created: %s", r.Source, r.Scope,
-				time.Unix(r.CreatedAt, 0).Format("2006-01-02 15:04"))))
-		}
+	// Print the path before the keyword call so a store error still carries
+	// the degradation reason that led here.
+	cmd.Printf("%s\n", tools.RetrievalLabel(query, "", hasEmbedder, vecErr, len(vecResults)))
+	results, err := db.SearchMemoryScoped(query, 10, "", scope)
+	if err != nil {
+		return fmt.Errorf("search: %w", err)
+	}
+
+	if len(results) == 0 {
+		cmd.Println("No matching memories found.")
+		printDimNote(cmd, note)
 		return nil
-	},
+	}
+
+	cmd.Printf("Found %d result(s):\n\n", len(results))
+	for _, r := range results {
+		cmd.Printf("  %s\n", Bold(r.Text))
+		cmd.Printf("        id: %s\n", Dim(r.ID))
+		if r.Tags != "" && r.Tags != "null" {
+			cmd.Printf("        tags: %s\n", Dim(r.Tags))
+		}
+		cmd.Printf("        %s\n", Dim(fmt.Sprintf("source: %s | scope: %s | created: %s", r.Source, r.Scope,
+			time.Unix(r.CreatedAt, 0).Format("2006-01-02 15:04"))))
+	}
+	printDimNote(cmd, note)
+	return nil
+}
+
+// printDimNote writes the stale-width note as the page's closing line. Every
+// path calls it — the vector page, the keyword fall-through and the empty
+// result — because all three can be missing rows the vector path could not
+// compare, and dropping the note turns that omission back into a silent one
+// (PR #824 review).
+func printDimNote(cmd *cobra.Command, note string) {
+	if note == "" {
+		return
+	}
+	cmd.Printf("\n%s\n", note)
 }
 
 // memoryAddCmd adds a memory entry.

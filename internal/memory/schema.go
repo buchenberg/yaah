@@ -203,10 +203,10 @@ type DB struct {
 	embMu     sync.Mutex
 	embedWarn embedWarnLimiter
 	// dimWarn rate-limits the stale-dimensionality warning (yaah-shq): a
-	// store left behind by a previous embedding model warns once per
-	// interval instead of on every search, because the condition repeats
+	// store left behind by a previous embedding model warns once per width
+	// per interval instead of on every search, because the condition repeats
 	// until the rows are re-embedded.
-	dimWarn embedWarnLimiter
+	dimWarn dimWarnLimiter
 	// embeds tracks in-flight background embedding writes so Close can
 	// drain them before the SQL pool is closed.
 	embeds pendingEmbeds

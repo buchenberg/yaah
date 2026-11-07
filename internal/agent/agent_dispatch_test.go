@@ -1,9 +1,11 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -374,4 +376,133 @@ func TestDispatch_BufferedHeartbeatAtDeadlineIsNotStartup(t *testing.T) {
 	if errors.Is(verdict, tools.ErrDispatchStartup) {
 		t.Fatalf("an in-flight heartbeat was read as zero heartbeats: %v", verdict)
 	}
+}
+
+// --- Quality-gate slot accounting (yaah-eyh) ---
+
+// gateDelegateStub stands in for the delegate tool the gate path executes: it
+// records the dispatch and returns a PASS verdict.
+type gateDelegateStub struct{ calls int }
+
+func (g *gateDelegateStub) Name() string            { return "delegate" }
+func (g *gateDelegateStub) Description() string     { return "gate delegate stub" }
+func (g *gateDelegateStub) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+
+func (g *gateDelegateStub) Execute(context.Context, string) (string, error) {
+	g.calls++
+	return "PASS", nil
+}
+
+// gateLoop builds a loop whose delegate tool is the stub and whose sub-agent
+// cap is one: the geometry where a blocking gate acquire deadlocks, because
+// the parent dispatch already holds the only slot.
+func gateLoop(t *testing.T) (*Loop, *gateDelegateStub) {
+	t.Helper()
+	reg := tools.NewEmptyRegistry()
+	stub := &gateDelegateStub{}
+	reg.Register(stub)
+	l := NewLoop(nil, reg, WithSubAgentConcurrency(1, 0, nil))
+	l.subAgentSem = make(chan struct{}, 1)
+	return l, stub
+}
+
+// captureSlogWarnings redirects the default logger for the duration of the
+// test and returns a function yielding everything logged at warn or above.
+func captureSlogWarnings(t *testing.T) func() string {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return func() string { return buf.String() }
+}
+
+// A gate dispatches while the parent sub-agent dispatch still holds the only
+// slot. A blocking acquire would deadlock there, so the gate takes the
+// unslotted branch — but it must still complete, and the overrun must be
+// counted rather than silently swallowed (yaah-eyh).
+func TestGateDispatch_SingleSlotDoesNotDeadlock(t *testing.T) {
+	l, stub := gateLoop(t)
+	l.subAgentSem <- struct{}{} // the parent dispatch holds the only slot
+	defer func() { <-l.subAgentSem }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := l.runGateDispatch(ctx, "validator", "validate this")
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("gate dispatch: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("gate dispatch blocked while the parent held the only slot — the non-blocking acquire is gone")
+	}
+	if stub.calls != 1 {
+		t.Fatalf("validator dispatched %d time(s), want 1", stub.calls)
+	}
+	if got := l.UnslottedGateDispatches(); got != 1 {
+		t.Errorf("unslotted gate dispatches = %d, want 1", got)
+	}
+	// The parent's slot is untouched: the gate never took one.
+	if len(l.subAgentSem) != 1 {
+		t.Errorf("sub-agent slots in use = %d, want 1 (the gate must not take the parent's slot)", len(l.subAgentSem))
+	}
+}
+
+// The unslotted run is surfaced, not silent: the warning names the validator,
+// the cap, and the running total, and the count is available to any run
+// summary. A gate that does get a slot reports nothing (yaah-eyh).
+func TestGateDispatch_UnslottedDispatchIsReported(t *testing.T) {
+	t.Run("unslotted dispatch warns and counts", func(t *testing.T) {
+		l, stub := gateLoop(t)
+		l.subAgentSem <- struct{}{} // full: the gate must go unslotted
+		logs := captureSlogWarnings(t)
+
+		if _, err := l.runGateDispatch(context.Background(), "validator", "validate this"); err != nil {
+			t.Fatalf("gate dispatch: %v", err)
+		}
+		if stub.calls != 1 {
+			t.Fatalf("validator dispatched %d time(s), want 1", stub.calls)
+		}
+		if got := l.UnslottedGateDispatches(); got != 1 {
+			t.Fatalf("unslotted gate dispatches = %d, want 1", got)
+		}
+		out := logs()
+		for _, want := range []string{
+			"without a sub-agent slot",
+			"validator=validator",
+			"max_concurrency=1",
+			"unslotted_total=1",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("warning log missing %q; got:\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("slotted dispatch is silent and releases its slot", func(t *testing.T) {
+		l, stub := gateLoop(t) // a slot is free: the gate takes it
+		logs := captureSlogWarnings(t)
+
+		if _, err := l.runGateDispatch(context.Background(), "validator", "validate this"); err != nil {
+			t.Fatalf("gate dispatch: %v", err)
+		}
+		if stub.calls != 1 {
+			t.Fatalf("validator dispatched %d time(s), want 1", stub.calls)
+		}
+		if got := l.UnslottedGateDispatches(); got != 0 {
+			t.Errorf("unslotted gate dispatches = %d, want 0 when a slot was free", got)
+		}
+		if out := logs(); strings.Contains(out, "without a sub-agent slot") {
+			t.Errorf("a slotted gate must not warn; got:\n%s", out)
+		}
+		if len(l.subAgentSem) != 0 {
+			t.Errorf("sub-agent slots still held = %d, want 0", len(l.subAgentSem))
+		}
+	})
 }

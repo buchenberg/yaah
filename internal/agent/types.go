@@ -169,6 +169,16 @@ type Loop struct {
 	toolConcurrency *pipeline.ToolConcurrencyMiddleware
 	subAgentSem     chan struct{}
 
+	// unslottedGates counts quality-gate validator dispatches that ran
+	// without taking a sub-agent slot. The gate path acquires the
+	// semaphore non-blockingly — a blocking acquire deadlocks at
+	// MaxSubAgentConcurrency == 1, where the parent dispatch already
+	// holds the only slot — so a validator can run outside the configured
+	// cap. That trade (correctness over efficiency) is kept; the count
+	// makes the oversubscription observable instead of invisible
+	// (yaah-eyh).
+	unslottedGates atomic.Int64
+
 	toolDefsCache []types.ToolDef
 	toolDefsGen   int
 

@@ -10,11 +10,42 @@ import (
 	"time"
 )
 
-// VectorResult is a memory entry with its cosine similarity score.
+// VectorResult is a memory entry with its similarity score. A hit whose stored
+// embedding could not be compared with the query vector — a previous embedding
+// model wrote it at a different width — is marked Keyword and carries a
+// keyword-overlap score instead of a cosine one (yaah-shq).
 type VectorResult struct {
 	Entry
 	Score float32
+	// Keyword marks a keyword-fallback hit: the row's stored embedding cannot be
+	// compared with the current model's query vector, so it is ranked by word
+	// overlap rather than dropped from the page.
+	Keyword bool
 }
+
+// VectorSearchReport is one vector search: the ranked page plus the counts that
+// let a caller tell a degraded recall from a true miss (yaah-shq). A row left
+// at a previous embedding model's width is incomparable to the current query
+// vector, so it is counted here (and keyword-scored) instead of vanishing
+// without a signal.
+type VectorSearchReport struct {
+	// Hits is the result page: vector-scored rows first (descending cosine
+	// similarity), then the keyword-scored rows the vector path could not
+	// compare.
+	Hits []VectorResult
+	// DimMismatch counts the in-scope, live rows whose stored embedding width
+	// differs from the current model's query vector. Each one is keyword-scored;
+	// none is re-embedded here.
+	DimMismatch int
+	// DimMismatchByDim maps a stored embedding width to its row count, so a
+	// store holding rows from several past models reports every width.
+	DimMismatchByDim map[int]int
+}
+
+// HasDimMismatch reports whether any in-scope row was left at a previous
+// embedding model's width. A caller that shows results uses it to name the
+// omission rather than presenting keyword fallback as semantic recall.
+func (r VectorSearchReport) HasDimMismatch() bool { return r.DimMismatch > 0 }
 
 // embedError reports that the vector path could not embed its query. It is
 // unexported so only this package can construct one: callers classify with
@@ -145,6 +176,12 @@ func (d *DB) SearchMemoryVector(ctx context.Context, query string, limit int) ([
 	return d.SearchMemoryVectorScoped(ctx, query, limit, ScopeAll)
 }
 
+// SearchMemoryVectorReport is SearchMemoryVector with the dimension-mismatch
+// diagnostics attached (yaah-shq).
+func (d *DB) SearchMemoryVectorReport(ctx context.Context, query string, limit int) (VectorSearchReport, error) {
+	return d.SearchMemoryVectorScopedReport(ctx, query, limit, ScopeAll)
+}
+
 // SearchMemoryVectorScoped is SearchMemoryVector with an explicit scope (tier)
 // filter. scope must name a tier: ScopeGlobal, ScopeSession, or ScopeAll.
 //
@@ -167,56 +204,212 @@ func (d *DB) SearchMemoryVectorScoped(ctx context.Context, query string, limit i
 // A nil embedder is not an error — it reports (nil, nil) — so a caller that
 // must name that state checks Embedder() first.
 func (d *DB) SearchMemoryVectorScopedDiag(ctx context.Context, query string, limit int, scope string) ([]VectorResult, error) {
-	scope, err := NormalizeScopeFilter(scope)
+	report, err := d.SearchMemoryVectorScopedReport(ctx, query, limit, scope)
 	if err != nil {
 		return nil, err
 	}
+	return report.Hits, nil
+}
+
+// SearchMemoryVectorScopedReport is the search the front-ends call: the ranked
+// page together with the count of rows the vector path could not compare
+// (yaah-shq). An embedding-model swap leaves earlier rows at the old width:
+// the vec0 index is recreated at the new width (so it holds none of them) and a
+// cosine score against the new query vector is meaningless. Those rows are
+// keyword-scored into the page and counted in the report — the omission is
+// never silent, and nothing is re-embedded here (no embedder round-trip beyond
+// the query itself).
+//
+// A nil embedder reports the zero report; an embed failure returns an
+// *embedError after recording it, exactly like the Diag form.
+func (d *DB) SearchMemoryVectorScopedReport(ctx context.Context, query string, limit int, scope string) (VectorSearchReport, error) {
+	scope, err := NormalizeScopeFilter(scope)
+	if err != nil {
+		return VectorSearchReport{}, err
+	}
 	embedder := d.Embedder()
 	if embedder == nil {
-		return nil, nil
+		return VectorSearchReport{}, nil
 	}
 	qEmb, err := EmbedQuery(ctx, embedder, query)
 	if err != nil {
 		d.recordEmbedFailure("search_memory_vector", err)
-		return nil, &embedError{err: err}
+		return VectorSearchReport{}, &embedError{err: err}
 	}
 
 	// Indexed path when the vec0 table exists, brute-force scan otherwise
 	// (the index is created lazily, so an embedder that only became
 	// reachable after startup still serves the scan path).
-	var results []VectorResult
+	var report VectorSearchReport
 	if d.vecIndexPresent() {
-		results, err = d.searchVecIndex(ctx, qEmb, limit, scope)
+		report, err = d.searchVecIndexReport(ctx, qEmb, query, limit, scope)
 		if err != nil {
 			// A stale index (wrong width after a model swap the startup
 			// reconcile could not fix, or any vec0 store error) degrades to
 			// the brute-force scan rather than failing the search.
-			results, err = d.searchVectorScan(ctx, qEmb, query, limit, scope)
+			report, err = d.searchVectorScan(ctx, qEmb, query, limit, scope)
 		}
 	} else {
-		results, err = d.searchVectorScan(ctx, qEmb, query, limit, scope)
+		report, err = d.searchVectorScan(ctx, qEmb, query, limit, scope)
 	}
 	if err != nil {
-		return nil, err
+		return VectorSearchReport{}, err
 	}
 
+	// One warning per stale width, rate-limited: the condition repeats on
+	// every search until the rows are re-embedded, so it must be visible
+	// without flooding the log.
+	d.publishStaleWidths(report.DimMismatchByDim, len(qEmb))
+
 	now := time.Now().Unix()
-	ids := make([]string, len(results))
-	for i := range results {
-		results[i].AccessCount++
-		results[i].AccessedAt = now
-		ids[i] = results[i].ID
+	ids := make([]string, len(report.Hits))
+	for i := range report.Hits {
+		report.Hits[i].AccessCount++
+		report.Hits[i].AccessedAt = now
+		ids[i] = report.Hits[i].ID
 	}
 	d.bumpAccessCountIDs(ids, now)
 
-	return results, nil
+	return report, nil
+}
+
+// publishStaleWidths surfaces the widths a store was left at by previous
+// embedding models, one warning per width, so the rows that fall back to
+// keyword scoring are visible instead of silently skipped (yaah-shq).
+func (d *DB) publishStaleWidths(byDim map[int]int, queryDim int) {
+	if len(byDim) == 0 {
+		return
+	}
+	dims := make([]int, 0, len(byDim))
+	for dim := range byDim {
+		dims = append(dims, dim)
+	}
+	sort.Ints(dims)
+	for _, dim := range dims {
+		d.warnEmbedDimMismatch(dim, queryDim, byDim[dim])
+	}
+}
+
+// staleWidths is the dimension-mismatch population of one search: the
+// keyword-scored rows it contributes and the count per stored width.
+type staleWidths struct {
+	rows  []VectorResult
+	count int
+	byDim map[int]int
+}
+
+// staleWidthRows selects the in-scope, live rows whose stored embedding was
+// written at a different width than qEmb and scores them by keyword overlap
+// with query. The vec0 path needs it because the index is recreated at the
+// current model's width, so no stale row is in it: without this query those
+// rows are unreachable from an indexed search (yaah-shq). skip names the ids
+// the vector path already returned, so a row that is both indexed and stale is
+// never listed twice. Counting is the point, so the query is not limited by the
+// page size.
+func (d *DB) staleWidthRows(ctx context.Context, qEmb Embedding, query string, scope string, skip []VectorResult) (staleWidths, error) {
+	staleSQL := `
+		SELECT id, text, tags, source, scope, created_at, COALESCE(accessed_at, 0), access_count, length(embedding)
+		FROM memory
+		WHERE embedding IS NOT NULL AND length(embedding) != ? AND superseded_by IS NULL`
+	args := []any{4 * len(qEmb)}
+	if scope != ScopeAll {
+		staleSQL += ` AND scope = ?`
+		args = append(args, scope)
+	}
+	rows, err := d.sql.QueryContext(ctx, staleSQL, args...)
+	if err != nil {
+		return staleWidths{}, err
+	}
+	defer rows.Close()
+
+	scored := make(map[string]bool, len(skip))
+	for _, r := range skip {
+		scored[r.ID] = true
+	}
+	tokens := keywordTokens(query)
+	out := staleWidths{byDim: map[int]int{}}
+	for rows.Next() {
+		var e Entry
+		var blobLen int
+		if err := rows.Scan(&e.ID, &e.Text, &e.Tags, &e.Source, &e.Scope, &e.CreatedAt, &e.AccessedAt, &e.AccessCount, &blobLen); err != nil {
+			return staleWidths{}, err
+		}
+		out.count++
+		out.byDim[blobLen/4]++
+		if scored[e.ID] {
+			continue
+		}
+		// A stale row that shares no word with the query stays out of the
+		// page; the count in the report is what keeps it from being
+		// invisible.
+		if score, ok := keywordScore(e.Text, tokens); ok {
+			out.rows = append(out.rows, VectorResult{Entry: e, Score: score, Keyword: true})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return staleWidths{}, err
+	}
+	sort.Slice(out.rows, func(i, j int) bool { return out.rows[i].Score > out.rows[j].Score })
+	return out, nil
+}
+
+// searchVecIndexReport runs the indexed KNN path and folds in the rows the
+// index cannot hold (yaah-shq).
+func (d *DB) searchVecIndexReport(ctx context.Context, qEmb Embedding, query string, limit int, scope string) (VectorSearchReport, error) {
+	hits, err := d.searchVecIndex(ctx, qEmb, limit, scope)
+	if err != nil {
+		return VectorSearchReport{}, err
+	}
+	stale, err := d.staleWidthRows(ctx, qEmb, query, scope, hits)
+	if err != nil {
+		return VectorSearchReport{}, err
+	}
+	return VectorSearchReport{
+		Hits:             mergeKeywordFallback(limit, hits, stale.rows),
+		DimMismatch:      stale.count,
+		DimMismatchByDim: stale.byDim,
+	}, nil
+}
+
+// mergeKeywordFallback concatenates the vector-ranked page with the
+// keyword-scored fallback rows. A cosine score and a keyword-overlap score are
+// not on the same scale, so the lists are concatenated rather than merged:
+// every vector hit outranks every fallback hit. But the limit must not silently
+// starve the fallback rows — the rows it recovers are the ones a model swap
+// would otherwise lose — so they reserve up to a third of the page. For
+// limit < 3 the vector-first order wins and the reported mismatch count is the
+// signal instead.
+func mergeKeywordFallback(limit int, vec, keyword []VectorResult) []VectorResult {
+	if len(keyword) == 0 {
+		return vec
+	}
+	if limit <= 0 || len(vec)+len(keyword) <= limit {
+		out := make([]VectorResult, 0, len(vec)+len(keyword))
+		out = append(out, vec...)
+		return append(out, keyword...)
+	}
+	reserve := limit / 3
+	if reserve > len(keyword) {
+		reserve = len(keyword)
+	}
+	vecKeep := limit - reserve
+	if vecKeep > len(vec) {
+		vecKeep = len(vec)
+	}
+	out := make([]VectorResult, 0, limit)
+	out = append(out, vec[:vecKeep]...)
+	kwTake := limit - len(out)
+	if kwTake > len(keyword) {
+		kwTake = len(keyword)
+	}
+	return append(out, keyword[:kwTake]...)
 }
 
 // searchVectorScan is the pre-vec0 brute-force path: it scans every row with
 // a non-null embedding and scores by cosine similarity in Go, degrading
 // stale-width rows to keyword overlap (yaah-shq). Kept as the fallback when
 // the vec0 index has not been created yet.
-func (d *DB) searchVectorScan(ctx context.Context, qEmb Embedding, query string, limit int, scope string) ([]VectorResult, error) {
+func (d *DB) searchVectorScan(ctx context.Context, qEmb Embedding, query string, limit int, scope string) (VectorSearchReport, error) {
 	vecSQL := `
 		SELECT id, text, tags, source, scope, created_at, COALESCE(accessed_at, 0), access_count, COALESCE(embedding, '')
 		FROM memory
@@ -228,7 +421,7 @@ func (d *DB) searchVectorScan(ctx context.Context, qEmb Embedding, query string,
 	}
 	rows, err := d.sql.QueryContext(ctx, vecSQL, vecArgs...)
 	if err != nil {
-		return nil, err
+		return VectorSearchReport{}, err
 	}
 	defer rows.Close()
 
@@ -241,12 +434,12 @@ func (d *DB) searchVectorScan(ctx context.Context, qEmb Embedding, query string,
 		var e Entry
 		var blob []byte
 		if err := rows.Scan(&e.ID, &e.Text, &e.Tags, &e.Source, &e.Scope, &e.CreatedAt, &e.AccessedAt, &e.AccessCount, &blob); err != nil {
-			return nil, err
+			return VectorSearchReport{}, err
 		}
 		candidates = append(candidates, candidate{e, blob})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return VectorSearchReport{}, err
 	}
 
 	// Rows embedded by a previous embedding model decode to a different
@@ -263,71 +456,40 @@ func (d *DB) searchVectorScan(ctx context.Context, qEmb Embedding, query string,
 	// models (384 and 512 and 768), and reporting only the first masked
 	// the others (m3pk/shq review).
 	staleByDim := map[int]int{}
+	mismatched := 0
 	for _, c := range candidates {
 		if len(c.blob) == 0 {
 			// An unembedded row is as findable as this search can make it:
 			// score it on words, like a stale-width row, instead of letting
 			// the vector path drop it silently (shq review).
 			if score, ok := keywordScore(c.e.Text, tokens); ok {
-				keywordResults = append(keywordResults, VectorResult{Entry: c.e, Score: score})
+				keywordResults = append(keywordResults, VectorResult{Entry: c.e, Score: score, Keyword: true})
 			}
 			continue
 		}
 		emb := DecodeEmbedding(c.blob)
 		if len(emb) != len(qEmb) {
+			mismatched++
 			staleByDim[len(emb)]++
 			if score, ok := keywordScore(c.e.Text, tokens); ok {
-				keywordResults = append(keywordResults, VectorResult{Entry: c.e, Score: score})
+				keywordResults = append(keywordResults, VectorResult{Entry: c.e, Score: score, Keyword: true})
 			}
 			continue
 		}
 		score := CosineSimilarity(qEmb, emb)
 		results = append(results, VectorResult{Entry: c.e, Score: score})
 	}
-	if len(staleByDim) > 0 {
-		dims := make([]int, 0, len(staleByDim))
-		for dim := range staleByDim {
-			dims = append(dims, dim)
-		}
-		sort.Ints(dims)
-		for _, dim := range dims {
-			d.warnEmbedDimMismatch(dim, len(qEmb), staleByDim[dim])
-		}
-	}
 
 	// Sort descending by score (sort.Slice — the hand-rolled bubble
 	// sort was O(n²) on every vector search, review A6).
 	sort.Slice(results, func(i, j int) bool { return results[i].Score > results[j].Score })
 	sort.Slice(keywordResults, func(i, j int) bool { return keywordResults[i].Score > keywordResults[j].Score })
-	// A cosine score and a keyword-overlap score are not on the same
-	// scale, so the two lists are concatenated rather than merged: every
-	// vector hit outranks every keyword-fallback hit. But the limit must
-	// not silently starve the fallback rows (shq review) — when stale rows
-	// exist they reserve up to a third of the limit, so a page full of
-	// comparable hits cannot hide them. For limit < 3 vector-first ordering
-	// is preserved; the dim-mismatch warning still names the hidden rows.
-	if limit > 0 && len(results)+len(keywordResults) > limit {
-		reserve := limit / 3
-		if reserve > len(keywordResults) {
-			reserve = len(keywordResults)
-		}
-		vecKeep := limit - reserve
-		if vecKeep > len(results) {
-			vecKeep = len(results)
-		}
-		out := make([]VectorResult, 0, limit)
-		out = append(out, results[:vecKeep]...)
-		kwTake := limit - len(out)
-		if kwTake > len(keywordResults) {
-			kwTake = len(keywordResults)
-		}
-		out = append(out, keywordResults[:kwTake]...)
-		results = out
-	} else {
-		results = append(results, keywordResults...)
-	}
 
-	return results, nil
+	return VectorSearchReport{
+		Hits:             mergeKeywordFallback(limit, results, keywordResults),
+		DimMismatch:      mismatched,
+		DimMismatchByDim: staleByDim,
+	}, nil
 }
 
 // bumpAccessCountIDs records one access for every id in a single

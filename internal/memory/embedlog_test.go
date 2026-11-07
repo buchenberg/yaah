@@ -140,3 +140,74 @@ func TestDB_RecordEmbedFailure_NoMetricsNoPanic(t *testing.T) {
 		t.Errorf("warning not surfaced: %q", out)
 	}
 }
+
+// TestDimWarnLimiter_BoundedWidths pins PR #824 review finding 2: stored widths
+// come from blob lengths, so a corrupted or foreign store can invent as many as
+// it likes. The per-width map must not grow with it, and the capped widths must
+// still be named rather than silenced.
+func TestDimWarnLimiter_BoundedWidths(t *testing.T) {
+	t.Run("many distinct widths leave a bounded map", func(t *testing.T) {
+		captureWarnLogs(t)
+
+		var l dimWarnLimiter
+		emitted := 0
+		for width := 300; width < 320; width++ {
+			if ok, _ := l.allow(width); ok {
+				emitted++
+			}
+		}
+
+		l.mu.Lock()
+		tracked, overflowed := len(l.byWidth), l.overflow != nil
+		l.mu.Unlock()
+
+		if tracked > dimWarnLimiterMaxWidths {
+			t.Errorf("tracked %d widths, want at most %d", tracked, dimWarnLimiterMaxWidths)
+		}
+		if tracked != dimWarnLimiterMaxWidths {
+			t.Errorf("tracked %d widths, want the cap %d", tracked, dimWarnLimiterMaxWidths)
+		}
+		if !overflowed {
+			t.Error("widths past the cap must share the overflow limiter")
+		}
+		// One warning per tracked width plus one for the shared overflow
+		// window: the capped widths are named, not dropped.
+		if want := dimWarnLimiterMaxWidths + 1; emitted != want {
+			t.Errorf("emitted %d warnings, want %d", emitted, want)
+		}
+	})
+
+	t.Run("an overflowed width warns once its window elapses", func(t *testing.T) {
+		captureWarnLogs(t)
+
+		var l dimWarnLimiter
+		for width := 0; width < dimWarnLimiterMaxWidths; width++ {
+			l.allow(width)
+		}
+		// Prime the overflow window without emitting, then drive its clock so
+		// the test does not wait out the real interval.
+		overflow := l.limiter(1000)
+		now := time.Unix(1_700_000_000, 0)
+		overflow.mu.Lock()
+		overflow.nowFn = func() time.Time { return now }
+		overflow.mu.Unlock()
+
+		if ok, _ := l.allow(1000); !ok {
+			t.Error("the first overflowed width must warn")
+		}
+		if ok, _ := l.allow(1001); ok {
+			t.Error("a second overflowed width must share the quiet window")
+		}
+		now = now.Add(embedWarnInterval + time.Second)
+		if ok, _ := l.allow(1002); !ok {
+			t.Error("an overflowed width must warn again after the window elapses")
+		}
+
+		l.mu.Lock()
+		tracked := len(l.byWidth)
+		l.mu.Unlock()
+		if tracked != dimWarnLimiterMaxWidths {
+			t.Errorf("tracked %d widths after overflow use, want the cap %d", tracked, dimWarnLimiterMaxWidths)
+		}
+	})
+}

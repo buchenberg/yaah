@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -88,11 +89,24 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 	attemptVector := params.Query != "" && params.Tag == "" && hasEmbedder
 	var vecResults []memory.VectorResult
 	var vecErr error
+	var report memory.VectorSearchReport
+	// note names the rows a vector search could not compare at their stored
+	// embedding width. It is computed before the page-size branch because every
+	// path below can carry that omission: a store whose only stale rows share no
+	// word with the query yields zero vector hits, falls through to FTS, and
+	// would report a plain miss — the exact silent omission the note exists to
+	// fix (shq review).
+	var note string
 	if attemptVector {
-		vecResults, vecErr = t.DB.SearchMemoryVectorScopedDiag(ctx, params.Query, params.TopK, scope)
+		report, vecErr = t.DB.SearchMemoryVectorScopedReport(ctx, params.Query, params.TopK, scope)
+		vecResults = report.Hits
+		note = DimMismatchNote(report)
 		if vecErr == nil && len(vecResults) > 0 {
+			// Rows left at a previous embedding model's width come back
+			// keyword-scored; the note says how many so a degraded page is
+			// never passed off as semantic recall (yaah-shq).
 			if len(vecResults) >= params.TopK {
-				return formatVectorResults(vecResults), nil
+				return formatVectorResults(vecResults, note), nil
 			}
 			// Partial semantic page: union with FTS so rows the vector path
 			// paged out are not silently dropped (shq review). Vector hits
@@ -103,7 +117,7 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 			for _, r := range vecResults {
 				seen[r.ID] = true
 				score := r.Score
-				lines = append(lines, entryLine(r.ID, r.Tags, r.Scope, r.Text, r.CreatedAt, &score, "semantic"))
+				lines = append(lines, entryLine(r.ID, r.Tags, r.Scope, r.Text, r.CreatedAt, &score, vectorHitMarker(r)))
 			}
 			if fts, err := t.DB.SearchMemoryScoped(params.Query, params.TopK, params.Tag, scope); err == nil {
 				for _, e := range fts {
@@ -115,12 +129,8 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 					lines = append(lines, entryLine(e.ID, e.Tags, e.Scope, e.Text, e.CreatedAt, nil, "keyword"))
 				}
 			}
-			// The hybrid label appears only when keyword actually contributed.
-			header := RetrievalSemantic
-			if kwRows > 0 {
-				header = RetrievalHybrid
-			}
-			return header + "\n" + strings.Join(lines, "\n"), nil
+			out := pageLabel(vecResults, kwRows) + "\n" + strings.Join(lines, "\n")
+			return withDimNote(out, note), nil
 		}
 	}
 	path := RetrievalLabel(params.Query, params.Tag, hasEmbedder, vecErr, len(vecResults))
@@ -131,10 +141,21 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 	}
 
 	if len(ftsResults) == 0 {
-		return path + "\n" + t.emptyHint(scope), nil
+		return withDimNote(path+"\n"+t.emptyHint(scope), note), nil
 	}
 
-	return path + "\n" + formatEntries(ftsResults), nil
+	return withDimNote(path+"\n"+formatEntries(ftsResults), note), nil
+}
+
+// withDimNote appends the stale-width note to a result page. The fall-through
+// and empty pages get it too: a keyword-only or empty recall can still be
+// missing rows the vector path could not compare, and dropping the note there
+// makes that omission silent again (shq review).
+func withDimNote(out, note string) string {
+	if note == "" {
+		return out
+	}
+	return out + "\n" + note
 }
 
 // Retrieval path labels. Every memory_search result names the path that
@@ -146,6 +167,11 @@ const (
 	// RetrievalHybrid is the merged path: a partial vector page unioned
 	// with FTS hits so neither path's rows are silently dropped.
 	RetrievalHybrid = "Retrieval: semantic (vector) + keyword (FTS5)"
+	// RetrievalHybridFallback labels a page that mixes vector-scored rows with
+	// keyword-fallback rows from the store: a previous embedding model left
+	// those rows at a width the current one cannot compare (yaah-shq), so they
+	// are ranked on words rather than by FTS5.
+	RetrievalHybridFallback = "Retrieval: semantic (vector) + keyword fallback (stale embeddings)"
 	// RetrievalListing is the no-query branch: SearchMemoryScoped orders by
 	// created_at and runs no FTS match, so calling it (FTS5) would be a lie.
 	RetrievalListing = "Retrieval: listing (newest first)"
@@ -183,6 +209,78 @@ func semanticFailureReason(err error) string {
 		return "semantic search failed (embedding): " + err.Error()
 	}
 	return "semantic search failed (store): " + err.Error()
+}
+
+// VectorPageLabel names the path a vector page used: pure semantic scoring, or
+// semantic with keyword-fallback rows mixed in because a previous embedding
+// model wrote part of the store at a width the current one cannot compare
+// (yaah-shq). Shared with `yaah memory search` so neither front-end can present
+// a degraded page as semantic recall.
+func VectorPageLabel(results []memory.VectorResult) string {
+	for _, r := range results {
+		if r.Keyword {
+			return RetrievalHybridFallback
+		}
+	}
+	return RetrievalSemantic
+}
+
+// pageLabel names the path a vector page used, counting the FTS rows folded
+// into it. A keyword-fallback row anywhere in the final page is the strongest
+// signal — part of the store cannot be compared with the current model — so it
+// names the page even when FTS also contributed; the FTS contribution is named
+// after it rather than replacing it, so neither path's degradation hides the
+// other (shq review).
+func pageLabel(results []memory.VectorResult, kwRows int) string {
+	vecLabel := VectorPageLabel(results)
+	switch {
+	case kwRows == 0:
+		return vecLabel
+	case vecLabel == RetrievalHybridFallback:
+		return RetrievalHybridFallback + " + keyword (FTS5)"
+	default:
+		return RetrievalHybrid
+	}
+}
+
+// vectorHitMarker names the path that scored one vector hit. A hit marked
+// Keyword was ranked on word overlap because its stored embedding could not be
+// compared with the current model — calling it semantic would hide exactly the
+// degradation the marker exists to expose.
+func vectorHitMarker(r memory.VectorResult) string {
+	if r.Keyword {
+		return "keyword"
+	}
+	return "semantic"
+}
+
+// DimMismatchNote names the rows a vector search could not score because a
+// previous embedding model wrote them, and how many there are: the omission has
+// to be visible, or a keyword-scored page reads as a complete semantic recall
+// (yaah-shq). Empty when nothing was left behind. Shared with
+// `yaah memory search`.
+func DimMismatchNote(r memory.VectorSearchReport) string {
+	if !r.HasDimMismatch() {
+		return ""
+	}
+	return fmt.Sprintf(
+		"note: %d memory row(s) are stored at a different embedding dimension (%s) and were ranked by keyword fallback; re-embedding them restores semantic recall",
+		r.DimMismatch, staleWidthList(r.DimMismatchByDim))
+}
+
+// staleWidthList renders the mismatched widths ascending, e.g.
+// "384: 2 row(s), 512: 1 row(s)".
+func staleWidthList(byDim map[int]int) string {
+	dims := make([]int, 0, len(byDim))
+	for dim := range byDim {
+		dims = append(dims, dim)
+	}
+	sort.Ints(dims)
+	parts := make([]string, 0, len(dims))
+	for _, dim := range dims {
+		parts = append(parts, fmt.Sprintf("%d: %d row(s)", dim, byDim[dim]))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // emptyHint explains a miss instead of dead-ending on it. The usual cause is a
@@ -275,12 +373,17 @@ func formatEntries(results []memory.Entry) string {
 	return strings.Join(lines, "\n")
 }
 
-func formatVectorResults(results []memory.VectorResult) string {
-	lines := make([]string, 0, len(results)+1)
-	lines = append(lines, RetrievalSemantic)
+// formatVectorResults renders a vector page with its path label; note, when
+// non-empty, is appended as the closing line (yaah-shq's dimension mismatch).
+func formatVectorResults(results []memory.VectorResult, note string) string {
+	lines := make([]string, 0, len(results)+2)
+	lines = append(lines, VectorPageLabel(results))
 	for _, r := range results {
 		score := r.Score
-		lines = append(lines, entryLine(r.ID, r.Tags, r.Scope, r.Text, r.CreatedAt, &score, "semantic"))
+		lines = append(lines, entryLine(r.ID, r.Tags, r.Scope, r.Text, r.CreatedAt, &score, vectorHitMarker(r)))
+	}
+	if note != "" {
+		lines = append(lines, note)
 	}
 	return strings.Join(lines, "\n")
 }

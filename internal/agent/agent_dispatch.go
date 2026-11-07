@@ -568,6 +568,42 @@ func (d *toolDispatch) runQualityGates(ctx context.Context, result string) strin
 	return note.String()
 }
 
+// acquireGateSlot takes a sub-agent slot for a quality-gate dispatch if one
+// is free. It must never block: the parent sub-agent dispatch already holds
+// a slot that accounts for this work, so a blocking acquire would deadlock
+// at MaxSubAgentConcurrency == 1.
+//
+// The price of that non-blocking acquire is that a validator can run
+// unslotted — outside the configured cap — and oversubscribe a slow
+// provider. The trade itself stays (deadlock avoidance is worth more than a
+// transient overrun), but it is no longer invisible: each unslotted dispatch
+// is counted on the loop and reported at warn level with the running total,
+// so the orchestrator can see the cap being exceeded (yaah-eyh).
+func (d *toolDispatch) acquireGateSlot(validatorRole string) {
+	l := d.loop
+	if !d.isDelegate || l.subAgentSem == nil {
+		return
+	}
+	select {
+	case l.subAgentSem <- struct{}{}:
+		d.releaseSubAgent = func() { <-l.subAgentSem }
+	default:
+		total := l.unslottedGates.Add(1)
+		slog.Warn("quality gate dispatch ran without a sub-agent slot — validator work can exceed the configured concurrency cap (kept to avoid deadlock at max_concurrency=1)",
+			"validator", validatorRole,
+			"max_concurrency", cap(l.subAgentSem),
+			"unslotted_total", total,
+		)
+	}
+}
+
+// UnslottedGateDispatches reports how many quality-gate validator dispatches
+// this loop has run without taking a sub-agent slot — the oversubscription
+// the non-blocking gate acquire trades for deadlock avoidance (yaah-eyh).
+// Reporters that summarise a run can include it; zero means every gate ran
+// inside the configured cap.
+func (l *Loop) UnslottedGateDispatches() int64 { return l.unslottedGates.Load() }
+
 // runGateDispatch executes one validator sub-agent through the
 // supervised dispatch path. It publishes no ToolStart/ToolEnd events:
 // the gate is not a conversation tool call; only SubAgentStart/End
@@ -586,14 +622,10 @@ func (l *Loop) runGateDispatch(ctx context.Context, validatorRole, gatePrompt st
 
 	// Non-blocking semaphore acquire: the parent sub-agent dispatch
 	// already holds a slot that accounts for this work, and a blocking
-	// acquire could deadlock when MaxSubAgentConcurrency == 1.
-	if gd.isDelegate && l.subAgentSem != nil {
-		select {
-		case l.subAgentSem <- struct{}{}:
-			gd.releaseSubAgent = func() { <-l.subAgentSem }
-		default:
-		}
-	}
+	// acquire could deadlock when MaxSubAgentConcurrency == 1. The
+	// consequence — an unslotted validator run — is counted and reported
+	// rather than silently ignored (yaah-eyh).
+	gd.acquireGateSlot(validatorRole)
 	if l.toolConcurrency != nil {
 		if err := l.toolConcurrency.Acquire(ctx); err != nil {
 			gd.release()

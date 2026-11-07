@@ -52,9 +52,16 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 	for _, path := range drift {
 		driftSet[PathKey(normalizeProposalPath(path))] = true
 	}
+	// One EOL policy for the settle: core.autocrlf is read once here, and the
+	// per-path .gitattributes probe only runs for a path whose bytes differ
+	// while its folded content matches (PR #824 review, finding 3). The probe
+	// is asked lazily from the comparison itself, so a byte-identical path
+	// spawns nothing (round 3, finding 2).
+	eol := newEOLNormalization(ctx, p.repoPath)
 
 	var writes []proposalMergeWrite
 	var conflicted []string
+	var unbasisable []string
 	for _, change := range changes {
 		current, currentExists, err := p.parentContentFull(ctx, change.Path)
 		if err != nil {
@@ -64,8 +71,27 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 		if err != nil {
 			return "", fmt.Errorf("proposal %s: three_way: read proposed %s: %w", p.id, change.Path, err)
 		}
+		base, baseExists, err := p.baseContentFull(ctx, change.Path)
+		if err != nil {
+			// A base that cannot be read — a blob over the merge cap, a
+			// non-git basis backend, a failing git plumbing call — leaves this
+			// path unprovable, and none of the three strategies may run on a
+			// guess. Aborting the whole settle strands every other path of the
+			// proposal behind one unreadable blob; the no-drift fast path would
+			// overwrite the parent whole-path with no basis to prove it
+			// unmoved, which is the fail-open the content check exists to
+			// prevent; and a three-way merge has no base input at all. So the
+			// path is a conflict: it surfaces to the human, who can resolve or
+			// discard, and the rest of the proposal is not hostage to it.
+			conflicted = append(conflicted, change.Path)
+			unbasisable = append(unbasisable, fmt.Sprintf("%s: %v", change.Path, err))
+			continue
+		}
+		if !baseExists {
+			base = nil
+		}
 
-		if !driftSet[PathKey(normalizeProposalPath(change.Path))] {
+		if !proposalPathDrifted(driftSet[PathKey(normalizeProposalPath(change.Path))], change.Path, eol, base, baseExists, current, currentExists) {
 			if proposedExists {
 				mode, modeSet := proposalModeFromString(change.Mode)
 				writes = append(writes, proposalMergeWrite{
@@ -90,13 +116,6 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 		if bytes.Equal(current, proposed) {
 			continue
 		}
-		base, baseExists, err := p.baseContentFull(ctx, change.Path)
-		if err != nil {
-			return "", fmt.Errorf("proposal %s: three_way: read base %s: %w", p.id, change.Path, err)
-		}
-		if !baseExists {
-			base = nil
-		}
 		if len(base) > proposalMergeMaxBytes || len(current) > proposalMergeMaxBytes || len(proposed) > proposalMergeMaxBytes ||
 			isBinaryContent(base) || isBinaryContent(current) || isBinaryContent(proposed) {
 			conflicted = append(conflicted, change.Path)
@@ -116,12 +135,16 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 	}
 
 	if len(conflicted) > 0 {
+		message := "three-way apply found a textual conflict; resolve the path or use discard/release"
+		if len(unbasisable) > 0 {
+			message = fmt.Sprintf("%s; no merge basis for %s", message, strings.Join(unbasisable, "; "))
+		}
 		return "", &proposalApplyConflict{
 			ProposalID: p.id,
 			Paths:      conflicted,
 			Strategy:   proposalApplyThreeWay,
 			Changes:    proposalChangesForPaths(ctx, p, conflicted),
-			Message:    "three-way apply found a textual conflict; resolve the path or use discard/release",
+			Message:    message,
 			Cause:      goatherd.ErrApplyConflict,
 		}
 	}
@@ -206,6 +229,83 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 	}
 	env.Outcome = settleOutcome(goatherd.SettleApply, p, env).String()
 	return marshalProposalEnvelope(env), nil
+}
+
+// proposalPathDrifted reports whether the parent moved off the dispatch basis
+// for one path, which is what decides "the parent's edit wins outright" versus
+// "merge three ways".
+//
+// The sealed-output drift list (parentDrift) is a hint, not the authority. The
+// parent git backend derives it by capturing the host tree, and that capture has
+// been observed to miss a rewrite outright: a same-size edit written moments
+// after the dispatch basis is intermittently absent from the drift list even
+// though `git diff <basis-tree>` names it at the same instant (yaah-610z). A
+// three-way apply that trusted the hint would then take the no-drift path and
+// overwrite the parent's own edit whole-path, reporting "settled" with no
+// conflict — a fail-open. So content decides: the path is drifted when the
+// parent's current content differs from the basis, or when the path exists on
+// only one side of that comparison (created or deleted in the parent). The hint
+// can only add paths to the merge set, never remove them; merging a path the
+// parent did not actually move is harmless (git resolves it to the proposal's
+// post-image).
+//
+// The content comparison folds CRLF to LF because the two sides come from
+// different places: base is a raw tree blob, current is the working-tree file.
+// Under core.autocrlf or an eol smudge filter the same unchanged file is LF in
+// the blob and CRLF on disk, so a byte-for-byte comparison would call every
+// such path drifted and force a three-way merge on a path the parent never
+// touched. The fold is not unconditional, though: in a repo that does not
+// normalize, an EOL-only difference is a real parent edit and folding it away
+// would let the no-drift fast path overwrite that edit whole-path. So the fold
+// is consulted from eol (the repo's own policy) and applies only to text — see
+// proposalContentEqual. The fold never reaches the merge inputs.
+func proposalPathDrifted(hinted bool, path string, eol *eolNormalization, base []byte, baseExists bool, current []byte, currentExists bool) bool {
+	if hinted || baseExists != currentExists {
+		return true
+	}
+	return baseExists && !proposalContentEqual(path, eol, base, current)
+}
+
+// proposalContentEqual reports whether a basis blob and the parent's current
+// file hold the same content for the drift question. Binary content is compared
+// byte for byte: EOL translation does not apply to it, so a difference there is
+// always a real edit. Text is compared after folding CRLF to LF, which can only
+// ever drop a CR that directly precedes an LF — and only when the repo's policy
+// says git normalization is what put those CRs there. Without that, an EOL-only
+// difference is a parent edit.
+//
+// The policy is asked for last, and only once the raw bytes differ while the
+// folded comparison has already come out equal: that is the single case where
+// the answer can change the verdict. Byte-identical paths and paths whose edit
+// is more than line endings therefore never spawn the per-path
+// `git check-attr` probe (PR #824 review round 3, finding 2).
+func proposalContentEqual(path string, eol *eolNormalization, base, current []byte) bool {
+	if bytes.Equal(base, current) {
+		return true
+	}
+	if isBinaryContent(base) || isBinaryContent(current) {
+		return false
+	}
+	if !bytes.Equal(foldCRLF(base), foldCRLF(current)) {
+		return false
+	}
+	return eol.expected(path)
+}
+
+// foldCRLF returns b with the CR of every CRLF pair removed, leaving lone CRs
+// (old-Mac line endings, or content that means them) intact.
+func foldCRLF(b []byte) []byte {
+	if !bytes.Contains(b, []byte("\r\n")) {
+		return b
+	}
+	out := make([]byte, 0, len(b))
+	for i := 0; i < len(b); i++ {
+		if b[i] == '\r' && i+1 < len(b) && b[i+1] == '\n' {
+			continue
+		}
+		out = append(out, b[i])
+	}
+	return out
 }
 
 // proposalModeFromString parses a FileMode.String value, including the
