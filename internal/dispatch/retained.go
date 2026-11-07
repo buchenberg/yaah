@@ -201,7 +201,7 @@ type proposalEnvelope struct {
 	// Strategy records the apply strategy used by a settlement.
 	Strategy string `json:"strategy,omitempty"`
 	// StopReason is why a dispatch/continuation run ended: completed,
-	// turn_budget, iteration_budget, timeout, halted, canceled, or
+	// turn_budget, iteration_budget, max_tokens, timeout, halted, canceled, or
 	// provider_error. It turns the continue/fork/redispatch decision from prose
 	// inference into a typed signal.
 	StopReason string   `json:"stop_reason,omitempty"`
@@ -828,7 +828,7 @@ func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	if cancel != nil {
 		cancel()
 	}
-	env.StopReason = retainedStopReason(&stop, bodyErr)
+	env.StopReason = retainedStopReason(&stop, bodyErr, classifyRetainedBodyFailure(bodyErr, timeout, runErr, parentErr, budgetGoverns))
 
 	// The report lane (yaah-7yf) never seals: the deliverable is the
 	// result text. Surface any provisioning problem the proposal lane
@@ -1012,7 +1012,7 @@ func resolveThreadSeed(rt RetainedRuntime, sourceID, seedMode, newRole string) (
 // stop_reason field. The runner's typed stop wins over the error shape: a
 // turn-budget end returns a nil error, and a supervisor halt can surface as a
 // bare cancellation.
-func retainedStopReason(stop *jobs.SubAgentStop, bodyErr error) string {
+func retainedStopReason(stop *jobs.SubAgentStop, bodyErr error, source retainedFailureSource) string {
 	if stop != nil {
 		switch {
 		case stop.HaltedBySupervisor:
@@ -1021,19 +1021,30 @@ func retainedStopReason(stop *jobs.SubAgentStop, bodyErr error) string {
 			return "iteration_budget"
 		case stop.TurnBudgetExhausted:
 			return "turn_budget"
+		case stop.FinishReason == "length":
+			// The provider truncated the output on max_tokens; the run did not
+			// finish, even though it returned no error.
+			return "max_tokens"
 		}
 	}
 	if bodyErr == nil {
 		return "completed"
 	}
-	switch {
-	case errors.Is(bodyErr, context.DeadlineExceeded):
-		return "timeout"
-	case errors.Is(bodyErr, context.Canceled):
+	if errors.Is(bodyErr, context.Canceled) {
 		return "canceled"
-	default:
-		return "provider_error"
 	}
+	if errors.Is(bodyErr, context.DeadlineExceeded) {
+		// Only the role/global budget or the parent deadline is a "timeout". A
+		// provider-internal deadline while the dispatch was live is a provider
+		// error, matching the error text classifyRetainedBodyFailure produces.
+		switch source {
+		case retainedFailureBudget, retainedFailureParent:
+			return "timeout"
+		default:
+			return "provider_error"
+		}
+	}
+	return "provider_error"
 }
 
 // withWorkspaceNotice prepends the live workspace root to a re-run prompt.
@@ -1151,7 +1162,7 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	if cancel != nil {
 		cancel()
 	}
-	stopReason := retainedStopReason(&stop, bodyErr)
+	stopReason := retainedStopReason(&stop, bodyErr, classifyRetainedBodyFailure(bodyErr, p.timeout, runErr, parentErr, budgetGoverns))
 
 	ScrubConfinementScratch(wt)
 	reviewProposal, reviewFactID, reviewErr := recordRetainedReview(ctx, mgr, scopeID)
@@ -1235,10 +1246,14 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 		env.Notes = "fork of " + id
 	}
 	// Flag a byte-identical continuation: the sub-agent changed nothing this
-	// turn, which is legitimate but worth stating in the envelope.
-	if srcDigest, derr := p.output.Workspace().Digest(); derr == nil {
-		if outDigest, oerr := output.Workspace().Digest(); oerr == nil && outDigest == srcDigest {
-			env.Notes += " (no delta vs parent)"
+	// turn, which is legitimate but worth stating in the envelope. Only a
+	// successful run gets the note — a failed one may be identical for the
+	// wrong reason.
+	if bodyErr == nil {
+		if srcDigest, derr := p.output.Workspace().Digest(); derr == nil {
+			if outDigest, oerr := output.Workspace().Digest(); oerr == nil && outDigest == srcDigest {
+				env.Notes += " (no delta vs parent)"
+			}
 		}
 	}
 	if consumeOriginal {

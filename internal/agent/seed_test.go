@@ -39,6 +39,22 @@ func TestNewSubAgentLoop_SeedsConversation(t *testing.T) {
 	}
 }
 
+// TestNewSubAgentLoop_EmptyPromptKeepsSeedSystem: an empty current prompt must
+// not blank the role/environment context the seed already carries.
+func TestNewSubAgentLoop_EmptyPromptKeepsSeedSystem(t *testing.T) {
+	seed := []types.Message{types.SystemMsg("seeded sys"), types.UserMsg("do")}
+	loop := NewSubAgentLoop(nil, tools.NewEmptyRegistry(), "m", "", SubAgentConfig{
+		MaxLoopCycles: 2,
+		SeedMessages:  seed,
+	})
+	if len(loop.State.Messages) != 2 {
+		t.Fatalf("seeded %d messages, want 2", len(loop.State.Messages))
+	}
+	if loop.State.Messages[0].Content != "seeded sys" {
+		t.Errorf("first message = %q, want the seeded system message", loop.State.Messages[0].Content)
+	}
+}
+
 // TestNewSubAgentLoop_SeedWithoutSystemGetsOne: a seed that lacks a system
 // message still gets the current prompt prepended.
 func TestNewSubAgentLoop_SeedWithoutSystemGetsOne(t *testing.T) {

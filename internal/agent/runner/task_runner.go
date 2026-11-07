@@ -453,9 +453,12 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// keeps the write alive when a timeout ended the run.
 		tools.CaptureSubAgentTranscript(context.WithoutCancel(ctx), subLoop.State.Messages)
 		var maxIterErr agent.MaxIterationsError
+		iterExhausted := errors.As(runErr, &maxIterErr)
 		tools.CaptureSubAgentStop(context.WithoutCancel(ctx), tools.SubAgentStop{
-			TurnBudgetExhausted:      subLoop.State.TurnBudgetExhausted,
-			IterationBudgetExhausted: errors.As(runErr, &maxIterErr),
+			// The loop sets TurnBudgetExhausted on the hard iteration stop too;
+			// only the soft tool-turn cap means tools were stripped.
+			TurnBudgetExhausted:      subLoop.State.TurnBudgetExhausted && !iterExhausted,
+			IterationBudgetExhausted: iterExhausted,
 			HaltedBySupervisor:       haltedBySupervisor.Load(),
 			FinishReason:             subLoop.State.LastFinishReason,
 		})

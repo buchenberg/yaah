@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"strings"
 	"time"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
@@ -184,11 +185,21 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 		// it tells the model the wrong tree (the sub-agent then writes to a
 		// prior-run absolute path and is refused by containment).
 		seed := cfg.SeedMessages
-		if len(seed) > 0 && seed[0].Role == "system" {
+		// Only the leading system message is the identity/environment prompt.
+		// Later system messages are compaction summaries or steering, carry no
+		// stale workspace root, and must be kept.
+		hasSystem := len(seed) > 0 && seed[0].Role == "system"
+		// Only replace the system message when there is a current prompt to put
+		// in its place; an empty prompt must not blank the role/environment
+		// context the seed already carries.
+		replaceSystem := hasSystem && strings.TrimSpace(systemPrompt) != ""
+		if replaceSystem {
 			seed = seed[1:]
 		}
 		seeded := make([]types.Message, 0, len(seed)+1)
-		seeded = append(seeded, types.SystemMsg(systemPrompt))
+		if strings.TrimSpace(systemPrompt) != "" {
+			seeded = append(seeded, types.SystemMsg(systemPrompt))
+		}
 		seeded = append(seeded, seed...)
 		l.State.Messages = seeded
 	}

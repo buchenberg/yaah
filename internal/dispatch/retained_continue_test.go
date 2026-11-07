@@ -267,6 +267,36 @@ func TestRetained_StopReasonAndNotes(t *testing.T) {
 	}
 }
 
+// TestRetainedStopReason pins the typed stop classification, including the
+// distinctions the envelope's error text already makes: a provider-internal
+// deadline is not a role-budget timeout, and a truncated finish is max_tokens.
+func TestRetainedStopReason(t *testing.T) {
+	tests := []struct {
+		name    string
+		stop    *jobs.SubAgentStop
+		bodyErr error
+		source  retainedFailureSource
+		want    string
+	}{
+		{name: "completed", want: "completed"},
+		{name: "turn budget", stop: &jobs.SubAgentStop{TurnBudgetExhausted: true}, want: "turn_budget"},
+		{name: "iteration budget", stop: &jobs.SubAgentStop{IterationBudgetExhausted: true}, want: "iteration_budget"},
+		{name: "max tokens", stop: &jobs.SubAgentStop{FinishReason: "length"}, want: "max_tokens"},
+		{name: "halted", stop: &jobs.SubAgentStop{HaltedBySupervisor: true}, want: "halted"},
+		{name: "role budget deadline", bodyErr: context.DeadlineExceeded, source: retainedFailureBudget, want: "timeout"},
+		{name: "parent deadline", bodyErr: context.DeadlineExceeded, source: retainedFailureParent, want: "timeout"},
+		{name: "provider deadline", bodyErr: context.DeadlineExceeded, source: retainedFailureProvider, want: "provider_error"},
+		{name: "canceled", bodyErr: context.Canceled, source: retainedFailureProvider, want: "canceled"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := retainedStopReason(tc.stop, tc.bodyErr, tc.source); got != tc.want {
+				t.Errorf("retainedStopReason(...) = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestRetained_ContinuationPromptCarriesWorkspaceRoot: a re-run prompt names the
 // live workspace root so the model does not echo a prior run's absolute path.
 func TestRetained_ContinuationPromptCarriesWorkspaceRoot(t *testing.T) {
