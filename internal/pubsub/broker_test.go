@@ -265,6 +265,52 @@ func TestBroker_MultipleSubscribers(t *testing.T) {
 	b.Unsubscribe("b")
 }
 
+// TestPublish_concurrentCloseDoesNotPanic is the Publish counterpart of
+// TestPublishMustDeliver_concurrentCloseDoesNotPanic (yaah-8jou.1): the
+// closed check must happen under the read lock, otherwise Close can
+// close a subscriber channel between Publish's check and its send.
+func TestPublish_concurrentCloseDoesNotPanic(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		b := NewBroker[int]()
+		b.Subscribe("slow", 1) // nobody reads
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			b.Publish(42)
+		}()
+		go func() {
+			defer wg.Done()
+			b.Close()
+		}()
+		wg.Wait() // a panic in either goroutine fails the test
+	}
+}
+
+// TestBroker_SubscribeAfterClose (yaah-8jou.2) pins that subscribing to
+// a closed broker returns an already-closed channel (so a ranging
+// consumer exits) and does not register a live subscription.
+func TestBroker_SubscribeAfterClose(t *testing.T) {
+	b := NewBroker[int]()
+	b.Close()
+
+	ch := b.Subscribe("late", 1)
+	if _, open := <-ch; open {
+		t.Fatal("expected already-closed channel when subscribing after Close")
+	}
+	if b.SubscriberCount() != 0 {
+		t.Errorf("expected 0 subscribers after Subscribe on closed broker, got %d", b.SubscriberCount())
+	}
+
+	// Publish after the late subscribe must still be a no-op.
+	b.Publish(1)
+	b.PublishMustDeliver(2)
+	if b.Delivered() != 0 {
+		t.Errorf("expected no deliveries after close, got %d", b.Delivered())
+	}
+}
+
 // TestPublishMustDeliver_concurrentCloseDoesNotPanic pins the safety
 // invariant that delivery holds the read lock while Close holds the write
 // lock, so a send can never race a channel close (send-on-closed-channel
