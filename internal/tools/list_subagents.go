@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
@@ -36,6 +37,10 @@ type SubAgentContract struct {
 
 // SubAgentLister returns role metadata so the agent can see available
 // sub-agent roles and their tool sets. Called by ListSubAgentsTool.
+// Primary-only roles (mode: primary) are filtered from the returned
+// list before rendering (yaah-21uk.4) — the orchestrator cannot
+// dispatch them, so advertising them would only invite a doomed or
+// self-referential dispatch.
 type SubAgentLister func() []SubAgentInfo
 
 // ListSubAgentsTool returns the available sub-agent roles and their
@@ -57,7 +62,15 @@ func (t *ListSubAgentsTool) Execute(ctx context.Context, args string) (string, e
 	if t.Lister == nil {
 		return "", fmt.Errorf("list_subagents: lister not configured")
 	}
-	roles := t.Lister()
+	listed := t.Lister()
+	// Primary-only roles never reach the orchestrator's dispatch surface
+	// (yaah-21uk.4). The registry keeps them; only this view filters.
+	roles := make([]SubAgentInfo, 0, len(listed))
+	for _, r := range listed {
+		if subagent.DelegatableRole(r.Role) {
+			roles = append(roles, r)
+		}
+	}
 	if len(roles) == 0 {
 		return "No sub-agent roles registered. Add role definitions under .agents/roles/ or ~/.agents/roles/.", nil
 	}

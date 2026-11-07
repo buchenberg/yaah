@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 )
 
 // TestRoleSearchPaths_UserLevelUsesRealHome pins the yaah-gqqo fix:
@@ -58,4 +60,37 @@ func TestRoleSearchPaths_UserLevelUsesRealHome(t *testing.T) {
 			t.Errorf("first dir %q should be under cwd %q", project[0], cwd)
 		}
 	})
+}
+
+// TestRoleDescriptionsForExcludesPrimaryOnlyRoles pins yaah-21uk.4 on
+// the delegate schema's description map: a primary-only persona never
+// contributes an entry, so it cannot resurface in the role parameter's
+// rendered description even if a stale name list still mentions it.
+func TestRoleDescriptionsForExcludesPrimaryOnlyRoles(t *testing.T) {
+	reg := subagent.NewRoleRegistry()
+	if err := reg.LoadBytes(map[string][]byte{
+		"boss.md": []byte("---\nname: Boss\nmode: primary\ntools: [read]\ndescription: runs the session\n---\nbody"),
+		"work.md": []byte("---\nname: Worker\nmode: subagent\ntools: [read]\ndescription: does work\n---\nbody"),
+		"flex.md": []byte("---\nname: Flex\nmode: all\ntools: [read]\ndescription: does either\n---\nbody"),
+		"base.md": []byte("---\nname: Legacy\ntools: [read]\ndescription: old default\n---\nbody"),
+	}); err != nil {
+		t.Fatalf("LoadBytes: %v", err)
+	}
+	subagent.SetDefaultRoleRegistry(reg)
+	defer subagent.SetDefaultRoleRegistry(nil)
+
+	descs := RoleDescriptionsFor([]string{"boss", "work", "flex", "base"})
+	if _, ok := descs["boss"]; ok {
+		t.Errorf("primary-only role leaked into role descriptions: %v", descs)
+	}
+	want := map[string]string{
+		"work": "does work",
+		"flex": "does either",
+		"base": "old default",
+	}
+	for role, d := range want {
+		if descs[role] != d {
+			t.Errorf("descs[%q] = %q, want %q", role, descs[role], d)
+		}
+	}
 }

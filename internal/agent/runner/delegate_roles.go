@@ -11,10 +11,11 @@ import (
 // RoleDescriptionsFor maps each role name to a one-line description (or
 // specialty fallback) drawn from the role registry. Used to populate the
 // role parameter description of the delegate schema so the orchestrator
-// can choose a role without calling list_subagents.
+// can choose a role without calling list_subagents. Primary-only roles
+// are excluded (yaah-21uk.4): the delegate surface never mentions them.
 func RoleDescriptionsFor(roleNames []string) map[string]string {
 	descs := make(map[string]string, len(roleNames))
-	for _, name := range roleNames {
+	for _, name := range subagent.DelegatableRoles(roleNames) {
 		p := subagent.RoleProfileFor(subagent.SubAgentRole(name))
 		if p.Description != "" {
 			descs[name] = p.Description
