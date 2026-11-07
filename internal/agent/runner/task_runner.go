@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -451,6 +452,13 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// continued from its context instead of restarted cold. WithoutCancel
 		// keeps the write alive when a timeout ended the run.
 		tools.CaptureSubAgentTranscript(context.WithoutCancel(ctx), subLoop.State.Messages)
+		var maxIterErr agent.MaxIterationsError
+		tools.CaptureSubAgentStop(context.WithoutCancel(ctx), tools.SubAgentStop{
+			TurnBudgetExhausted:      subLoop.State.TurnBudgetExhausted,
+			IterationBudgetExhausted: errors.As(runErr, &maxIterErr),
+			HaltedBySupervisor:       haltedBySupervisor.Load(),
+			FinishReason:             subLoop.State.LastFinishReason,
+		})
 		recordSubAgentUsage(context.WithoutCancel(ctx), opts.traceStore, subTraceID, opts.parentSession, string(role), subModel, params.Lane, subLoop.OwnUsage())
 		// Record the jail the body actually ran under, not just the one the
 		// previous fact resolved: a backend can pass its availability check and

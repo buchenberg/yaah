@@ -93,6 +93,21 @@ func CaptureSubAgentTranscript(ctx context.Context, messages []types.Message) {
 	jobs.CaptureSubAgentTranscript(ctx, messages)
 }
 
+// SubAgentStop is the runner's typed stop outcome (aliased from jobs).
+type SubAgentStop = jobs.SubAgentStop
+
+// WithSubAgentStop installs a stop-outcome sink so a dispatch body can report
+// why the run ended.
+func WithSubAgentStop(ctx context.Context, ptr *SubAgentStop) context.Context {
+	return jobs.WithSubAgentStop(ctx, ptr)
+}
+
+// CaptureSubAgentStop reports the run's typed stop outcome through the sink in
+// ctx, if one was installed.
+func CaptureSubAgentStop(ctx context.Context, stop SubAgentStop) {
+	jobs.CaptureSubAgentStop(ctx, stop)
+}
+
 func WithSubAgentReadyNotifier(ctx context.Context, fn func()) context.Context {
 	return jobs.WithSubAgentReadyNotifier(ctx, fn)
 }

@@ -135,6 +135,7 @@ func loadWorktreeProposals(reg *ProposalRegistry, mgr *goatherd.ScopeManager, re
 				transcript: meta.Transcript,
 				params:     meta.Params,
 				timeout:    time.Duration(meta.TimeoutMS) * time.Millisecond,
+				stopReason: meta.StopReason,
 				parentID:   parent,
 				mgr:        mgr,
 				repoPath:   repoPath,

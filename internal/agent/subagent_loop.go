@@ -176,8 +176,21 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 	if len(cfg.SeedMessages) > 0 {
 		// Seed the continuation's conversation. Run appends its prompt to a
 		// non-nil State.Messages instead of building a fresh system+user pair,
-		// so the prior turns (and the system prompt they carry) survive.
-		l.State.Messages = append([]types.Message(nil), cfg.SeedMessages...)
+		// so the prior turns survive.
+		//
+		// Drop the seeded system message and prepend the CURRENT system prompt:
+		// a continued/forked run gets a new workspace root, and the prior
+		// system message's environment header advertises the old one. Re-sending
+		// it tells the model the wrong tree (the sub-agent then writes to a
+		// prior-run absolute path and is refused by containment).
+		seed := cfg.SeedMessages
+		if len(seed) > 0 && seed[0].Role == "system" {
+			seed = seed[1:]
+		}
+		seeded := make([]types.Message, 0, len(seed)+1)
+		seeded = append(seeded, types.SystemMsg(systemPrompt))
+		seeded = append(seeded, seed...)
+		l.State.Messages = seeded
 	}
 
 	l.CtxMgr = NewContextManager(provider, model)

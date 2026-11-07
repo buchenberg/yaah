@@ -199,8 +199,13 @@ type proposalEnvelope struct {
 	// inspected; it is not the same fact as no changes.
 	ChangesError string `json:"changes_error,omitempty"`
 	// Strategy records the apply strategy used by a settlement.
-	Strategy string   `json:"strategy,omitempty"`
-	Next     []string `json:"next,omitempty"`
+	Strategy string `json:"strategy,omitempty"`
+	// StopReason is why a dispatch/continuation run ended: completed,
+	// turn_budget, iteration_budget, timeout, halted, canceled, or
+	// provider_error. It turns the continue/fork/redispatch decision from prose
+	// inference into a typed signal.
+	StopReason string   `json:"stop_reason,omitempty"`
+	Next       []string `json:"next,omitempty"`
 }
 
 // proposalVerbs is the settlement vocabulary advertised to the orchestrator,
@@ -264,6 +269,10 @@ type retainedProposal struct {
 	// reused when this proposal is continued or forked.
 	params  jobs.SubAgentParams
 	timeout time.Duration
+	// stopReason is the typed outcome of the run that sealed this proposal
+	// (completed, turn_budget, iteration_budget, timeout, halted, canceled,
+	// provider_error).
+	stopReason string
 
 	// Review provenance for a worktree proposal: the proposal recorded before
 	// sealing and the fact it was recorded as. The decision is recorded when
@@ -797,7 +806,9 @@ func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	// Capture the sub-agent's final conversation so a continuation can resume
 	// from its context instead of restarting cold.
 	var transcript []types.Message
+	var stop jobs.SubAgentStop
 	runCtx := jobs.WithSubAgentTranscript(ctx, &transcript)
+	runCtx = jobs.WithSubAgentStop(runCtx, &stop)
 	var cancel context.CancelFunc
 	if timeout > 0 {
 		runCtx, cancel = context.WithTimeout(runCtx, timeout)
@@ -812,6 +823,7 @@ func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	if cancel != nil {
 		cancel()
 	}
+	env.StopReason = retainedStopReason(&stop, bodyErr)
 
 	// The report lane (yaah-7yf) never seals: the deliverable is the
 	// result text. Surface any provisioning problem the proposal lane
@@ -935,6 +947,7 @@ func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		transcript:     transcript,
 		params:         subParams,
 		timeout:        timeout,
+		stopReason:     env.StopReason,
 	}
 	rt.Proposals.add(proposal)
 	rt.Proposals.recordSealConflictFacts(ctx, proposal)
@@ -987,6 +1000,34 @@ func resolveThreadSeed(rt RetainedRuntime, sourceID, seedMode, newRole string) (
 		return state, src.transcript, nil
 	default:
 		return shepherdtrace.WorkspaceState{}, nil, fmt.Errorf("seed_mode %q must be %q or %q", seedMode, jobs.SeedModeWorkspace, jobs.SeedModeConversation)
+	}
+}
+
+// retainedStopReason classifies why a worktree run ended for the envelope's
+// stop_reason field. The runner's typed stop wins over the error shape: a
+// turn-budget end returns a nil error, and a supervisor halt can surface as a
+// bare cancellation.
+func retainedStopReason(stop *jobs.SubAgentStop, bodyErr error) string {
+	if stop != nil {
+		switch {
+		case stop.HaltedBySupervisor:
+			return "halted"
+		case stop.IterationBudgetExhausted:
+			return "iteration_budget"
+		case stop.TurnBudgetExhausted:
+			return "turn_budget"
+		}
+	}
+	if bodyErr == nil {
+		return "completed"
+	}
+	switch {
+	case errors.Is(bodyErr, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(bodyErr, context.Canceled):
+		return "canceled"
+	default:
+		return "provider_error"
 	}
 }
 
@@ -1079,7 +1120,9 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	budgetGoverns := p.timeout > 0 && (!parentHasDeadline || parentDeadline.After(budgetDeadline))
 
 	var transcript []types.Message
+	var stop jobs.SubAgentStop
 	runCtx := jobs.WithSubAgentTranscript(ctx, &transcript)
+	runCtx = jobs.WithSubAgentStop(runCtx, &stop)
 	var cancel context.CancelFunc
 	if p.timeout > 0 {
 		runCtx, cancel = context.WithTimeout(runCtx, p.timeout)
@@ -1091,6 +1134,7 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	if cancel != nil {
 		cancel()
 	}
+	stopReason := retainedStopReason(&stop, bodyErr)
 
 	ScrubConfinementScratch(wt)
 	reviewProposal, reviewFactID, reviewErr := recordRetainedReview(ctx, mgr, scopeID)
@@ -1121,6 +1165,7 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 		ProposalID: newID,
 		Next:       proposalVerbs(),
 		World:      string(subagent.WorldWorktree),
+		StopReason: stopReason,
 	}
 	if output == nil {
 		// Sealing failed: discard the isolated scope rather than strand it,
@@ -1158,6 +1203,7 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 		transcript:     transcript,
 		params:         p.params,
 		timeout:        p.timeout,
+		stopReason:     stopReason,
 	}
 	rt.Proposals.add(cont)
 	rt.Proposals.recordSealConflictFacts(ctx, cont)
@@ -1166,7 +1212,18 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	}
 	env.Next = nextVerbsFor(cont)
 
-	env.Notes = "continuation of " + id
+	if consumeOriginal {
+		env.Notes = "continued from " + id
+	} else {
+		env.Notes = "fork of " + id
+	}
+	// Flag a byte-identical continuation: the sub-agent changed nothing this
+	// turn, which is legitimate but worth stating in the envelope.
+	if srcDigest, derr := p.output.Workspace().Digest(); derr == nil {
+		if outDigest, oerr := output.Workspace().Digest(); oerr == nil && outDigest == srcDigest {
+			env.Notes += " (no delta vs parent)"
+		}
+	}
 	if consumeOriginal {
 		if _, derr := rt.Proposals.settleRetainedProposalWithStrategy(ctx, id, "discard", ""); derr != nil {
 			notes = append(notes, "original proposal "+id+" could not be discarded: "+derr.Error())

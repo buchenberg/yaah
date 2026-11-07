@@ -209,6 +209,64 @@ func TestRetained_ContinueRefusesWithoutConversation(t *testing.T) {
 	}
 }
 
+// TestRetained_StopReasonAndNotes: the envelope reports why the run ended, and
+// the notes distinguish continue (consumes) from fork (preserves), flagging a
+// byte-identical continuation.
+func TestRetained_StopReasonAndNotes(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	seed := []types.Message{types.UserMsg("go")}
+	rt := RetainedRuntime{
+		Runner: func(ctx context.Context, prompt string, params SubAgentParams) (string, error) {
+			writeTestFile(t, params.Workdir, "work.txt", "work\n")
+			jobs.CaptureSubAgentTranscript(ctx, seed)
+			jobs.CaptureSubAgentStop(ctx, jobs.SubAgentStop{TurnBudgetExhausted: true})
+			return "done", nil
+		},
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+		Proposals:    NewProposalRegistry(),
+	}
+
+	res, err := StartRetainedRun(context.Background(), rt, "go", SubAgentParams{Role: "developer"}, 10*time.Second, false)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	env := decodeProposalEnvelope(t, res)
+	if env.StopReason != "turn_budget" {
+		t.Errorf("dispatch stop_reason = %q, want turn_budget", env.StopReason)
+	}
+
+	// Fork: preserves the parent, notes read "fork of".
+	resFork, err := ContinueRetainedRun(context.Background(), rt, env.ProposalID, 2, "", false)
+	if err != nil {
+		t.Fatalf("fork: %v", err)
+	}
+	fork := decodeProposalEnvelope(t, resFork)
+	if fork.StopReason != "turn_budget" {
+		t.Errorf("fork stop_reason = %q, want turn_budget", fork.StopReason)
+	}
+	if !strings.HasPrefix(fork.Notes, "fork of ") || strings.Contains(fork.Notes, "original discarded") {
+		t.Errorf("fork notes = %q, want a preserving 'fork of' note", fork.Notes)
+	}
+	// The runner writes the same file the source already had, so the
+	// continuation is byte-identical and must say so.
+	if !strings.Contains(fork.Notes, "no delta vs parent") {
+		t.Errorf("fork notes = %q, want a no-delta note", fork.Notes)
+	}
+
+	// Continue: consumes the parent, notes read "continued from".
+	resCont, err := ContinueRetainedRun(context.Background(), rt, fork.ProposalID, 2, "", true)
+	if err != nil {
+		t.Fatalf("continue: %v", err)
+	}
+	cont := decodeProposalEnvelope(t, resCont)
+	if !strings.HasPrefix(cont.Notes, "continued from ") || !strings.Contains(cont.Notes, "original discarded") {
+		t.Errorf("continue notes = %q, want a consuming 'continued from' note", cont.Notes)
+	}
+}
+
 // TestProposalEnvelope_NextAdvertisesContinuation: `next` is a real eligibility
 // list — an open worktree proposal with a captured conversation advertises the
 // re-run verbs, on the dispatch envelope and on `show`.

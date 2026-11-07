@@ -112,6 +112,7 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 			ProposalID: p.id,
 			Result:     p.result,
 			Error:      p.runErr,
+			StopReason: p.stopReason,
 			Next:       nextVerbsFor(p),
 		}
 		if p.delta != nil {
