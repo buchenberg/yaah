@@ -109,7 +109,10 @@ func (d *DB) ReembedStaleEmbeddings(ctx context.Context) (int, error) {
 	}
 
 	// Re-mirror rows whose BLOB is the correct width but which never landed a
-	// vec0 row. A single INSERT...SELECT repairs them without re-embedding.
+	// vec0 row. A single INSERT...SELECT repairs them without re-embedding. The
+	// superseded_by IS NULL predicate keeps superseded atoms out: their vec0
+	// rows were removed by supersede on purpose, and re-mirroring them would
+	// just re-accumulate dead rows each startup.
 	remirrored := 0
 	if d.vecIndexPresent() {
 		res, err := d.sql.ExecContext(ctx, `
@@ -117,6 +120,7 @@ func (d *DB) ReembedStaleEmbeddings(ctx context.Context) (int, error) {
 			SELECT m.rowid, m.embedding, m.scope, COALESCE(m.superseded_by, '')
 			FROM memory m
 			WHERE m.embedding IS NOT NULL AND length(m.embedding) = ?
+			  AND m.superseded_by IS NULL
 			  AND NOT EXISTS (SELECT 1 FROM memory_vec v WHERE v.rowid = m.rowid)`, 4*dim)
 		if err != nil {
 			return reembedded, fmt.Errorf("reembed stale: re-mirror missing: %w", err)

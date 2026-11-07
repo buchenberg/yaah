@@ -257,6 +257,35 @@ func TestReembedStaleEmbeddings_RemirrorsMissingRow(t *testing.T) {
 	}
 }
 
+// TestReembedStaleEmbeddings_DoesNotRemirrorSuperseded verifies the re-mirror
+// pass does not re-add a superseded atom whose vec0 row was removed on
+// supersede: the superseded_by IS NULL predicate keeps dead rows from
+// re-accumulating every startup.
+func TestReembedStaleEmbeddings_DoesNotRemirrorSuperseded(t *testing.T) {
+	db := openTestDB(t)
+	db.SetEmbedder(stubEmbedder{})
+	addMemoryAndWait(t, db, Entry{ID: "old", Text: "old fact", Source: "agent", CreatedAt: 1})
+	addMemoryAndWait(t, db, Entry{ID: "new", Text: "new fact", Source: "agent", CreatedAt: 2})
+
+	if err := db.SupersedeMemory("old", "new"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The re-embed pass runs the re-mirror step; it must skip the superseded
+	// atom (whose BLOB is still present but whose vec0 row was deleted).
+	if _, err := db.ReembedStaleEmbeddings(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	var n int
+	if err := db.sql.QueryRow(`SELECT COUNT(*) FROM memory_vec WHERE rowid = (SELECT rowid FROM memory WHERE id = 'old')`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("superseded atom was re-mirrored into memory_vec (n=%d), want 0", n)
+	}
+}
+
 // TestVecStaleIndexFallsBackToScan verifies a vec0 table left at the wrong
 // width (a model swap the startup reconcile could not run) degrades to the
 // brute-force scan instead of returning a hard MATCH error.

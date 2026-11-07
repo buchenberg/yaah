@@ -70,3 +70,28 @@ func TestMemorySessionSearchTool_SemanticContextAndHybridUnion(t *testing.T) {
 		t.Fatalf("hybrid union dropped the keyword-only message: %q", out)
 	}
 }
+
+// TestMemorySessionSearchTool_KeywordLabel verifies the keyword fallback names
+// its path: a missing embedder must not read as a plain full-text search (it
+// should carry the "no embedding model configured" label, like memory_search).
+func TestMemorySessionSearchTool_KeywordLabel(t *testing.T) {
+	db := openScopeTestDB(t) // no embedder configured
+
+	if err := db.CreateSession(memory.Session{ID: "ses-abcdef123456", StartedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AddMessage(memory.Message{ID: "kw-1", SessionID: "ses-abcdef123456", Idx: 0, Role: "user", Content: "postgres connection pooling", Timestamp: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := (&MemorySessionSearchTool{DB: db}).Execute(context.Background(), `{"query":"connection"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, RetrievalKeyword+" — no embedding model configured") {
+		t.Fatalf("keyword fallback must name the missing-embedder path: %q", out)
+	}
+	if !strings.Contains(out, "postgres connection pooling") {
+		t.Fatalf("keyword fallback lost the match: %q", out)
+	}
+}

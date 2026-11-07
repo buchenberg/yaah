@@ -602,7 +602,10 @@ func (t *MemorySessionSearchTool) Execute(ctx context.Context, args string) (str
 		return t.listRecentMessages(params.TopK)
 	}
 
-	vecResults, vecErr := t.DB.SearchMessagesVector(ctx, params.Query, params.TopK)
+	// Label the path before the entries: a failed embed must not read as an
+	// ordinary full-text search (yaah-17s), matching memory_search.
+	hasEmbedder := t.DB.Embedder() != nil
+	vecResults, vecErr := t.DB.SearchMessagesVectorDiag(ctx, params.Query, params.TopK)
 	if vecErr == nil && len(vecResults) > 0 {
 		if len(vecResults) >= params.TopK {
 			return formatMessageVectorResults(vecResults), nil
@@ -634,20 +637,22 @@ func (t *MemorySessionSearchTool) Execute(ctx context.Context, args string) (str
 		return header + "\n" + strings.Join(lines, "\n"), nil
 	}
 
+	path := RetrievalLabel(params.Query, "", hasEmbedder, vecErr, len(vecResults))
+
 	results, err := t.DB.SearchMessages(params.Query, params.TopK)
 	if err != nil {
 		return "", fmt.Errorf("memory_search_sessions: %w", err)
 	}
 
 	if len(results) == 0 {
-		return "No matching session messages found.", nil
+		return path + "\n" + "No matching session messages found.", nil
 	}
 
 	var output string
 	for _, m := range results {
 		output += messageLine(m.SessionID, m.Role, m.Content, nil, false) + "\n"
 	}
-	return output, nil
+	return path + "\n" + output, nil
 }
 
 // messageLine renders one session-message hit: the session prefix, role, and

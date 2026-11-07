@@ -214,13 +214,26 @@ type MessageVectorResult struct {
 	Score     float32
 }
 
-// SearchMessagesVector embeds the query, runs a vec0 nearest-neighbour search
-// over messages_vec (falling back to a brute-force scan when the index has not
-// been created yet), and returns the top-K by cosine similarity. Falls back to
-// empty when no embedder is configured; a failed embedding call degrades to
-// empty and is surfaced via the rate-limited warning log and the OTel
-// embed-failure counter.
+// SearchMessagesVector embeds the query and returns the top-K semantically
+// matched messages, degrading an embed failure to an empty result so the caller
+// keeps its keyword path. Use SearchMessagesVectorDiag when the reason for the
+// degradation must be reported.
 func (d *DB) SearchMessagesVector(ctx context.Context, query string, limit int) ([]MessageVectorResult, error) {
+	results, err := d.SearchMessagesVectorDiag(ctx, query, limit)
+	if IsEmbedFailure(err) {
+		return nil, nil
+	}
+	return results, err
+}
+
+// SearchMessagesVectorDiag is SearchMessagesVector with the reason for a
+// degraded semantic path preserved: a non-nil error means the vector path
+// produced nothing, either because the query could not be embedded (an embed
+// failure, already recorded for the log and OTel counter; classify it with
+// IsEmbedFailure) or the store query failed. A nil embedder is not an error —
+// it reports (nil, nil) — so a caller that must name that state checks
+// Embedder() first.
+func (d *DB) SearchMessagesVectorDiag(ctx context.Context, query string, limit int) ([]MessageVectorResult, error) {
 	embedder := d.Embedder()
 	if embedder == nil {
 		return nil, nil
@@ -228,7 +241,7 @@ func (d *DB) SearchMessagesVector(ctx context.Context, query string, limit int) 
 	qEmb, err := EmbedQuery(ctx, embedder, query)
 	if err != nil {
 		d.recordEmbedFailure("search_messages_vector", err)
-		return nil, nil
+		return nil, &embedError{err: err}
 	}
 
 	if d.messagesVecPresent() {
