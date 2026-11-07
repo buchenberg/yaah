@@ -294,11 +294,14 @@ func (d *DB) searchMessagesVectorScan(ctx context.Context, qEmb Embedding, limit
 	return results, nil
 }
 
-// ReembedStaleMessageEmbeddings rewrites message rows whose stored vector has
-// a different dimensionality than the configured embedder produces (the
-// message-side counterpart to ReembedStaleEmbeddings). Returns the number of
-// rows rewritten; a nil embedder is a no-op. An embed failure is surfaced like
-// any other and does not stop the sweep.
+// ReembedStaleMessageEmbeddings heals the messages_vec index from the BLOB
+// column: it re-embeds rows whose stored width differs from the embedder (the
+// message-side counterpart to ReembedStaleEmbeddings), and re-mirrors rows whose
+// BLOB is the correct width but whose vec0 row is missing (a crash between the
+// BLOB update and the mirror would otherwise leave them invisible to the
+// index-preferred search). Returns the number of rows healed; a nil embedder is
+// a no-op. An embed failure is surfaced like any other and does not stop the
+// sweep.
 func (d *DB) ReembedStaleMessageEmbeddings(ctx context.Context) (int, error) {
 	embedder := d.Embedder()
 	if embedder == nil {
@@ -309,8 +312,13 @@ func (d *DB) ReembedStaleMessageEmbeddings(ctx context.Context) (int, error) {
 		d.recordEmbedFailure("reembed_message", err)
 		return 0, fmt.Errorf("reembed stale messages: probe embedder: %w", err)
 	}
+	dim := len(probe)
+
+	// id != '' mirrors the embed gate in embedMessageAsync: a message with no id
+	// was never embedded, and messages.id is not unique, so an UPDATE keyed on
+	// id = '' would fan out across every empty-id row.
 	rows, err := d.sql.QueryContext(ctx,
-		`SELECT id, content FROM messages WHERE embedding IS NOT NULL AND length(embedding) != ?`, 4*len(probe))
+		`SELECT id, content FROM messages WHERE embedding IS NOT NULL AND length(embedding) != ? AND id != ''`, 4*dim)
 	if err != nil {
 		return 0, fmt.Errorf("reembed stale messages: query: %w", err)
 	}
@@ -345,7 +353,25 @@ func (d *DB) ReembedStaleMessageEmbeddings(ctx context.Context) (int, error) {
 		}
 		reembedded++
 	}
-	return reembedded, nil
+
+	// Re-mirror rows whose BLOB is the correct width but which never landed a
+	// vec0 row. A single INSERT...SELECT repairs them without re-embedding.
+	remirrored := 0
+	if d.messagesVecPresent() {
+		res, err := d.sql.ExecContext(ctx, `
+			INSERT INTO messages_vec(rowid, embedding)
+			SELECT m.rowid, m.embedding FROM messages m
+			WHERE m.embedding IS NOT NULL AND length(m.embedding) = ?
+			  AND NOT EXISTS (SELECT 1 FROM messages_vec v WHERE v.rowid = m.rowid)`, 4*dim)
+		if err != nil {
+			return reembedded, fmt.Errorf("reembed stale messages: re-mirror missing: %w", err)
+		}
+		if n, err := res.RowsAffected(); err == nil {
+			remirrored = int(n)
+		}
+	}
+
+	return reembedded + remirrored, nil
 }
 
 // ReconcileMessageEmbeddings backfills embeddings for user/assistant message

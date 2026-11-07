@@ -1017,14 +1017,17 @@ stanza, which references a provider's `base_url` (e.g. `lmstudio` →
 
 Both the `memory` and `messages` tables carry an optional `embedding BLOB`
 column. Embeddings are serialized as little-endian
-float32 arrays. At startup, `ReconcileEmbeddings` backfills entries that
-were created before the embedding provider was configured.
+float32 arrays. At startup, `ReconcileEmbeddings` (memory) and
+`ReconcileMessageEmbeddings` (messages) backfill entries that were created
+before the embedding provider was configured, re-embed rows left at a stale
+width by a model swap, and re-mirror rows whose BLOB landed but whose vec0 row
+did not (a crash between the two writes).
 
-The `memory.embedding` BLOB is mirrored into a `memory_vec` `vec0` virtual
-table (the bundled `sqlite-vec` extension, CGo-free) that serves the
-nearest-neighbour search. The BLOB stays the source of truth; `vec0` is a
-derived index that is built lazily and recreated when the embedding width
-changes (a model swap).
+The `memory.embedding` and `messages.embedding` BLOBs are mirrored into
+`memory_vec` and `messages_vec` `vec0` virtual tables (the bundled
+`sqlite-vec` extension, CGo-free) that serve the nearest-neighbour search. The
+BLOB stays the source of truth; the `vec0` tables are derived indexes that are
+built lazily and recreated when the embedding width changes (a model swap).
 
 ### 3. Embed-on-save
 

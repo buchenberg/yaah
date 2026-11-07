@@ -269,17 +269,18 @@ func TestVecMessagesSearchScore(t *testing.T) {
 // existed becomes findable when EnsureVectorIndex creates and backfills it.
 func TestVecMessagesBackfillOnEnsure(t *testing.T) {
 	db := openTestDB(t)
-	db.SetEmbedder(stubEmbedder{}) // 3-dim
-
+	// No embedder yet, so AddMessage does not embed (and the async mirror does
+	// not pre-create the vec0 table, which would defeat the backfill test).
 	if err := db.AddMessage(Message{ID: "m1", SessionID: "ses-test", Idx: 0, Role: "user", Content: "pre-existing message", Timestamp: 1}); err != nil {
 		t.Fatal(err)
 	}
-	// Written by the pre-index code path: a BLOB with no vec0 mirror.
+	// Written by the pre-index code path: a 3-dim BLOB with no vec0 mirror.
 	vec := Embedding{0.1, 0.2, -0.3}
 	if _, err := db.sql.Exec(`UPDATE messages SET embedding = ? WHERE id = 'm1'`, EncodeEmbedding(vec)); err != nil {
 		t.Fatal(err)
 	}
 
+	db.SetEmbedder(stubEmbedder{}) // 3-dim, attached after the fact
 	if _, err := db.EnsureVectorIndex(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -380,5 +381,38 @@ func TestReconcileMessageEmbeddings(t *testing.T) {
 	}
 	if len(results) != 1 || results[0].ID != "rm1" {
 		t.Fatalf("reconciled message not found: %v", messageResultIDs(results))
+	}
+}
+
+// TestReembedStaleMessageEmbeddings_RemirrorsMissingRow verifies a message whose
+// BLOB landed but whose vec0 row is missing (a crash between the two writes) is
+// re-mirrored by the reconcile pass, so it does not stay invisible to the
+// index-preferred search.
+func TestReembedStaleMessageEmbeddings_RemirrorsMissingRow(t *testing.T) {
+	db := openTestDB(t)
+	db.SetEmbedder(stubEmbedder{})
+	addMessageAndWait(t, db, Message{ID: "rm2", SessionID: "ses-test", Idx: 0, Role: "user", Content: "orphaned vector", Timestamp: 1})
+
+	// Simulate a crash between the BLOB update and the mirror: drop the vec0 row.
+	if _, err := db.sql.Exec(`DELETE FROM messages_vec WHERE rowid = (SELECT rowid FROM messages WHERE id = 'rm2')`); err != nil {
+		t.Fatal(err)
+	}
+
+	// The BLOB is present but the index is missing the row. The reconcile pass
+	// must re-mirror it (no re-embed needed — the width is already correct).
+	n, err := db.ReembedStaleMessageEmbeddings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("ReembedStaleMessageEmbeddings = %d, want 1 (the re-mirrored row)", n)
+	}
+
+	results, err := db.SearchMessagesVector(context.Background(), "orphaned", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].ID != "rm2" {
+		t.Fatalf("re-mirrored message not found: %v", messageResultIDs(results))
 	}
 }
