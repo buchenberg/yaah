@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.147.0](https://github.com/buchenberg/yaah/compare/v0.146.1...v0.147.0) (2026-11-07)
+
+
+### Features
+
+* **memory:** vec0 (sqlite-vec) index for semantic memory search ([4c91bcd](https://github.com/buchenberg/yaah/commit/4c91bcdef628fcc260d2e002596cf6f257393d52))
+
+
+### Bug Fixes
+
+* **memory:** address review — backfill index on create, atomic delete, graceful fallback ([bc14a45](https://github.com/buchenberg/yaah/commit/bc14a45bce04c8f37ea0f2bb762c1cb9cca28429))
+
 ## [0.146.1](https://github.com/buchenberg/yaah/compare/v0.146.0...v0.146.1) (2026-11-06)
 
 
