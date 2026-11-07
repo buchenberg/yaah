@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.151.0](https://github.com/buchenberg/yaah/compare/v0.150.0...v0.151.0) (2026-11-07)
+
+
+### Features
+
+* **dispatch:** stop_reason, fresh seeded system prompt, continuation notes ([d92e584](https://github.com/buchenberg/yaah/commit/d92e5846eb3ddde332a56b52cdb5600e0125b79f))
+* **dispatch:** stop_reason, fresh seeded system prompt, continuation notes ([d075865](https://github.com/buchenberg/yaah/commit/d075865d6b68401996ba0e6a19cf1114dd0dcbcb))
+
+
+### Bug Fixes
+
+* **dispatch:** address review findings on stop_reason and seeding ([173023d](https://github.com/buchenberg/yaah/commit/173023daa1b70ce42f1f9201d51d44c00341c16f))
+* **dispatch:** let a terminal error win over a stale max_tokens finish ([ef2c9e5](https://github.com/buchenberg/yaah/commit/ef2c9e5dc3fdf01fd83e45c333c5e9c8afcc5038))
+* **dispatch:** name the live workspace root in re-run prompts ([fedcdf8](https://github.com/buchenberg/yaah/commit/fedcdf835251a5fd005b57a69a966be5af09a446))
+
 ## [0.150.0](https://github.com/buchenberg/yaah/compare/v0.149.0...v0.150.0) (2026-11-07)
 
 
