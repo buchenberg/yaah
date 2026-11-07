@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.152.0](https://github.com/buchenberg/yaah/compare/v0.151.1...v0.152.0) (2026-11-07)
+
+
+### Features
+
+* **dispatch:** adopt retained-output substrate for worktree proposals ([deece7b](https://github.com/buchenberg/yaah/commit/deece7b04156e3a8738897460d392e52a33d7ad0))
+* **dispatch:** adopt retained-output substrate for worktree proposals ([3bc6492](https://github.com/buchenberg/yaah/commit/3bc6492bf1e8996c9068e443b268afefabbf6f50))
+
+
+### Bug Fixes
+
+* **dispatch:** return a usable seal payload with a nil error ([c300041](https://github.com/buchenberg/yaah/commit/c300041ebb5816ac9768de0ad1e424e714437218))
+* **dispatch:** tighten rehydrate boundaries and degrade transcript corruption ([759c22e](https://github.com/buchenberg/yaah/commit/759c22e4c70a84faa5b23965611979b7f4a2f1b7))
+
 ## [0.151.1](https://github.com/buchenberg/yaah/compare/v0.151.0...v0.151.1) (2026-11-07)
 
 
