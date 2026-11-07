@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -175,16 +176,51 @@ func TestProposalTool_ContinueAction(t *testing.T) {
 }
 
 // TestRetained_ContinueRefusesWithoutConversation: a proposal whose dispatch
-// captured no conversation (report/older run) cannot be continued — the tool
-// fails loudly instead of silently starting cold.
+// captured no conversation (report/older run) cannot be continued — the guard
+// fails loudly instead of silently starting cold, and the refusal leaves the
+// original open.
 func TestRetained_ContinueRefusesWithoutConversation(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
 	rt := RetainedRuntime{
-		Runner:       func(context.Context, string, SubAgentParams) (string, error) { return "", nil },
+		Runner: func(ctx context.Context, prompt string, params SubAgentParams) (string, error) {
+			writeTestFile(t, params.Workdir, "work.txt", "work\n")
+			// Deliberately capture no transcript.
+			return "done", nil
+		},
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
 		Proposals:    NewProposalRegistry(),
-		RootScopeID:  "scope:missing",
-		ScopeManager: nil,
 	}
-	if _, err := ContinueRetainedRun(context.Background(), rt, "proposal:nope", 1, "", true); err == nil {
-		t.Fatal("expected an error for an unknown proposal")
+
+	res, err := StartRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "developer"}, 10*time.Second, false)
+	if err != nil {
+		t.Fatalf("StartRetainedRun: %v", err)
+	}
+	orig := decodeProposalEnvelope(t, res)
+
+	_, err = ContinueRetainedRun(context.Background(), rt, orig.ProposalID, 2, "", true)
+	if err == nil || !strings.Contains(err.Error(), "no captured conversation") {
+		t.Fatalf("err = %v, want the no-conversation guard", err)
+	}
+	if _, gerr := rt.Proposals.get(orig.ProposalID); gerr != nil {
+		t.Errorf("refused continue consumed the original: %v", gerr)
+	}
+}
+
+// TestProposalRegistry_ClaimContinueSerializes: a second continue/fork on the
+// same proposal is refused while one is in flight.
+func TestProposalRegistry_ClaimContinueSerializes(t *testing.T) {
+	r := NewProposalRegistry()
+	if !r.claimContinue("p1") {
+		t.Fatal("first claim should succeed")
+	}
+	if r.claimContinue("p1") {
+		t.Fatal("second claim should be refused")
+	}
+	r.releaseContinue("p1")
+	if !r.claimContinue("p1") {
+		t.Fatal("claim after release should succeed")
 	}
 }

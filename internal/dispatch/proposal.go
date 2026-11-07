@@ -33,6 +33,14 @@ type ProposalTool struct {
 	Runtime *RetainedRuntime
 }
 
+// Continuation budgets. maxContinueTurns matches the delegate tool's max_turns
+// maximum so a continuation is bounded by the same budget model as a fresh
+// dispatch; defaultContinueTurns applies when a caller omits extra_turns.
+const (
+	defaultContinueTurns = 5
+	maxContinueTurns     = 50
+)
+
 func (*ProposalTool) Name() string { return "proposal" }
 
 func (*ProposalTool) Description() string {
@@ -60,7 +68,9 @@ func (*ProposalTool) Schema() json.RawMessage {
 			"extra_turns": {
 				"type": "integer",
 				"minimum": 1,
-				"description": "continue/fork only: how many additional tool turns to grant the continuation"
+				"maximum": 50,
+				"default": 5,
+				"description": "continue/fork only: how many additional tool turns to grant the continuation (default 5, max 50)"
 			},
 			"prompt": {
 				"type": "string",
@@ -188,7 +198,11 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 		if t.Runtime == nil {
 			return "", fmt.Errorf("proposal: %s needs the session retained runtime — runner.NewDelegateTool wires it", raw.Action)
 		}
-		return ContinueRetainedRun(ctx, *t.Runtime, raw.ProposalID, raw.ExtraTurns, raw.Prompt, raw.Action == "continue")
+		extraTurns := raw.ExtraTurns
+		if extraTurns <= 0 {
+			extraTurns = defaultContinueTurns
+		}
+		return ContinueRetainedRun(ctx, *t.Runtime, raw.ProposalID, extraTurns, raw.Prompt, raw.Action == "continue")
 	default:
 		return "", fmt.Errorf("proposal: unknown action %q (list, show, select, apply, release, discard, continue, fork)", raw.Action)
 	}

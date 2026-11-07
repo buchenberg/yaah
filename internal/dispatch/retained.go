@@ -314,6 +314,9 @@ type ProposalRegistry struct {
 	mu            sync.Mutex
 	byID          map[string]*retainedProposal
 	conflictFacts map[string]bool
+	// continuing reserves a proposal for one in-flight continue/fork so two
+	// callers cannot both seal a continuation from the same sealed output.
+	continuing map[string]bool
 }
 
 // NewProposalRegistry returns an empty registry for one session.
@@ -350,6 +353,30 @@ func (r *ProposalRegistry) remove(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.byID, id)
+}
+
+// claimContinue reserves a proposal for one continue/fork. It reports false
+// when another continue/fork is already in flight for id, which is what keeps
+// two callers from both seeding a continuation from the same sealed output.
+func (r *ProposalRegistry) claimContinue(id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.continuing == nil {
+		r.continuing = make(map[string]bool)
+	}
+	if r.continuing[id] {
+		return false
+	}
+	r.continuing[id] = true
+	return true
+}
+
+// releaseContinue clears a claimContinue reservation (deferred by the continue
+// path, including on refusal/failure).
+func (r *ProposalRegistry) releaseContinue(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.continuing, id)
 }
 
 // all returns the open proposals, ordered by id so a listing is stable.
@@ -907,9 +934,20 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	if extraTurns <= 0 {
 		return "", fmt.Errorf("proposal %s: extra_turns must be positive", id)
 	}
+	if extraTurns > maxContinueTurns {
+		extraTurns = maxContinueTurns
+	}
 	if len(p.transcript) == 0 {
 		return "", fmt.Errorf("proposal %s has no captured conversation to continue from", id)
 	}
+
+	// One continue/fork per proposal at a time: without this, two concurrent
+	// calls both seed from the same sealed output and both register a
+	// continuation before either discards the original.
+	if !rt.Proposals.claimContinue(id) {
+		return "", fmt.Errorf("proposal %s: a continue/fork is already in progress", id)
+	}
+	defer rt.Proposals.releaseContinue(id)
 
 	// Seed the continuation's world from the original's sealed state, not the
 	// parent's current state, so it resumes exactly where the original stopped.
