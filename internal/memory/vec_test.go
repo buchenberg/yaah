@@ -205,6 +205,37 @@ func TestVecBackfillOnEnsure(t *testing.T) {
 	}
 }
 
+// TestReembedStaleEmbeddings_RemirrorsMissingRow verifies a memory row whose
+// BLOB landed but whose vec0 row is missing (a crash between the two writes) is
+// re-mirrored by the reconcile pass, so it does not stay invisible to the
+// index-preferred search.
+func TestReembedStaleEmbeddings_RemirrorsMissingRow(t *testing.T) {
+	db := openTestDB(t)
+	db.SetEmbedder(stubEmbedder{})
+	addMemoryAndWait(t, db, Entry{ID: "orphan-mem", Text: "orphaned vector memory", Source: "agent", CreatedAt: 1})
+
+	// Simulate a crash between the BLOB update and the mirror: drop the vec0 row.
+	if _, err := db.sql.Exec(`DELETE FROM memory_vec WHERE rowid = (SELECT rowid FROM memory WHERE id = 'orphan-mem')`); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := db.ReembedStaleEmbeddings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("ReembedStaleEmbeddings = %d, want 1 (the re-mirrored row)", n)
+	}
+
+	results, err := db.SearchMemoryVector(context.Background(), "orphaned", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].ID != "orphan-mem" {
+		t.Fatalf("re-mirrored memory not found: %v", resultIDs(results))
+	}
+}
+
 // TestVecStaleIndexFallsBackToScan verifies a vec0 table left at the wrong
 // width (a model swap the startup reconcile could not run) degrades to the
 // brute-force scan instead of returning a hard MATCH error.

@@ -50,9 +50,11 @@ func IsEmbedFailure(err error) bool {
 // different dimensionality than the configured embedder produces (yaah-shq).
 // Swapping the model (say 384-dim all-MiniLM for 768-dim nomic) leaves every
 // earlier row uncomparable to the new query vectors — it survives on keyword
-// fallback until this runs. Returns the number of rows rewritten; a nil
-// embedder is a no-op. An embed failure is surfaced like any other and does
-// not stop the sweep.
+// fallback until this runs. It also re-mirrors rows whose BLOB is the correct
+// width but whose vec0 row is missing (a crash between the BLOB update and the
+// mirror would otherwise leave them invisible to the index-preferred search).
+// Returns the number of rows healed; a nil embedder is a no-op. An embed
+// failure is surfaced like any other and does not stop the sweep.
 func (d *DB) ReembedStaleEmbeddings(ctx context.Context) (int, error) {
 	embedder := d.Embedder()
 	if embedder == nil {
@@ -68,8 +70,9 @@ func (d *DB) ReembedStaleEmbeddings(ctx context.Context) (int, error) {
 		// indication the heal never ran (m3pk/shq review).
 		return 0, fmt.Errorf("reembed stale: probe embedder: %w", err)
 	}
+	dim := len(probe)
 	rows, err := d.sql.Query(
-		`SELECT id, text FROM memory WHERE embedding IS NOT NULL AND length(embedding) != ?`, 4*len(probe))
+		`SELECT id, text FROM memory WHERE embedding IS NOT NULL AND length(embedding) != ?`, 4*dim)
 	if err != nil {
 		return 0, fmt.Errorf("reembed stale: query: %w", err)
 	}
@@ -104,7 +107,26 @@ func (d *DB) ReembedStaleEmbeddings(ctx context.Context) (int, error) {
 		}
 		reembedded++
 	}
-	return reembedded, nil
+
+	// Re-mirror rows whose BLOB is the correct width but which never landed a
+	// vec0 row. A single INSERT...SELECT repairs them without re-embedding.
+	remirrored := 0
+	if d.vecIndexPresent() {
+		res, err := d.sql.ExecContext(ctx, `
+			INSERT INTO memory_vec(rowid, embedding, scope, superseded_by)
+			SELECT m.rowid, m.embedding, m.scope, COALESCE(m.superseded_by, '')
+			FROM memory m
+			WHERE m.embedding IS NOT NULL AND length(m.embedding) = ?
+			  AND NOT EXISTS (SELECT 1 FROM memory_vec v WHERE v.rowid = m.rowid)`, 4*dim)
+		if err != nil {
+			return reembedded, fmt.Errorf("reembed stale: re-mirror missing: %w", err)
+		}
+		if n, err := res.RowsAffected(); err == nil {
+			remirrored = int(n)
+		}
+	}
+
+	return reembedded + remirrored, nil
 }
 
 // SearchMemoryVector embeds the query, scans all rows with non-null
