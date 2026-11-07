@@ -223,7 +223,7 @@ returns a proposal the orchestrator settles.
   sequentially. Container-lane proposals cannot be continued: their world ended
   at seal. Every re-run gets a new workspace root, so steer it with
   repo-relative paths; paths from a prior run are refused by containment. The
-  sealed envelope's `notes` records `continuation of <id>` plus
+  sealed envelope's `notes` records `continued from <id>` (or `fork of <id>` for `fork`) plus
   `(original discarded)` for `continue`, and `(no delta vs parent)` when the
   re-run produced the same delta.
 - **Threading.** `delegate(seed_from: <proposal_id>, seed_mode: workspace)`
