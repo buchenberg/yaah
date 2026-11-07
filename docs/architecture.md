@@ -1050,8 +1050,10 @@ yet (the embedder only became reachable after startup), the path falls back to
 the pre-index brute-force scan: scan all non-null `embedding` rows and compute
 `CosineSimilarity` in Go.
 
-`SearchMessagesVector` still uses the brute-force scan over `messages.embedding`
-(a `messages_vec` index is a follow-up).
+`SearchMessagesVector` runs the same vec0 nearest-neighbour search over
+`messages_vec`, joining back to `messages` for the content. Messages carry no
+scope/superseded tier, so the index holds only the vector and the search
+filters nothing at the index.
 
 ### 5. Tool dispatch
 

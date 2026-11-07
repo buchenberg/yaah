@@ -221,3 +221,87 @@ func TestVecStaleIndexFallsBackToScan(t *testing.T) {
 		t.Fatalf("stale index must degrade to the scan, not error: %v", err)
 	}
 }
+
+// TestVecMessagesSearchScore verifies the messages_vec path returns, for each
+// hit, Score == 1 - distance == CosineSimilarity(query, stored).
+func TestVecMessagesSearchScore(t *testing.T) {
+	db := openTestDB(t) // creates the ses-test session
+	db.SetEmbedder(stubEmbedder{})
+	addMessageAndWait(t, db, Message{ID: "m1", SessionID: "ses-test", Idx: 0, Role: "user", Content: "postgres connection pooling", Timestamp: 1})
+	addMessageAndWait(t, db, Message{ID: "m2", SessionID: "ses-test", Idx: 1, Role: "user", Content: "llama grooming", Timestamp: 2})
+
+	results, err := db.SearchMessagesVector(context.Background(), "database", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2 (%v)", len(results), resultIDs(results))
+	}
+
+	q, err := db.Embedder().Embed(context.Background(), "database")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range results {
+		var blob []byte
+		if err := db.sql.QueryRow(`SELECT embedding FROM messages WHERE id = ?`, r.ID).Scan(&blob); err != nil {
+			t.Fatal(err)
+		}
+		want := CosineSimilarity(q, DecodeEmbedding(blob))
+		if math.Abs(float64(r.Score-want)) > 1e-4 {
+			t.Errorf("score for %s = %f, want %f", r.ID, r.Score, want)
+		}
+	}
+}
+
+// TestVecMessagesBackfillOnEnsure verifies a message embedded before the index
+// existed becomes findable when EnsureVectorIndex creates and backfills it.
+func TestVecMessagesBackfillOnEnsure(t *testing.T) {
+	db := openTestDB(t)
+	db.SetEmbedder(stubEmbedder{}) // 3-dim
+
+	if err := db.AddMessage(Message{ID: "m1", SessionID: "ses-test", Idx: 0, Role: "user", Content: "pre-existing message", Timestamp: 1}); err != nil {
+		t.Fatal(err)
+	}
+	// Written by the pre-index code path: a BLOB with no vec0 mirror.
+	vec := Embedding{0.1, 0.2, -0.3}
+	if _, err := db.sql.Exec(`UPDATE messages SET embedding = ? WHERE id = 'm1'`, EncodeEmbedding(vec)); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.EnsureVectorIndex(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := db.SearchMessagesVector(context.Background(), "message", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].ID != "m1" {
+		t.Fatalf("backfilled messages index did not surface the pre-existing message: %v", resultIDs(results))
+	}
+}
+
+// TestVecMessagesDeleteRemovesIndexRow verifies deleting a message removes its
+// messages_vec row, so it cannot resurface (including via a reused rowid).
+func TestVecMessagesDeleteRemovesIndexRow(t *testing.T) {
+	db := openTestDB(t)
+	db.SetEmbedder(stubEmbedder{})
+	addMessageAndWait(t, db, Message{ID: "m1", SessionID: "ses-test", Idx: 0, Role: "user", Content: "delete this message", Timestamp: 1})
+
+	if got, _ := db.SearchMessagesVector(context.Background(), "delete", 10); len(got) != 1 {
+		t.Fatalf("precondition: got %v, want [m1]", resultIDs(got))
+	}
+
+	if err := db.DeleteMessagesFrom("ses-test", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := db.SearchMessagesVector(context.Background(), "delete", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("deleted message still surfaces: %v", resultIDs(got))
+	}
+}

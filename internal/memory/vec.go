@@ -13,13 +13,18 @@ import (
 	_ "modernc.org/sqlite/vec"
 )
 
-// memoryVecTable is the vec0 virtual table backing semantic memory search.
-const memoryVecTable = "memory_vec"
+// memoryVecTable and messagesVecTable are the vec0 virtual tables backing
+// semantic memory and session-message search respectively. They share one
+// vector_dim stamp because both embed with the same model.
+const (
+	memoryVecTable   = "memory_vec"
+	messagesVecTable = "messages_vec"
+)
 
-// vectorDimKey is the schema_meta key holding the embedding width the
-// memory_vec table was created for. vec0 pins its dimension at CREATE, so the
+// vectorDimKey is the schema_meta key holding the embedding width the vec0
+// index tables were created for. vec0 pins its dimension at CREATE, so the
 // width must be reconciled against the configured embedder (see
-// ensureVectorTable) — a model swap changes it.
+// ensureVectorTables) — a model swap changes it.
 const vectorDimKey = "vector_dim"
 
 // memoryVecDDL is the vec0 table definition. embedding is the vector column;
@@ -33,12 +38,20 @@ const memoryVecDDL = `CREATE VIRTUAL TABLE IF NOT EXISTS ` + memoryVecTable + ` 
 	superseded_by text
 );`
 
-// EnsureVectorIndex creates (or recreates) the memory_vec table at the width
-// the configured embedder produces, and stamps that width. It is the startup
-// reconciliation point: a model swap changes the width, so a stale table is
-// dropped and recreated for the follow-up re-embed pass to repopulate.
+// messagesVecDDL is the vec0 table for session messages. It carries no
+// metadata columns — messages have no scope/superseded tier — so the search
+// joins back to messages for the content and filters nothing at the index.
+const messagesVecDDL = `CREATE VIRTUAL TABLE IF NOT EXISTS ` + messagesVecTable + ` USING vec0(
+	embedding float[%d] distance_metric=cosine
+);`
+
+// EnsureVectorIndex creates (or recreates) the vec0 index tables (memory_vec
+// and messages_vec) at the width the configured embedder produces, and stamps
+// that width. It is the startup reconciliation point: a model swap changes the
+// width, so stale tables are dropped and recreated for the follow-up re-embed
+// pass to repopulate.
 //
-// Idempotent and safe to call repeatedly. Returns recreated=true when the
+// Idempotent and safe to call repeatedly. Returns recreated=true when any
 // table was (re)created and needs repopulation. A nil embedder is a no-op; a
 // probe failure (embedder unreachable) is returned so callers can degrade
 // gracefully and retry via the write/reconcile paths.
@@ -53,14 +66,14 @@ func (d *DB) EnsureVectorIndex(ctx context.Context) (recreated bool, err error) 
 	if len(probe) == 0 {
 		return false, fmt.Errorf("vec0 index: embedder returned an empty vector")
 	}
-	return d.ensureVectorTable(len(probe))
+	return d.ensureVectorTables(len(probe))
 }
 
-// ensureVectorTable makes memory_vec exist at exactly dim, recreating it if
-// the current table was created at a different width. It serializes on vecMu
-// because DDL (CREATE/DROP VIRTUAL TABLE) is a shared write and concurrent
-// embed goroutines may reach it simultaneously.
-func (d *DB) ensureVectorTable(dim int) (bool, error) {
+// ensureVectorTables makes both vec0 index tables exist at exactly dim,
+// recreating either when the current table was created at a different width.
+// It serializes on vecMu because DDL (CREATE/DROP VIRTUAL TABLE) is a shared
+// write and concurrent embed goroutines may reach it simultaneously.
+func (d *DB) ensureVectorTables(dim int) (bool, error) {
 	d.vecMu.Lock()
 	defer d.vecMu.Unlock()
 
@@ -68,42 +81,67 @@ func (d *DB) ensureVectorTable(dim int) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	exists, err := d.tableExists(memoryVecTable)
-	if err != nil {
+	recreated := false
+	// ensure reconciles one table: no-op when it exists at the stamped width,
+	// otherwise drop+create+backfill from its source BLOB column.
+	ensure := func(name, ddl string, backfill func(int) error) error {
+		exists, err := d.tableExists(name)
+		if err != nil {
+			return err
+		}
+		if exists && hasStamp && stamped == dim {
+			return nil
+		}
+		if exists {
+			if _, err := d.sql.Exec(`DROP TABLE IF EXISTS ` + name); err != nil {
+				return fmt.Errorf("vec0 index: drop stale %s: %w", name, err)
+			}
+		}
+		if _, err := d.sql.Exec(fmt.Sprintf(ddl, dim)); err != nil {
+			return fmt.Errorf("vec0 index: create %s: %w", name, err)
+		}
+		// Populate the fresh (or recreated) table from rows already embedded
+		// at this width, so an upgrade does not leave pre-existing rows
+		// invisible to the new index. On a model swap the BLOBs are
+		// stale-width, so this copies nothing and the re-embed sweep
+		// repopulates instead.
+		if err := backfill(dim); err != nil {
+			return fmt.Errorf("vec0 index: backfill %s: %w", name, err)
+		}
+		recreated = true
+		return nil
+	}
+	if err := ensure(memoryVecTable, memoryVecDDL, d.backfillMemoryVec); err != nil {
 		return false, err
 	}
-	if exists && hasStamp && stamped == dim {
-		return false, nil
-	}
-	if exists {
-		if _, err := d.sql.Exec(`DROP TABLE IF EXISTS ` + memoryVecTable); err != nil {
-			return false, fmt.Errorf("vec0 index: drop stale table: %w", err)
-		}
-	}
-	if _, err := d.sql.Exec(fmt.Sprintf(memoryVecDDL, dim)); err != nil {
-		return false, fmt.Errorf("vec0 index: create table: %w", err)
+	if err := ensure(messagesVecTable, messagesVecDDL, d.backfillMessagesVec); err != nil {
+		return false, err
 	}
 	if err := d.setVecDim(dim); err != nil {
 		return false, err
 	}
-	// Populate the fresh (or recreated) table from rows already embedded at
-	// this width, so an upgrade does not leave pre-existing memories invisible
-	// to the new index. On a model swap the BLOBs are stale-width, so this
-	// copies nothing and the re-embed sweep repopulates instead.
-	if err := d.backfillVecIndex(dim); err != nil {
-		return false, fmt.Errorf("vec0 index: backfill: %w", err)
-	}
-	return true, nil
+	return recreated, nil
 }
 
-// backfillVecIndex copies rows already embedded at dim from the memory BLOB
+// backfillMemoryVec copies rows already embedded at dim from the memory BLOB
 // column into memory_vec, so a newly created (or recreated) index starts
 // consistent with the store rather than empty.
-func (d *DB) backfillVecIndex(dim int) error {
+func (d *DB) backfillMemoryVec(dim int) error {
 	_, err := d.sql.Exec(`
 		INSERT INTO memory_vec(rowid, embedding, scope, superseded_by)
 		SELECT rowid, embedding, scope, COALESCE(superseded_by, '')
 		FROM memory
+		WHERE embedding IS NOT NULL AND length(embedding) = ?`, 4*dim)
+	return err
+}
+
+// backfillMessagesVec copies rows already embedded at dim from the messages
+// BLOB column into messages_vec.
+func (d *DB) backfillMessagesVec(dim int) error {
+	_, err := d.sql.Exec(`
+		INSERT INTO messages_vec(rowid, embedding)
+		SELECT rowid, embedding
+		FROM messages
 		WHERE embedding IS NOT NULL AND length(embedding) = ?`, 4*dim)
 	return err
 }
@@ -148,12 +186,18 @@ func (d *DB) vecIndexPresent() bool {
 	return err == nil && ok
 }
 
+// messagesVecPresent reports whether the messages vec0 table currently exists.
+func (d *DB) messagesVecPresent() bool {
+	ok, err := d.tableExists(messagesVecTable)
+	return err == nil && ok
+}
+
 // mirrorVec writes (or refreshes) the vec0 row for a memory id so the index
 // mirrors the memory.embedding BLOB plus its scope and supersession state.
 // The table is created lazily at the embedding's width, so the write path
 // self-heals when the embedder only became reachable after startup.
 func (d *DB) mirrorVec(id string, emb Embedding) error {
-	if _, err := d.ensureVectorTable(len(emb)); err != nil {
+	if _, err := d.ensureVectorTables(len(emb)); err != nil {
 		return err
 	}
 	tx, err := d.sql.Begin()
@@ -266,6 +310,66 @@ func (d *DB) searchVecIndex(ctx context.Context, qEmb Embedding, limit int, scop
 		// vec0 returns cosine distance (1 - similarity); invert to match the
 		// brute-force path's Score, where higher is better.
 		results = append(results, VectorResult{Entry: e, Score: 1 - float32(dist)})
+	}
+	return results, rows.Err()
+}
+
+// mirrorMessageVec writes (or refreshes) the messages_vec row for a message id
+// so the index mirrors the messages.embedding BLOB. The table is created
+// lazily at the embedding's width.
+func (d *DB) mirrorMessageVec(id string, emb Embedding) error {
+	if _, err := d.ensureVectorTables(len(emb)); err != nil {
+		return err
+	}
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var rowid int64
+	err = tx.QueryRow(`SELECT rowid FROM messages WHERE id = ?`, id).Scan(&rowid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil // deleted concurrently; nothing to mirror
+	}
+	if err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`DELETE FROM messages_vec WHERE rowid = ?`, rowid); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO messages_vec(rowid, embedding) VALUES (?, ?)`, rowid, EncodeEmbedding(emb)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// searchMessagesVecIndex runs the vec0 nearest-neighbour search over messages
+// and joins back to the messages table for id and content. It preserves the
+// VectorResult{Entry{ID,Text}} shape the brute-force scan returned.
+func (d *DB) searchMessagesVecIndex(ctx context.Context, qEmb Embedding, limit int) ([]VectorResult, error) {
+	rows, err := d.sql.QueryContext(ctx, `
+		SELECT m.id, m.content, v.distance
+		FROM messages_vec v
+		JOIN messages m ON m.rowid = v.rowid
+		WHERE v.embedding MATCH ? AND k = ?
+		ORDER BY v.distance`,
+		EncodeEmbedding(qEmb), limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []VectorResult
+	for rows.Next() {
+		var id, content string
+		var dist float64
+		if err := rows.Scan(&id, &content, &dist); err != nil {
+			return nil, err
+		}
+		results = append(results, VectorResult{Entry: Entry{ID: id, Text: content}, Score: 1 - float32(dist)})
 	}
 	return results, rows.Err()
 }

@@ -230,12 +230,21 @@ func (d *DB) ListSessionsPage(filter SessionListFilter) ([]SessionSummary, strin
 // is not session-keyed and memory entries are global; trace_owners rows
 // pointing at the session are stale after deletion and are removed too.
 func (d *DB) DeleteSession(id string) error {
+	vecActive := d.messagesVecPresent()
 	tx, err := d.sql.BeginTx(context.Background(), nil)
 	if err != nil {
 		return fmt.Errorf("begin delete: %w", err)
 	}
 	defer tx.Rollback()
 
+	// Remove the messages_vec rows in the same transaction as the messages
+	// themselves, so a rowid reused by a later insert cannot resurface a stale
+	// vector.
+	if vecActive {
+		if _, err := tx.Exec(`DELETE FROM messages_vec WHERE rowid IN (SELECT rowid FROM messages WHERE session_id = ?)`, id); err != nil {
+			return fmt.Errorf("delete message vectors: %w", err)
+		}
+	}
 	if _, err := tx.Exec(`DELETE FROM messages WHERE session_id = ?`, id); err != nil {
 		return fmt.Errorf("delete messages: %w", err)
 	}

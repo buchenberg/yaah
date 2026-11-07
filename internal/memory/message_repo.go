@@ -84,6 +84,10 @@ func (d *DB) embedMessageAsync(id, role, content string) <-chan struct{} {
 		}
 		if _, err := d.sql.Exec(`UPDATE messages SET embedding = ? WHERE id = ?`, EncodeEmbedding(emb), id); err != nil {
 			slog.Warn("memory: store embedding failed", "op", "embed_message", "id", id, "err", err)
+			return
+		}
+		if err := d.mirrorMessageVec(id, emb); err != nil {
+			slog.Warn("memory: mirror messages vec0 failed", "op", "embed_message", "id", id, "err", err)
 		}
 	}()
 	return done
@@ -110,10 +114,26 @@ func (d *DB) MaxMessageIdx(sessionID string) (int, error) {
 // wholesale (compaction rebase) or rewound (turn restore), so stale
 // rows cannot conflict with re-persisted messages or resurrect on
 // resume (review finding B7). FTS5 rows follow via the messages
-// table's delete triggers.
+// table's delete triggers; the messages_vec rows are removed here in the
+// same transaction so a reused rowid cannot resurface a stale vector.
 func (d *DB) DeleteMessagesFrom(sessionID string, fromIdx int) error {
-	_, err := d.sql.Exec(`DELETE FROM messages WHERE session_id = ? AND idx >= ?`, sessionID, fromIdx)
-	return err
+	vecActive := d.messagesVecPresent()
+
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if vecActive {
+		if _, err := tx.Exec(`DELETE FROM messages_vec WHERE rowid IN (SELECT rowid FROM messages WHERE session_id = ? AND idx >= ?)`, sessionID, fromIdx); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM messages WHERE session_id = ? AND idx >= ?`, sessionID, fromIdx); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // GetMessages returns all messages for a session.
@@ -181,11 +201,12 @@ func (d *DB) SearchMessages(query string, limit int) ([]Message, error) {
 	return results, rows.Err()
 }
 
-// SearchMessagesVector embeds the query, scans messages with non-null
-// embeddings, and returns the top-K by cosine similarity. Falls back
-// to empty when no embedder is configured; a failed embedding call
-// degrades to empty and is surfaced via the rate-limited warning log
-// and the OTel embed-failure counter.
+// SearchMessagesVector embeds the query, runs a vec0 nearest-neighbour search
+// over messages_vec (falling back to a brute-force scan when the index has not
+// been created yet), and returns the top-K by cosine similarity. Falls back to
+// empty when no embedder is configured; a failed embedding call degrades to
+// empty and is surfaced via the rate-limited warning log and the OTel
+// embed-failure counter.
 func (d *DB) SearchMessagesVector(ctx context.Context, query string, limit int) ([]VectorResult, error) {
 	embedder := d.Embedder()
 	if embedder == nil {
@@ -197,7 +218,21 @@ func (d *DB) SearchMessagesVector(ctx context.Context, query string, limit int) 
 		return nil, nil
 	}
 
-	rows, err := d.sql.Query(`
+	if d.messagesVecPresent() {
+		results, err := d.searchMessagesVecIndex(ctx, qEmb, limit)
+		if err == nil {
+			return results, nil
+		}
+		// A stale index (wrong width) degrades to the scan.
+		return d.searchMessagesVectorScan(ctx, qEmb, limit)
+	}
+	return d.searchMessagesVectorScan(ctx, qEmb, limit)
+}
+
+// searchMessagesVectorScan is the pre-vec0 brute-force path: it scans messages
+// with non-null embeddings and scores by cosine similarity in Go.
+func (d *DB) searchMessagesVectorScan(ctx context.Context, qEmb Embedding, limit int) ([]VectorResult, error) {
+	rows, err := d.sql.QueryContext(ctx, `
 		SELECT id, content, embedding
 		FROM messages
 		WHERE embedding IS NOT NULL
