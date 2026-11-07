@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.148.0](https://github.com/buchenberg/yaah/compare/v0.147.0...v0.148.0) (2026-11-07)
+
+
+### Features
+
+* **memory:** re-embed stale and NULL message embeddings on startup ([5e4d56a](https://github.com/buchenberg/yaah/commit/5e4d56aab12bd56afd52bbbb932c4faee8fc546e))
+* **memory:** session context and hybrid union for session message search ([79e1d1a](https://github.com/buchenberg/yaah/commit/79e1d1a7fc13f494c211bc5292153a5a5d3ec1be))
+* **memory:** vec0 (sqlite-vec) index for session message search ([7d5c683](https://github.com/buchenberg/yaah/commit/7d5c683cfb48c7a40aad4f7b5d3a7b55426453d0))
+* **memory:** vec0 (sqlite-vec) index for session message search (yaah-8mxk) ([f94911e](https://github.com/buchenberg/yaah/commit/f94911e507b8449d6a11f1a172a49f260ae12701))
+
+
+### Bug Fixes
+
+* **memory:** address review — exclude superseded from re-mirror, label keyword fallback ([7880976](https://github.com/buchenberg/yaah/commit/788097695e7825259ee3cefaea4e5cb83338c876))
+* **memory:** address review — repair missing vec0 rows, guard empty id, split backfill ([d00c4e1](https://github.com/buchenberg/yaah/commit/d00c4e1222badc37aa8dcef33bea417c55e08615))
+* **memory:** re-mirror memory rows whose vec0 row is missing after a crash ([aca3fc4](https://github.com/buchenberg/yaah/commit/aca3fc4b0ab34fff614867eca54b035088cf2d4c))
+
+
+### Tests
+
+* **memory:** fix race in TestReembedStaleMessageEmbeddings_RemirrorsMissingRow ([9a77133](https://github.com/buchenberg/yaah/commit/9a771338af9428a04733237c0d4d36c7d68fd931))
+* **memory:** make addMessageAndWait wait for the vec0 mirror, not just the BLOB ([66d03a8](https://github.com/buchenberg/yaah/commit/66d03a8475746a0cfe5278ac5a9dc3dd34ef2b7c))
+
 ## [0.147.0](https://github.com/buchenberg/yaah/compare/v0.146.1...v0.147.0) (2026-11-07)
 
 
