@@ -83,6 +83,40 @@ func TestRetained_ThreadingSeedsWorkspaceFromProposal(t *testing.T) {
 	}
 }
 
+// TestRetained_ThreadingConversationNeedsTranscript: asking for conversation
+// seeding on a source with no captured transcript fails loudly instead of
+// silently degrading to a workspace-only seed.
+func TestRetained_ThreadingConversationNeedsTranscript(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	rt := RetainedRuntime{
+		Runner: func(ctx context.Context, prompt string, params SubAgentParams) (string, error) {
+			writeTestFile(t, params.Workdir, "work.txt", "work\n")
+			// Deliberately capture no transcript.
+			return "done", nil
+		},
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+		Proposals:    NewProposalRegistry(),
+	}
+
+	res, err := StartRetainedRun(context.Background(), rt, "A", SubAgentParams{Role: "developer"}, 10*time.Second, false)
+	if err != nil {
+		t.Fatalf("dispatch A: %v", err)
+	}
+	env := decodeProposalEnvelope(t, res)
+
+	_, err = StartRetainedRun(context.Background(), rt, "B", SubAgentParams{
+		Role:     "developer",
+		SeedFrom: env.ProposalID,
+		SeedMode: jobs.SeedModeConversation,
+	}, 10*time.Second, false)
+	if err == nil || !strings.Contains(err.Error(), "captured conversation") {
+		t.Fatalf("err = %v, want a no-conversation refusal", err)
+	}
+}
+
 // TestRetained_ThreadingConversationIsSameRoleOnly: conversation seeding carries
 // the source transcript for the same role and refuses a different role (whose
 // system prompt would otherwise leak into the new loop).

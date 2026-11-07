@@ -102,7 +102,20 @@ func loadWorktreeProposals(reg *ProposalRegistry, mgr *goatherd.ScopeManager, re
 				warnings = append(warnings, fmt.Sprintf("proposal rehydrate: %s: %v", workdir, err))
 				continue
 			}
-			if sessionID != "" && meta.SessionID != "" && meta.SessionID != sessionID {
+			// Scope by session like the container lane: the durable session id
+			// is the key, and the recorded parent scope is the fallback for
+			// sidecars written before that field existed. Anything that cannot
+			// prove it belongs to this session is skipped, never surfaced.
+			switch {
+			case sessionID != "" && meta.SessionID != "":
+				if meta.SessionID != sessionID {
+					continue
+				}
+			case sessionID == "" && meta.SessionID != "" && meta.ParentScopeID != rootScopeID:
+				warnings = append(warnings, fmt.Sprintf("proposal %s: session id unavailable and the root scope differs; not rehydrated", meta.ID))
+				continue
+			case meta.SessionID == "" && meta.ParentScopeID != rootScopeID:
+				// A legacy sidecar from another session: not ours to settle.
 				continue
 			}
 			parent := rootScopeID

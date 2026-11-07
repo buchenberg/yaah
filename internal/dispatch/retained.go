@@ -977,6 +977,13 @@ func resolveThreadSeed(rt RetainedRuntime, sourceID, seedMode, newRole string) (
 		if src.params.Role != newRole {
 			return shepherdtrace.WorkspaceState{}, nil, fmt.Errorf("seed_mode conversation is same-role only (%s != %s); use seed_mode workspace", src.params.Role, newRole)
 		}
+		if len(src.transcript) == 0 {
+			// Never silently degrade to workspace-only: the caller asked for
+			// context and would otherwise assume it got some. The transcript
+			// may be absent because it was never captured or because it was
+			// omitted over the sidecar size bound.
+			return shepherdtrace.WorkspaceState{}, nil, fmt.Errorf("seed_mode conversation needs the source's captured conversation, but it is empty (never captured or omitted over the size bound); use seed_mode workspace")
+		}
 		return state, src.transcript, nil
 	default:
 		return shepherdtrace.WorkspaceState{}, nil, fmt.Errorf("seed_mode %q must be %q or %q", seedMode, jobs.SeedModeWorkspace, jobs.SeedModeConversation)

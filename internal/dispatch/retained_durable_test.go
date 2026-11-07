@@ -16,6 +16,45 @@ import (
 	"github.com/buchenberg/yaah/internal/types"
 )
 
+// TestRetained_RehydrateScopesBySession pins the session boundary: a sidecar
+// from another session is not surfaced even when it lives in the same repo.
+func TestRetained_RehydrateScopesBySession(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	seed := []types.Message{types.UserMsg("go")}
+	rt := RetainedRuntime{
+		Runner: func(ctx context.Context, prompt string, params SubAgentParams) (string, error) {
+			writeTestFile(t, params.Workdir, "work.txt", "work\n")
+			jobs.CaptureSubAgentTranscript(ctx, seed)
+			return "done", nil
+		},
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+		SessionID:    "sess-a",
+		Proposals:    NewProposalRegistry(),
+	}
+
+	res, err := StartRetainedRun(context.Background(), rt, "go", SubAgentParams{Role: "developer"}, 10*time.Second, false)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	env := decodeProposalEnvelope(t, res)
+
+	newMgr, _, rerr := recovery.Recover(context.Background(), fx.store, repo, true, nil)
+	if rerr != nil {
+		t.Fatalf("recover: %v", rerr)
+	}
+	regB, _ := LoadProposalRegistry(repo, newMgr, rootID, "sess-b")
+	if _, err := regB.get(env.ProposalID); err == nil {
+		t.Error("another session rehydrated the proposal")
+	}
+	regA, _ := LoadProposalRegistry(repo, newMgr, rootID, "sess-a")
+	if _, err := regA.get(env.ProposalID); err != nil {
+		t.Errorf("owning session did not rehydrate the proposal: %v", err)
+	}
+}
+
 func TestRetained_WorktreeProposalSurvivesRestart(t *testing.T) {
 	fx, repo, rootID := newSessionFixtures(t)
 	transcript := []types.Message{types.SystemMsg("dev sys"), types.UserMsg("do the work")}

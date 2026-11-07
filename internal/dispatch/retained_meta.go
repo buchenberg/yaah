@@ -92,7 +92,9 @@ func persistWorktreeProposalMeta(rt RetainedRuntime, p *retainedProposal) error 
 	if err != nil {
 		return fmt.Errorf("marshal sidecar: %w", err)
 	}
-	if err := os.WriteFile(worktreeProposalMetaPath(p.workdir), data, 0o644); err != nil {
+	// 0o600: the sidecar carries the transcript (worktree contents and tool
+	// output) and the diff, so it is private to the owning user.
+	if err := os.WriteFile(worktreeProposalMetaPath(p.workdir), data, 0o600); err != nil {
 		return fmt.Errorf("write sidecar: %w", err)
 	}
 	return nil

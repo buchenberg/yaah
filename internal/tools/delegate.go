@@ -216,17 +216,25 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 	// Threading: a dispatch may start from a retained proposal's sealed work,
 	// running its own role/prompt/toolset. That is proposal-lane only — a
 	// report or shared dispatch seals nothing to thread into.
+	//
+	// Validate seed_mode independently: a typo that empties seed_from (e.g.
+	// "seed_form") must not leave a stray seed_mode silently ignored.
+	if subParams.SeedMode != "" {
+		switch subParams.SeedMode {
+		case jobs.SeedModeWorkspace, jobs.SeedModeConversation:
+		default:
+			return "", fmt.Errorf("delegate: seed_mode %q must be %q or %q", subParams.SeedMode, jobs.SeedModeWorkspace, jobs.SeedModeConversation)
+		}
+		if subParams.SeedFrom == "" {
+			return "", fmt.Errorf("delegate: seed_mode requires seed_from")
+		}
+	}
 	if subParams.SeedFrom != "" {
 		if t.Retained == nil {
 			return "", fmt.Errorf("delegate: seed_from requires the retained lane")
 		}
 		if lane != LaneProposal {
 			return "", fmt.Errorf("delegate: seed_from needs a proposal-lane role; %q resolves to the %s lane", params.Role, lane)
-		}
-		switch subParams.SeedMode {
-		case "", jobs.SeedModeWorkspace, jobs.SeedModeConversation:
-		default:
-			return "", fmt.Errorf("delegate: seed_mode %q must be %q or %q", subParams.SeedMode, jobs.SeedModeWorkspace, jobs.SeedModeConversation)
 		}
 	}
 

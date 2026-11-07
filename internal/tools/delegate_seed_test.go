@@ -47,4 +47,13 @@ func TestDelegate_SeedFromValidation(t *testing.T) {
 			t.Fatalf("err = %v, want a seed_mode refusal", err)
 		}
 	})
+
+	t.Run("rejects seed_mode without seed_from", func(t *testing.T) {
+		rt := &RetainedRuntime{}
+		tt := &DelegateTool{RoleNames: []string{"developer"}, Runner: noop, Retained: rt}
+		_, err := tt.Execute(context.Background(), args(`,"seed_mode":"workspace"`))
+		if err == nil || !strings.Contains(err.Error(), "requires seed_from") {
+			t.Fatalf("err = %v, want a seed_mode-without-seed_from refusal", err)
+		}
+	})
 }
