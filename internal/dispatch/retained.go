@@ -922,7 +922,7 @@ func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		notes = append(notes, "review proposal: "+reviewErr.Error())
 	}
 	if metaErr != nil {
-		notes = append(notes, "durable proposal metadata: "+metaErr.Error())
+		notes = append(notes, "durable proposal state: "+metaErr.Error())
 	}
 	if bodyFailure != "" {
 		notes = append(notes, bodyFailure)
@@ -1251,7 +1251,7 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 		notes = append(notes, "review proposal: "+reviewErr.Error())
 	}
 	if metaErr != nil {
-		notes = append(notes, "durable proposal metadata: "+metaErr.Error())
+		notes = append(notes, "durable proposal state: "+metaErr.Error())
 	}
 	if bodyFailure != "" {
 		notes = append(notes, bodyFailure)

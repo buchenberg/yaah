@@ -9,6 +9,7 @@ package dispatch
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	goatherd "github.com/buchenberg/goatherd-runtime"
 	"github.com/buchenberg/yaah/internal/jobs"
@@ -40,7 +41,9 @@ type retainedProposalMeta struct {
 
 // proposalSealOptions builds the seal payload for a worktree proposal. The
 // conversation becomes the execution snapshot; everything else becomes opaque
-// metadata. A transcript over the bound is omitted and marked.
+// metadata. A transcript over the bound — or one that cannot be marshaled — is
+// omitted and marked, but the metadata is still emitted so the proposal stays
+// settleable after a restart.
 func proposalSealOptions(meta retainedProposalMeta, transcript []types.Message) (goatherd.SealOptions, error) {
 	// The seed is recomputed at continuation time; persisting it would double
 	// the transcript and the workdir is per-run. A source link describes how
@@ -52,24 +55,26 @@ func proposalSealOptions(meta retainedProposalMeta, transcript []types.Message) 
 	params.SeedMode = ""
 	meta.Params = params
 
-	opts := goatherd.SealOptions{}
+	var opts goatherd.SealOptions
+	var transcriptErr error
 	if len(transcript) > 0 {
 		data, err := json.Marshal(transcript)
-		if err != nil {
-			return goatherd.SealOptions{}, fmt.Errorf("marshal transcript: %w", err)
-		}
-		if len(data) <= maxDurableTranscriptBytes {
+		switch {
+		case err != nil:
+			meta.TranscriptOmitted = true
+			transcriptErr = fmt.Errorf("marshal transcript: %w", err)
+		case len(data) <= maxDurableTranscriptBytes:
 			opts.Snapshot = data
-		} else {
+		default:
 			meta.TranscriptOmitted = true
 		}
 	}
 	data, err := json.Marshal(meta)
 	if err != nil {
-		return goatherd.SealOptions{}, fmt.Errorf("marshal proposal metadata: %w", err)
+		return opts, fmt.Errorf("marshal proposal metadata: %w", err)
 	}
 	opts.Metadata = data
-	return opts, nil
+	return opts, transcriptErr
 }
 
 // proposalMetaFromOutput reads what proposalSealOptions wrote. Missing
@@ -87,7 +92,13 @@ func proposalMetaFromOutput(out *goatherd.RetainedOutput) (retainedProposalMeta,
 	var transcript []types.Message
 	if snapshot := out.Snapshot(); len(snapshot) > 0 {
 		if err := json.Unmarshal(snapshot, &transcript); err != nil {
-			return meta, nil, fmt.Errorf("decode transcript snapshot: %w", err)
+			// Metadata is enough to list and settle the proposal; only the
+			// conversation seed is lost. Degrade instead of dropping the
+			// whole proposal.
+			slog.Warn("proposal rehydrate: transcript snapshot is corrupt; proposal stays settleable but not conversation-continuable",
+				"output", out.ID(), "err", err)
+			meta.TranscriptOmitted = true
+			return meta, nil, nil
 		}
 	}
 	return meta, transcript, nil

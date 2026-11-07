@@ -116,13 +116,17 @@ func loadWorktreeProposals(reg *ProposalRegistry, mgr *goatherd.ScopeManager, re
 			case sessionID == "" && meta.SessionID != "" && meta.ParentScopeID != rootScopeID:
 				warnings = append(warnings, fmt.Sprintf("proposal %s: session id unavailable and the root scope differs; not rehydrated", meta.ID))
 				continue
-			case meta.SessionID == "" && meta.ParentScopeID != "" && meta.ParentScopeID != rootScopeID:
-				// A seal from another session: not ours to settle.
+			case meta.SessionID == "" && meta.ParentScopeID != rootScopeID:
+				// A seal from another session (or one that cannot prove its
+				// session): not ours to settle.
 				continue
 			}
 			id := meta.ID
 			if id == "" {
-				id = strings.TrimPrefix(scope.ID(), "scope:")
+				// proposalSealOptions always writes the id; a missing one is a
+				// malformed seal, not a reason to invent an opaque id.
+				warnings = append(warnings, fmt.Sprintf("proposal rehydrate: %s: sealed proposal metadata has no id", workdir))
+				continue
 			}
 			parent := rootScopeID
 			if parent == "" && scope.Parent() != nil {
