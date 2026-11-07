@@ -10,6 +10,16 @@ import (
 	"github.com/buchenberg/yaah/internal/types"
 )
 
+// Seed modes for SubAgentParams.SeedMode (retained-result threading).
+const (
+	// SeedModeWorkspace seeds a dispatch's world from a retained proposal's
+	// sealed workspace state, without its conversation. Safe across roles.
+	SeedModeWorkspace = "workspace"
+	// SeedModeConversation seeds the workspace and the captured conversation;
+	// same-role only.
+	SeedModeConversation = "conversation"
+)
+
 // SubAgentParams carries the per-invocation sub-agent configuration that
 // the model may supply via the task tool arguments. It is passed through
 // to the TaskRunner so the runner can build a role-appropriate Loop.
@@ -32,6 +42,18 @@ type SubAgentParams struct {
 	// instead of starting fresh. The continuation prompt is still appended as
 	// the next user message by the loop's normal message initialization.
 	SeedMessages []types.Message
+
+	// SeedFrom, when non-empty, names a retained proposal whose sealed
+	// workspace state seeds this dispatch's world. The source proposal stays
+	// open (threading reads it); this dispatch runs its own role, prompt, and
+	// toolset. Worktree lane only.
+	SeedFrom string
+
+	// SeedMode selects what SeedFrom carries: SeedModeWorkspace (default) is
+	// the sealed worktree state; SeedModeConversation also seeds the captured
+	// messages and is same-role only (a different role's system prompt would
+	// otherwise be carried into the new loop).
+	SeedMode string
 
 	// JSONMode enables structured JSON output for this sub-agent.
 	JSONMode bool

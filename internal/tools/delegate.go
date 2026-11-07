@@ -138,6 +138,8 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 		JSONMode       bool   `json:"json_mode"`
 		OutputLimit    int    `json:"output_limit"`
 		Background     bool   `json:"background"`
+		SeedFrom       string `json:"seed_from"`
+		SeedMode       string `json:"seed_mode"`
 	}
 	if err := json.Unmarshal(fixed, &params); err != nil {
 		return "", fmt.Errorf("delegate: invalid arguments: %w", err)
@@ -189,6 +191,8 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 		MaxToolTurns:   clampedTurns,
 		JSONMode:       params.JSONMode,
 		OutputLimit:    clampedOutput,
+		SeedFrom:       params.SeedFrom,
+		SeedMode:       params.SeedMode,
 	}
 
 	timeout := resolveTaskTimeout(clampedTimeout, t.ResolveTimeout, subParams)
@@ -208,6 +212,23 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 	}
 	subParams.Lane = conflictLane
 	runCtx := WithConflictDispatch(ctx, label, conflictLane)
+
+	// Threading: a dispatch may start from a retained proposal's sealed work,
+	// running its own role/prompt/toolset. That is proposal-lane only — a
+	// report or shared dispatch seals nothing to thread into.
+	if subParams.SeedFrom != "" {
+		if t.Retained == nil {
+			return "", fmt.Errorf("delegate: seed_from requires the retained lane")
+		}
+		if lane != LaneProposal {
+			return "", fmt.Errorf("delegate: seed_from needs a proposal-lane role; %q resolves to the %s lane", params.Role, lane)
+		}
+		switch subParams.SeedMode {
+		case "", jobs.SeedModeWorkspace, jobs.SeedModeConversation:
+		default:
+			return "", fmt.Errorf("delegate: seed_mode %q must be %q or %q", subParams.SeedMode, jobs.SeedModeWorkspace, jobs.SeedModeConversation)
+		}
+	}
 
 	// A dispatch that never reaches the retained resolver has no world of its
 	// own: it runs on the session's tree. Publish that resolution so the

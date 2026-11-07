@@ -99,3 +99,9 @@ so `max_concurrency` bounds the fan-out.
 Bound it by cost, not by doubt: three attempts triple the spend, and a task with
 one obvious shape gains nothing from a second sample. One attempt plus a careful
 read beats three attempts you settle without comparing.
+
+To build a new dispatch on an existing proposal's work instead of starting cold,
+`delegate` with `seed_from: <proposal_id>` (default `seed_mode: workspace`; use
+`conversation` only for the same role). The source proposal stays open. Open
+worktree proposals are durable: they survive a restart, so a resumed session can
+still list, settle, and continue them.

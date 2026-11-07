@@ -217,6 +217,12 @@ branched into several continuations and compared. A continuation runs in its own
 fresh clone, so it settles and tears down like any other proposal; it keeps the
 work and context the sub-agent already built instead of restarting cold.
 
+To build a *new* dispatch on an existing proposal's work, `delegate` accepts
+`seed_from: <proposal_id>` with `seed_mode: workspace` (the default) or
+`conversation` (same-role only). Worktree proposals are also durable: the sealed
+result and its transcript survive a restart, so the proposal list, settlement,
+and `continue` still work after `yaah --resume`.
+
 ### Session topology, lanes, and dispatch worlds
 
 A session runs on one of two substrates, each dispatch picks a lane from its
