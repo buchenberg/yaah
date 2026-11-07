@@ -4,7 +4,28 @@ import (
 	"context"
 	"math"
 	"testing"
+	"time"
 )
+
+// waitForMessagesVecRow waits for a message's vec0 mirror to land. The async
+// embedMessageAsync writes the BLOB and then the mirror, but addMessageAndWait
+// only waits for the BLOB, so a test that deletes the vec0 row must wait for
+// the mirror itself or race it.
+func waitForMessagesVecRow(t *testing.T, db *DB, id string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		var n int
+		err := db.sql.QueryRow(
+			`SELECT COUNT(*) FROM messages_vec WHERE rowid = (SELECT rowid FROM messages WHERE id = ?)`, id,
+		).Scan(&n)
+		if err == nil && n > 0 {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for messages_vec row of message %s", id)
+}
 
 // TestVecEnsureVectorIndex pins the startup reconciliation: no embedder means
 // no table; the first ensure creates and stamps the table at the embedder's
@@ -423,6 +444,7 @@ func TestReembedStaleMessageEmbeddings_RemirrorsMissingRow(t *testing.T) {
 	db := openTestDB(t)
 	db.SetEmbedder(stubEmbedder{})
 	addMessageAndWait(t, db, Message{ID: "rm2", SessionID: "ses-test", Idx: 0, Role: "user", Content: "orphaned vector", Timestamp: 1})
+	waitForMessagesVecRow(t, db, "rm2")
 
 	// Simulate a crash between the BLOB update and the mirror: drop the vec0 row.
 	if _, err := db.sql.Exec(`DELETE FROM messages_vec WHERE rowid = (SELECT rowid FROM messages WHERE id = 'rm2')`); err != nil {
