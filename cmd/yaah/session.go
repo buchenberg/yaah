@@ -762,6 +762,10 @@ func (s *agentSession) runPromptLocked(ctx context.Context, prompt string) (stri
 // driver calls it once.
 func (s *agentSession) Start() {
 	s.startOnce.Do(func() {
+		// Announce a non-default persona once, at the point every driver
+		// has installed its view (yaah-21uk.10). Before the wake check, so
+		// sessions built without wake plumbing still announce.
+		s.announcePersona()
 		if s.closed.Load() || s.wakeMgr == nil {
 			return
 		}

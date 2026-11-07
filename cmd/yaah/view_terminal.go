@@ -96,6 +96,11 @@ func (v *terminalView) HandleEvent(evt agent.Event) {
 		// the buffered event is drained, so the transcript records which
 		// regime the turn runs under.
 		fmt.Fprintf(os.Stderr, "\n  %s\n", Dim(e.Notice))
+	case *agent.AgentChangedEvent:
+		// In-band persona marker, drained like the mode marker on the next
+		// run for buffered views: the transcript records which persona the
+		// session runs as. Only non-build personas announce.
+		fmt.Fprintf(os.Stderr, "\n  %s\n", Dim(e.Notice()))
 	case *agent.EscalationEvent:
 		severity := e.Severity
 		color := replYellow

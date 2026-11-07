@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/memory"
@@ -51,23 +52,28 @@ func resolveSessionPersona(source, configured string) sessionPersona {
 		return sessionPersona{Persona: p, Configured: name}
 	}
 	slog.Warn(source+": not a primary-capable persona; falling back to the default build persona",
-		"configured", name, "reason", personaMissReason(name))
+		"configured", name, "reason", subagent.PersonaMissReason(name))
 	p, _ := subagent.ResolvePersona(subagent.BuildPersonaName)
 	return sessionPersona{Persona: p, Configured: name, Fallback: true}
 }
 
 // resolveSessionPersonaFor picks the persona name a session resolves
 // against and runs the D4 chain on it (yaah-21uk.9). A fresh session
-// resolves agents.default.agent — the D4 default selection. A resumed
-// session resolves its OWN stored sessions.persona name instead: the
-// persona is selection state captured at creation, so a later change to
-// the config default — or a role file that has since appeared or
-// vanished — never rewrites an existing session. What the restored name
-// drives is the persona's budget (resolveOrchestratorBudget) and belt
-// (buildToolRegistry) effects, the same seams a fresh session feeds;
-// the prompt is NOT rebuilt from it — a resumed session's persisted
-// SystemPrompt wins byte-for-byte (restoreSession), so the persona body
-// the session actually ran with stays in the prompt it recorded.
+// resolves agents.default.agent — the D4 default selection — and falls
+// through the process-level next-session override when that key is
+// unset (yaah-21uk.10 precedence for a fresh session: explicit config,
+// then the override, then build; the plain string key makes "" mean
+// unset, so an override may apply). A resumed session resolves its OWN
+// stored sessions.persona name instead: the persona is selection state
+// captured at creation, so a later change to the config default — or a
+// role file that has since appeared or vanished, or an override a
+// pick surface set — never rewrites an existing session. What the
+// restored name drives is the persona's budget (resolveOrchestratorBudget)
+// and belt (buildToolRegistry) effects, the same seams a fresh session
+// feeds; the prompt is NOT rebuilt from it — a resumed session's
+// persisted SystemPrompt wins byte-for-byte (restoreSession), so the
+// persona body the session actually ran with stays in the prompt it
+// recorded.
 //
 // A store that cannot serve the read (nil, closed, failing) falls back
 // to the configured default with a warning — the resolution today's
@@ -79,8 +85,19 @@ func resolveSessionPersonaFor(db *memory.DB, opts SessionOptions, cfg *config.Co
 	name := cfg.Agent.Default.Agent
 	source := "agents.default.agent"
 	if opts.ResumeSessionID != "" {
+		// The override never reaches the resume path: the fallback handed
+		// to storedPersonaName stays the config default, so a failed read
+		// degrades to the resolution a store-less build would have made,
+		// not to whatever a pick surface last set.
 		name = storedPersonaName(db, opts.ResumeSessionID, name)
 		source = "the session's stored persona"
+		return resolveSessionPersona(source, name)
+	}
+	if name == "" {
+		if override := subagent.NextPersona(); override != "" {
+			name = override
+			source = "the next-session persona override"
+		}
 	}
 	return resolveSessionPersona(source, name)
 }
@@ -111,14 +128,47 @@ func storedPersonaName(db *memory.DB, sessionID, fallback string) string {
 	return stored
 }
 
-// personaMissReason names why a configured persona did not resolve, so
-// the fallback warning can separate a typo from a delegate-only role.
-// ResolvePersona collapses both into one miss: mode "subagent" is a
-// registered role the orchestrator cannot be; anything else (unknown
-// name, no registry) is missing.
-func personaMissReason(name string) string {
-	if subagent.RoleProfileFor(subagent.SubAgentRole(name)).Mode == "subagent" {
-		return "delegate-only"
+// PersonaName reports the persona the session runs as, fixed at
+// construction (yaah-21uk.11: role reloads refresh the registry for new
+// sessions only; nothing re-resolves this mid-session). Immutable after
+// wiring, like WorldStatus, so it reads without the session lock. The
+// ACP server reports it on session/new and session/load so a client can
+// show which persona the session actually is.
+func (s *agentSession) PersonaName() string { return s.persona.Name }
+
+// NextPersonaName reports the persona a session built after this call
+// would resolve in this process — the yaah-21uk.10 precedence for a
+// fresh session: an explicit agents.default.agent config wins, then the
+// process-level next-session override a pick surface set, then the
+// built-in build persona. It never consults this session's own stored
+// persona: that is selection state a resume reads, not something a
+// fresh build inherits. The name is the raw resolution input — a
+// configured name that no longer resolves still lands on build through
+// resolveSessionPersona's warn+fallback at actual build time.
+func (s *agentSession) NextPersonaName() string {
+	if s.cfg != nil {
+		if explicit := strings.TrimSpace(s.cfg.Agent.Default.Agent); explicit != "" {
+			return explicit
+		}
 	}
-	return "missing"
+	if override := subagent.NextPersona(); override != "" {
+		return override
+	}
+	return subagent.BuildPersonaName
+}
+
+// announcePersona publishes the session-start persona notice when the
+// session runs as anything other than the built-in build default
+// (yaah-21uk.10): views show "session persona: plan" in-band instead of
+// the session's identity being invisible. Build is the silent majority
+// — announcing it would add a line to every plain session — and a zero
+// persona (hand-built sessions) is no persona at all. dispatchEvent
+// buffers for views that cannot take writes between runs (REPL, ACP),
+// so the notice there rides the first run's drain.
+func (s *agentSession) announcePersona() {
+	name := s.persona.Name
+	if name == "" || name == subagent.BuildPersonaName {
+		return
+	}
+	s.dispatchEvent(&agent.AgentChangedEvent{Persona: name, ReadOnly: s.persona.ReadOnly})
 }

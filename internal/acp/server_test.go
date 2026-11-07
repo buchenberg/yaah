@@ -114,6 +114,11 @@ func (f *fakeSession) WorldStatus() worldinfo.Status {
 	return f.world
 }
 
+// The fake runs as the default build persona (yaah-21uk.10): no
+// per-session persona, and a next-session resolution of build.
+func (f *fakeSession) PersonaName() string     { return "build" }
+func (f *fakeSession) NextPersonaName() string { return "build" }
+
 func (f *fakeSession) SetModel(provider, model string) {
 	f.mu.Lock()
 	f.provider = provider

@@ -36,6 +36,7 @@ const (
 	CmdSession
 	CmdMCP
 	CmdModel
+	CmdAgent
 	CmdPlan
 	CmdBuild
 )
@@ -73,6 +74,7 @@ var commandNames = []struct {
 	{"session", CmdSession},
 	{"mcp", CmdMCP},
 	{"model", CmdModel},
+	{"agent", CmdAgent},
 	{"plan", CmdPlan},
 	{"build", CmdBuild},
 }
@@ -89,7 +91,7 @@ func splitName(input string) (name, arg string) {
 // takesArg reports whether cmd consumes the rest of the line.
 func takesArg(cmd Cmd) bool {
 	switch cmd {
-	case CmdSteer, CmdFollowUp, CmdSearch, CmdModel:
+	case CmdSteer, CmdFollowUp, CmdSearch, CmdModel, CmdAgent:
 		return true
 	default:
 		return false
@@ -148,6 +150,8 @@ func Usage(cmd Cmd) string {
 		return ":search <query>"
 	case CmdModel:
 		return ":model [name]"
+	case CmdAgent:
+		return ":agent [name]"
 	default:
 		return ""
 	}
@@ -170,6 +174,7 @@ func DefaultEntries() []Entry {
 		{"steer", "Inject steering text (requires arg)", CmdSteer},
 		{"followup", "Queue text as a follow-up message (requires arg)", CmdFollowUp},
 		{"model", "Switch model", CmdModel},
+		{"agent", "Pick the persona for new sessions", CmdAgent},
 		{"plan", "Switch to plan mode (inspection tools)", CmdPlan},
 		{"build", "Switch to build mode (full tools)", CmdBuild},
 		{"search", "Search messages (requires arg)", CmdSearch},

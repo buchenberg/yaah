@@ -152,6 +152,13 @@ type App struct {
 	availableModels []string
 	providerNames   map[string]string
 
+	// agentNames/agentDescs back the :agent persona picker; the driver
+	// installs them once at startup — the persona set is static per
+	// process (role reloads are followed by a restart of the picker
+	// data on the next launch).
+	agentNames []string
+	agentDescs map[string]string
+
 	// Render tracking for the incremental append fast path in
 	// refreshMessages: how many convItems are already reflected in the
 	// Messages text view, and at which width they were formatted.
@@ -176,6 +183,10 @@ type App struct {
 
 	OnModelSelect func(model string)
 	OnModeSelect  func(mode string)
+	// OnAgentSelect receives the persona the user picked in the :agent
+	// palette. The driver validates it and sets the process-level
+	// next-session override; the current session keeps its persona.
+	OnAgentSelect func(name string)
 }
 
 type convItem struct {

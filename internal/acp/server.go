@@ -80,6 +80,15 @@ type Session interface {
 	// SetMode switches the ACP session mode. An in-flight turn finishes on
 	// the mode it started with; the next turn uses the new mode.
 	SetMode(mode string) error
+	// PersonaName reports the persona the session runs as (fixed at
+	// construction). session/new and session/load report it in _meta so
+	// a client can show which persona the session actually is.
+	PersonaName() string
+	// NextPersonaName reports the persona a session created after this
+	// call would resolve (yaah-21uk.10 precedence: an explicit
+	// agents.default.agent config, then the process-level override, then
+	// the built-in build persona). session/set_agent returns it.
+	NextPersonaName() string
 	// ProviderName and ModelName report the current selection, which the
 	// ACP server renders as the model picker's currentValue.
 	ProviderName() string
@@ -637,6 +646,9 @@ func (s *Server) dispatch(
 
 		case "session/set_mode":
 			s.handleSetMode(dispatchCtx, msg, sendUpdate, respOK, respErr)
+
+		case "session/set_agent":
+			s.handleSetAgent(msg, respOK, respErr)
 
 		case "session/set_config_option":
 			s.handleSetConfigOption(dispatchCtx, msg, sendUpdate, respOK, respErr)

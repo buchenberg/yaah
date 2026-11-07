@@ -145,6 +145,32 @@ type ModeChangedEvent struct {
 
 func (*ModeChangedEvent) eventMarker() {}
 
+// AgentChangedEvent is emitted once at session start when the session
+// runs as a persona other than the default build orchestrator
+// (yaah-21uk.10): views can show which persona the session actually is
+// ("Session persona: plan") instead of the identity being invisible.
+// Plain build sessions emit nothing — build is the silent default.
+type AgentChangedEvent struct {
+	// Persona is the resolved persona name ("plan", or a registry
+	// persona's file stem).
+	Persona string
+	// ReadOnly reports that the persona's session must not mutate the
+	// workspace (the synthetic plan persona).
+	ReadOnly bool
+}
+
+func (*AgentChangedEvent) eventMarker() {}
+
+// Notice renders the one-line in-band notice every view shows, so all
+// consumers describe the persona identically (mirrors StartedSummary).
+func (e *AgentChangedEvent) Notice() string {
+	n := "Session persona: " + e.Persona
+	if e.ReadOnly {
+		n += " (read-only)"
+	}
+	return n
+}
+
 // WakeEvent announces a harness wake: an armed watch fired between turns and
 // the session is about to run the injected prompt. Text is that prompt,
 // including the predicate's evidence, so every view can show what woke the
@@ -231,6 +257,7 @@ var (
 	_ Event = (*SubAgentStartEvent)(nil)
 	_ Event = (*SubAgentEndEvent)(nil)
 	_ Event = (*ModeChangedEvent)(nil)
+	_ Event = (*AgentChangedEvent)(nil)
 	_ Event = (*WakeEvent)(nil)
 	_ Event = (*DoneEvent)(nil)
 	_ Event = (*CompactionStartedEvent)(nil)

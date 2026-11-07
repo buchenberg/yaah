@@ -395,6 +395,24 @@ func (s *Server) loadConfigOptions(ctx context.Context, st *sessionState) []Sess
 	return buildSessionConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName(), st.sess.Mode())
 }
 
+// sessionMetaOf renders the `_meta` block for a session/new or
+// session/load result: the world posture (nil when the session never
+// derived one) plus the persona the session runs as (yaah-21uk.10). The
+// block is omitted only when neither is present — hand-built test
+// doubles with no persona and no world posture.
+func sessionMetaOf(st *sessionState) *SessionMeta {
+	meta := worldMetaOf(st.sess.WorldStatus())
+	persona := st.sess.PersonaName()
+	if meta == nil {
+		if persona == "" {
+			return nil
+		}
+		meta = &SessionMeta{}
+	}
+	meta.Persona = persona
+	return meta
+}
+
 // worldMetaOf renders the ACP `_meta` block for a derived posture. The zero
 // status yields nil, which omits `_meta` entirely rather than sending an
 // empty block.
@@ -565,7 +583,7 @@ func (s *Server) handleSessionResume(
 				fmt.Sprintf("session %q was created with cwd %q, requested %q", st.id, st.cwd, cwd))
 			return
 		}
-		respOK(msg.ID, SessionResumeResult{ConfigOptions: s.loadConfigOptions(ctx, st)})
+		respOK(msg.ID, SessionResumeResult{ConfigOptions: s.loadConfigOptions(ctx, st), Persona: st.sess.PersonaName()})
 		s.refreshAvailableCommands(st, sendUpdate)
 		return
 	}

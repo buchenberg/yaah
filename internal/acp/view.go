@@ -362,6 +362,14 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 			SessionUpdate: UpdateAgentMessageChunk,
 			Content:       textContent("[" + e.Notice + "]"),
 		})
+	case *agent.AgentChangedEvent:
+		// Session-start persona marker, same plain-text shape as the mode
+		// marker: the client's transcript records which persona the session
+		// runs as. Only non-build personas announce (yaah-21uk.10).
+		send(sessionID, ChunkUpdate{
+			SessionUpdate: UpdateAgentMessageChunk,
+			Content:       textContent("[" + e.Notice() + "]"),
+		})
 	case *agent.WakeEvent:
 		// A watch fired between turns. ACP has no client-side prompt for
 		// harness-initiated turns in v1, so the wake appears as one agent

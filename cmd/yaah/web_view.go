@@ -317,6 +317,10 @@ func (v *sseView) HandleEvent(evt agent.Event) {
 		// compaction notices. The header's mode badge is updated
 		// separately by SetSessionMode.
 		we = sseWireEvent{Type: "ctrl.status", Text: e.Notice}
+	case *agent.AgentChangedEvent:
+		// One-line persona marker in the status line, alongside the mode
+		// notice. Only non-build personas announce (yaah-21uk.10).
+		we = sseWireEvent{Type: "ctrl.status", Text: e.Notice()}
 	case *agent.WakeEvent:
 		// A watch fired between turns. The status line carries the digest's
 		// first line; the model receives the full evidence in the injected

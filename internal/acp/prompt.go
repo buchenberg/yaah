@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/control"
 )
 
@@ -86,6 +87,51 @@ func (s *Server) handleSetMode(
 		ConfigOptions: buildSessionConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName(), p.ModeID),
 	})
 	respOK(msg.ID, nil)
+}
+
+// handleSetAgent stores the process-level next-session persona override
+// (yaah-21uk.10). The override applies to sessions created AFTER the
+// call — the addressed session keeps its persona, which was fixed at
+// its construction (yaah-21uk.11) — and an explicit agents.default.agent
+// config still outranks it, which is why the result reports the
+// effective next persona rather than echoing the request. The name must
+// resolve primary-capable; an unknown session id or empty name is
+// invalid params, mirroring session/set_mode.
+func (s *Server) handleSetAgent(
+	msg Message,
+	respOK func(id json.RawMessage, result any),
+	respErr func(id json.RawMessage, code int, message string),
+) {
+	var p SetAgentParams
+	if len(msg.Params) > 0 {
+		if err := json.Unmarshal(msg.Params, &p); err != nil {
+			respErr(msg.ID, codeInvalidParams, "invalid params: "+err.Error())
+			return
+		}
+	}
+	if p.SessionID == "" {
+		respErr(msg.ID, codeInvalidParams, "sessionId is required")
+		return
+	}
+	name := strings.TrimSpace(p.Agent)
+	if name == "" {
+		respErr(msg.ID, codeInvalidParams, "agent is required")
+		return
+	}
+	s.mu.Lock()
+	st, ok := s.sessions[p.SessionID]
+	s.mu.Unlock()
+	if !ok {
+		respErr(msg.ID, codeInvalidParams, "unknown session id")
+		return
+	}
+	if _, resolvable := subagent.ResolvePersona(name); !resolvable {
+		respErr(msg.ID, codeInvalidParams,
+			fmt.Sprintf("%q is not a primary-capable agent (%s)", name, subagent.PersonaMissReason(name)))
+		return
+	}
+	subagent.SetNextPersona(name)
+	respOK(msg.ID, SetAgentResult{Persona: st.sess.NextPersonaName()})
 }
 
 // modelCatalog returns the models discovery reports for the picker, or

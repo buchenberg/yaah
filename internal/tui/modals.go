@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/buchenberg/yaah/internal/tui/components/agentpicker"
 	"github.com/buchenberg/yaah/internal/tui/components/approval"
 	"github.com/buchenberg/yaah/internal/tui/components/errdialog"
 	"github.com/buchenberg/yaah/internal/tui/components/help"
@@ -71,6 +72,19 @@ func (t *App) ShowModelPicker(models []string, providerNames map[string]string, 
 	modelpicker.Show(t.App, t.Pages, models, providerNames, onSelect, func(string) {
 		t.endModal()
 	}, t.Input)
+}
+
+// SetAgentPicker installs the persona list the :agent palette entry
+// offers: names in display order with their one-line descriptions.
+func (t *App) SetAgentPicker(names []string, descriptions map[string]string) {
+	t.agentNames = names
+	t.agentDescs = descriptions
+}
+
+// ShowAgentPicker displays the persona picker modal (yaah-21uk.10).
+func (t *App) ShowAgentPicker(names []string, descriptions map[string]string, onSelect func(string)) {
+	t.beginModal()
+	agentpicker.Show(t.App, t.Pages, names, descriptions, onSelect, t.endModal)
 }
 
 // ShowHelp displays the help overlay.

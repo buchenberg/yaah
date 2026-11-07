@@ -122,6 +122,12 @@ func startREPL() error {
 		case repl.CmdReloadRoles:
 			sess.reloadRoles()
 			continue
+		case repl.CmdAgents:
+			sess.showAgents()
+			continue
+		case repl.CmdAgent:
+			sess.agentCommand(repl.SlashAgentArg(input))
+			continue
 		case repl.CmdLogin:
 			replLogin(sess)
 			continue
@@ -222,6 +228,8 @@ func printHelp() {
 	fmt.Printf("  %s  %s\n", repl.Bold("/logout"), repl.Dim("remove stored OAuth credentials"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/plan"), repl.Dim("inspection/planning mode: inspection tools only, no edits"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/build"), repl.Dim("full toolset mode"))
+	fmt.Printf("  %s  %s\n", repl.Bold("/agents"), repl.Dim("list agent personas"))
+	fmt.Printf("  %s  %s\n", repl.Bold("/agent [name]"), repl.Dim("pick the persona for new sessions"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/?"), repl.Dim("show this help"))
 	fmt.Println()
 }

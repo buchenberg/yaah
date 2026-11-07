@@ -114,6 +114,16 @@ func (t *App) HandleEvent(event agent.Event) {
 			t.conversationLog = append(t.conversationLog, convItem{text: msg})
 			t.markDirty()
 		})
+	case *agent.AgentChangedEvent:
+		// In-band persona marker next to the mode marker: which persona
+		// the session runs as stays in the transcript, not only in the
+		// info pane. Only non-build personas announce (yaah-21uk.10).
+		t.queueUpdateCritical(func() {
+			t.flushPendingTokens()
+			msg := fmt.Sprintf("[%s]%s[-]", t.Theme.Dim, e.Notice())
+			t.conversationLog = append(t.conversationLog, convItem{text: msg})
+			t.markDirty()
+		})
 	case *agent.WakeEvent:
 		// A watch fired between turns: record the injected prompt exactly
 		// where a user turn would appear, so the transcript shows what woke
