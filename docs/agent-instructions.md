@@ -57,10 +57,16 @@ From `retained.md` (injected when the retained lane is live):
   (export the sealed delta to a retention path; tear down a worktree, or
   consume the already-ended container manifest), `discard` (throw it away and
   free the worktree or manifest directory). A proposal settles exactly once.
-- A turn-exhausted proposal can be carried forward: `proposal continue` re-runs
+- An open worktree proposal can be carried forward: `proposal continue` re-runs
   it for `extra_turns` more turns (default 5, max 50), seeded from its captured
   conversation and sealed workspace, and supersedes the original; `fork` keeps
   the original open for comparison. Container-lane proposals cannot continue.
+- A new dispatch can build on an existing proposal's work:
+  `delegate(seed_from: <proposal_id>)` seeds a fresh clone from that proposal's
+  sealed workspace (its own role/prompt/toolset), and `seed_mode: conversation`
+  also carries the captured messages for the same role. The source stays open.
+- Worktree proposals are durable: their result and transcript survive a restart,
+  so a resumed session can still list, settle, and continue them.
 - The dispatch envelope names `world` (`worktree` or `container`); a
   container proposal also names `target` (`host` or `session`). It can include
   `warning` for a degraded dispatch or `notes` for settlement caveats.

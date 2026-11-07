@@ -210,7 +210,8 @@ returns a proposal the orchestrator settles.
   `agents.subagent.roles.<role>.turn_checkpoints: true` captures workspace and
   conversation before each turn, so a turn that fails in the tool phase or
   exhausts its iteration budget rewinds instead of losing the attempt.
-- **Continuation.** A turn-exhausted worktree proposal is not a dead end:
+- **Continuation.** An open worktree proposal is not a dead end (most often one
+  that ran out of turns):
   `proposal continue` re-runs it for `extra_turns` more turns, seeded from its
   captured conversation and sealed workspace, and seals a superseding proposal
   (the original is discarded so settlement stays consume-once).
@@ -219,6 +220,16 @@ returns a proposal the orchestrator settles.
   continuation is a fresh clone with its own worktree and scope, so it cleans up
   at settlement like any other proposal. Container-lane proposals cannot be
   continued: their world ended at seal.
+- **Threading.** `delegate(seed_from: <proposal_id>, seed_mode: workspace)`
+  starts a new dispatch — its own role, prompt, and toolset — from a retained
+  proposal's sealed workspace, in a fresh clone; the source proposal stays open.
+  `seed_mode: conversation` also carries the captured messages and is same-role
+  only. Worktree lane only.
+- **Durable proposals.** A worktree proposal's result, transcript, and dispatch
+  params are written to a sidecar beside the worktree, and at startup the
+  proposal registry is rebuilt from the kernel-recovered scopes and sealed
+  outputs. A recovered proposal can be listed, shown, settled, and continued
+  after a restart; a sidecar-less output is reported and skipped.
 
 Because every retained dispatch is isolated, several can be compared safely:
 issue two or three calls for one task in a single turn, read the proposals,

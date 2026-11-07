@@ -38,6 +38,7 @@ not claim it wholesale.
 | Kernel / record | `shepherd2` `abi.v0` | `goatherd-kernel v0.20.0`, golden vectors | **Shipped, exact** |
 | Retained runs / settlement | `workspace.run` + four settlement verbs | `delegate` + `proposal` verbs | **Shipped** |
 | Context continuation | not shipped (paper's fork/revert vision) | `proposal continue` / `proposal fork` over retained proposals | **Shipped, beyond reference**; `yaah-hxk3.6` |
+| Retained-result threading | not shipped (roadmap row) | `delegate(seed_from)` over retained proposals; worktree proposals survive restart | **Shipped, beyond reference**; `yaah-hxk3.7` |
 | Dispatch worlds | `vcs-core` carriers | git worktree + croft container | **Shipped**; live container verification in `yaah-kit` |
 | Authority | Landlock / Seatbelt | Landlock / winacl / Seatbelt | **Shipped** |
 | Per-binding grants | `May[GitRepo, ReadOnly/ReadWrite]` | world-relative RW/RO config grants | **Shipped**, different surface |
@@ -432,7 +433,7 @@ to the shaped container before the body starts.
 
 ### D13 — sub-agent continuation is a fork, not a resume (yaah-hxk3.6)
 
-A turn-exhausted worktree proposal can be carried forward: `proposal continue`
+An open worktree proposal can be carried forward: `proposal continue`
 (and `proposal fork`) re-runs it for extra turns, seeded from its captured
 conversation and its sealed workspace state, and seals the result as a new
 proposal. This reverses the earlier D1 "seed messages live in the loop config,
@@ -451,6 +452,53 @@ seal.
 
 Non-goals: deterministic replay (needs a deterministic provider neither project
 ships); container-lane continuation; `oversee` / task-as-value delegation.
+
+### D14 — retained-result threading and durable worktree proposals (yaah-hxk3.7)
+
+A dispatch can start from another retained proposal's sealed work
+(`delegate(seed_from, seed_mode)`), running its own role/prompt/toolset while the
+source proposal stays open. `seed_mode: workspace` (default) seeds only the
+sealed worktree state; `conversation` also carries the captured messages and is
+same-role only, so a different role's system prompt cannot leak in. Threading is
+worktree-lane only: a container world ends at seal.
+
+Worktree proposals are now durable. At seal a sidecar beside the worktree records
+the result, failure note, transcript, and dispatch params; at startup the
+registry is rebuilt from the kernel-recovered scopes + sealed outputs and
+enriched from that sidecar. The kernel already recovered scope/output state; the
+transcript was the missing half. A recovered proposal is listable, settleable,
+and continuable. A sidecar-less output is reported and skipped rather than
+surfaced half-formed, and a transcript over the sidecar bound is omitted (never
+truncated) so a continuation cannot inherit an invalid message sequence.
+
+Non-goals: durable *live* background loops (a loop cannot survive restart without
+deterministic replay); container-lane threading.
+
+### D15 — retained outputs become first-class in goatherd (cross-repo)
+
+yaah's continue/fork, threading, and durable proposals (D13/D14) are implemented
+host-side: a sidecar persists result/transcript/params, and fork-from-a-state is a
+manual Create + ForkIsolated + Apply. Two of those belong in the substrate, and
+the seal record is currently lossy — it omits the diff, carries no execution
+snapshot, and recovery rebuilds neither (so a recovered worktree proposal shows
+no diff).
+
+Target substrate — goatherd-runtime epic `shepherd-runtime-go-owf`, with the
+goatherd-kernel named-blob primitive `goatherd-kernel-vkg`:
+
+1. **Seal is complete.** `SealOptions{Snapshot, Metadata, DiffCap}` persists the
+   execution snapshot, the diff, and opaque caller metadata; recovery rebuilds
+   them.
+2. **Fork has explicit Baseline/Seed/Snapshot.** A child can be seeded from a
+   retained output while settling against the parent's current tree, with the
+   snapshot persisted in the fork record.
+3. **Lineage is first-class.** Settled outputs cite the output they
+   supersede/derive from, and the review pair is recoverable.
+
+When those land, yaah deletes the worktree sidecar, routes continue/threading
+through the substrate, and keeps only host policy (loop seeding and transcript
+meaning, roles/budgets, same-role/seed-mode rules, conflict analysis, the tool
+surface). Tracked as `yaah-hxk3.8`, blocked on the goatherd epic.
 
 ## Review provenance
 

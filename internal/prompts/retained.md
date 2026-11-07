@@ -26,8 +26,9 @@ it with the `proposal` tool:
   claiming success.
 - `discard` — throw the proposal away and remove its worktree, or its manifest
   directory.
-- `continue` — re-run a turn-exhausted worktree proposal for `extra_turns` more
-  turns (default 5, maximum 50), seeded from its captured conversation and
+- `continue` — re-run an open worktree proposal (most often one that ran out of
+  turns) for `extra_turns` more turns (default 5, maximum 50), seeded from its
+  captured conversation and
   sealed workspace, and seal a superseding proposal (the original is discarded
   so settlement stays consume-once). `fork` is the same re-run but keeps the
   original open so you can compare continuations. Container-lane proposals
@@ -99,3 +100,9 @@ so `max_concurrency` bounds the fan-out.
 Bound it by cost, not by doubt: three attempts triple the spend, and a task with
 one obvious shape gains nothing from a second sample. One attempt plus a careful
 read beats three attempts you settle without comparing.
+
+To build a new dispatch on an existing proposal's work instead of starting cold,
+`delegate` with `seed_from: <proposal_id>` (default `seed_mode: workspace`; use
+`conversation` only for the same role). The source proposal stays open. Open
+worktree proposals are durable: they survive a restart, so a resumed session can
+still list, settle, and continue them.

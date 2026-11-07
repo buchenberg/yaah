@@ -23,7 +23,9 @@ func (t *DelegateTool) Schema() json.RawMessage {
 			"max_turns": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Optional soft cap on tool-using turns. Prefer omitting — the role knows its own budget, and the value cannot go below the role's min_turns."},
 			"json_mode": {"type": "boolean", "description": "Request structured JSON output from the sub-agent."},
 			"output_limit": {"type": "integer", "minimum": 1024, "description": "Optional byte cap on the sub-agent's final report."},
-			"background": {"type": "boolean", "description": "When true, dispatch the sub-agent asynchronously and return immediately. Results arrive in a follow-up message. Returns a job_id you can use with subagent_jobs to check status, cancel, or wait."}
+			"background": {"type": "boolean", "description": "When true, dispatch the sub-agent asynchronously and return immediately. Results arrive in a follow-up message. Returns a job_id you can use with subagent_jobs to check status, cancel, or wait."},
+			"seed_from": {"type": "string", "description": "Optional retained proposal id whose sealed workspace seeds this dispatch (retained-result threading); the source proposal stays open. Proposal-lane only."},
+			"seed_mode": {"type": "string", "enum": ["workspace", "conversation"], "description": "seed_from only: workspace (default) seeds the sealed worktree state; conversation also seeds the captured messages and is same-role only."}
 		},
 		"required": ["description", "prompt", "role"]
 	}`)
@@ -121,6 +123,15 @@ func BuildDelegateSchema(roleNames []string, roleDescriptions map[string]string)
 			"background": map[string]any{
 				"type":        "boolean",
 				"description": "When true, dispatch the sub-agent asynchronously and return immediately. Results arrive in a follow-up message. Returns a job_id to use with subagent_jobs (status/cancel/wait).",
+			},
+			"seed_from": map[string]any{
+				"type":        "string",
+				"description": "Optional retained proposal id whose sealed workspace seeds this dispatch (retained-result threading); the source proposal stays open. Proposal-lane only.",
+			},
+			"seed_mode": map[string]any{
+				"type":        "string",
+				"enum":        []string{"workspace", "conversation"},
+				"description": "seed_from only: workspace (default) seeds the sealed worktree state; conversation also seeds the captured messages and is same-role only.",
 			},
 		},
 		"required": []string{"description", "prompt", "role"},

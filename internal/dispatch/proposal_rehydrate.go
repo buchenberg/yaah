@@ -9,8 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	goatherd "github.com/buchenberg/goatherd-runtime"
+	"github.com/buchenberg/goatherd-runtime/sandbox"
 )
 
 // LoadProposalRegistry rebuilds the container-proposal registry from the
@@ -28,41 +30,119 @@ import (
 // consumed rather than resurrected.
 func LoadProposalRegistry(repoPath string, mgr *goatherd.ScopeManager, rootScopeID, sessionID string) (*ProposalRegistry, []string) {
 	reg := NewProposalRegistry()
-	if strings.TrimSpace(repoPath) == "" {
-		return reg, []string{"proposal rehydrate: no repository path — container proposals are not visible"}
-	}
-	if rootScopeID == "" {
-		return reg, []string{"proposal rehydrate: no root scope — container proposals are not visible"}
-	}
-	root := filepath.Join(repoPath, ".yaah", "proposals")
-	entries, err := os.ReadDir(root)
-	if errors.Is(err, fs.ErrNotExist) {
-		return reg, nil
-	}
-	if err != nil {
-		return reg, []string{fmt.Sprintf("proposal rehydrate: read %s: %v", root, err)}
+	var warnings []string
+
+	// Container proposals: durable artifacts under <repo>/.yaah/proposals.
+	switch {
+	case strings.TrimSpace(repoPath) == "":
+		warnings = append(warnings, "proposal rehydrate: no repository path — container proposals are not visible")
+	case rootScopeID == "":
+		warnings = append(warnings, "proposal rehydrate: no root scope — container proposals are not visible")
+	default:
+		root := filepath.Join(repoPath, ".yaah", "proposals")
+		entries, err := os.ReadDir(root)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+		case err != nil:
+			warnings = append(warnings, fmt.Sprintf("proposal rehydrate: read %s: %v", root, err))
+		default:
+			for _, entry := range entries {
+				if !entry.IsDir() {
+					continue
+				}
+				dir := filepath.Join(root, entry.Name())
+				p, warn, err := loadGitDeltaProposal(dir, repoPath, mgr, rootScopeID, sessionID)
+				if err != nil {
+					warnings = append(warnings, fmt.Sprintf("proposal rehydrate: %s: %v", dir, err))
+					continue
+				}
+				if p == nil {
+					if warn != "" {
+						warnings = append(warnings, warn)
+					}
+					continue
+				}
+				reg.add(p)
+			}
+		}
 	}
 
-	var warnings []string
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		dir := filepath.Join(root, entry.Name())
-		p, warn, err := loadGitDeltaProposal(dir, repoPath, mgr, rootScopeID, sessionID)
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("proposal rehydrate: %s: %v", dir, err))
-			continue
-		}
-		if p == nil {
-			if warn != "" {
-				warnings = append(warnings, warn)
-			}
-			continue
-		}
-		reg.add(p)
-	}
+	// Worktree proposals: the kernel recovered the scopes and sealed outputs
+	// from the trace; the sidecar beside each worktree adds result/transcript.
+	warnings = append(warnings, loadWorktreeProposals(reg, mgr, repoPath, rootScopeID, sessionID)...)
+
 	return reg, warnings
+}
+
+// loadWorktreeProposals rebuilds the worktree lane's open proposals from the
+// recovered scope tree. A scope that is active and owns a re-adopted worktree
+// sandbox, with an unconsumed sealed output, is an open proposal; its sidecar
+// supplies the id, result, transcript, and continuation params. A sidecar-less
+// output is reported and skipped rather than surfaced half-formed.
+func loadWorktreeProposals(reg *ProposalRegistry, mgr *goatherd.ScopeManager, repoPath, rootScopeID, sessionID string) []string {
+	if mgr == nil {
+		return nil
+	}
+	var warnings []string
+	for _, scope := range mgr.AllScopes() {
+		if scope.State() != goatherd.ScopeActive {
+			continue
+		}
+		addr, ok := scope.Sandbox().(sandbox.Addressed)
+		if !ok || addr.Address() == "" {
+			continue
+		}
+		workdir := addr.Address()
+		for _, out := range mgr.OutputsForScope(scope.ID()) {
+			if out.State() != goatherd.OutputUnconsumed {
+				continue
+			}
+			meta, err := readWorktreeProposalMeta(workdir)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("proposal rehydrate: %s: %v", workdir, err))
+				continue
+			}
+			// Scope by session like the container lane: the durable session id
+			// is the key, and the recorded parent scope is the fallback for
+			// sidecars written before that field existed. Anything that cannot
+			// prove it belongs to this session is skipped, never surfaced.
+			switch {
+			case sessionID != "" && meta.SessionID != "":
+				if meta.SessionID != sessionID {
+					continue
+				}
+			case sessionID == "" && meta.SessionID != "" && meta.ParentScopeID != rootScopeID:
+				warnings = append(warnings, fmt.Sprintf("proposal %s: session id unavailable and the root scope differs; not rehydrated", meta.ID))
+				continue
+			case meta.SessionID == "" && meta.ParentScopeID != rootScopeID:
+				// A legacy sidecar from another session: not ours to settle.
+				continue
+			}
+			parent := rootScopeID
+			if parent == "" && scope.Parent() != nil {
+				parent = scope.Parent().ID()
+			}
+			reg.add(&retainedProposal{
+				id:      meta.ID,
+				scopeID: scope.ID(),
+				workdir: workdir,
+				output:  out,
+				// review carries the diff persisted in the sidecar: the kernel's
+				// recovered output has none, and reviewDiff() prefers it.
+				review:     meta.Diff,
+				result:     meta.Result,
+				runErr:     meta.RunErr,
+				transcript: meta.Transcript,
+				params:     meta.Params,
+				timeout:    time.Duration(meta.TimeoutMS) * time.Millisecond,
+				parentID:   parent,
+				mgr:        mgr,
+				repoPath:   repoPath,
+				world:      "worktree",
+			})
+		}
+	}
+	return warnings
 }
 
 // loadGitDeltaProposal rehydrates one artifact directory. A nil proposal with

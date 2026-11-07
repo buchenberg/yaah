@@ -208,7 +208,7 @@ restores to the state before it instead of losing the whole attempt
 untracked content: scratch files, freshly authored roles, and sub-agent output
 survive it, and anything that cannot be moved back is reported rather than lost.
 
-A turn-exhausted proposal is not a dead end either. If a sub-agent stops because
+An open proposal is not a dead end either. If a sub-agent stops because
 it hit its turn or iteration budget while close to finishing, `proposal continue`
 re-runs it for `extra_turns` more turns seeded from its captured conversation and
 sealed workspace, then seals a superseding proposal and discards the original.
@@ -216,6 +216,12 @@ sealed workspace, then seals a superseding proposal and discards the original.
 branched into several continuations and compared. A continuation runs in its own
 fresh clone, so it settles and tears down like any other proposal; it keeps the
 work and context the sub-agent already built instead of restarting cold.
+
+To build a *new* dispatch on an existing proposal's work, `delegate` accepts
+`seed_from: <proposal_id>` with `seed_mode: workspace` (the default) or
+`conversation` (same-role only). Worktree proposals are also durable: the sealed
+result and its transcript survive a restart, so the proposal list, settlement,
+and `continue` still work after `yaah --resume`.
 
 ### Session topology, lanes, and dispatch worlds
 

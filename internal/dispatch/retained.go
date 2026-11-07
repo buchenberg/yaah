@@ -207,6 +207,22 @@ type proposalEnvelope struct {
 // mirroring Shepherd's run select | apply | release | discard.
 func proposalVerbs() []string { return []string{"select", "apply", "release", "discard"} }
 
+// continuableVerbs is the open-worktree vocabulary: the settlement verbs plus
+// the re-run verbs a proposal whose conversation was captured accepts.
+func continuableVerbs() []string {
+	return []string{"select", "apply", "release", "discard", "continue", "fork"}
+}
+
+// nextVerbsFor returns the legal next verbs for one proposal. A worktree
+// proposal with a captured transcript can be continued or forked; a container
+// proposal's world ended at seal, so it settles only.
+func nextVerbsFor(p *retainedProposal) []string {
+	if p != nil && p.delta == nil && len(p.transcript) > 0 {
+		return continuableVerbs()
+	}
+	return proposalVerbs()
+}
+
 // Apply strategies. Path-disjoint is the default and the only strategy a
 // container proposal can use. Three-way is an explicit worktree-only opt-in;
 // it never applies automatically and fails closed on a textual conflict.
@@ -499,7 +515,16 @@ func (r *ProposalRegistry) listEnvelope(ctx context.Context) string {
 	if duplicates == nil {
 		duplicates = []proposalConflict{}
 	}
-	env := proposalListEnvelope{Status: "open", Proposals: list, Conflicts: conflicts, Duplicates: duplicates, Next: proposalVerbs()}
+	// Advertise the re-run verbs when at least one listed proposal accepts
+	// them, so `next` is a real eligibility list (not settlement-only).
+	next := proposalVerbs()
+	for _, analysis := range analyses {
+		if analysis.proposal != nil && analysis.proposal.delta == nil && len(analysis.proposal.transcript) > 0 {
+			next = continuableVerbs()
+			break
+		}
+	}
+	env := proposalListEnvelope{Status: "open", Proposals: list, Conflicts: conflicts, Duplicates: duplicates, Next: next}
 	data, err := json.Marshal(env)
 	if err != nil {
 		return `{"status":"open","proposals":[],"conflicts":[],"duplicates":[]}`
@@ -630,6 +655,18 @@ func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	}
 	recordDispatchWorld(ctx, worldRes)
 
+	// Retained-result threading (seed_from) is worktree-only: a report dispatch
+	// seals nothing to thread, and a container world ends at seal so it has no
+	// live world to seed a new dispatch from.
+	if subParams.SeedFrom != "" {
+		if report {
+			return "", fmt.Errorf("delegate: seed_from cannot seed a report dispatch")
+		}
+		if worldRes.Resolved == subagent.WorldContainer {
+			return "", fmt.Errorf("delegate: seed_from is worktree-lane only; the container lane ends its world at seal")
+		}
+	}
+
 	// A container world serves both lanes. A report never seals, so the
 	// container is simply destroyed. A proposal seals a GitDelta manifest
 	// before the container is destroyed: the manifest is the proposal, so no
@@ -704,12 +741,24 @@ func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		recordDispatchWorld(ctx, worldRes)
 	}
 
-	// The basis: the parent's workspace at dispatch. The proposal's delta is
-	// everything the sub-agent changes relative to it. A container report
-	// dispatch never needs it — it returns above, before the copy-in.
-	forkPoint, err := parent.CaptureWorkspace(ctx)
-	if err != nil {
-		return "", fmt.Errorf("delegate: capture basis: %w", err)
+	// The basis: the parent's workspace at dispatch, or — for retained-result
+	// threading — the sealed workspace of a source proposal. The proposal's
+	// delta is everything the sub-agent changes relative to it. A container
+	// report dispatch never needs it — it returns above, before the copy-in.
+	var forkPoint shepherdtrace.WorkspaceState
+	var seedMessages []types.Message
+	if subParams.SeedFrom != "" {
+		seed, msgs, serr := resolveThreadSeed(rt, subParams.SeedFrom, subParams.SeedMode, subParams.Role)
+		if serr != nil {
+			return "", fmt.Errorf("delegate: %w", serr)
+		}
+		forkPoint, seedMessages = seed, msgs
+	} else {
+		var cerr error
+		forkPoint, cerr = parent.CaptureWorkspace(ctx)
+		if cerr != nil {
+			return "", fmt.Errorf("delegate: capture basis: %w", cerr)
+		}
 	}
 
 	id := fmt.Sprintf("proposal:%d:%d", time.Now().UnixNano(), proposalSeq.Add(1))
@@ -736,6 +785,7 @@ func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 
 	sp := subParams
 	sp.Workdir = wt
+	sp.SeedMessages = seedMessages
 
 	// The dispatch budget is a wall-clock limit on the whole run. Track which
 	// deadline governed the run context so a parent deadline (or a provider's
@@ -888,12 +938,56 @@ func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	}
 	rt.Proposals.add(proposal)
 	rt.Proposals.recordSealConflictFacts(ctx, proposal)
+	if err := persistWorktreeProposalMeta(rt, proposal); err != nil {
+		env.Notes = appendSettleNote(env.Notes, "durable sidecar: "+err.Error())
+	}
+	env.Next = nextVerbsFor(proposal)
 
 	env.Status = "proposal"
 	env.Result = trimResult(result)
 	env.Diff = clipDiff(output.Diff())
 	env.Files = changesPaths(output.Changes())
 	return marshalProposalEnvelope(env), nil
+}
+
+// resolveThreadSeed resolves a source proposal for retained-result threading:
+// its sealed workspace state plus, for conversation mode, its captured
+// messages. It refuses a container source (its world ended at seal) and a
+// cross-role conversation seed (the source's system prompt would leak into the
+// new role's loop).
+func resolveThreadSeed(rt RetainedRuntime, sourceID, seedMode, newRole string) (shepherdtrace.WorkspaceState, []types.Message, error) {
+	if rt.Proposals == nil {
+		return shepherdtrace.WorkspaceState{}, nil, fmt.Errorf("seed_from needs a proposal registry")
+	}
+	src, err := rt.Proposals.get(sourceID)
+	if err != nil {
+		return shepherdtrace.WorkspaceState{}, nil, fmt.Errorf("seed_from: %w", err)
+	}
+	if src.delta != nil {
+		return shepherdtrace.WorkspaceState{}, nil, fmt.Errorf("seed_from %s is a container proposal; threading is worktree-lane only", sourceID)
+	}
+	if src.output == nil {
+		return shepherdtrace.WorkspaceState{}, nil, fmt.Errorf("seed_from %s has no sealed output", sourceID)
+	}
+	state := src.output.Workspace()
+	switch seedMode {
+	case "", jobs.SeedModeWorkspace:
+		return state, nil, nil
+	case jobs.SeedModeConversation:
+		if src.params.Role != newRole {
+			return shepherdtrace.WorkspaceState{}, nil, fmt.Errorf("seed_mode conversation is same-role only (%s != %s); use seed_mode workspace", src.params.Role, newRole)
+		}
+		if len(src.transcript) == 0 {
+			// Never silently degrade to workspace-only: the caller asked for
+			// context and would otherwise assume it got some. The transcript
+			// may be absent because it was never captured or because it was
+			// omitted over the sidecar size bound.
+			return shepherdtrace.WorkspaceState{}, nil, fmt.Errorf("seed_mode conversation needs the source's captured conversation, but it is empty (never captured or omitted over the size bound); use seed_mode workspace")
+		}
+		return state, src.transcript, nil
+	default:
+		return shepherdtrace.WorkspaceState{}, nil, fmt.Errorf("seed_mode %q must be %q or %q", seedMode, jobs.SeedModeWorkspace, jobs.SeedModeConversation)
+	}
 }
 
 // ContinueRetainedRun re-runs an open worktree proposal with extraTurns more
@@ -949,9 +1043,13 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	}
 	defer rt.Proposals.releaseContinue(id)
 
-	// Seed the continuation's world from the original's sealed state, not the
-	// parent's current state, so it resumes exactly where the original stopped.
-	seed := p.output.Workspace()
+	// Seed the continuation's world from the original's sealed state and
+	// conversation, not the parent's current state, so it resumes exactly
+	// where the original stopped.
+	seed, seedMessages, serr := resolveThreadSeed(rt, id, jobs.SeedModeConversation, p.params.Role)
+	if serr != nil {
+		return "", serr
+	}
 	newID := fmt.Sprintf("proposal:%d:%d", time.Now().UnixNano(), proposalSeq.Add(1))
 	wt := retainedWorktreePath(rt, newID)
 	rt.BeginDispatchScope(newID)
@@ -965,7 +1063,12 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 
 	sp := p.params
 	sp.Workdir = wt
-	sp.SeedMessages = p.transcript
+	// A continuation seeds from the original itself, not from whatever that
+	// proposal was originally threaded from; clear the thread fields so a
+	// continuation of a threaded proposal cannot re-resolve an older source.
+	sp.SeedFrom = ""
+	sp.SeedMode = ""
+	sp.SeedMessages = seedMessages
 	sp.MaxToolTurns = extraTurns
 	if strings.TrimSpace(prompt) == "" {
 		prompt = fmt.Sprintf("SUPERVISOR: continue the task for up to %d more turns, then produce your complete final report.", extraTurns)
@@ -1058,6 +1161,10 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	}
 	rt.Proposals.add(cont)
 	rt.Proposals.recordSealConflictFacts(ctx, cont)
+	if err := persistWorktreeProposalMeta(rt, cont); err != nil {
+		notes = append(notes, "durable sidecar: "+err.Error())
+	}
+	env.Next = nextVerbsFor(cont)
 
 	env.Notes = "continuation of " + id
 	if consumeOriginal {
@@ -1377,8 +1484,10 @@ func (r *ProposalRegistry) settleRetainedProposalDefault(ctx context.Context, id
 
 	env.Outcome = settleOutcome(verb, p, env).String()
 
-	// Consume-once: a settled proposal leaves the registry.
+	// Consume-once: a settled proposal leaves the registry, and its durable
+	// sidecar goes with it.
 	r.remove(id)
+	removeWorktreeProposalMeta(p)
 	return marshalProposalEnvelope(env), nil
 }
 
@@ -1421,7 +1530,9 @@ func exportReleasedDelta(p *retainedProposal) (string, error) {
 	if files := changesPaths(p.output.Changes()); len(files) > 0 {
 		fmt.Fprintf(&b, "\nfiles:\n%s\n", strings.Join(files, "\n"))
 	}
-	fmt.Fprintf(&b, "\ndiff:\n%s\n", p.output.Diff())
+	// reviewDiff() falls back to the sidecar diff for a recovered proposal,
+	// whose kernel output carries none.
+	fmt.Fprintf(&b, "\ndiff:\n%s\n", p.reviewDiff())
 
 	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
 		return "", err

@@ -201,6 +201,7 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 			notes = appendSettleNote(notes, fmt.Sprintf("worktree teardown failed: %v; worktree stranded at %s", cleanupErr, p.workdir))
 		}
 		r.remove(p.id)
+		removeWorktreeProposalMeta(p)
 		message := "merge landed but sealed output could not be consumed: " + settleErr.Error()
 		if errors.Is(settleErr, goatherd.ErrOutputConsumed) {
 			message = fmt.Sprintf("merge landed but sealed output was already consumed by %s; inspect the parent tree", p.output.Action())
@@ -218,6 +219,7 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 		return marshalProposalEnvelope(env), nil
 	}
 	r.remove(p.id)
+	removeWorktreeProposalMeta(p)
 
 	env := proposalEnvelope{
 		Status:     "settled",

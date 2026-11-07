@@ -209,6 +209,47 @@ func TestRetained_ContinueRefusesWithoutConversation(t *testing.T) {
 	}
 }
 
+// TestProposalEnvelope_NextAdvertisesContinuation: `next` is a real eligibility
+// list — an open worktree proposal with a captured conversation advertises the
+// re-run verbs, on the dispatch envelope and on `show`.
+func TestProposalEnvelope_NextAdvertisesContinuation(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	seed := []types.Message{types.UserMsg("do it")}
+	rt := RetainedRuntime{
+		Runner: func(ctx context.Context, prompt string, params SubAgentParams) (string, error) {
+			writeTestFile(t, params.Workdir, "work.txt", "work\n")
+			jobs.CaptureSubAgentTranscript(ctx, seed)
+			return "done", nil
+		},
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+		Proposals:    NewProposalRegistry(),
+	}
+
+	res, err := StartRetainedRun(context.Background(), rt, "go", SubAgentParams{Role: "developer"}, 10*time.Second, false)
+	if err != nil {
+		t.Fatalf("StartRetainedRun: %v", err)
+	}
+	env := decodeProposalEnvelope(t, res)
+	for _, want := range []string{"continue", "fork"} {
+		if !slices.Contains(env.Next, want) {
+			t.Errorf("dispatch next = %v, want it to include %q", env.Next, want)
+		}
+	}
+
+	out, err := (&ProposalTool{Proposals: rt.Proposals}).Execute(context.Background(),
+		`{"action":"show","proposal_id":`+jsonString(env.ProposalID)+`}`)
+	if err != nil {
+		t.Fatalf("show: %v", err)
+	}
+	shown := decodeProposalEnvelope(t, out)
+	if !slices.Contains(shown.Next, "continue") || !slices.Contains(shown.Next, "fork") {
+		t.Errorf("show next = %v, want it to include continue and fork", shown.Next)
+	}
+}
+
 // TestProposalRegistry_ClaimContinueSerializes: a second continue/fork on the
 // same proposal is refused while one is in flight.
 func TestProposalRegistry_ClaimContinueSerializes(t *testing.T) {
