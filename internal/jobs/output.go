@@ -6,6 +6,8 @@ package jobs
 import (
 	"encoding/json"
 	"regexp"
+
+	"github.com/buchenberg/yaah/internal/types"
 )
 
 // SubAgentParams carries the per-invocation sub-agent configuration that
@@ -24,6 +26,12 @@ type SubAgentParams struct {
 
 	// MaxToolTurns, when > 0, overrides the soft turn cap for tool-using turns.
 	MaxToolTurns int
+
+	// SeedMessages, when non-empty, pre-populates the sub-agent loop's
+	// conversation so a continuation resumes from the prior run's context
+	// instead of starting fresh. The continuation prompt is still appended as
+	// the next user message by the loop's normal message initialization.
+	SeedMessages []types.Message
 
 	// JSONMode enables structured JSON output for this sub-agent.
 	JSONMode bool

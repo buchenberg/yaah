@@ -210,6 +210,15 @@ returns a proposal the orchestrator settles.
   `agents.subagent.roles.<role>.turn_checkpoints: true` captures workspace and
   conversation before each turn, so a turn that fails in the tool phase or
   exhausts its iteration budget rewinds instead of losing the attempt.
+- **Continuation.** A turn-exhausted worktree proposal is not a dead end:
+  `proposal continue` re-runs it for `extra_turns` more turns, seeded from its
+  captured conversation and sealed workspace, and seals a superseding proposal
+  (the original is discarded so settlement stays consume-once).
+  `proposal fork` re-runs the same way but leaves the original open, so one
+  proposal can be branched into several continuations and compared. A
+  continuation is a fresh clone with its own worktree and scope, so it cleans up
+  at settlement like any other proposal. Container-lane proposals cannot be
+  continued: their world ended at seal.
 
 Because every retained dispatch is isolated, several can be compared safely:
 issue two or three calls for one task in a single turn, read the proposals,

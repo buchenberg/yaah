@@ -27,6 +27,10 @@ type ProposalTool struct {
 	// proposals (yaah-yox). Required: without it the tool refuses to execute
 	// rather than falling back to a shared registry.
 	Proposals *ProposalRegistry
+	// Runtime is the session's retained runtime (runner + scopes), needed to
+	// re-run a proposal for continue/fork. Nil leaves settlement available and
+	// refuses continue/fork rather than guessing a runner.
+	Runtime *RetainedRuntime
 }
 
 func (*ProposalTool) Name() string { return "proposal" }
@@ -41,17 +45,26 @@ func (*ProposalTool) Schema() json.RawMessage {
 		"properties": {
 			"action": {
 				"type": "string",
-				"enum": ["list", "show", "select", "apply", "release", "discard"],
-				"description": "list: show open proposals, their parent drift, and typed content-aware conflicts; show: one proposal's diff, files, changes, and conflicts; select: fast-forward onto the dispatch basis — fails closed if the basis moved since the dispatch; apply: apply path-disjoint onto a moved tree (a worktree proposal merges three-way, a container proposal writes whole-path post-images), refused on overlap with a machine-readable conflict; release: export the delta to a retention path (and tear a worktree down; a container world already ended at seal); discard: throw the proposal away"
+				"enum": ["list", "show", "select", "apply", "release", "discard", "continue", "fork"],
+				"description": "list: show open proposals, their parent drift, and typed content-aware conflicts; show: one proposal's diff, files, changes, and conflicts; select: fast-forward onto the dispatch basis — fails closed if the basis moved since the dispatch; apply: apply path-disjoint onto a moved tree (a worktree proposal merges three-way, a container proposal writes whole-path post-images), refused on overlap with a machine-readable conflict; release: export the delta to a retention path (and tear a worktree down; a container world already ended at seal); discard: throw the proposal away; continue: re-run a turn-exhausted worktree proposal with extra_turns more turns, seeded from its captured conversation and sealed workspace, and seal the result as a new superseding proposal; fork: the same re-run but leaves the original open for comparison"
 			},
 			"proposal_id": {
 				"type": "string",
-				"description": "The proposal id from a delegate result (required for show, select, apply, release, discard)"
+				"description": "The proposal id from a delegate result (required for show, select, apply, release, discard, continue, fork)"
 			},
 			"strategy": {
 				"type": "string",
 				"enum": ["path_disjoint", "three_way"],
 				"description": "apply only: path_disjoint (default; refuses any parent overlap) or three_way (worktree lane only; explicit Git merge, fails closed on a textual conflict)"
+			},
+			"extra_turns": {
+				"type": "integer",
+				"minimum": 1,
+				"description": "continue/fork only: how many additional tool turns to grant the continuation"
+			},
+			"prompt": {
+				"type": "string",
+				"description": "continue/fork only: optional instruction for the continuation; defaults to a supervisor wrap-up prompt"
 			}
 		},
 		"required": ["action"]
@@ -63,6 +76,8 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 		Action     string `json:"action"`
 		ProposalID string `json:"proposal_id"`
 		Strategy   string `json:"strategy"`
+		ExtraTurns int    `json:"extra_turns"`
+		Prompt     string `json:"prompt"`
 	}
 	if err := json.Unmarshal([]byte(args), &raw); err != nil {
 		return "", fmt.Errorf("proposal: invalid arguments: %w", err)
@@ -166,7 +181,15 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 			return "", err
 		}
 		return out, nil
+	case "continue", "fork":
+		if raw.ProposalID == "" {
+			return "", fmt.Errorf("proposal: proposal_id required for %s", raw.Action)
+		}
+		if t.Runtime == nil {
+			return "", fmt.Errorf("proposal: %s needs the session retained runtime — runner.NewDelegateTool wires it", raw.Action)
+		}
+		return ContinueRetainedRun(ctx, *t.Runtime, raw.ProposalID, raw.ExtraTurns, raw.Prompt, raw.Action == "continue")
 	default:
-		return "", fmt.Errorf("proposal: unknown action %q (list, show, select, apply, release, discard)", raw.Action)
+		return "", fmt.Errorf("proposal: unknown action %q (list, show, select, apply, release, discard, continue, fork)", raw.Action)
 	}
 }

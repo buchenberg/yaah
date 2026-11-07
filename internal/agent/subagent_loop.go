@@ -6,6 +6,7 @@ import (
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/buchenberg/yaah/internal/types"
 )
 
 // SubAgentConfig holds the tuning parameters for a sub-agent loop.
@@ -30,8 +31,12 @@ type SubAgentConfig struct {
 	EvidenceGuardHalt      int
 	PipelineDisabled       []string
 	JSONMode               bool
-	ToolResultMaxLines     int
-	ToolResultMaxBytes     int
+	// SeedMessages, when non-empty, pre-populates the loop's conversation so a
+	// continuation resumes from the prior run's context. Run still appends its
+	// prompt as the next user message.
+	SeedMessages       []types.Message
+	ToolResultMaxLines int
+	ToolResultMaxBytes int
 
 	// ToolSpillDir is the directory where oversized tool results are
 	// spilled to disk (mirrors LoopConfig.ToolSpillDir). Empty disables
@@ -166,6 +171,13 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 			TurnCheckpointMax:     cfg.TurnCheckpointMax,
 			MaxTurnRestores:       cfg.MaxTurnRestores,
 		},
+	}
+
+	if len(cfg.SeedMessages) > 0 {
+		// Seed the continuation's conversation. Run appends its prompt to a
+		// non-nil State.Messages instead of building a fresh system+user pair,
+		// so the prior turns (and the system prompt they carry) survive.
+		l.State.Messages = append([]types.Message(nil), cfg.SeedMessages...)
 	}
 
 	l.CtxMgr = NewContextManager(provider, model)

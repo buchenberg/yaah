@@ -81,6 +81,18 @@ func AddSubAgentUsage(ctx context.Context, delta types.Usage) {
 	jobs.AddSubAgentUsage(ctx, delta)
 }
 
+// WithSubAgentTranscript installs a transcript sink so a dispatch body can
+// capture the sub-agent's final conversation and seed a continuation from it.
+func WithSubAgentTranscript(ctx context.Context, ptr *[]types.Message) context.Context {
+	return jobs.WithSubAgentTranscript(ctx, ptr)
+}
+
+// CaptureSubAgentTranscript reports the sub-agent's final conversation through
+// the transcript sink in ctx, if one was installed.
+func CaptureSubAgentTranscript(ctx context.Context, messages []types.Message) {
+	jobs.CaptureSubAgentTranscript(ctx, messages)
+}
+
 func WithSubAgentReadyNotifier(ctx context.Context, fn func()) context.Context {
 	return jobs.WithSubAgentReadyNotifier(ctx, fn)
 }

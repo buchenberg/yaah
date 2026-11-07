@@ -422,6 +422,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			EvidenceGuardHalt:      opts.defaults.EvidenceGuardHalt,
 			PipelineDisabled:       opts.pipelineDisabled,
 			JSONMode:               jsonMode,
+			SeedMessages:           params.SeedMessages,
 			ToolResultMaxLines:     opts.defaults.ToolResultMaxLines,
 			ToolResultMaxBytes:     opts.defaults.ToolResultMaxBytes,
 			ToolSpillDir:           opts.toolSpillDir,
@@ -446,6 +447,10 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		})
 
 		result, runErr := subLoop.Run(ctx, prompt)
+		// Capture the final conversation so a turn-exhausted dispatch can be
+		// continued from its context instead of restarted cold. WithoutCancel
+		// keeps the write alive when a timeout ended the run.
+		tools.CaptureSubAgentTranscript(context.WithoutCancel(ctx), subLoop.State.Messages)
 		recordSubAgentUsage(context.WithoutCancel(ctx), opts.traceStore, subTraceID, opts.parentSession, string(role), subModel, params.Lane, subLoop.OwnUsage())
 		// Record the jail the body actually ran under, not just the one the
 		// previous fact resolved: a backend can pass its availability check and
