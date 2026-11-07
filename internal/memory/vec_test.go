@@ -305,3 +305,69 @@ func TestVecMessagesDeleteRemovesIndexRow(t *testing.T) {
 		t.Fatalf("deleted message still surfaces: %v", resultIDs(got))
 	}
 }
+
+// storeMessageEmbedding writes a raw embedding blob for a message id, standing
+// in for a message embedded by a previous model.
+func storeMessageEmbedding(t *testing.T, db *DB, id string, dims int) {
+	t.Helper()
+	vec := make(Embedding, dims)
+	for i := range vec {
+		vec[i] = 0.1 + float32(i)*0.01
+	}
+	if _, err := db.sql.Exec(`UPDATE messages SET embedding = ? WHERE id = ?`, EncodeEmbedding(vec), id); err != nil {
+		t.Fatalf("store %d-dim message embedding for %s: %v", dims, id, err)
+	}
+}
+
+// TestReembedStaleMessageEmbeddings heals a message left at the old width after
+// a model swap: one pass rewrites it, and the healed message is searchable.
+func TestReembedStaleMessageEmbeddings(t *testing.T) {
+	db := openTestDB(t)
+	if err := db.AddMessage(Message{ID: "sm1", SessionID: "ses-test", Idx: 0, Role: "user", Content: "old vector message", Timestamp: 1}); err != nil {
+		t.Fatal(err)
+	}
+	storeMessageEmbedding(t, db, "sm1", 3) // written by the previous 3-dim model
+
+	db.SetEmbedder(dimEmbedder{dims: 4, base: 0.5})
+	n, err := db.ReembedStaleMessageEmbeddings(context.Background())
+	if err != nil {
+		t.Fatalf("ReembedStaleMessageEmbeddings: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("ReembedStaleMessageEmbeddings = %d, want 1", n)
+	}
+
+	results, err := db.SearchMessagesVector(context.Background(), "vector", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].ID != "sm1" {
+		t.Fatalf("healed message not found by vector search: %v", resultIDs(results))
+	}
+}
+
+// TestReconcileMessageEmbeddings backfills a user message that was added before
+// an embedder was configured (NULL embedding), making it searchable.
+func TestReconcileMessageEmbeddings(t *testing.T) {
+	db := openTestDB(t)
+	if err := db.AddMessage(Message{ID: "rm1", SessionID: "ses-test", Idx: 0, Role: "user", Content: "reconcile me", Timestamp: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	db.SetEmbedder(dimEmbedder{dims: 4, base: 0.5})
+	updated, err := db.ReconcileMessageEmbeddings(context.Background())
+	if err != nil {
+		t.Fatalf("ReconcileMessageEmbeddings: %v", err)
+	}
+	if updated != 1 {
+		t.Fatalf("ReconcileMessageEmbeddings = %d, want 1", updated)
+	}
+
+	results, err := db.SearchMessagesVector(context.Background(), "reconcile", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].ID != "rm1" {
+		t.Fatalf("reconciled message not found: %v", resultIDs(results))
+	}
+}

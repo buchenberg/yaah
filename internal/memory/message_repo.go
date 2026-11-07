@@ -285,3 +285,112 @@ func (d *DB) searchMessagesVectorScan(ctx context.Context, qEmb Embedding, limit
 	}
 	return results, nil
 }
+
+// ReembedStaleMessageEmbeddings rewrites message rows whose stored vector has
+// a different dimensionality than the configured embedder produces (the
+// message-side counterpart to ReembedStaleEmbeddings). Returns the number of
+// rows rewritten; a nil embedder is a no-op. An embed failure is surfaced like
+// any other and does not stop the sweep.
+func (d *DB) ReembedStaleMessageEmbeddings(ctx context.Context) (int, error) {
+	embedder := d.Embedder()
+	if embedder == nil {
+		return 0, nil
+	}
+	probe, err := embedder.Embed(ctx, "dimension probe")
+	if err != nil {
+		d.recordEmbedFailure("reembed_message", err)
+		return 0, fmt.Errorf("reembed stale messages: probe embedder: %w", err)
+	}
+	rows, err := d.sql.QueryContext(ctx,
+		`SELECT id, content FROM messages WHERE embedding IS NOT NULL AND length(embedding) != ?`, 4*len(probe))
+	if err != nil {
+		return 0, fmt.Errorf("reembed stale messages: query: %w", err)
+	}
+	defer rows.Close()
+
+	type staleRow struct{ id, content string }
+	var stale []staleRow
+	for rows.Next() {
+		var r staleRow
+		if err := rows.Scan(&r.id, &r.content); err != nil {
+			return 0, err
+		}
+		stale = append(stale, r)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	reembedded := 0
+	for _, r := range stale {
+		emb, err := embedder.Embed(ctx, r.content)
+		if err != nil {
+			d.recordEmbedFailure("reembed_message", err)
+			continue
+		}
+		if _, err := d.sql.Exec(`UPDATE messages SET embedding = ? WHERE id = ?`, EncodeEmbedding(emb), r.id); err != nil {
+			slog.Warn("memory: store message embedding failed", "op", "reembed_message", "id", r.id, "err", err)
+			continue
+		}
+		if err := d.mirrorMessageVec(r.id, emb); err != nil {
+			slog.Warn("memory: mirror messages vec0 failed", "op", "reembed_message", "id", r.id, "err", err)
+		}
+		reembedded++
+	}
+	return reembedded, nil
+}
+
+// ReconcileMessageEmbeddings backfills embeddings for user/assistant message
+// rows with a NULL embedding, then heals rows left at a stale width after a
+// model swap. Returns the number of rows updated. An error from any single
+// embed does not stop the reconciliation.
+func (d *DB) ReconcileMessageEmbeddings(ctx context.Context) (int, error) {
+	embedder := d.Embedder()
+	if embedder == nil {
+		return 0, nil
+	}
+	rows, err := d.sql.QueryContext(ctx,
+		`SELECT id, content FROM messages WHERE embedding IS NULL AND role IN ('user','assistant') AND content != '' AND id != ''`)
+	if err != nil {
+		return 0, fmt.Errorf("reconcile messages: query: %w", err)
+	}
+	defer rows.Close()
+
+	type row struct{ id, content string }
+	var pending []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.content); err != nil {
+			return 0, err
+		}
+		pending = append(pending, r)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	updated := 0
+	for _, r := range pending {
+		emb, err := embedder.Embed(ctx, r.content)
+		if err != nil {
+			d.recordEmbedFailure("reconcile_messages", err)
+			continue
+		}
+		if _, err := d.sql.Exec(`UPDATE messages SET embedding = ? WHERE id = ?`, EncodeEmbedding(emb), r.id); err != nil {
+			slog.Warn("memory: store message embedding failed", "op", "reconcile_messages", "id", r.id, "err", err)
+			continue
+		}
+		if err := d.mirrorMessageVec(r.id, emb); err != nil {
+			slog.Warn("memory: mirror messages vec0 failed", "op", "reconcile_messages", "id", r.id, "err", err)
+		}
+		updated++
+	}
+
+	// A model swap leaves rows at the old dimensionality; fold the repair in so
+	// the stale population drains instead of persisting unsearchable.
+	healed, err := d.ReembedStaleMessageEmbeddings(ctx)
+	if err != nil {
+		slog.Warn("memory: re-embed stale messages failed", "err", err)
+	}
+	return updated + healed, nil
+}

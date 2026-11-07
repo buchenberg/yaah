@@ -110,7 +110,8 @@ func recordSessionWorkspace(lc *sessionConfig, tr *toolRegistryStage, mcps *mcpS
 }
 
 // launchEmbeddingBackfill starts backfilling embeddings for memory entries
-// created before the embedding server was configured. It must run only after
+// and session messages created before the embedding server was configured, and
+// heals rows left at a stale width after a model swap. It must run only after
 // the last fallible step has passed: the startup ownership guard can no longer
 // fire, so the backfill cannot race the guard's db.Close.
 func launchEmbeddingBackfill(tr *toolRegistryStage) {
@@ -120,11 +121,15 @@ func launchEmbeddingBackfill(tr *toolRegistryStage) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		n, err := tr.db.ReconcileEmbeddings(ctx)
-		if err != nil {
+		if n, err := tr.db.ReconcileEmbeddings(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: embedding backfill: %v\n", err)
 		} else if n > 0 {
 			fmt.Fprintf(os.Stderr, "embedded %d existing memory entries\n", n)
+		}
+		if n, err := tr.db.ReconcileMessageEmbeddings(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: message embedding backfill: %v\n", err)
+		} else if n > 0 {
+			fmt.Fprintf(os.Stderr, "embedded %d existing session messages\n", n)
 		}
 	}()
 }
