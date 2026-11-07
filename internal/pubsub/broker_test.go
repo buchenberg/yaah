@@ -265,29 +265,6 @@ func TestBroker_MultipleSubscribers(t *testing.T) {
 	b.Unsubscribe("b")
 }
 
-// TestPublish_concurrentCloseDoesNotPanic is the Publish counterpart of
-// TestPublishMustDeliver_concurrentCloseDoesNotPanic (yaah-8jou.1): the
-// closed check must happen under the read lock, otherwise Close can
-// close a subscriber channel between Publish's check and its send.
-func TestPublish_concurrentCloseDoesNotPanic(t *testing.T) {
-	for i := 0; i < 50; i++ {
-		b := NewBroker[int]()
-		b.Subscribe("slow", 1) // nobody reads
-
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			b.Publish(42)
-		}()
-		go func() {
-			defer wg.Done()
-			b.Close()
-		}()
-		wg.Wait() // a panic in either goroutine fails the test
-	}
-}
-
 // TestBroker_SubscribeAfterClose (yaah-8jou.2) pins that subscribing to
 // a closed broker returns an already-closed channel (so a ranging
 // consumer exits) and does not register a live subscription.

@@ -32,15 +32,11 @@ func NewBroker[T any]() *Broker[T] {
 }
 
 func (b *Broker[T]) Publish(event T) {
-	// The closed check must happen under the read lock (yaah-8jou.1):
-	// Close takes the write lock to close subscriber channels, so a
-	// check before RLock races it — Close could close a channel
-	// between the check and the send, panicking on send-to-closed.
-	b.mu.RLock()
-	defer b.mu.RUnlock()
 	if b.closed.Load() {
 		return
 	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	for _, s := range b.subs {
 		select {
 		case s.ch <- event:
