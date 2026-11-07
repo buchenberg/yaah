@@ -52,6 +52,10 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 	for _, path := range drift {
 		driftSet[PathKey(normalizeProposalPath(path))] = true
 	}
+	// One EOL policy for the settle: core.autocrlf is read once here, and the
+	// per-path .gitattributes probe only runs for a path whose bytes differ
+	// while its folded content matches (PR #824 review, finding 3).
+	eol := newEOLNormalization(ctx, p.repoPath)
 
 	var writes []proposalMergeWrite
 	var conflicted []string
@@ -85,7 +89,7 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 			base = nil
 		}
 
-		if !proposalPathDrifted(driftSet[PathKey(normalizeProposalPath(change.Path))], base, baseExists, current, currentExists) {
+		if !proposalPathDrifted(driftSet[PathKey(normalizeProposalPath(change.Path))], change.Path, eol, base, baseExists, current, currentExists) {
 			if proposedExists {
 				mode, modeSet := proposalModeFromString(change.Mode)
 				writes = append(writes, proposalMergeWrite{
@@ -248,25 +252,30 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 // Under core.autocrlf or an eol smudge filter the same unchanged file is LF in
 // the blob and CRLF on disk, so a byte-for-byte comparison would call every
 // such path drifted and force a three-way merge on a path the parent never
-// touched. The fold is applied to the comparison only, never to the merge
-// inputs, and never to binary content — see proposalContentEqual.
-func proposalPathDrifted(hinted bool, base []byte, baseExists bool, current []byte, currentExists bool) bool {
+// touched. The fold is not unconditional, though: in a repo that does not
+// normalize, an EOL-only difference is a real parent edit and folding it away
+// would let the no-drift fast path overwrite that edit whole-path. So the fold
+// is consulted from eol (the repo's own policy) and applies only to text — see
+// proposalContentEqual. The fold never reaches the merge inputs.
+func proposalPathDrifted(hinted bool, path string, eol *eolNormalization, base []byte, baseExists bool, current []byte, currentExists bool) bool {
 	if hinted || baseExists != currentExists {
 		return true
 	}
-	return baseExists && !proposalContentEqual(base, current)
+	return baseExists && !proposalContentEqual(base, current, eol.expected(path))
 }
 
 // proposalContentEqual reports whether a basis blob and the parent's current
 // file hold the same content for the drift question. Binary content is compared
 // byte for byte: EOL translation does not apply to it, so a difference there is
 // always a real edit. Text is compared after folding CRLF to LF, which can only
-// ever drop a CR that directly precedes an LF.
-func proposalContentEqual(base, current []byte) bool {
+// ever drop a CR that directly precedes an LF — and only when eolFold says git
+// normalization is what put those CRs there. Without that, an EOL-only
+// difference is a parent edit.
+func proposalContentEqual(base, current []byte, eolFold bool) bool {
 	if bytes.Equal(base, current) {
 		return true
 	}
-	if isBinaryContent(base) || isBinaryContent(current) {
+	if !eolFold || isBinaryContent(base) || isBinaryContent(current) {
 		return false
 	}
 	return bytes.Equal(foldCRLF(base), foldCRLF(current))

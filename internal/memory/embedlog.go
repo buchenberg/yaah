@@ -78,12 +78,27 @@ func (l *embedWarnLimiter) allow() (bool, int) {
 // limiter let the first width's warning suppress the others for a whole
 // interval, so the doc's "one warning per stale width" was not what the code
 // did. Each width gets its own embedWarnLimiter, so every width warns once per
-// interval and repeats stay rate-limited. The zero value is usable and safe for
-// concurrent use.
+// interval and repeats stay rate-limited. The map is capped at
+// dimWarnLimiterMaxWidths entries — stored widths come from blob lengths, not
+// from a list the code controls — and widths past the cap share one overflow
+// limiter instead of adding a window apiece. The zero value is usable and safe
+// for concurrent use.
 type dimWarnLimiter struct {
 	mu      sync.Mutex
 	byWidth map[int]*embedWarnLimiter
+	// overflow rate-limits the widths past dimWarnLimiterMaxWidths. Widths
+	// are derived from stored blob lengths (length(embedding)/4), which a
+	// corrupted or foreign store can vary without bound, so an unbounded
+	// per-width map would grow with the store. Widths beyond the cap share
+	// this one limiter: they still warn, just on one shared window.
+	overflow *embedWarnLimiter
 }
+
+// dimWarnLimiterMaxWidths caps how many stored widths get their own warning
+// window. A real store holds a handful (384, 512, 768, ...); a store that
+// reports more is damaged, and its extra widths only need to be named, not
+// tracked individually.
+const dimWarnLimiterMaxWidths = 16
 
 // allow reports whether the warning for one width may be emitted now, along
 // with the number of that width's warnings suppressed since the last emitted
@@ -98,14 +113,22 @@ func (l *dimWarnLimiter) allow(width int) (bool, int) {
 func (l *dimWarnLimiter) limiter(width int) *embedWarnLimiter {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if lim, ok := l.byWidth[width]; ok {
+		return lim
+	}
+	if len(l.byWidth) >= dimWarnLimiterMaxWidths {
+		// Past the cap no new window is tracked, so the map cannot grow with
+		// an arbitrarily damaged store (PR #824 review).
+		if l.overflow == nil {
+			l.overflow = &embedWarnLimiter{}
+		}
+		return l.overflow
+	}
 	if l.byWidth == nil {
 		l.byWidth = make(map[int]*embedWarnLimiter)
 	}
-	lim, ok := l.byWidth[width]
-	if !ok {
-		lim = &embedWarnLimiter{}
-		l.byWidth[width] = lim
-	}
+	lim := &embedWarnLimiter{}
+	l.byWidth[width] = lim
 	return lim
 }
 

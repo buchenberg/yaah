@@ -101,7 +101,7 @@ func TestProposalPathDriftedIgnoresFalseNegativeHint(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := proposalPathDrifted(tc.hinted, tc.base, tc.baseExists, tc.current, tc.currentExists); got != tc.want {
+			if got := proposalPathDrifted(tc.hinted, "notes.txt", nil, tc.base, tc.baseExists, tc.current, tc.currentExists); got != tc.want {
 				t.Errorf("proposalPathDrifted = %v, want %v", got, tc.want)
 			}
 		})
@@ -113,33 +113,49 @@ func TestProposalPathDriftedIgnoresFalseNegativeHint(t *testing.T) {
 // or an eol smudge filter an unchanged path is LF in the blob and CRLF on disk.
 // A byte-for-byte comparison called every such path drifted and forced a
 // three-way merge on a path the parent never touched.
+//
+// Folding unconditionally went too far the other way (PR #824 review, finding
+// 3): in a repo that does not normalize, an EOL-only difference is a real
+// parent edit, and folding it away let the no-drift fast path overwrite the
+// parent's whole-path content. So the fold is asked for by the repo's policy.
 func TestProposalPathDriftedFoldsCRLF(t *testing.T) {
 	lf := []byte("line1\nline2\nline3\n")
+	// An autocrlf checkout: git is expected to have smudged the worktree file.
+	normalizing := &eolNormalization{autocrlf: true}
+	// A repo with no autocrlf and no .gitattributes rule.
+	raw := &eolNormalization{}
 
 	t.Run("crlf worktree file against an lf blob is not drifted", func(t *testing.T) {
 		crlf := []byte("line1\r\nline2\r\nline3\r\n")
-		if proposalPathDrifted(false, lf, true, crlf, true) {
+		if proposalPathDrifted(false, "README.md", normalizing, lf, true, crlf, true) {
 			t.Error("EOL translation made an unchanged path look drifted")
+		}
+	})
+
+	t.Run("eol-only edit in a non-normalizing repo is drifted", func(t *testing.T) {
+		crlf := []byte("line1\r\nline2\r\nline3\r\n")
+		if !proposalPathDrifted(false, "README.md", raw, lf, true, crlf, true) {
+			t.Error("a repo that does not normalize must treat an EOL-only difference as a parent edit")
 		}
 	})
 
 	t.Run("an actual edit is still drifted under crlf", func(t *testing.T) {
 		edited := []byte("line1\r\nhost2\r\nline3\r\n")
-		if !proposalPathDrifted(false, lf, true, edited, true) {
+		if !proposalPathDrifted(false, "README.md", normalizing, lf, true, edited, true) {
 			t.Error("a changed line must still classify as drifted")
 		}
 	})
 
 	t.Run("binary content is compared byte for byte", func(t *testing.T) {
 		base := []byte("a\r\nb\x00\x01")
-		if !proposalPathDrifted(false, base, true, []byte("a\nb\x00\x01"), true) {
+		if !proposalPathDrifted(false, "img.bin", normalizing, base, true, []byte("a\nb\x00\x01"), true) {
 			t.Error("a binary blob must not be folded into equality")
 		}
 	})
 
 	t.Run("a lone CR is content, not an eol form", func(t *testing.T) {
 		oldMac := []byte("line1\rline2\rline3\r")
-		if !proposalPathDrifted(false, lf, true, oldMac, true) {
+		if !proposalPathDrifted(false, "README.md", normalizing, lf, true, oldMac, true) {
 			t.Error("folding must only drop the CR of a CRLF pair")
 		}
 	})
