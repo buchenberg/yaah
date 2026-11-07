@@ -161,6 +161,12 @@ func (d *DB) SearchMemoryVectorScopedDiag(ctx context.Context, query string, lim
 	var results []VectorResult
 	if d.vecIndexPresent() {
 		results, err = d.searchVecIndex(ctx, qEmb, limit, scope)
+		if err != nil {
+			// A stale index (wrong width after a model swap the startup
+			// reconcile could not fix, or any vec0 store error) degrades to
+			// the brute-force scan rather than failing the search.
+			results, err = d.searchVectorScan(ctx, qEmb, query, limit, scope)
+		}
 	} else {
 		results, err = d.searchVectorScan(ctx, qEmb, query, limit, scope)
 	}

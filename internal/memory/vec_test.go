@@ -172,3 +172,52 @@ func TestVecSupersedeRemovesIndexRow(t *testing.T) {
 		}
 	}
 }
+
+// TestVecBackfillOnEnsure reproduces the upgrade path: rows embedded before the
+// vec0 index existed (their BLOB is populated, the index is not) must become
+// findable when EnsureVectorIndex creates the table, without a re-embed pass.
+func TestVecBackfillOnEnsure(t *testing.T) {
+	db := openTestDB(t)
+	db.SetEmbedder(stubEmbedder{}) // 3-dim
+
+	if err := db.AddMemory(Entry{ID: "up1", Text: "pre-existing fact", Source: "agent", CreatedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	storeEmbedding(t, db, "up1", 3) // written by the pre-index code path
+
+	// Before the index exists the search uses the scan path and finds it.
+	if got, _ := db.SearchMemoryVector(context.Background(), "fact", 10); len(got) != 1 {
+		t.Fatalf("precondition (scan path): got %v, want [up1]", resultIDs(got))
+	}
+
+	// EnsureVectorIndex creates the table and backfills the existing BLOB.
+	if _, err := db.EnsureVectorIndex(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// The indexed path must now find it too (backfilled, not empty).
+	got, err := db.SearchMemoryVector(context.Background(), "fact", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "up1" {
+		t.Fatalf("backfilled index did not surface the pre-existing row: %v", resultIDs(got))
+	}
+}
+
+// TestVecStaleIndexFallsBackToScan verifies a vec0 table left at the wrong
+// width (a model swap the startup reconcile could not run) degrades to the
+// brute-force scan instead of returning a hard MATCH error.
+func TestVecStaleIndexFallsBackToScan(t *testing.T) {
+	db := openTestDB(t)
+	db.SetEmbedder(dimEmbedder{dims: 3, base: 0.5})
+	addMemoryAndWait(t, db, Entry{ID: "x1", Text: "stale width row", Source: "agent", CreatedAt: 1})
+
+	// Swap width without reconciling: the vec0 table stays at 3 dims while
+	// the query embeds at 4, so the MATCH would error.
+	db.SetEmbedder(dimEmbedder{dims: 4, base: 0.5})
+
+	if _, err := db.SearchMemoryVector(context.Background(), "row", 10); err != nil {
+		t.Fatalf("stale index must degrade to the scan, not error: %v", err)
+	}
+}

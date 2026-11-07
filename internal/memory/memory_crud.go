@@ -163,21 +163,35 @@ var ErrMemoryNotFound = errors.New("memory not found")
 // tools surfaced, and a silent no-op delete let truncated IDs report
 // "deleted" while the row — and its duplicates — accumulated (#328).
 func (d *DB) DeleteMemory(id string) error {
+	// Capture whether the vec0 index exists before the transaction, so a store
+	// with no embedder (no vec0 table) still deletes cleanly.
+	vecActive := d.vecIndexPresent()
+
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	var rowid int64
-	err := d.sql.QueryRow(`SELECT rowid FROM memory WHERE id = ?`, id).Scan(&rowid)
+	err = tx.QueryRow(`SELECT rowid FROM memory WHERE id = ?`, id).Scan(&rowid)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("%w: %s", ErrMemoryNotFound, id)
 	}
 	if err != nil {
 		return err
 	}
-	if _, err := d.sql.Exec(`DELETE FROM memory WHERE id = ?`, id); err != nil {
+	if _, err := tx.Exec(`DELETE FROM memory WHERE id = ?`, id); err != nil {
 		return err
 	}
-	// Remove the vec0 row too: a lingering row would attach to whatever
-	// memory row later reuses this rowid, surfacing a stale vector.
-	d.deleteVecByRowID(rowid)
-	return nil
+	// Remove the vec0 row in the same transaction: a rowid reused by a later
+	// insert cannot then redirect this delete onto a live vector.
+	if vecActive {
+		if _, err := tx.Exec(`DELETE FROM memory_vec WHERE rowid = ?`, rowid); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // UpdateMemory updates the text of an existing memory entry.

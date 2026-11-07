@@ -86,7 +86,26 @@ func (d *DB) ensureVectorTable(dim int) (bool, error) {
 	if err := d.setVecDim(dim); err != nil {
 		return false, err
 	}
+	// Populate the fresh (or recreated) table from rows already embedded at
+	// this width, so an upgrade does not leave pre-existing memories invisible
+	// to the new index. On a model swap the BLOBs are stale-width, so this
+	// copies nothing and the re-embed sweep repopulates instead.
+	if err := d.backfillVecIndex(dim); err != nil {
+		return false, fmt.Errorf("vec0 index: backfill: %w", err)
+	}
 	return true, nil
+}
+
+// backfillVecIndex copies rows already embedded at dim from the memory BLOB
+// column into memory_vec, so a newly created (or recreated) index starts
+// consistent with the store rather than empty.
+func (d *DB) backfillVecIndex(dim int) error {
+	_, err := d.sql.Exec(`
+		INSERT INTO memory_vec(rowid, embedding, scope, superseded_by)
+		SELECT rowid, embedding, scope, COALESCE(superseded_by, '')
+		FROM memory
+		WHERE embedding IS NOT NULL AND length(embedding) = ?`, 4*dim)
+	return err
 }
 
 // vecDim reads the stamped vector width from schema_meta.
@@ -169,18 +188,6 @@ func (d *DB) mirrorVec(id string, emb Embedding) error {
 	return tx.Commit()
 }
 
-// deleteVecByRowID removes the vec0 row for a memory rowid. Best-effort: a
-// missing table or row is a no-op. Required on delete so a stale rowid
-// (reused by a later insert) cannot resurface an old vector.
-func (d *DB) deleteVecByRowID(rowid int64) {
-	if !d.vecIndexPresent() {
-		return
-	}
-	if _, err := d.sql.Exec(`DELETE FROM memory_vec WHERE rowid = ?`, rowid); err != nil {
-		slog.Warn("memory: delete vec0 row failed", "rowid", rowid, "err", err)
-	}
-}
-
 // deleteVecByMemoryID removes the vec0 row for a still-live memory id, via a
 // rowid subquery. Used by supersede, where the memory row survives with its
 // superseded_by marker set. Best-effort.
@@ -234,7 +241,7 @@ func (d *DB) searchVecIndex(ctx context.Context, qEmb Embedding, limit int, scop
 		SELECT m.id, m.text, m.tags, m.source, m.scope, m.created_at, COALESCE(m.accessed_at, 0), m.access_count, v.distance
 		FROM memory_vec v
 		JOIN memory m ON m.rowid = v.rowid
-		WHERE v.embedding MATCH ? AND v.superseded_by = ''`
+		WHERE v.embedding MATCH ? AND v.superseded_by = '' AND m.superseded_by IS NULL`
 	args := []any{EncodeEmbedding(qEmb)}
 	if scope != ScopeAll {
 		query += ` AND v.scope = ?`
