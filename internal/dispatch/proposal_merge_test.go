@@ -77,6 +77,37 @@ func TestGitMergeFile_MultipleConflictHunks(t *testing.T) {
 	}
 }
 
+// TestProposalPathDriftedIgnoresFalseNegativeHint pins the invariant behind
+// yaah-610z: the parent drift list is a hint, and a hint that misses a path
+// must never authorize a whole-path overwrite of the parent's own edit.
+func TestProposalPathDriftedIgnoresFalseNegativeHint(t *testing.T) {
+	base := []byte("line1\nline2\nline3\n")
+	host := []byte("host1\nline2\nline3\n")
+	tests := []struct {
+		name          string
+		hinted        bool
+		base          []byte
+		baseExists    bool
+		current       []byte
+		currentExists bool
+		want          bool
+	}{
+		{name: "hint only, parent unmoved", hinted: true, base: base, baseExists: true, current: base, currentExists: true, want: true},
+		{name: "no hint, parent unmoved", base: base, baseExists: true, current: base, currentExists: true, want: false},
+		{name: "no hint, same-size parent rewrite", base: base, baseExists: true, current: host, currentExists: true, want: true},
+		{name: "no hint, parent deleted the path", base: base, baseExists: true, current: nil, currentExists: false, want: true},
+		{name: "no hint, parent created the path", base: nil, baseExists: false, current: host, currentExists: true, want: true},
+		{name: "no hint, path on neither side", base: nil, baseExists: false, current: nil, currentExists: false, want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := proposalPathDrifted(tc.hinted, tc.base, tc.baseExists, tc.current, tc.currentExists); got != tc.want {
+				t.Errorf("proposalPathDrifted = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestProposalModeFromString(t *testing.T) {
 	tests := []fs.FileMode{
 		0o644,

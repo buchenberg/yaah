@@ -64,8 +64,15 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 		if err != nil {
 			return "", fmt.Errorf("proposal %s: three_way: read proposed %s: %w", p.id, change.Path, err)
 		}
+		base, baseExists, err := p.baseContentFull(ctx, change.Path)
+		if err != nil {
+			return "", fmt.Errorf("proposal %s: three_way: read base %s: %w", p.id, change.Path, err)
+		}
+		if !baseExists {
+			base = nil
+		}
 
-		if !driftSet[PathKey(normalizeProposalPath(change.Path))] {
+		if !proposalPathDrifted(driftSet[PathKey(normalizeProposalPath(change.Path))], base, baseExists, current, currentExists) {
 			if proposedExists {
 				mode, modeSet := proposalModeFromString(change.Mode)
 				writes = append(writes, proposalMergeWrite{
@@ -89,13 +96,6 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 		}
 		if bytes.Equal(current, proposed) {
 			continue
-		}
-		base, baseExists, err := p.baseContentFull(ctx, change.Path)
-		if err != nil {
-			return "", fmt.Errorf("proposal %s: three_way: read base %s: %w", p.id, change.Path, err)
-		}
-		if !baseExists {
-			base = nil
 		}
 		if len(base) > proposalMergeMaxBytes || len(current) > proposalMergeMaxBytes || len(proposed) > proposalMergeMaxBytes ||
 			isBinaryContent(base) || isBinaryContent(current) || isBinaryContent(proposed) {
@@ -206,6 +206,30 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 	}
 	env.Outcome = settleOutcome(goatherd.SettleApply, p, env).String()
 	return marshalProposalEnvelope(env), nil
+}
+
+// proposalPathDrifted reports whether the parent moved off the dispatch basis
+// for one path, which is what decides "the parent's edit wins outright" versus
+// "merge three ways".
+//
+// The sealed-output drift list (parentDrift) is a hint, not the authority. The
+// parent git backend derives it by capturing the host tree, and that capture has
+// been observed to miss a rewrite outright: a same-size edit written moments
+// after the dispatch basis is intermittently absent from the drift list even
+// though `git diff <basis-tree>` names it at the same instant (yaah-610z). A
+// three-way apply that trusted the hint would then take the no-drift path and
+// overwrite the parent's own edit whole-path, reporting "settled" with no
+// conflict — a fail-open. So content decides: the path is drifted when the
+// parent's current content differs from the basis, or when the path exists on
+// only one side of that comparison (created or deleted in the parent). The hint
+// can only add paths to the merge set, never remove them; merging a path the
+// parent did not actually move is harmless (git resolves it to the proposal's
+// post-image).
+func proposalPathDrifted(hinted bool, base []byte, baseExists bool, current []byte, currentExists bool) bool {
+	if hinted || baseExists != currentExists {
+		return true
+	}
+	return baseExists && !bytes.Equal(base, current)
 }
 
 // proposalModeFromString parses a FileMode.String value, including the

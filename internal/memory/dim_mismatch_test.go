@@ -67,13 +67,14 @@ func TestSearchMemoryVector_MatchingDimsUnchanged(t *testing.T) {
 	}
 }
 
-// TestSearchMemoryVector_StaleRowAbsentUntilReembed documents the vec0
-// behavior after a model swap: a row embedded at the old width is absent from
-// the vector index (it was never mirrored at the new width), so the vector
-// path does not surface it until the re-embed sweep runs. The keyword fallback
-// that recovers such rows for the agent lives at the tools layer (the FTS5
-// union in MemorySearchTool), not in this store-level path.
-func TestSearchMemoryVector_StaleRowAbsentUntilReembed(t *testing.T) {
+// TestSearchMemoryVector_StaleRowSurfacesViaKeywordFallback pins the yaah-shq
+// fix on the indexed path: a row embedded at the previous model's width is not
+// in the memory_vec index (it was recreated at the new width), so the vec0
+// search cannot return it. It must still reach the page through the keyword
+// fallback, and the report must count the mismatch so the omission is not
+// silent.
+func TestSearchMemoryVector_StaleRowSurfacesViaKeywordFallback(t *testing.T) {
+	logs := captureWarnLogs(t)
 	db := openTestDB(t)
 
 	// A row embedded by the previous, 384-dim model.
@@ -87,29 +88,48 @@ func TestSearchMemoryVector_StaleRowAbsentUntilReembed(t *testing.T) {
 	db.SetEmbedder(dimEmbedder{dims: 768, base: 0.5})
 	addMemoryAndWait(t, db, Entry{ID: "new1", Text: "sandbox flag for the sandbox tool", Source: "agent", CreatedAt: 2})
 
-	results, err := db.SearchMemoryVector(context.Background(), "sandbox", 10)
+	report, err := db.SearchMemoryVectorReport(context.Background(), "sandbox", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(results) != 1 || results[0].ID != "new1" {
-		t.Fatalf("vector path must return only the indexed new-width row, got %v", resultIDs(results))
+	if len(report.Hits) != 2 {
+		t.Fatalf("got %d hits, want 2 (ids %v)", len(report.Hits), resultIDs(report.Hits))
+	}
+	// Vector hits lead; the stale row follows, marked as keyword-scored.
+	if report.Hits[0].ID != "new1" || report.Hits[0].Keyword {
+		t.Errorf("first hit = %s (keyword=%v), want the vector-scored new1", report.Hits[0].ID, report.Hits[0].Keyword)
+	}
+	if report.Hits[1].ID != "old1" || !report.Hits[1].Keyword {
+		t.Errorf("second hit = %s (keyword=%v), want the keyword-scored old1", report.Hits[1].ID, report.Hits[1].Keyword)
+	}
+	if report.DimMismatch != 1 || report.DimMismatchByDim[384] != 1 {
+		t.Errorf("DimMismatch = %d (by dim %v), want 1 row at 384", report.DimMismatch, report.DimMismatchByDim)
+	}
+	if !strings.Contains(logs.String(), "dimensions differ") {
+		t.Errorf("stale row must be warned about: %q", logs.String())
 	}
 
-	// The re-embed sweep mirrors the stale row into the index at the new
-	// width, after which it is findable again.
+	// The re-embed sweep heals the row, after which it is vector-scored again
+	// and stops being counted.
 	if n, err := db.ReembedStaleEmbeddings(context.Background()); err != nil || n != 1 {
 		t.Fatalf("ReembedStaleEmbeddings = %d, %v; want 1 healed row", n, err)
 	}
-	results, err = db.SearchMemoryVector(context.Background(), "sandbox", 10)
+	report, err = db.SearchMemoryVectorReport(context.Background(), "sandbox", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	seen := map[string]bool{}
-	for _, r := range results {
+	for _, r := range report.Hits {
 		seen[r.ID] = true
+		if r.Keyword {
+			t.Errorf("healed hit %s still keyword-scored", r.ID)
+		}
 	}
 	if !seen["old1"] || !seen["new1"] {
-		t.Fatalf("after re-embed both rows must be findable: %v", resultIDs(results))
+		t.Fatalf("after re-embed both rows must be findable: %v", resultIDs(report.Hits))
+	}
+	if report.HasDimMismatch() {
+		t.Errorf("healed store still reports %d mismatched rows", report.DimMismatch)
 	}
 }
 
@@ -218,4 +238,140 @@ func TestReconcileEmbeddings_HealsStaleDims(t *testing.T) {
 	if updated != 1 {
 		t.Fatalf("ReconcileEmbeddings = %d, want 1 (the stale row)", updated)
 	}
+}
+
+// seedMixedWidthStore builds the yaah-shq store shape: two rows embedded by a
+// previous 384-dim model, then a swap to a 1536-dim model whose vec0 index is
+// recreated at the new width (so it holds neither stale row), then one row
+// embedded at the current width.
+func seedMixedWidthStore(t *testing.T, db *DB) {
+	t.Helper()
+	db.SetEmbedder(dimEmbedder{dims: 384, base: 0.5})
+	addMemoryAndWait(t, db, Entry{ID: "old-a", Text: "pgbouncer pools postgres connections", Source: "agent", CreatedAt: 1})
+	addMemoryAndWait(t, db, Entry{ID: "old-b", Text: "llama grooming schedule", Source: "agent", CreatedAt: 2})
+
+	db.SetEmbedder(dimEmbedder{dims: 1536, base: 0.3})
+	if _, err := db.EnsureVectorIndex(context.Background()); err != nil {
+		t.Fatalf("EnsureVectorIndex after the model swap: %v", err)
+	}
+	addMemoryAndWait(t, db, Entry{ID: "new-a", Text: "postgres connection limits in the sandbox", Source: "agent", CreatedAt: 3})
+}
+
+// TestSearchMemoryVectorReport_MixedDimensions is the yaah-shq regression: a
+// store holding rows from two embedding models must surface a literal-text
+// match on a stale-dimension row through the keyword fallback, and must report
+// how many rows it could not compare. Nothing is re-embedded on this path.
+func TestSearchMemoryVectorReport_MixedDimensions(t *testing.T) {
+	t.Run("literal match on a stale row surfaces via keyword fallback", func(t *testing.T) {
+		logs := captureWarnLogs(t)
+		db := openTestDB(t)
+		seedMixedWidthStore(t, db)
+
+		report, err := db.SearchMemoryVectorReport(context.Background(), "pgbouncer", 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		seen := map[string]bool{}
+		for _, r := range report.Hits {
+			seen[r.ID] = true
+			// The 1536-dim row is the only one the vector path can score;
+			// every other hit here must be an explicit keyword fallback.
+			if r.Keyword != (r.ID != "new-a") {
+				t.Errorf("hit %s has Keyword=%v; only new-a is vector-scored", r.ID, r.Keyword)
+			}
+		}
+		if !seen["old-a"] {
+			t.Fatalf("literal match on a 384-dim row was lost: ids %v", resultIDs(report.Hits))
+		}
+		if !seen["new-a"] {
+			t.Fatalf("vector-scored row missing from the page: ids %v", resultIDs(report.Hits))
+		}
+
+		if report.DimMismatch != 2 {
+			t.Errorf("DimMismatch = %d, want 2 (old-a, old-b)", report.DimMismatch)
+		}
+		if report.DimMismatchByDim[384] != 2 {
+			t.Errorf("DimMismatchByDim = %v, want 2 rows at 384", report.DimMismatchByDim)
+		}
+		if !report.HasDimMismatch() {
+			t.Error("HasDimMismatch must report the mismatched rows")
+		}
+		if !strings.Contains(logs.String(), "dimensions differ") {
+			t.Errorf("mismatch must be warned about: %q", logs.String())
+		}
+
+		// No re-embedding happened: the stale rows keep their stored width.
+		var stale int
+		if err := db.sql.QueryRow(`SELECT COUNT(*) FROM memory WHERE length(embedding) = ?`, 4*384).Scan(&stale); err != nil {
+			t.Fatal(err)
+		}
+		if stale != 2 {
+			t.Errorf("%d rows left at 384 dims, want 2 (the search must not re-embed)", stale)
+		}
+	})
+
+	t.Run("mismatch counted even when no word matches", func(t *testing.T) {
+		db := openTestDB(t)
+		seedMixedWidthStore(t, db)
+
+		report, err := db.SearchMemoryVectorReport(context.Background(), "kubernetes", 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range report.Hits {
+			if r.Keyword {
+				t.Errorf("unrelated stale row %s padded the page", r.ID)
+			}
+		}
+		if report.DimMismatch != 2 {
+			t.Errorf("DimMismatch = %d, want 2 even without a keyword match", report.DimMismatch)
+		}
+	})
+
+	t.Run("matching widths report no mismatch", func(t *testing.T) {
+		logs := captureWarnLogs(t)
+		db := openTestDB(t)
+		db.SetEmbedder(dimEmbedder{dims: 384, base: 0.5})
+		addMemoryAndWait(t, db, Entry{ID: "only", Text: "pgbouncer pools postgres connections", Source: "agent", CreatedAt: 1})
+
+		report, err := db.SearchMemoryVectorReport(context.Background(), "pgbouncer", 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(report.Hits) != 1 || report.Hits[0].Keyword {
+			t.Fatalf("hits = %v, want the single vector-scored row", resultIDs(report.Hits))
+		}
+		if report.HasDimMismatch() || len(report.DimMismatchByDim) != 0 {
+			t.Errorf("matching widths reported a mismatch: %d %v", report.DimMismatch, report.DimMismatchByDim)
+		}
+		if out := logs.String(); out != "" {
+			t.Errorf("matching widths must not warn: %q", out)
+		}
+	})
+
+	t.Run("stale rows outside the requested tier are not counted", func(t *testing.T) {
+		db := openTestDB(t)
+		db.SetEmbedder(dimEmbedder{dims: 384, base: 0.5})
+		addMemoryAndWait(t, db, Entry{ID: "old-session", Text: "pgbouncer session note", Scope: ScopeSession, Source: "agent", CreatedAt: 1})
+
+		db.SetEmbedder(dimEmbedder{dims: 1536, base: 0.3})
+		if _, err := db.EnsureVectorIndex(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		addMemoryAndWait(t, db, Entry{ID: "new-g", Text: "postgres limits", Source: "agent", CreatedAt: 2})
+
+		report, err := db.SearchMemoryVectorScopedReport(context.Background(), "pgbouncer", 10, ScopeGlobal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if report.HasDimMismatch() {
+			t.Errorf("global search counted %d session-scoped stale rows (%v)", report.DimMismatch, report.DimMismatchByDim)
+		}
+		for _, r := range report.Hits {
+			if r.ID == "old-session" {
+				t.Fatalf("session atom leaked into a global search: %v", resultIDs(report.Hits))
+			}
+		}
+	})
 }

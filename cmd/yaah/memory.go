@@ -61,10 +61,15 @@ with single spaces. Use '--' when the query itself begins with a dash:
 		attemptVector := query != "" && hasEmbedder
 		var vecResults []memory.VectorResult
 		var vecErr error
+		var report memory.VectorSearchReport
 		if attemptVector {
-			vecResults, vecErr = db.SearchMemoryVectorScopedDiag(cmd.Context(), query, 10, scope)
+			report, vecErr = db.SearchMemoryVectorScopedReport(cmd.Context(), query, 10, scope)
+			vecResults = report.Hits
 			if vecErr == nil && len(vecResults) > 0 {
-				cmd.Printf("%s\nFound %d result(s):\n\n", tools.RetrievalSemantic, len(vecResults))
+				// Rows a previous embedding model left at another width come
+				// back keyword-scored, so the path label and the closing note
+				// have to say so (yaah-shq).
+				cmd.Printf("%s\nFound %d result(s):\n\n", tools.VectorPageLabel(vecResults), len(vecResults))
 				for _, r := range vecResults {
 					cmd.Printf("  %s  (score: %.2f)\n", Bold(r.Text), r.Score)
 					cmd.Printf("        id: %s\n", Dim(r.ID))
@@ -73,6 +78,9 @@ with single spaces. Use '--' when the query itself begins with a dash:
 					}
 					cmd.Printf("        %s\n", Dim(fmt.Sprintf("source: %s | scope: %s | created: %s", r.Source, r.Scope,
 						time.Unix(r.CreatedAt, 0).Format("2006-01-02 15:04"))))
+				}
+				if note := tools.DimMismatchNote(report); note != "" {
+					cmd.Printf("\n%s\n", note)
 				}
 				return nil
 			}
