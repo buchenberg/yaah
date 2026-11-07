@@ -34,6 +34,21 @@ type Persona struct {
 	// is today's full-surface orchestrator, and plan's restriction is
 	// the read-only tools level (yaah-21uk.12), not a belt.
 	Tools []string
+	// MaxLoopCycles / MaxToolTurns / Timeout carry the role file's
+	// budget fields (yaah-21uk.8) and bound the ORCHESTRATOR loop the
+	// persona drives, resolved config-authoritatively by
+	// resolveOrchestratorBudget: an explicit agents.default value
+	// wins, the persona file fills the gap, and the shipped defaults
+	// apply last (budget.Resolve supplies the precedence). Zero means
+	// no constraint, so the synthetic built-ins — all three zero —
+	// keep today's limits exactly. Timeout is carried for parity with
+	// RoleProfile, but the orchestrator loop has no wall-clock timeout
+	// knob yet, so nothing consumes it; the min_* floors are
+	// dispatch-specific (they bound per-call overrides) and are not
+	// part of the persona view.
+	MaxLoopCycles int
+	MaxToolTurns  int
+	Timeout       int
 	// ReadOnly marks personas whose session must not mutate the
 	// workspace. Only the synthetic "plan" persona sets it.
 	ReadOnly bool
@@ -144,10 +159,13 @@ func registryPersona(reg *RoleRegistry, role SubAgentRole) (Persona, bool) {
 		return Persona{}, false
 	}
 	return Persona{
-		Name:        string(role),
-		Mode:        def.Mode,
-		Body:        def.Body,
-		Description: def.Description,
-		Tools:       def.Tools,
+		Name:          string(role),
+		Mode:          def.Mode,
+		Body:          def.Body,
+		Description:   def.Description,
+		Tools:         def.Tools,
+		MaxLoopCycles: def.MaxLoopCycles,
+		MaxToolTurns:  def.MaxToolTurns,
+		Timeout:       def.Timeout,
 	}, true
 }

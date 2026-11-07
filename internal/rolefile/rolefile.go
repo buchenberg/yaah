@@ -73,6 +73,17 @@ type Frontmatter struct {
 	JSONMode      bool   `yaml:"json_mode"`
 	Timeout       int    `yaml:"timeout"` // seconds; 0 = no timeout
 
+	// Provider and Model are accepted-but-ignored routing keys
+	// (yaah-21uk.8): role-file routing is config-only — dispatch roles
+	// route through agents.subagent.roles.<role>.provider/model — so
+	// the registry warns and drops them on the way to RoleDef. Modeled
+	// here with omitempty (files without the keys marshal exactly as
+	// before) rather than left to extras, so the warning seam can see
+	// them and a rewrite keeps them at their source position.
+	// Revisiting persona-level routing is yaah-21uk.15.
+	Provider string `yaml:"provider,omitempty"`
+	Model    string `yaml:"model,omitempty"`
+
 	// extra holds frontmatter keys this struct does not model, in source
 	// order. They are preserved through Parse→Marshal so editing a role does
 	// not silently drop provider/project extensions.

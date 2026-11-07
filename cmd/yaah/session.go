@@ -43,6 +43,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/events"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/control"
@@ -113,6 +114,12 @@ type agentSession struct {
 	provider     agent.Provider
 	providerName string
 	modelName    string
+	// persona is the session's resolved orchestrator persona (yaah-21uk
+	// D4). Its Body binds into the system prompt (yaah-21uk.6) and its
+	// budget fields bound every loop the session builds (yaah-21uk.8,
+	// resolveOrchestratorBudget). The zero persona — hand-built test
+	// sessions — resolves today's limits unchanged.
+	persona      subagent.Persona
 	systemPrompt string
 	// mainPrompt is systemPrompt plus the default-agent directives
 	// injected after the identity block. Only the top-level loop sees

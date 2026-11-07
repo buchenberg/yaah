@@ -493,3 +493,59 @@ func TestParseRejectsComplexKeys(t *testing.T) {
 		t.Fatal("Parse accepted a non-scalar frontmatter key")
 	}
 }
+
+// TestRoundTripProviderModelField pins the accepted-but-ignored routing
+// keys (yaah-21uk.8): they parse into the modeled Provider/Model
+// fields, survive parse→marshal at their source position, and stay
+// omitted when absent (omitempty) so rewrites of files without them
+// never gain empty routing keys.
+func TestRoundTripProviderModelField(t *testing.T) {
+	input := `---
+name: boss
+description: runs the session
+provider: zai
+model: glm-5
+tools: [read]
+---
+body
+`
+	fm, body, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if fm.Provider != "zai" || fm.Model != "glm-5" {
+		t.Fatalf("routing keys = %q/%q, want zai/glm-5", fm.Provider, fm.Model)
+	}
+	out, err := Marshal(fm, body)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	fm2, body2, err := Parse(out)
+	if err != nil {
+		t.Fatalf("re-parse after Marshal: %v\n--- output ---\n%s", err, out)
+	}
+	if fm2.Provider != "zai" || fm2.Model != "glm-5" {
+		t.Errorf("routing keys changed on round trip: %q/%q vs %q/%q", fm2.Provider, fm2.Model, fm.Provider, fm.Model)
+	}
+	if !slices.Contains(fm2.order, "provider") || !slices.Contains(fm2.order, "model") {
+		t.Errorf("key order lost the routing keys: %v", fm2.order)
+	}
+	if body2 != body {
+		t.Errorf("body changed on round trip: %q vs %q", body2, body)
+	}
+
+	t.Run("absent keys stay omitted", func(t *testing.T) {
+		plain := "---\nname: quiet\ntools: [read]\n---\nbody\n"
+		fm, body, err := Parse(plain)
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		out, err := Marshal(fm, body)
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		if strings.Contains(out, "provider:") || strings.Contains(out, "model:") {
+			t.Errorf("rewrite gained empty routing keys:\n%s", out)
+		}
+	})
+}
