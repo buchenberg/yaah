@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.150.0](https://github.com/buchenberg/yaah/compare/v0.149.0...v0.150.0) (2026-11-07)
+
+
+### Features
+
+* **dispatch:** retained-result threading and durable worktree proposals ([3ff3066](https://github.com/buchenberg/yaah/commit/3ff3066b6c9ab1751935ec0c326e92608efac9c0))
+* **dispatch:** retained-result threading and durable worktree proposals ([3640406](https://github.com/buchenberg/yaah/commit/36404066ad2214ad825669a7cb982b5f6f1331f2))
+
+
+### Bug Fixes
+
+* **dispatch:** address review findings on threading and durable proposals ([aa97486](https://github.com/buchenberg/yaah/commit/aa97486b525c042ad844d89433eccb3626f6aa02))
+* **dispatch:** advertise continue/fork in the proposal next list ([eaaed97](https://github.com/buchenberg/yaah/commit/eaaed97abd6da88e5d2c68d4404d96e5ece0d859))
+
 ## [0.149.0](https://github.com/buchenberg/yaah/compare/v0.148.1...v0.149.0) (2026-11-07)
 
 
