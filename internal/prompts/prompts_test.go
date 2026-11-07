@@ -239,6 +239,9 @@ func TestInjectAfterIdentityAt_DefaultIdentityByteCompat(t *testing.T) {
 		{Identity: IdentityPrompt},
 		{Identity: IdentityPrompt, Environment: DetectEnvironment("/w")},
 		{Identity: IdentityPrompt, Environment: DetectEnvironment("/w"), Memory: "fact"},
+		// yaah-21uk.6: a persona layer sits immediately after the identity;
+		// the anchor derivation and the legacy search must still agree.
+		{Identity: IdentityPrompt, Persona: "ORCHESTRATOR PERSONA BODY", Environment: DetectEnvironment("/w"), Memory: "fact"},
 	}
 	for i, l := range layers {
 		t.Run(fmt.Sprintf("layers/%d", i), func(t *testing.T) {
@@ -338,6 +341,123 @@ func TestInjectAfterIdentityAt_FallsBackWithoutAnchor(t *testing.T) {
 			t.Errorf("directives block missing, got %q", got)
 		}
 	})
+}
+
+// The golden gate for the persona layer (yaah-21uk.6): with an empty
+// Persona the assembled prompt must be byte-for-byte what the same Layers
+// produced before the field existed. The expected strings are derived
+// independently of the persona branch — one from the same layers with a
+// real persona layer removed, one written out literally — so a stray
+// separator or empty part from the persona emission fails the gate.
+func TestBuildMarked_EmptyPersonaGoldenGate(t *testing.T) {
+	layers := Layers{
+		Identity:               IdentityPrompt,
+		Environment:            DetectEnvironment("/w"),
+		SubAgentDispatch:       "Sub-agent dispatch: provider=zai model=m.",
+		UserContext:            "prefer terse answers",
+		Project:                "# Project rules\nstay minimal",
+		Memory:                 "fact one",
+		Skills:                 "## Available Skills\n- **x**: does x",
+		MaxSubAgentConcurrency: 4,
+	}
+
+	t.Run("unset persona equals set-to-empty persona", func(t *testing.T) {
+		promptUnset, endUnset := BuildMarked(layers)
+		set := layers
+		set.Persona = ""
+		promptEmpty, endEmpty := BuildMarked(set)
+		if promptUnset != promptEmpty || endUnset != endEmpty {
+			t.Fatalf("an explicitly empty Persona diverged from the unset field:\n %q (%d) vs %q (%d)", promptEmpty, endEmpty, promptUnset, endUnset)
+		}
+	})
+
+	t.Run("empty persona equals the same layers with a persona layer removed", func(t *testing.T) {
+		empty, _ := BuildMarked(layers)
+		withPersona := layers
+		withPersona.Persona = "ORCHESTRATOR PERSONA BODY"
+		full, _ := BuildMarked(withPersona)
+		want := strings.Replace(full, "ORCHESTRATOR PERSONA BODY\n\n", "", 1)
+		if empty != want {
+			t.Fatalf("an empty persona layer changed the bytes:\n got  %q\n want %q", empty, want)
+		}
+	})
+
+	t.Run("literal prompt pins the separators", func(t *testing.T) {
+		got, end := BuildMarked(Layers{Identity: "ID", Persona: "", Environment: "## Environment\nOS: test"})
+		if want := "ID\n\n## Environment\nOS: test"; got != want {
+			t.Fatalf("got %q; want %q", got, want)
+		}
+		if end != len("ID") {
+			t.Errorf("anchor = %d; want %d", end, len("ID"))
+		}
+	})
+
+	t.Run("whitespace-only persona is omitted too", func(t *testing.T) {
+		got, end := BuildMarked(Layers{Identity: "ID", Persona: " \n\t ", Environment: "## Environment\nOS: test"})
+		if want := "ID\n\n## Environment\nOS: test"; got != want {
+			t.Fatalf("got %q; want %q", got, want)
+		}
+		if end != len("ID") {
+			t.Errorf("anchor = %d; want %d", end, len("ID"))
+		}
+	})
+}
+
+// A non-empty persona renders as its own layer immediately after the
+// identity, before the concurrency sentence and the environment — and the
+// identity anchor still points just past the identity, not past the
+// persona (yaah-21uk.6).
+func TestBuildMarked_PersonaLayerOrdering(t *testing.T) {
+	persona := "ORCHESTRATOR PERSONA BODY: plan before acting."
+	prompt, end := BuildMarked(Layers{
+		Identity:               IdentityPrompt,
+		Persona:                persona,
+		Environment:            DetectEnvironment("/w"),
+		MaxSubAgentConcurrency: 4,
+	})
+
+	identity := strings.TrimSpace(IdentityPrompt)
+	if prompt[:end] != identity {
+		t.Fatalf("prompt[:anchor] = %q; want the identity %q — the anchor must not move for the persona layer", prompt[:end], identity)
+	}
+	idxPersona := strings.Index(prompt, persona)
+	idxConc := strings.Index(prompt, "Your sub-agent concurrency limit")
+	idxEnv := strings.Index(prompt, "## Environment")
+	if idxPersona <= end || idxConc < 0 || idxEnv < 0 {
+		t.Fatalf("missing or misplaced layers: anchor=%d persona=%d concurrency=%d environment=%d", end, idxPersona, idxConc, idxEnv)
+	}
+	if !(idxPersona < idxConc && idxConc < idxEnv) {
+		t.Errorf("layer order must be identity, persona, concurrency, environment: persona=%d concurrency=%d environment=%d", idxPersona, idxConc, idxEnv)
+	}
+	if between := prompt[end:idxPersona]; strings.Contains(between, "Your sub-agent concurrency limit") || strings.Contains(between, "## Environment") {
+		t.Errorf("nothing may sit between the identity and its persona layer: %q", between)
+	}
+}
+
+// All three persona-placement facts pinned byte-exactly (yaah-21uk.6): the
+// persona renders as its own layer between identity and environment, the
+// anchor points just past the identity (not past the persona), and
+// directives injected at the anchor land immediately after the identity —
+// before the persona body. A synthetic identity keeps the expected bytes
+// independent of the embedded identity's trailing whitespace.
+func TestInjectAfterIdentityAt_PersonaSitsAfterInjections(t *testing.T) {
+	const persona = "ORCHESTRATOR PERSONA BODY"
+	env := "## Environment\nOS: test"
+	dirs := []string{"always run tests"}
+
+	prompt, end := BuildMarked(Layers{Identity: "SYNTH ORCHESTRATOR", Persona: persona, Environment: env})
+	if want := "SYNTH ORCHESTRATOR\n\n" + persona + "\n\n" + env; prompt != want {
+		t.Fatalf("persona must be its own layer between identity and environment:\n got  %q\n want %q", prompt, want)
+	}
+	if end != len("SYNTH ORCHESTRATOR") {
+		t.Fatalf("anchor = %d; want %d — just past the identity, not past the persona", end, len("SYNTH ORCHESTRATOR"))
+	}
+
+	got := InjectAfterIdentityAt(prompt, end, dirs)
+	want := "SYNTH ORCHESTRATOR\n\n" + FormatDirectives(dirs) + "\n\n" + persona + "\n\n" + env
+	if got != want {
+		t.Fatalf("directives must land immediately after the identity, before the persona:\n got  %q\n want %q", got, want)
+	}
 }
 
 func TestDetectEnvironment_RendersSharedTemplate(t *testing.T) {

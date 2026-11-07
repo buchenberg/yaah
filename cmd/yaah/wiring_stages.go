@@ -68,9 +68,9 @@ type sessionConfig struct {
 	otelActive   bool
 
 	// persona is the session's resolved orchestrator persona (yaah-21uk
-	// D4 plumbing), set right after buildWorkspace rebuilds the role
-	// registry. Phase 2 prompt binding (yaah-21uk.6) consumes it; until
-	// then it changes no behavior.
+	// D4), set right after buildWorkspace rebuilds the role registry.
+	// buildMCPSkills binds Persona.Body into the orchestrator system
+	// prompt (yaah-21uk.6).
 	persona sessionPersona
 }
 
@@ -443,8 +443,10 @@ type mcpSkillsStage struct {
 // buildMCPSkills assembles the system prompt, starts the MCP servers, and
 // registers the skill, plan, role, todo and background_process tools. Like
 // buildToolRegistry it has no failure of its own: every one of these pieces
-// degrades (a warning, a nil store) rather than failing the session.
-func buildMCPSkills(cfg *config.Config, opts SessionOptions, ws *workspaceStage, tr *toolRegistryStage, skipMCP bool) (*mcpSkillsStage, error) {
+// degrades (a warning, a nil store) rather than failing the session. The
+// system prompt carries the session's resolved persona (lc.persona, bound
+// by buildSystemPromptMarked).
+func buildMCPSkills(cfg *config.Config, opts SessionOptions, lc *sessionConfig, ws *workspaceStage, tr *toolRegistryStage, skipMCP bool) (*mcpSkillsStage, error) {
 	st := &mcpSkillsStage{}
 
 	// --- Prompt assembly -------------------------------------------------
@@ -458,7 +460,7 @@ func buildMCPSkills(cfg *config.Config, opts SessionOptions, ws *workspaceStage,
 		Writers: tr.reg.Get("memory_add") != nil && tr.reg.Get("memory_update") != nil &&
 			tr.reg.Get("memory_delete") != nil && tr.reg.Get("memory_promote") != nil,
 	}
-	st.systemPrompt, st.identityEnd = buildSystemPromptMarked(cfg, ws.cwd, tr.db, opts.ResumeSessionID, mem)
+	st.systemPrompt, st.identityEnd = buildSystemPromptMarked(cfg, ws.cwd, tr.db, opts.ResumeSessionID, mem, lc.persona.Persona.Body)
 
 	// --- MCP servers ------------------------------------------------------
 	// Isolated mode omits MCP tools by policy: they execute on the host

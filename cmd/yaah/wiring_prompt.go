@@ -84,14 +84,16 @@ func storeHasRecall(db *memory.DB) bool {
 // are appended for fresh sessions (resumeSessionID == "") only, and only
 // for the tools mem says are actually registered — the caller derives it
 // from the registry, so the prompt can never advertise a tool that is not
-// in the request.
+// in the request. personaBody is the resolved orchestrator persona's
+// system-prompt body; the default build persona's empty body leaves the
+// prompt byte-identical.
 //
 // The returned systemPrompt is the main-session base prompt (clean of
 // top-level directives). The caller derives mainPrompt by injecting
 // directives. Sub-agents get their own lean base from
 // buildSubAgentBasePrompt instead of this one.
-func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSessionID string, mem prompts.MemoryGuidance) string {
-	base, _ := buildSystemPromptMarked(cfg, cwd, db, resumeSessionID, mem)
+func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSessionID string, mem prompts.MemoryGuidance, personaBody string) string {
+	base, _ := buildSystemPromptMarked(cfg, cwd, db, resumeSessionID, mem, personaBody)
 	return base
 }
 
@@ -100,9 +102,18 @@ func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSess
 // point every after-identity injection anchors on. The prompt bytes are
 // identical to buildSystemPrompt's — the anchor travels beside them, never
 // inside them.
-func buildSystemPromptMarked(cfg *config.Config, cwd string, db *memory.DB, resumeSessionID string, mem prompts.MemoryGuidance) (string, int) {
+//
+// personaBody is the resolved orchestrator persona's system-prompt body
+// (yaah-21uk.6, threaded from lc.persona): it renders as its own layer
+// immediately after the identity, before the environment — and after the
+// identity anchor, so directives injected at the anchor keep landing
+// between the identity and the persona. The default build persona carries
+// an empty body, which omits the layer entirely and leaves the prompt
+// byte-identical to the pre-persona assembly.
+func buildSystemPromptMarked(cfg *config.Config, cwd string, db *memory.DB, resumeSessionID string, mem prompts.MemoryGuidance, personaBody string) (string, int) {
 	layers := prompts.Layers{
 		Identity:               prompts.IdentityPrompt,
+		Persona:                personaBody,
 		Environment:            prompts.DetectEnvironment(cwd),
 		SubAgentDispatch:       subAgentDispatchLine(cfg),
 		UserContext:            prompts.LoadUserContext(config.HomeDir()),

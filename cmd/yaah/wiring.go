@@ -185,12 +185,13 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	if err != nil {
 		return nil, err
 	}
-	// Effective orchestrator persona (yaah-21uk D4 plumbing): resolve
+	// Effective orchestrator persona (yaah-21uk D4): resolve
 	// agents.default.agent against the registry buildWorkspace just
 	// rebuilt. A configured-but-missing or delegate-only name warns and
 	// falls back to the built-in "build" persona — OpenCode semantics,
-	// never a session failure. Inert plumbing for now: phase 2 prompt
-	// binding (yaah-21uk.6) consumes lc.persona.
+	// never a session failure. buildMCPSkills binds the resolved body
+	// into the system prompt (yaah-21uk.6); the build persona's empty
+	// body leaves the prompt byte-identical.
 	lc.persona = resolveSessionPersona(lc.cfg.Agent.Default.Agent)
 	if toolsStage, err = buildToolRegistry(lc.cfg, opts, ws); err != nil {
 		return nil, err
@@ -231,7 +232,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		}()
 	}
 
-	if mcpStage, err = buildMCPSkills(lc.cfg, opts, ws, toolsStage, skipMCP); err != nil {
+	if mcpStage, err = buildMCPSkills(lc.cfg, opts, lc, ws, toolsStage, skipMCP); err != nil {
 		return nil, err
 	}
 	if loopStage, err = buildLoopInfra(lc.cfg, opts, lc, ws, toolsStage, mcpStage); err != nil {

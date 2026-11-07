@@ -586,6 +586,7 @@ type MemoryGuidance struct {
 // from multiple sources.
 type Layers struct {
 	Identity               string // embedded identity (always present)
+	Persona                string // orchestrator persona guidance layered after the identity (not for sub-agent prompts)
 	Environment            string // runtime OS/arch/shell context
 	SubAgentDispatch       string // resolved sub-agent provider/model + limits
 	UserContext            string // ~/.yaah/AGENTS.md (optional)
@@ -614,6 +615,12 @@ func Build(l Layers) string {
 // persona) is invisible to the substring search and would otherwise push
 // every injected block to the end of the prompt. The anchor is -1 when no
 // identity layer is present, and it never appears in the prompt bytes.
+//
+// The persona layer, when non-empty, renders immediately after the identity
+// — after the anchor position, so directives injected at the anchor keep
+// landing between the identity and the persona. An empty persona layer is
+// omitted entirely: the prompt is byte-identical to Layers without the
+// field.
 func BuildMarked(l Layers) (string, int) {
 	var parts []string
 	identityEnd := -1
@@ -624,6 +631,13 @@ func BuildMarked(l Layers) (string, int) {
 		// assembled prompt, so the offset within the layer is the offset
 		// within the prompt.
 		identityEnd = strings.Index(l.Identity, identity) + len(identity)
+	}
+
+	if persona := strings.TrimSpace(l.Persona); persona != "" {
+		// Renders after the anchor position computed above, so directives
+		// and mode directives injected at identityEnd keep landing
+		// immediately after the identity block, before this layer.
+		parts = append(parts, persona)
 	}
 
 	if l.MaxSubAgentConcurrency > 0 {

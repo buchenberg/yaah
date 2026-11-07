@@ -9,9 +9,9 @@ import (
 
 // sessionPersona is the small holder a session build carries the
 // resolved orchestrator persona in (yaah-21uk D4). It rides the
-// session-config path (sessionConfig.persona); phase 2 prompt binding
-// (yaah-21uk.6) consumes Persona. Until then this is pure plumbing:
-// resolving it changes no behavior.
+// session-config path (sessionConfig.persona); prompt binding
+// (yaah-21uk.6) feeds Persona.Body into the orchestrator system prompt
+// as its own layer after the identity.
 type sessionPersona struct {
 	// Persona is the resolved view: a synthetic built-in ("build",
 	// "plan") or a registry persona with mode "primary" or "all".
