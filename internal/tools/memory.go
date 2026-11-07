@@ -602,13 +602,42 @@ func (t *MemorySessionSearchTool) Execute(ctx context.Context, args string) (str
 		return t.listRecentMessages(params.TopK)
 	}
 
-	if vecResults, err := t.DB.SearchMessagesVector(ctx, params.Query, params.TopK); err == nil && len(vecResults) > 0 {
-		var output string
-		for _, r := range vecResults {
-			output += fmt.Sprintf("[semantic] %s  (score: %.2f)\n", r.Text, r.Score)
+	// Label the path before the entries: a failed embed must not read as an
+	// ordinary full-text search (yaah-17s), matching memory_search.
+	hasEmbedder := t.DB.Embedder() != nil
+	vecResults, vecErr := t.DB.SearchMessagesVectorDiag(ctx, params.Query, params.TopK)
+	if vecErr == nil && len(vecResults) > 0 {
+		if len(vecResults) >= params.TopK {
+			return formatMessageVectorResults(vecResults), nil
 		}
-		return output, nil
+		// Partial semantic page: union with FTS so keyword matches the vector
+		// path paged out are not dropped (mirrors memory_search's hybrid union).
+		seen := make(map[string]bool, len(vecResults))
+		var lines []string
+		kwRows := 0
+		for _, r := range vecResults {
+			seen[r.ID] = true
+			score := r.Score
+			lines = append(lines, messageLine(r.SessionID, r.Role, r.Content, &score, true))
+		}
+		if fts, err := t.DB.SearchMessages(params.Query, params.TopK); err == nil {
+			for _, m := range fts {
+				if seen[m.ID] || len(seen) >= params.TopK {
+					continue
+				}
+				seen[m.ID] = true
+				kwRows++
+				lines = append(lines, messageLine(m.SessionID, m.Role, m.Content, nil, false))
+			}
+		}
+		header := RetrievalSemantic
+		if kwRows > 0 {
+			header = RetrievalHybrid
+		}
+		return header + "\n" + strings.Join(lines, "\n"), nil
 	}
+
+	path := RetrievalLabel(params.Query, "", hasEmbedder, vecErr, len(vecResults))
 
 	results, err := t.DB.SearchMessages(params.Query, params.TopK)
 	if err != nil {
@@ -616,14 +645,43 @@ func (t *MemorySessionSearchTool) Execute(ctx context.Context, args string) (str
 	}
 
 	if len(results) == 0 {
-		return "No matching session messages found.", nil
+		return path + "\n" + "No matching session messages found.", nil
 	}
 
 	var output string
 	for _, m := range results {
-		output += fmt.Sprintf("[%s] %s: %s\n", m.SessionID[:12], m.Role, m.Content)
+		output += messageLine(m.SessionID, m.Role, m.Content, nil, false) + "\n"
 	}
-	return output, nil
+	return path + "\n" + output, nil
+}
+
+// messageLine renders one session-message hit: the session prefix, role, and
+// content, with an optional [semantic] marker and score.
+func messageLine(sessionID, role, content string, score *float32, semantic bool) string {
+	var b strings.Builder
+	if semantic {
+		b.WriteString("[semantic] ")
+	}
+	if len(sessionID) > 12 {
+		sessionID = sessionID[:12]
+	}
+	fmt.Fprintf(&b, "[%s] %s: %s", sessionID, role, content)
+	if score != nil {
+		fmt.Fprintf(&b, "  (score: %.2f)", *score)
+	}
+	return b.String()
+}
+
+// formatMessageVectorResults renders a full semantic page with the retrieval
+// path label.
+func formatMessageVectorResults(results []memory.MessageVectorResult) string {
+	lines := make([]string, 0, len(results)+1)
+	lines = append(lines, RetrievalSemantic)
+	for _, r := range results {
+		score := r.Score
+		lines = append(lines, messageLine(r.SessionID, r.Role, r.Content, &score, true))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (t *MemorySessionSearchTool) listRecentMessages(limit int) (string, error) {

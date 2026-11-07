@@ -799,22 +799,33 @@ func addMessageAndWait(t *testing.T, db *DB, m Message) {
 	if m.Role != "user" && m.Role != "assistant" {
 		return
 	}
+	// Wait for both the BLOB and its vec0 mirror: embedMessageAsync writes the
+	// BLOB then mirrors into messages_vec, and a search/delete that touches the
+	// index must not race the mirror (the old BLOB-only wait let the vec0 search
+	// miss a just-added row under -shuffle).
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		var emb []byte
-		db.sql.QueryRow(`SELECT COALESCE(embedding, '') FROM messages WHERE id = ?`, m.ID).Scan(&emb)
-		if len(emb) > 0 {
+		if messageEmbeddedAndMirrored(db, m.ID) {
 			return
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
-	// Final check: the embedding may have landed during the last sleep.
-	var emb []byte
-	db.sql.QueryRow(`SELECT COALESCE(embedding, '') FROM messages WHERE id = ?`, m.ID).Scan(&emb)
-	if len(emb) > 0 {
+	if messageEmbeddedAndMirrored(db, m.ID) {
 		return
 	}
-	t.Fatalf("timed out waiting for embedding of message %s", m.ID)
+	t.Fatalf("timed out waiting for embedding+mirror of message %s", m.ID)
+}
+
+// messageEmbeddedAndMirrored reports whether a message's embedding BLOB is
+// written and its messages_vec row exists. The second check tolerates the table
+// not existing yet (the mirror creates it).
+func messageEmbeddedAndMirrored(db *DB, id string) bool {
+	var emb []byte
+	if err := db.sql.QueryRow(`SELECT COALESCE(embedding, '') FROM messages WHERE id = ?`, id).Scan(&emb); err != nil || len(emb) == 0 {
+		return false
+	}
+	var n int
+	return db.sql.QueryRow(`SELECT COUNT(*) FROM messages_vec WHERE rowid = (SELECT rowid FROM messages WHERE id = ?)`, id).Scan(&n) == nil && n > 0
 }
 
 func TestDB_SearchMessagesVectorNoEmbedder(t *testing.T) {

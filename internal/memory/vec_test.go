@@ -205,6 +205,66 @@ func TestVecBackfillOnEnsure(t *testing.T) {
 	}
 }
 
+// TestReembedStaleEmbeddings_RemirrorsMissingRow verifies a memory row whose
+// BLOB landed but whose vec0 row is missing (a crash between the two writes) is
+// re-mirrored by the reconcile pass, so it does not stay invisible to the
+// index-preferred search.
+func TestReembedStaleEmbeddings_RemirrorsMissingRow(t *testing.T) {
+	db := openTestDB(t)
+	db.SetEmbedder(stubEmbedder{})
+	addMemoryAndWait(t, db, Entry{ID: "orphan-mem", Text: "orphaned vector memory", Source: "agent", CreatedAt: 1})
+
+	// Simulate a crash between the BLOB update and the mirror: drop the vec0 row.
+	if _, err := db.sql.Exec(`DELETE FROM memory_vec WHERE rowid = (SELECT rowid FROM memory WHERE id = 'orphan-mem')`); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := db.ReembedStaleEmbeddings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("ReembedStaleEmbeddings = %d, want 1 (the re-mirrored row)", n)
+	}
+
+	results, err := db.SearchMemoryVector(context.Background(), "orphaned", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].ID != "orphan-mem" {
+		t.Fatalf("re-mirrored memory not found: %v", resultIDs(results))
+	}
+}
+
+// TestReembedStaleEmbeddings_DoesNotRemirrorSuperseded verifies the re-mirror
+// pass does not re-add a superseded atom whose vec0 row was removed on
+// supersede: the superseded_by IS NULL predicate keeps dead rows from
+// re-accumulating every startup.
+func TestReembedStaleEmbeddings_DoesNotRemirrorSuperseded(t *testing.T) {
+	db := openTestDB(t)
+	db.SetEmbedder(stubEmbedder{})
+	addMemoryAndWait(t, db, Entry{ID: "old", Text: "old fact", Source: "agent", CreatedAt: 1})
+	addMemoryAndWait(t, db, Entry{ID: "new", Text: "new fact", Source: "agent", CreatedAt: 2})
+
+	if err := db.SupersedeMemory("old", "new"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The re-embed pass runs the re-mirror step; it must skip the superseded
+	// atom (whose BLOB is still present but whose vec0 row was deleted).
+	if _, err := db.ReembedStaleEmbeddings(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	var n int
+	if err := db.sql.QueryRow(`SELECT COUNT(*) FROM memory_vec WHERE rowid = (SELECT rowid FROM memory WHERE id = 'old')`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("superseded atom was re-mirrored into memory_vec (n=%d), want 0", n)
+	}
+}
+
 // TestVecStaleIndexFallsBackToScan verifies a vec0 table left at the wrong
 // width (a model swap the startup reconcile could not run) degrades to the
 // brute-force scan instead of returning a hard MATCH error.
@@ -219,5 +279,200 @@ func TestVecStaleIndexFallsBackToScan(t *testing.T) {
 
 	if _, err := db.SearchMemoryVector(context.Background(), "row", 10); err != nil {
 		t.Fatalf("stale index must degrade to the scan, not error: %v", err)
+	}
+}
+
+// messageResultIDs maps message vector results to their message IDs, for
+// assertion messages (the message analogue of resultIDs, which takes
+// []VectorResult).
+func messageResultIDs(results []MessageVectorResult) []string {
+	ids := make([]string, len(results))
+	for i, r := range results {
+		ids[i] = r.ID
+	}
+	return ids
+}
+
+// TestVecMessagesSearchScore verifies the messages_vec path returns, for each
+// hit, Score == 1 - distance == CosineSimilarity(query, stored).
+func TestVecMessagesSearchScore(t *testing.T) {
+	db := openTestDB(t) // creates the ses-test session
+	db.SetEmbedder(stubEmbedder{})
+	addMessageAndWait(t, db, Message{ID: "m1", SessionID: "ses-test", Idx: 0, Role: "user", Content: "postgres connection pooling", Timestamp: 1})
+	addMessageAndWait(t, db, Message{ID: "m2", SessionID: "ses-test", Idx: 1, Role: "user", Content: "llama grooming", Timestamp: 2})
+
+	results, err := db.SearchMessagesVector(context.Background(), "database", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2 (%v)", len(results), messageResultIDs(results))
+	}
+
+	q, err := db.Embedder().Embed(context.Background(), "database")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range results {
+		var blob []byte
+		if err := db.sql.QueryRow(`SELECT embedding FROM messages WHERE id = ?`, r.ID).Scan(&blob); err != nil {
+			t.Fatal(err)
+		}
+		want := CosineSimilarity(q, DecodeEmbedding(blob))
+		if math.Abs(float64(r.Score-want)) > 1e-4 {
+			t.Errorf("score for %s = %f, want %f", r.ID, r.Score, want)
+		}
+	}
+}
+
+// TestVecMessagesBackfillOnEnsure verifies a message embedded before the index
+// existed becomes findable when EnsureVectorIndex creates and backfills it.
+func TestVecMessagesBackfillOnEnsure(t *testing.T) {
+	db := openTestDB(t)
+	// No embedder yet, so AddMessage does not embed (and the async mirror does
+	// not pre-create the vec0 table, which would defeat the backfill test).
+	if err := db.AddMessage(Message{ID: "m1", SessionID: "ses-test", Idx: 0, Role: "user", Content: "pre-existing message", Timestamp: 1}); err != nil {
+		t.Fatal(err)
+	}
+	// Written by the pre-index code path: a 3-dim BLOB with no vec0 mirror.
+	vec := Embedding{0.1, 0.2, -0.3}
+	if _, err := db.sql.Exec(`UPDATE messages SET embedding = ? WHERE id = 'm1'`, EncodeEmbedding(vec)); err != nil {
+		t.Fatal(err)
+	}
+
+	db.SetEmbedder(stubEmbedder{}) // 3-dim, attached after the fact
+	if _, err := db.EnsureVectorIndex(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := db.SearchMessagesVector(context.Background(), "message", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].ID != "m1" {
+		t.Fatalf("backfilled messages index did not surface the pre-existing message: %v", messageResultIDs(results))
+	}
+}
+
+// TestVecMessagesDeleteRemovesIndexRow verifies deleting a message removes its
+// messages_vec row, so it cannot resurface (including via a reused rowid).
+func TestVecMessagesDeleteRemovesIndexRow(t *testing.T) {
+	db := openTestDB(t)
+	db.SetEmbedder(stubEmbedder{})
+	addMessageAndWait(t, db, Message{ID: "m1", SessionID: "ses-test", Idx: 0, Role: "user", Content: "delete this message", Timestamp: 1})
+
+	if got, _ := db.SearchMessagesVector(context.Background(), "delete", 10); len(got) != 1 {
+		t.Fatalf("precondition: got %v, want [m1]", messageResultIDs(got))
+	}
+
+	if err := db.DeleteMessagesFrom("ses-test", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := db.SearchMessagesVector(context.Background(), "delete", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("deleted message still surfaces: %v", messageResultIDs(got))
+	}
+}
+
+// storeMessageEmbedding writes a raw embedding blob for a message id, standing
+// in for a message embedded by a previous model.
+func storeMessageEmbedding(t *testing.T, db *DB, id string, dims int) {
+	t.Helper()
+	vec := make(Embedding, dims)
+	for i := range vec {
+		vec[i] = 0.1 + float32(i)*0.01
+	}
+	if _, err := db.sql.Exec(`UPDATE messages SET embedding = ? WHERE id = ?`, EncodeEmbedding(vec), id); err != nil {
+		t.Fatalf("store %d-dim message embedding for %s: %v", dims, id, err)
+	}
+}
+
+// TestReembedStaleMessageEmbeddings heals a message left at the old width after
+// a model swap: one pass rewrites it, and the healed message is searchable.
+func TestReembedStaleMessageEmbeddings(t *testing.T) {
+	db := openTestDB(t)
+	if err := db.AddMessage(Message{ID: "sm1", SessionID: "ses-test", Idx: 0, Role: "user", Content: "old vector message", Timestamp: 1}); err != nil {
+		t.Fatal(err)
+	}
+	storeMessageEmbedding(t, db, "sm1", 3) // written by the previous 3-dim model
+
+	db.SetEmbedder(dimEmbedder{dims: 4, base: 0.5})
+	n, err := db.ReembedStaleMessageEmbeddings(context.Background())
+	if err != nil {
+		t.Fatalf("ReembedStaleMessageEmbeddings: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("ReembedStaleMessageEmbeddings = %d, want 1", n)
+	}
+
+	results, err := db.SearchMessagesVector(context.Background(), "vector", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].ID != "sm1" {
+		t.Fatalf("healed message not found by vector search: %v", messageResultIDs(results))
+	}
+}
+
+// TestReconcileMessageEmbeddings backfills a user message that was added before
+// an embedder was configured (NULL embedding), making it searchable.
+func TestReconcileMessageEmbeddings(t *testing.T) {
+	db := openTestDB(t)
+	if err := db.AddMessage(Message{ID: "rm1", SessionID: "ses-test", Idx: 0, Role: "user", Content: "reconcile me", Timestamp: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	db.SetEmbedder(dimEmbedder{dims: 4, base: 0.5})
+	updated, err := db.ReconcileMessageEmbeddings(context.Background())
+	if err != nil {
+		t.Fatalf("ReconcileMessageEmbeddings: %v", err)
+	}
+	if updated != 1 {
+		t.Fatalf("ReconcileMessageEmbeddings = %d, want 1", updated)
+	}
+
+	results, err := db.SearchMessagesVector(context.Background(), "reconcile", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].ID != "rm1" {
+		t.Fatalf("reconciled message not found: %v", messageResultIDs(results))
+	}
+}
+
+// TestReembedStaleMessageEmbeddings_RemirrorsMissingRow verifies a message whose
+// BLOB landed but whose vec0 row is missing (a crash between the two writes) is
+// re-mirrored by the reconcile pass, so it does not stay invisible to the
+// index-preferred search.
+func TestReembedStaleMessageEmbeddings_RemirrorsMissingRow(t *testing.T) {
+	db := openTestDB(t)
+	db.SetEmbedder(stubEmbedder{})
+	addMessageAndWait(t, db, Message{ID: "rm2", SessionID: "ses-test", Idx: 0, Role: "user", Content: "orphaned vector", Timestamp: 1})
+
+	// Simulate a crash between the BLOB update and the mirror: drop the vec0 row.
+	if _, err := db.sql.Exec(`DELETE FROM messages_vec WHERE rowid = (SELECT rowid FROM messages WHERE id = 'rm2')`); err != nil {
+		t.Fatal(err)
+	}
+
+	// The BLOB is present but the index is missing the row. The reconcile pass
+	// must re-mirror it (no re-embed needed — the width is already correct).
+	n, err := db.ReembedStaleMessageEmbeddings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("ReembedStaleMessageEmbeddings = %d, want 1 (the re-mirrored row)", n)
+	}
+
+	results, err := db.SearchMessagesVector(context.Background(), "orphaned", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].ID != "rm2" {
+		t.Fatalf("re-mirrored message not found: %v", messageResultIDs(results))
 	}
 }

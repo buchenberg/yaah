@@ -84,6 +84,10 @@ func (d *DB) embedMessageAsync(id, role, content string) <-chan struct{} {
 		}
 		if _, err := d.sql.Exec(`UPDATE messages SET embedding = ? WHERE id = ?`, EncodeEmbedding(emb), id); err != nil {
 			slog.Warn("memory: store embedding failed", "op", "embed_message", "id", id, "err", err)
+			return
+		}
+		if err := d.mirrorMessageVec(id, emb); err != nil {
+			slog.Warn("memory: mirror messages vec0 failed", "op", "embed_message", "id", id, "err", err)
 		}
 	}()
 	return done
@@ -110,10 +114,26 @@ func (d *DB) MaxMessageIdx(sessionID string) (int, error) {
 // wholesale (compaction rebase) or rewound (turn restore), so stale
 // rows cannot conflict with re-persisted messages or resurrect on
 // resume (review finding B7). FTS5 rows follow via the messages
-// table's delete triggers.
+// table's delete triggers; the messages_vec rows are removed here in the
+// same transaction so a reused rowid cannot resurface a stale vector.
 func (d *DB) DeleteMessagesFrom(sessionID string, fromIdx int) error {
-	_, err := d.sql.Exec(`DELETE FROM messages WHERE session_id = ? AND idx >= ?`, sessionID, fromIdx)
-	return err
+	vecActive := d.messagesVecPresent()
+
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if vecActive {
+		if _, err := tx.Exec(`DELETE FROM messages_vec WHERE rowid IN (SELECT rowid FROM messages WHERE session_id = ? AND idx >= ?)`, sessionID, fromIdx); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM messages WHERE session_id = ? AND idx >= ?`, sessionID, fromIdx); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // GetMessages returns all messages for a session.
@@ -181,12 +201,39 @@ func (d *DB) SearchMessages(query string, limit int) ([]Message, error) {
 	return results, rows.Err()
 }
 
-// SearchMessagesVector embeds the query, scans messages with non-null
-// embeddings, and returns the top-K by cosine similarity. Falls back
-// to empty when no embedder is configured; a failed embedding call
-// degrades to empty and is surfaced via the rate-limited warning log
-// and the OTel embed-failure counter.
-func (d *DB) SearchMessagesVector(ctx context.Context, query string, limit int) ([]VectorResult, error) {
+// MessageVectorResult is a session message matched by semantic search. It
+// carries the originating session, role, and timestamp so a recall can point at
+// the conversation it came from — the pre-vec0 path returned only the content,
+// which left the session implicit.
+type MessageVectorResult struct {
+	ID        string
+	SessionID string
+	Role      string
+	Content   string
+	Timestamp int64
+	Score     float32
+}
+
+// SearchMessagesVector embeds the query and returns the top-K semantically
+// matched messages, degrading an embed failure to an empty result so the caller
+// keeps its keyword path. Use SearchMessagesVectorDiag when the reason for the
+// degradation must be reported.
+func (d *DB) SearchMessagesVector(ctx context.Context, query string, limit int) ([]MessageVectorResult, error) {
+	results, err := d.SearchMessagesVectorDiag(ctx, query, limit)
+	if IsEmbedFailure(err) {
+		return nil, nil
+	}
+	return results, err
+}
+
+// SearchMessagesVectorDiag is SearchMessagesVector with the reason for a
+// degraded semantic path preserved: a non-nil error means the vector path
+// produced nothing, either because the query could not be embedded (an embed
+// failure, already recorded for the log and OTel counter; classify it with
+// IsEmbedFailure) or the store query failed. A nil embedder is not an error —
+// it reports (nil, nil) — so a caller that must name that state checks
+// Embedder() first.
+func (d *DB) SearchMessagesVectorDiag(ctx context.Context, query string, limit int) ([]MessageVectorResult, error) {
 	embedder := d.Embedder()
 	if embedder == nil {
 		return nil, nil
@@ -194,11 +241,25 @@ func (d *DB) SearchMessagesVector(ctx context.Context, query string, limit int) 
 	qEmb, err := EmbedQuery(ctx, embedder, query)
 	if err != nil {
 		d.recordEmbedFailure("search_messages_vector", err)
-		return nil, nil
+		return nil, &embedError{err: err}
 	}
 
-	rows, err := d.sql.Query(`
-		SELECT id, content, embedding
+	if d.messagesVecPresent() {
+		results, err := d.searchMessagesVecIndex(ctx, qEmb, limit)
+		if err == nil {
+			return results, nil
+		}
+		// A stale index (wrong width) degrades to the scan.
+		return d.searchMessagesVectorScan(ctx, qEmb, limit)
+	}
+	return d.searchMessagesVectorScan(ctx, qEmb, limit)
+}
+
+// searchMessagesVectorScan is the pre-vec0 brute-force path: it scans messages
+// with non-null embeddings and scores by cosine similarity in Go.
+func (d *DB) searchMessagesVectorScan(ctx context.Context, qEmb Embedding, limit int) ([]MessageVectorResult, error) {
+	rows, err := d.sql.QueryContext(ctx, `
+		SELECT id, session_id, role, content, ts, embedding
 		FROM messages
 		WHERE embedding IS NOT NULL
 	`)
@@ -208,14 +269,13 @@ func (d *DB) SearchMessagesVector(ctx context.Context, query string, limit int) 
 	defer rows.Close()
 
 	type candidate struct {
-		id      string
-		content string
-		blob    []byte
+		r    MessageVectorResult
+		blob []byte
 	}
 	var candidates []candidate
 	for rows.Next() {
 		var c candidate
-		if err := rows.Scan(&c.id, &c.content, &c.blob); err != nil {
+		if err := rows.Scan(&c.r.ID, &c.r.SessionID, &c.r.Role, &c.r.Content, &c.r.Timestamp, &c.blob); err != nil {
 			return nil, err
 		}
 		candidates = append(candidates, c)
@@ -224,17 +284,13 @@ func (d *DB) SearchMessagesVector(ctx context.Context, query string, limit int) 
 		return nil, err
 	}
 
-	var results []VectorResult
+	var results []MessageVectorResult
 	for _, c := range candidates {
 		if len(c.blob) == 0 {
 			continue
 		}
-		emb := DecodeEmbedding(c.blob)
-		score := CosineSimilarity(qEmb, emb)
-		results = append(results, VectorResult{
-			Entry: Entry{ID: c.id, Text: c.content},
-			Score: score,
-		})
+		c.r.Score = CosineSimilarity(qEmb, DecodeEmbedding(c.blob))
+		results = append(results, c.r)
 	}
 
 	// Sort descending.
@@ -249,4 +305,139 @@ func (d *DB) SearchMessagesVector(ctx context.Context, query string, limit int) 
 		results = results[:limit]
 	}
 	return results, nil
+}
+
+// ReembedStaleMessageEmbeddings heals the messages_vec index from the BLOB
+// column: it re-embeds rows whose stored width differs from the embedder (the
+// message-side counterpart to ReembedStaleEmbeddings), and re-mirrors rows whose
+// BLOB is the correct width but whose vec0 row is missing (a crash between the
+// BLOB update and the mirror would otherwise leave them invisible to the
+// index-preferred search). Returns the number of rows healed; a nil embedder is
+// a no-op. An embed failure is surfaced like any other and does not stop the
+// sweep.
+func (d *DB) ReembedStaleMessageEmbeddings(ctx context.Context) (int, error) {
+	embedder := d.Embedder()
+	if embedder == nil {
+		return 0, nil
+	}
+	probe, err := embedder.Embed(ctx, "dimension probe")
+	if err != nil {
+		d.recordEmbedFailure("reembed_message", err)
+		return 0, fmt.Errorf("reembed stale messages: probe embedder: %w", err)
+	}
+	dim := len(probe)
+
+	// id != '' mirrors the embed gate in embedMessageAsync: a message with no id
+	// was never embedded, and messages.id is not unique, so an UPDATE keyed on
+	// id = '' would fan out across every empty-id row.
+	rows, err := d.sql.QueryContext(ctx,
+		`SELECT id, content FROM messages WHERE embedding IS NOT NULL AND length(embedding) != ? AND id != ''`, 4*dim)
+	if err != nil {
+		return 0, fmt.Errorf("reembed stale messages: query: %w", err)
+	}
+	defer rows.Close()
+
+	type staleRow struct{ id, content string }
+	var stale []staleRow
+	for rows.Next() {
+		var r staleRow
+		if err := rows.Scan(&r.id, &r.content); err != nil {
+			return 0, err
+		}
+		stale = append(stale, r)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	reembedded := 0
+	for _, r := range stale {
+		emb, err := embedder.Embed(ctx, r.content)
+		if err != nil {
+			d.recordEmbedFailure("reembed_message", err)
+			continue
+		}
+		if _, err := d.sql.Exec(`UPDATE messages SET embedding = ? WHERE id = ?`, EncodeEmbedding(emb), r.id); err != nil {
+			slog.Warn("memory: store message embedding failed", "op", "reembed_message", "id", r.id, "err", err)
+			continue
+		}
+		if err := d.mirrorMessageVec(r.id, emb); err != nil {
+			slog.Warn("memory: mirror messages vec0 failed", "op", "reembed_message", "id", r.id, "err", err)
+		}
+		reembedded++
+	}
+
+	// Re-mirror rows whose BLOB is the correct width but which never landed a
+	// vec0 row. A single INSERT...SELECT repairs them without re-embedding.
+	remirrored := 0
+	if d.messagesVecPresent() {
+		res, err := d.sql.ExecContext(ctx, `
+			INSERT INTO messages_vec(rowid, embedding)
+			SELECT m.rowid, m.embedding FROM messages m
+			WHERE m.embedding IS NOT NULL AND length(m.embedding) = ?
+			  AND NOT EXISTS (SELECT 1 FROM messages_vec v WHERE v.rowid = m.rowid)`, 4*dim)
+		if err != nil {
+			return reembedded, fmt.Errorf("reembed stale messages: re-mirror missing: %w", err)
+		}
+		if n, err := res.RowsAffected(); err == nil {
+			remirrored = int(n)
+		}
+	}
+
+	return reembedded + remirrored, nil
+}
+
+// ReconcileMessageEmbeddings backfills embeddings for user/assistant message
+// rows with a NULL embedding, then heals rows left at a stale width after a
+// model swap. Returns the number of rows updated. An error from any single
+// embed does not stop the reconciliation.
+func (d *DB) ReconcileMessageEmbeddings(ctx context.Context) (int, error) {
+	embedder := d.Embedder()
+	if embedder == nil {
+		return 0, nil
+	}
+	rows, err := d.sql.QueryContext(ctx,
+		`SELECT id, content FROM messages WHERE embedding IS NULL AND role IN ('user','assistant') AND content != '' AND id != ''`)
+	if err != nil {
+		return 0, fmt.Errorf("reconcile messages: query: %w", err)
+	}
+	defer rows.Close()
+
+	type row struct{ id, content string }
+	var pending []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.content); err != nil {
+			return 0, err
+		}
+		pending = append(pending, r)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	updated := 0
+	for _, r := range pending {
+		emb, err := embedder.Embed(ctx, r.content)
+		if err != nil {
+			d.recordEmbedFailure("reconcile_messages", err)
+			continue
+		}
+		if _, err := d.sql.Exec(`UPDATE messages SET embedding = ? WHERE id = ?`, EncodeEmbedding(emb), r.id); err != nil {
+			slog.Warn("memory: store message embedding failed", "op", "reconcile_messages", "id", r.id, "err", err)
+			continue
+		}
+		if err := d.mirrorMessageVec(r.id, emb); err != nil {
+			slog.Warn("memory: mirror messages vec0 failed", "op", "reconcile_messages", "id", r.id, "err", err)
+		}
+		updated++
+	}
+
+	// A model swap leaves rows at the old dimensionality; fold the repair in so
+	// the stale population drains instead of persisting unsearchable.
+	healed, err := d.ReembedStaleMessageEmbeddings(ctx)
+	if err != nil {
+		slog.Warn("memory: re-embed stale messages failed", "err", err)
+	}
+	return updated + healed, nil
 }

@@ -110,23 +110,30 @@ func recordSessionWorkspace(lc *sessionConfig, tr *toolRegistryStage, mcps *mcpS
 }
 
 // launchEmbeddingBackfill starts backfilling embeddings for memory entries
-// created before the embedding server was configured. It must run only after
+// and session messages created before the embedding server was configured, and
+// heals rows left at a stale width after a model swap. It must run only after
 // the last fallible step has passed: the startup ownership guard can no longer
 // fire, so the backfill cannot race the guard's db.Close.
 func launchEmbeddingBackfill(tr *toolRegistryStage) {
 	if tr.db == nil || !tr.embedderAttached {
 		return
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		n, err := tr.db.ReconcileEmbeddings(ctx)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: embedding backfill: %v\n", err)
-		} else if n > 0 {
-			fmt.Fprintf(os.Stderr, "embedded %d existing memory entries\n", n)
-		}
-	}()
+	// Memory and messages reconcile in separate goroutines, each with its own
+	// window: a large message sweep must not be starved by the memory sweep (or
+	// vice versa) under one shared 30s context.
+	backfill := func(label string, run func(context.Context) (int, error)) {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if n, err := run(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: %s embedding backfill: %v\n", label, err)
+			} else if n > 0 {
+				fmt.Fprintf(os.Stderr, "embedded %d existing %s\n", n, label)
+			}
+		}()
+	}
+	backfill("memory", tr.db.ReconcileEmbeddings)
+	backfill("session message", tr.db.ReconcileMessageEmbeddings)
 }
 
 // newSessionFromStages builds the agentSession from the completed stages. The
