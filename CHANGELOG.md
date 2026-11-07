@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.151.1](https://github.com/buchenberg/yaah/compare/v0.151.0...v0.151.1) (2026-11-07)
+
+
+### Documentation
+
+* tighten README and document retained-run details ([e872e0f](https://github.com/buchenberg/yaah/commit/e872e0fcffb654a85f14e11272c778331b57376a))
+* tighten README and document retained-run details ([84b2c91](https://github.com/buchenberg/yaah/commit/84b2c91f38fdd32bbe8b71eb19d193fffd088d2d))
+
 ## [0.151.0](https://github.com/buchenberg/yaah/compare/v0.150.0...v0.151.0) (2026-11-07)
 
 
