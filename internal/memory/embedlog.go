@@ -72,6 +72,43 @@ func (l *embedWarnLimiter) allow() (bool, int) {
 	return true, suppressed
 }
 
+// dimWarnLimiter rate-limits the stale-dimensionality warning per stored width
+// (yaah-shq). It is deliberately not one shared window: a store can hold rows
+// from several past embedding models (384 and 512 and 768), and a single
+// limiter let the first width's warning suppress the others for a whole
+// interval, so the doc's "one warning per stale width" was not what the code
+// did. Each width gets its own embedWarnLimiter, so every width warns once per
+// interval and repeats stay rate-limited. The zero value is usable and safe for
+// concurrent use.
+type dimWarnLimiter struct {
+	mu      sync.Mutex
+	byWidth map[int]*embedWarnLimiter
+}
+
+// allow reports whether the warning for one width may be emitted now, along
+// with the number of that width's warnings suppressed since the last emitted
+// one.
+func (l *dimWarnLimiter) allow(width int) (bool, int) {
+	return l.limiter(width).allow()
+}
+
+// limiter returns the per-width limiter, creating it on first use. The returned
+// limiter carries its own mutex, so this map's lock is held only long enough to
+// fetch it and a caller's log call never runs under it.
+func (l *dimWarnLimiter) limiter(width int) *embedWarnLimiter {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.byWidth == nil {
+		l.byWidth = make(map[int]*embedWarnLimiter)
+	}
+	lim, ok := l.byWidth[width]
+	if !ok {
+		lim = &embedWarnLimiter{}
+		l.byWidth[width] = lim
+	}
+	return lim
+}
+
 // recordEmbedFailure surfaces one embedding failure (GitHub #311): the
 // OTel yaah.memory.embed_failures counter increments unconditionally,
 // while the warning log is rate-limited. op names the failing operation
@@ -88,9 +125,10 @@ func (d *DB) recordEmbedFailure(op string, err error) {
 // The state repeats on every search until the rows are re-embedded, so it is
 // rate-limited exactly like an embed failure — one warning per interval with
 // the suppressed count folded into the next line — instead of vanishing
-// silently.
+// silently. The window is per stored width, so a store left at several widths
+// names every one of them.
 func (d *DB) warnEmbedDimMismatch(storedDim, queryDim, rows int) bool {
-	ok, suppressed := d.dimWarn.allow()
+	ok, suppressed := d.dimWarn.allow(storedDim)
 	if !ok {
 		return false
 	}

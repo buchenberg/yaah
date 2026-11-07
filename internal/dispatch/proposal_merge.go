@@ -55,6 +55,7 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 
 	var writes []proposalMergeWrite
 	var conflicted []string
+	var unbasisable []string
 	for _, change := range changes {
 		current, currentExists, err := p.parentContentFull(ctx, change.Path)
 		if err != nil {
@@ -66,7 +67,19 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 		}
 		base, baseExists, err := p.baseContentFull(ctx, change.Path)
 		if err != nil {
-			return "", fmt.Errorf("proposal %s: three_way: read base %s: %w", p.id, change.Path, err)
+			// A base that cannot be read — a blob over the merge cap, a
+			// non-git basis backend, a failing git plumbing call — leaves this
+			// path unprovable, and none of the three strategies may run on a
+			// guess. Aborting the whole settle strands every other path of the
+			// proposal behind one unreadable blob; the no-drift fast path would
+			// overwrite the parent whole-path with no basis to prove it
+			// unmoved, which is the fail-open the content check exists to
+			// prevent; and a three-way merge has no base input at all. So the
+			// path is a conflict: it surfaces to the human, who can resolve or
+			// discard, and the rest of the proposal is not hostage to it.
+			conflicted = append(conflicted, change.Path)
+			unbasisable = append(unbasisable, fmt.Sprintf("%s: %v", change.Path, err))
+			continue
 		}
 		if !baseExists {
 			base = nil
@@ -116,12 +129,16 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 	}
 
 	if len(conflicted) > 0 {
+		message := "three-way apply found a textual conflict; resolve the path or use discard/release"
+		if len(unbasisable) > 0 {
+			message = fmt.Sprintf("%s; no merge basis for %s", message, strings.Join(unbasisable, "; "))
+		}
 		return "", &proposalApplyConflict{
 			ProposalID: p.id,
 			Paths:      conflicted,
 			Strategy:   proposalApplyThreeWay,
 			Changes:    proposalChangesForPaths(ctx, p, conflicted),
-			Message:    "three-way apply found a textual conflict; resolve the path or use discard/release",
+			Message:    message,
 			Cause:      goatherd.ErrApplyConflict,
 		}
 	}
@@ -225,11 +242,50 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 // can only add paths to the merge set, never remove them; merging a path the
 // parent did not actually move is harmless (git resolves it to the proposal's
 // post-image).
+//
+// The content comparison folds CRLF to LF because the two sides come from
+// different places: base is a raw tree blob, current is the working-tree file.
+// Under core.autocrlf or an eol smudge filter the same unchanged file is LF in
+// the blob and CRLF on disk, so a byte-for-byte comparison would call every
+// such path drifted and force a three-way merge on a path the parent never
+// touched. The fold is applied to the comparison only, never to the merge
+// inputs, and never to binary content — see proposalContentEqual.
 func proposalPathDrifted(hinted bool, base []byte, baseExists bool, current []byte, currentExists bool) bool {
 	if hinted || baseExists != currentExists {
 		return true
 	}
-	return baseExists && !bytes.Equal(base, current)
+	return baseExists && !proposalContentEqual(base, current)
+}
+
+// proposalContentEqual reports whether a basis blob and the parent's current
+// file hold the same content for the drift question. Binary content is compared
+// byte for byte: EOL translation does not apply to it, so a difference there is
+// always a real edit. Text is compared after folding CRLF to LF, which can only
+// ever drop a CR that directly precedes an LF.
+func proposalContentEqual(base, current []byte) bool {
+	if bytes.Equal(base, current) {
+		return true
+	}
+	if isBinaryContent(base) || isBinaryContent(current) {
+		return false
+	}
+	return bytes.Equal(foldCRLF(base), foldCRLF(current))
+}
+
+// foldCRLF returns b with the CR of every CRLF pair removed, leaving lone CRs
+// (old-Mac line endings, or content that means them) intact.
+func foldCRLF(b []byte) []byte {
+	if !bytes.Contains(b, []byte("\r\n")) {
+		return b
+	}
+	out := make([]byte, 0, len(b))
+	for i := 0; i < len(b); i++ {
+		if b[i] == '\r' && i+1 < len(b) && b[i+1] == '\n' {
+			continue
+		}
+		out = append(out, b[i])
+	}
+	return out
 }
 
 // proposalModeFromString parses a FileMode.String value, including the

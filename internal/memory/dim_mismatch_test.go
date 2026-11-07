@@ -178,6 +178,66 @@ func TestSearchMemoryVector_EmptyStoreNoWarn(t *testing.T) {
 	}
 }
 
+// TestSearchMemoryVector_EveryStaleWidthWarns pins PR #824 review finding 5:
+// the doc promises one warning per stale width, but a single shared rate
+// limiter let the first width's warning suppress every other width for the
+// whole interval. The limiter is per width now, so a store left at two widths
+// names both in the same interval while repeats of one width stay rate-limited.
+func TestSearchMemoryVector_EveryStaleWidthWarns(t *testing.T) {
+	// twoStaleWidths builds the shape: one row left at 384 dims and one at 512
+	// by two past models, then a swap to 768 for the query.
+	twoStaleWidths := func(t *testing.T) *DB {
+		t.Helper()
+		db := openTestDB(t)
+		if err := db.AddMemory(Entry{ID: "old384", Text: "llama grooming", Source: "agent", CreatedAt: 1}); err != nil {
+			t.Fatalf("add old384: %v", err)
+		}
+		storeEmbedding(t, db, "old384", 384)
+		if err := db.AddMemory(Entry{ID: "old512", Text: "llama grooming roster", Source: "agent", CreatedAt: 2}); err != nil {
+			t.Fatalf("add old512: %v", err)
+		}
+		storeEmbedding(t, db, "old512", 512)
+		db.SetEmbedder(dimEmbedder{dims: 768, base: 0.3})
+		return db
+	}
+
+	t.Run("two stale widths each warn in the same interval", func(t *testing.T) {
+		logs := captureWarnLogs(t)
+		db := twoStaleWidths(t)
+
+		report, err := db.SearchMemoryVectorReport(context.Background(), "llama", 10)
+		if err != nil {
+			t.Fatalf("search: %v", err)
+		}
+		if report.DimMismatchByDim[384] != 1 || report.DimMismatchByDim[512] != 1 {
+			t.Fatalf("DimMismatchByDim = %v, want one row at each of 384 and 512", report.DimMismatchByDim)
+		}
+		out := logs.String()
+		for _, width := range []string{"stored_dim=384", "stored_dim=512"} {
+			if got := strings.Count(out, width); got != 1 {
+				t.Errorf("%s warned %d time(s), want exactly 1: %q", width, got, out)
+			}
+		}
+	})
+
+	t.Run("repeating the same widths stays rate-limited", func(t *testing.T) {
+		logs := captureWarnLogs(t)
+		db := twoStaleWidths(t)
+
+		for i := 0; i < 3; i++ {
+			if _, err := db.SearchMemoryVectorReport(context.Background(), "llama", 10); err != nil {
+				t.Fatalf("search %d: %v", i, err)
+			}
+		}
+		out := logs.String()
+		for _, width := range []string{"stored_dim=384", "stored_dim=512"} {
+			if got := strings.Count(out, width); got != 1 {
+				t.Errorf("%s warned %d time(s) across three searches, want 1: %q", width, got, out)
+			}
+		}
+	})
+}
+
 // TestReembedStaleEmbeddings heals rows left at the old width: one pass
 // rewrites them, a second pass finds nothing, and the healed row is scored by
 // the vector path again (no warning).

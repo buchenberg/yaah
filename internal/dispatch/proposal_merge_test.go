@@ -108,6 +108,43 @@ func TestProposalPathDriftedIgnoresFalseNegativeHint(t *testing.T) {
 	}
 }
 
+// TestProposalPathDriftedFoldsCRLF pins the EOL fix (PR #824 review): base is a
+// raw tree blob while current is the working-tree file, so under core.autocrlf
+// or an eol smudge filter an unchanged path is LF in the blob and CRLF on disk.
+// A byte-for-byte comparison called every such path drifted and forced a
+// three-way merge on a path the parent never touched.
+func TestProposalPathDriftedFoldsCRLF(t *testing.T) {
+	lf := []byte("line1\nline2\nline3\n")
+
+	t.Run("crlf worktree file against an lf blob is not drifted", func(t *testing.T) {
+		crlf := []byte("line1\r\nline2\r\nline3\r\n")
+		if proposalPathDrifted(false, lf, true, crlf, true) {
+			t.Error("EOL translation made an unchanged path look drifted")
+		}
+	})
+
+	t.Run("an actual edit is still drifted under crlf", func(t *testing.T) {
+		edited := []byte("line1\r\nhost2\r\nline3\r\n")
+		if !proposalPathDrifted(false, lf, true, edited, true) {
+			t.Error("a changed line must still classify as drifted")
+		}
+	})
+
+	t.Run("binary content is compared byte for byte", func(t *testing.T) {
+		base := []byte("a\r\nb\x00\x01")
+		if !proposalPathDrifted(false, base, true, []byte("a\nb\x00\x01"), true) {
+			t.Error("a binary blob must not be folded into equality")
+		}
+	})
+
+	t.Run("a lone CR is content, not an eol form", func(t *testing.T) {
+		oldMac := []byte("line1\rline2\rline3\r")
+		if !proposalPathDrifted(false, lf, true, oldMac, true) {
+			t.Error("folding must only drop the CR of a CRLF pair")
+		}
+	})
+}
+
 func TestProposalModeFromString(t *testing.T) {
 	tests := []fs.FileMode{
 		0o644,
@@ -185,6 +222,70 @@ func TestProposalTool_ThreeWayApplyFailsClosedOnConflict(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repo, "README.md"))
 	if err != nil || string(data) != "host1\nline2\nline3\n" {
 		t.Fatalf("a refused three-way apply must leave the host untouched: %q err=%v", data, err)
+	}
+	if _, err := rt.Proposals.get(env.ProposalID); err != nil {
+		t.Errorf("refused apply must leave the proposal open: %v", err)
+	}
+}
+
+// TestProposalTool_ThreeWayApplyOversizedBaseConflicts pins the fail-closed but
+// non-fatal handling of a base that cannot be read (PR #824 review). A basis
+// blob over the merge cap has no usable merge input: the no-drift fast path
+// would overwrite the parent whole-path with no proof it is unmoved, and a
+// three-way merge has no base at all. It must not abort the settle either —
+// that strands every other path of the proposal — so the path is reported as a
+// conflict and the proposal stays open for the human.
+func TestProposalTool_ThreeWayApplyOversizedBaseConflicts(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	writeTestFile(t, repo, "big.txt", strings.Repeat("x", proposalMergeMaxBytes+1))
+	mustRunGit(t, repo, "add", "-A")
+	mustRunGit(t, repo, "commit", "-m", "oversized basis blob")
+
+	runner := &sessionRunner{}
+	runner.sideEffect = func(call int, _ string) {
+		writeTestFile(t, runner.workdirFor(t, call), "big.txt", "proposal\n")
+	}
+	rt := RetainedRuntime{
+		Runner:       runner.run(),
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+		Proposals:    NewProposalRegistry(),
+	}
+	res, err := StartRetainedRun(context.Background(), rt, "shrink the big file", SubAgentParams{Role: "worker"}, 0, false)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	env := decodeProposalEnvelope(t, res)
+
+	// The parent drops the path, so the working-tree side is a delete and the
+	// merge cap on a working-tree read is not what fires: the basis blob itself
+	// is too large to read.
+	if err := os.Remove(filepath.Join(repo, "big.txt")); err != nil {
+		t.Fatalf("remove parent big.txt: %v", err)
+	}
+
+	out, err := (&ProposalTool{Proposals: rt.Proposals}).Execute(context.Background(),
+		`{"action":"apply","proposal_id":`+jsonString(env.ProposalID)+`,"strategy":"three_way"}`)
+	if err != nil {
+		t.Fatalf("an unreadable basis must be a structured conflict, not a failed apply: %v", err)
+	}
+	var got proposalEnvelope
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("apply result is not JSON: %v\n%s", err, out)
+	}
+	if got.Status != "conflict" || got.Strategy != proposalApplyThreeWay {
+		t.Fatalf("apply envelope = %+v, want conflict/three_way", got)
+	}
+	if len(got.Conflicts) != 1 || len(got.Conflicts[0].Paths) != 1 || got.Conflicts[0].Paths[0] != "big.txt" {
+		t.Fatalf("conflict must name the unbasisable path, got %+v", got.Conflicts)
+	}
+	if !strings.Contains(got.Error, "no merge basis") || !strings.Contains(got.Error, "merge cap") {
+		t.Errorf("refusal must say why the base could not be read: %q", got.Error)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "big.txt")); !os.IsNotExist(err) {
+		t.Errorf("a conflicted path must be left untouched, stat err = %v", err)
 	}
 	if _, err := rt.Proposals.get(env.ProposalID); err != nil {
 		t.Errorf("refused apply must leave the proposal open: %v", err)

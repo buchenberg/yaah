@@ -90,14 +90,21 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 	var vecResults []memory.VectorResult
 	var vecErr error
 	var report memory.VectorSearchReport
+	// note names the rows a vector search could not compare at their stored
+	// embedding width. It is computed before the page-size branch because every
+	// path below can carry that omission: a store whose only stale rows share no
+	// word with the query yields zero vector hits, falls through to FTS, and
+	// would report a plain miss — the exact silent omission the note exists to
+	// fix (shq review).
+	var note string
 	if attemptVector {
 		report, vecErr = t.DB.SearchMemoryVectorScopedReport(ctx, params.Query, params.TopK, scope)
 		vecResults = report.Hits
+		note = DimMismatchNote(report)
 		if vecErr == nil && len(vecResults) > 0 {
 			// Rows left at a previous embedding model's width come back
 			// keyword-scored; the note says how many so a degraded page is
 			// never passed off as semantic recall (yaah-shq).
-			note := DimMismatchNote(report)
 			if len(vecResults) >= params.TopK {
 				return formatVectorResults(vecResults, note), nil
 			}
@@ -122,16 +129,8 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 					lines = append(lines, entryLine(e.ID, e.Tags, e.Scope, e.Text, e.CreatedAt, nil, "keyword"))
 				}
 			}
-			// The hybrid label appears only when keyword actually contributed.
-			header := VectorPageLabel(vecResults)
-			if kwRows > 0 {
-				header = RetrievalHybrid
-			}
-			out := header + "\n" + strings.Join(lines, "\n")
-			if note != "" {
-				out += "\n" + note
-			}
-			return out, nil
+			out := pageLabel(vecResults, kwRows) + "\n" + strings.Join(lines, "\n")
+			return withDimNote(out, note), nil
 		}
 	}
 	path := RetrievalLabel(params.Query, params.Tag, hasEmbedder, vecErr, len(vecResults))
@@ -142,10 +141,21 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 	}
 
 	if len(ftsResults) == 0 {
-		return path + "\n" + t.emptyHint(scope), nil
+		return withDimNote(path+"\n"+t.emptyHint(scope), note), nil
 	}
 
-	return path + "\n" + formatEntries(ftsResults), nil
+	return withDimNote(path+"\n"+formatEntries(ftsResults), note), nil
+}
+
+// withDimNote appends the stale-width note to a result page. The fall-through
+// and empty pages get it too: a keyword-only or empty recall can still be
+// missing rows the vector path could not compare, and dropping the note there
+// makes that omission silent again (shq review).
+func withDimNote(out, note string) string {
+	if note == "" {
+		return out
+	}
+	return out + "\n" + note
 }
 
 // Retrieval path labels. Every memory_search result names the path that
@@ -213,6 +223,24 @@ func VectorPageLabel(results []memory.VectorResult) string {
 		}
 	}
 	return RetrievalSemantic
+}
+
+// pageLabel names the path a vector page used, counting the FTS rows folded
+// into it. A keyword-fallback row anywhere in the final page is the strongest
+// signal — part of the store cannot be compared with the current model — so it
+// names the page even when FTS also contributed; the FTS contribution is named
+// after it rather than replacing it, so neither path's degradation hides the
+// other (shq review).
+func pageLabel(results []memory.VectorResult, kwRows int) string {
+	vecLabel := VectorPageLabel(results)
+	switch {
+	case kwRows == 0:
+		return vecLabel
+	case vecLabel == RetrievalHybridFallback:
+		return RetrievalHybridFallback + " + keyword (FTS5)"
+	default:
+		return RetrievalHybrid
+	}
 }
 
 // vectorHitMarker names the path that scored one vector hit. A hit marked

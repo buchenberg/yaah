@@ -240,6 +240,125 @@ func TestMemorySearchTool_RetrievalPath(t *testing.T) {
 	})
 }
 
+// widthEmbedder returns a vector of a fixed width, so a test can stand on
+// either side of an embedding-model swap: rows embedded at one width cannot be
+// compared with a query embedded at another (yaah-shq).
+type widthEmbedder struct{ dims int }
+
+func (e widthEmbedder) Embed(context.Context, string) (memory.Embedding, error) {
+	v := make(memory.Embedding, e.dims)
+	for i := range v {
+		v[i] = 0.5 + float32(i)*0.01
+	}
+	return v, nil
+}
+
+// TestMemorySearchTool_DimMismatchNoteEveryPath pins PR #824 review finding 3:
+// the note has to reach every path, not only the one where the vector page has
+// hits. A store whose only stale-width rows share no word with the query
+// returns zero vector hits, falls through to FTS, and used to drop the note —
+// the silent omission the note exists to fix.
+func TestMemorySearchTool_DimMismatchNoteEveryPath(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("stale-only store with no keyword overlap notes the omission", func(t *testing.T) {
+		db := openScopeTestDB(t)
+		db.SetEmbedder(widthEmbedder{dims: 3})
+		seedEmbeddedRetrievalEntry(t, db, memory.Entry{ID: "stale", Text: "llama grooming schedule", Scope: memory.ScopeGlobal})
+		// The model swap: the query embeds at a width the stored row cannot be
+		// compared with, and no word of the row matches the query, so the
+		// vector page is empty and control falls through to FTS.
+		db.SetEmbedder(widthEmbedder{dims: 5})
+
+		out, err := (&MemorySearchTool{DB: db}).Execute(ctx, `{"query":"kubernetes"}`)
+		if err != nil {
+			t.Fatalf("memory_search: %v", err)
+		}
+		if !strings.Contains(out, "No matching memories found.") {
+			t.Fatalf("the unrelated stale row must not pad the page: %q", out)
+		}
+		if !strings.Contains(out, "different embedding dimension") || !strings.Contains(out, "3: 1 row(s)") {
+			t.Fatalf("the empty-result path dropped the dimension note: %q", out)
+		}
+	})
+
+	t.Run("stale-only store with fts hits notes the omission", func(t *testing.T) {
+		db := openScopeTestDB(t)
+		db.SetEmbedder(widthEmbedder{dims: 3})
+		seedEmbeddedRetrievalEntry(t, db, memory.Entry{ID: "stale", Text: "llama grooming schedule", Scope: memory.ScopeGlobal})
+		// No embedding at all, so only FTS5 can return it: the vector page is
+		// empty while the keyword path has a row, which is the fall-through
+		// branch, not the empty one.
+		seedRetrievalEntry(t, db, memory.Entry{ID: "kw", Text: "kubernetes cluster tuning", Scope: memory.ScopeGlobal})
+		db.SetEmbedder(widthEmbedder{dims: 5})
+
+		out, err := (&MemorySearchTool{DB: db}).Execute(ctx, `{"query":"kubernetes"}`)
+		if err != nil {
+			t.Fatalf("memory_search: %v", err)
+		}
+		if !strings.Contains(out, "kw") {
+			t.Fatalf("the keyword path lost its row: %q", out)
+		}
+		if !strings.Contains(out, "different embedding dimension") || !strings.Contains(out, "3: 1 row(s)") {
+			t.Fatalf("the FTS fall-through path dropped the dimension note: %q", out)
+		}
+	})
+}
+
+// TestMemorySearchTool_PageLabelKeepsFallback pins PR #824 review finding 4: a
+// page mixing stale-embedding fallback rows with FTS rows must keep the
+// fallback label. The FTS block used to overwrite it with the plain hybrid
+// label as soon as it contributed a row, hiding the fact that part of the store
+// cannot be compared with the current model at all.
+func TestMemorySearchTool_PageLabelKeepsFallback(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("fallback row plus fts row keeps the fallback label", func(t *testing.T) {
+		db := openScopeTestDB(t)
+		db.SetEmbedder(widthEmbedder{dims: 3})
+		// Left at the previous model's width, and it shares a word with the
+		// query, so it reaches the page as a keyword-fallback row.
+		seedEmbeddedRetrievalEntry(t, db, memory.Entry{ID: "stale", Text: "postgres pgbouncer tuning", Scope: memory.ScopeGlobal})
+		db.SetEmbedder(widthEmbedder{dims: 5})
+		// Embedded at the current width: the vector path scores it.
+		seedEmbeddedRetrievalEntry(t, db, memory.Entry{ID: "vec", Text: "postgres connection pooling", Scope: memory.ScopeGlobal})
+		// No embedding at all: only FTS5 can return it, so keyword contributes.
+		seedRetrievalEntry(t, db, memory.Entry{ID: "ftsrow", Text: "postgres replication slots", Scope: memory.ScopeGlobal})
+
+		out, err := (&MemorySearchTool{DB: db}).Execute(ctx, `{"query":"postgres"}`)
+		if err != nil {
+			t.Fatalf("memory_search: %v", err)
+		}
+		if len(strings.Split(out, "\n")) < 2 {
+			t.Fatalf("page too short to judge: %q", out)
+		}
+		if !strings.Contains(strings.Split(out, "\n")[0], RetrievalHybridFallback) {
+			t.Fatalf("mixed page lost the fallback label: %q", out)
+		}
+		for _, id := range []string{"stale", "vec", "ftsrow"} {
+			if !strings.Contains(out, id) {
+				t.Errorf("page lost %s, which the label describes: %q", id, out)
+			}
+		}
+	})
+
+	t.Run("no fallback row keeps the plain hybrid label", func(t *testing.T) {
+		db := openScopeTestDB(t)
+		db.SetEmbedder(widthEmbedder{dims: 5})
+		seedEmbeddedRetrievalEntry(t, db, memory.Entry{ID: "vec", Text: "postgres connection pooling", Scope: memory.ScopeGlobal})
+		seedRetrievalEntry(t, db, memory.Entry{ID: "ftsrow", Text: "postgres replication slots", Scope: memory.ScopeGlobal})
+
+		out, err := (&MemorySearchTool{DB: db}).Execute(ctx, `{"query":"postgres"}`)
+		if err != nil {
+			t.Fatalf("memory_search: %v", err)
+		}
+		header := strings.Split(out, "\n")[0]
+		if header != RetrievalHybrid {
+			t.Fatalf("header = %q, want the plain hybrid label", header)
+		}
+	})
+}
+
 // TestSemanticFailureReason distinguishes a failed embed (the semantic path is
 // down) from a store failure instead of reporting both as an embedding outage.
 func TestSemanticFailureReason(t *testing.T) {
