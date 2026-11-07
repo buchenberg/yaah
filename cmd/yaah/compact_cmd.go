@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
@@ -152,6 +153,14 @@ func (s *agentSession) compactContext() {
 	}
 }
 
+// reloadRoles hot-reloads the role registry from the session's role
+// search paths (REPL /roles and /reload-roles). Dispatch surfaces read
+// the live registry, so new sub-agent dispatches pick up the changes
+// immediately — but the session's own persona does not: it was resolved
+// once at construction (resolveSessionPersonaFor) and nothing re-resolves
+// it mid-session. Persona changes therefore apply to NEW sessions only;
+// the reload output reports the refreshed persona view and that rule so
+// the user can see what the next session will pick up.
 func (s *agentSession) reloadRoles() {
 	s.mu.RLock()
 	ch := s.ctrlCh
@@ -181,4 +190,10 @@ func (s *agentSession) reloadRoles() {
 	reg := subagent.DefaultRegistry()
 	roles := reg.Names()
 	msg(fmt.Sprintf("reloaded %d roles (%d built-in + %d search dirs)", len(roles), len(opts.BuiltinFiles), len(opts.SearchDirs)))
+
+	personas := make([]string, 0, 8)
+	for _, p := range subagent.Personas() {
+		personas = append(personas, p.Name)
+	}
+	msg(fmt.Sprintf("personas: %s — persona changes apply to new sessions; this session keeps its persona", strings.Join(personas, ", ")))
 }

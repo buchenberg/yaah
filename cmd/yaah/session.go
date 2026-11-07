@@ -118,7 +118,9 @@ type agentSession struct {
 	// D4). Its Body binds into the system prompt (yaah-21uk.6) and its
 	// budget fields bound every loop the session builds (yaah-21uk.8,
 	// resolveOrchestratorBudget). The zero persona — hand-built test
-	// sessions — resolves today's limits unchanged.
+	// sessions — resolves today's limits unchanged. Fixed at
+	// construction: role reloads refresh the registry for new sessions
+	// only; nothing re-resolves this field mid-session (yaah-21uk.11).
 	persona      subagent.Persona
 	systemPrompt string
 	// mainPrompt is systemPrompt plus the default-agent directives
