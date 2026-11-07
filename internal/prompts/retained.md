@@ -26,6 +26,12 @@ it with the `proposal` tool:
   claiming success.
 - `discard` — throw the proposal away and remove its worktree, or its manifest
   directory.
+- `continue` — re-run a turn-exhausted worktree proposal for `extra_turns` more
+  turns (default 5, maximum 50), seeded from its captured conversation and
+  sealed workspace, and seal a superseding proposal (the original is discarded
+  so settlement stays consume-once). `fork` is the same re-run but keeps the
+  original open so you can compare continuations. Container-lane proposals
+  cannot continue: their world ended at seal.
 
 `proposal` with `action: "list"` answers with the same JSON envelope as the other
 verbs: `proposals` is a list of summaries (id, files), and it is an
@@ -78,7 +84,9 @@ a commit, and do the committing yourself afterwards.
 Nothing lands unreviewed, and there is no reviewer sub-agent or round loop to
 satisfy. If the work needs another attempt, `discard` and dispatch again with
 what you learned — a discarded attempt costs one dispatch and leaves your tree
-untouched.
+untouched. If it stopped only because it ran out of turns while close to done,
+`continue` is cheaper: it re-runs the proposal with its captured context instead
+of starting cold.
 
 **When more than one approach is plausible, speculate.** Issue 2–3
 `delegate` calls in the *same* turn, one per approach, each with a
