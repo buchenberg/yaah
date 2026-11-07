@@ -180,6 +180,27 @@ func TestBrokerView_ClosePreventsDelivery(t *testing.T) {
 	}
 }
 
+// TestBrokerView_OnClosedBroker (yaah-8jou.2): a view created on an
+// already-closed broker must not leak its forwarder goroutine — Close
+// returns promptly instead of blocking on <-done.
+func TestBrokerView_OnClosedBroker(t *testing.T) {
+	broker := pubsub.NewBroker[Event]()
+	broker.Close()
+
+	bv := NewBrokerView(broker, &recordingView{})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		bv.Close()
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("BrokerView.Close hung on a closed broker")
+	}
+}
+
 func TestBrokerView_ConcurrentPublish(t *testing.T) {
 	broker := pubsub.NewBroker[Event]()
 	rv := &recordingView{}
