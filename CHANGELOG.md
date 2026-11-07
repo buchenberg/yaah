@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.148.1](https://github.com/buchenberg/yaah/compare/v0.148.0...v0.148.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* memory dim-mismatch fallback, validator slot visibility, three-way drift authority ([58a6b7f](https://github.com/buchenberg/yaah/commit/58a6b7fc326ca498fcc7352e3ff1c9b3ca0fc53f))
+* memory dim-mismatch fallback, validator slot visibility, three-way drift authority ([b9cb670](https://github.com/buchenberg/yaah/commit/b9cb6704b644d569c8f33e0e4075b4fe9acd7f3f))
+
 ## [0.148.0](https://github.com/buchenberg/yaah/compare/v0.147.0...v0.148.0) (2026-11-07)
 
 
