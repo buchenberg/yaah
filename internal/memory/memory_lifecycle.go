@@ -24,6 +24,8 @@ func (d *DB) SupersedeMemory(oldID, newID string) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("supersede %s: %w", oldID, err)
 	}
+	// Drop the superseded atom from the vector index so it stops surfacing.
+	d.deleteVecByMemoryID(oldID)
 	return nil
 }
 
@@ -115,6 +117,9 @@ func (d *DB) AddMemorySuperseding(e Entry, supersedesID string) (string, bool, e
 	if err := tx.Commit(); err != nil {
 		return "", false, err
 	}
+	if supersedesID != "" && supersedesID != id {
+		d.deleteVecByMemoryID(supersedesID)
+	}
 	return id, existed, nil
 }
 
@@ -150,6 +155,9 @@ func (d *DB) PromoteMemory(id string) (string, error) {
 	if _, err := d.sql.Exec(`UPDATE memory SET scope = ? WHERE id = ?`, ScopeGlobal, id); err != nil {
 		return "", fmt.Errorf("promote %s: %w", id, err)
 	}
+	// Refresh the vec0 scope metadata so a promoted atom is recallable as
+	// global, not only under its old session tier.
+	d.reindexVecByID(id)
 	return scope.String, nil
 }
 

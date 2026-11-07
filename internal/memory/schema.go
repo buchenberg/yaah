@@ -210,6 +210,9 @@ type DB struct {
 	// embeds tracks in-flight background embedding writes so Close can
 	// drain them before the SQL pool is closed.
 	embeds pendingEmbeds
+	// vecMu serializes the vec0 virtual-table DDL (CREATE/DROP), which is a
+	// shared write reached by concurrent embed goroutines.
+	vecMu sync.Mutex
 }
 
 // SetEmbedder configures the embedding model used for semantic search.
