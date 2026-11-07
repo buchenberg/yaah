@@ -54,7 +54,9 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 	}
 	// One EOL policy for the settle: core.autocrlf is read once here, and the
 	// per-path .gitattributes probe only runs for a path whose bytes differ
-	// while its folded content matches (PR #824 review, finding 3).
+	// while its folded content matches (PR #824 review, finding 3). The probe
+	// is asked lazily from the comparison itself, so a byte-identical path
+	// spawns nothing (round 3, finding 2).
 	eol := newEOLNormalization(ctx, p.repoPath)
 
 	var writes []proposalMergeWrite
@@ -261,24 +263,33 @@ func proposalPathDrifted(hinted bool, path string, eol *eolNormalization, base [
 	if hinted || baseExists != currentExists {
 		return true
 	}
-	return baseExists && !proposalContentEqual(base, current, eol.expected(path))
+	return baseExists && !proposalContentEqual(path, eol, base, current)
 }
 
 // proposalContentEqual reports whether a basis blob and the parent's current
 // file hold the same content for the drift question. Binary content is compared
 // byte for byte: EOL translation does not apply to it, so a difference there is
 // always a real edit. Text is compared after folding CRLF to LF, which can only
-// ever drop a CR that directly precedes an LF — and only when eolFold says git
-// normalization is what put those CRs there. Without that, an EOL-only
+// ever drop a CR that directly precedes an LF — and only when the repo's policy
+// says git normalization is what put those CRs there. Without that, an EOL-only
 // difference is a parent edit.
-func proposalContentEqual(base, current []byte, eolFold bool) bool {
+//
+// The policy is asked for last, and only once the raw bytes differ while the
+// folded comparison has already come out equal: that is the single case where
+// the answer can change the verdict. Byte-identical paths and paths whose edit
+// is more than line endings therefore never spawn the per-path
+// `git check-attr` probe (PR #824 review round 3, finding 2).
+func proposalContentEqual(path string, eol *eolNormalization, base, current []byte) bool {
 	if bytes.Equal(base, current) {
 		return true
 	}
-	if !eolFold || isBinaryContent(base) || isBinaryContent(current) {
+	if isBinaryContent(base) || isBinaryContent(current) {
 		return false
 	}
-	return bytes.Equal(foldCRLF(base), foldCRLF(current))
+	if !bytes.Equal(foldCRLF(base), foldCRLF(current)) {
+		return false
+	}
+	return eol.expected(path)
 }
 
 // foldCRLF returns b with the CR of every CRLF pair removed, leaving lone CRs

@@ -161,6 +161,82 @@ func TestProposalPathDriftedFoldsCRLF(t *testing.T) {
 	})
 }
 
+// TestProposalPathDriftedProbesEOLPolicyLazily pins PR #824 review round 3,
+// finding 2: the .gitattributes probe is a subprocess, and the answer can only
+// change the verdict when the raw bytes differ while the folded content
+// already matches. So a byte-identical path — the ordinary case in a settle —
+// and a path whose edit is more than line endings must not probe at all, and
+// the one path that does probe is cached.
+func TestProposalPathDriftedProbesEOLPolicyLazily(t *testing.T) {
+	lf := []byte("line1\nline2\nline3\n")
+	crlf := []byte("line1\r\nline2\r\nline3\r\n")
+	edited := []byte("line1\nhost2\nline3\n")
+	binary := []byte("line1\nline2\x00\x01")
+
+	// policy counts attribute probes and always answers with rule.
+	policy := func(rule eolRule, probes *int) *eolNormalization {
+		return &eolNormalization{lookup: func(string) eolRule {
+			(*probes)++
+			return rule
+		}}
+	}
+
+	t.Run("byte-identical path probes nothing", func(t *testing.T) {
+		probes := 0
+		if proposalPathDrifted(false, "README.md", policy(eolRuleNormalizes, &probes), lf, true, lf, true) {
+			t.Fatal("identical bytes are not drift")
+		}
+		if probes != 0 {
+			t.Errorf("byte-identical path ran %d attribute probe(s), want 0", probes)
+		}
+	})
+
+	t.Run("an edit beyond line endings probes nothing", func(t *testing.T) {
+		probes := 0
+		if !proposalPathDrifted(false, "README.md", policy(eolRuleNormalizes, &probes), lf, true, edited, true) {
+			t.Fatal("a changed line is drift")
+		}
+		if probes != 0 {
+			t.Errorf("a non-EOL edit ran %d attribute probe(s), want 0", probes)
+		}
+	})
+
+	t.Run("binary content probes nothing", func(t *testing.T) {
+		probes := 0
+		folded := []byte("line1\r\nline2\r\nline3\r\n")
+		if !proposalPathDrifted(false, "img.bin", policy(eolRuleNormalizes, &probes), binary, true, folded, true) {
+			t.Fatal("binary content is compared byte for byte")
+		}
+		if probes != 0 {
+			t.Errorf("binary path ran %d attribute probe(s), want 0", probes)
+		}
+	})
+
+	t.Run("an eol-only difference probes once and is not drift when normalizing", func(t *testing.T) {
+		probes := 0
+		p := policy(eolRuleNormalizes, &probes)
+		if proposalPathDrifted(false, "README.md", p, lf, true, crlf, true) {
+			t.Fatal("a normalized EOL-only difference is not drift")
+		}
+		if proposalPathDrifted(false, "README.md", p, lf, true, crlf, true) {
+			t.Fatal("the second question must get the same answer")
+		}
+		if probes != 1 {
+			t.Errorf("probed %d time(s), want the per-path answer cached after 1", probes)
+		}
+	})
+
+	t.Run("an eol-only difference on a -text path is drift", func(t *testing.T) {
+		probes := 0
+		if !proposalPathDrifted(false, "blob.bin", policy(eolRuleRaw, &probes), lf, true, crlf, true) {
+			t.Fatal("a raw path treats an EOL-only difference as a parent edit")
+		}
+		if probes != 1 {
+			t.Errorf("probed %d time(s), want 1", probes)
+		}
+	})
+}
+
 func TestProposalModeFromString(t *testing.T) {
 	tests := []fs.FileMode{
 		0o644,

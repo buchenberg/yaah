@@ -6,6 +6,11 @@ package dispatch
 // the repo, not about the bytes. These tests read the answer from real git
 // config and real .gitattributes files, so the probes cannot drift into
 // answering "normalizes" for everything.
+//
+// Review round 3 added finding 1: core.autocrlf is a default for a path with no
+// attribute rule, not a short-circuit, so `-text` keeps a path raw inside an
+// autocrlf checkout. The tests below cover both the per-path answer and the
+// drift verdict that follows from it.
 
 import (
 	"context"
@@ -17,7 +22,7 @@ import (
 func TestEOLNormalization_RepoPolicy(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("core.autocrlf=true normalizes every path", func(t *testing.T) {
+	t.Run("core.autocrlf=true is the default for paths with no attribute rule", func(t *testing.T) {
 		repo := newTestGitRepo(t)
 		mustRunGit(t, repo, "config", "core.autocrlf", "true")
 
@@ -82,6 +87,46 @@ func TestEOLNormalization_RepoPolicy(t *testing.T) {
 		}
 	})
 
+	t.Run("-text opts a path out even under core.autocrlf=true", func(t *testing.T) {
+		repo := newTestGitRepo(t)
+		mustRunGit(t, repo, "config", "core.autocrlf", "true")
+		writeTestFile(t, repo, ".gitattributes", "*.bin -text\n")
+
+		eol := newEOLNormalization(ctx, repo)
+		if !eol.autocrlf {
+			t.Fatal("autocrlf not detected")
+		}
+		if eol.expected("blob.bin") {
+			t.Error("-text must outrank autocrlf: the path keeps its bytes")
+		}
+		// The drift verdict that follows from it: an EOL-only difference on the
+		// opted-out path is a real parent edit, not git's smudge. Folding it
+		// away is the fail-open finding 1 names.
+		blob := []byte("alpha\nbeta\n")
+		rewritten := []byte("alpha\r\nbeta\r\n")
+		if !proposalPathDrifted(false, "blob.bin", eol, blob, true, rewritten, true) {
+			t.Error("-text path with an EOL-only diff must classify as drifted")
+		}
+		// A path with no relevant attribute still takes the autocrlf default.
+		if proposalPathDrifted(false, "notes.txt", eol, blob, true, rewritten, true) {
+			t.Error("a path with no attribute rule must still fold under autocrlf=true")
+		}
+	})
+
+	t.Run("an explicit text rule keeps normalizing under autocrlf=true", func(t *testing.T) {
+		repo := newTestGitRepo(t)
+		mustRunGit(t, repo, "config", "core.autocrlf", "true")
+		writeTestFile(t, repo, ".gitattributes", "*.cfg text eol=crlf\n")
+
+		eol := newEOLNormalization(ctx, repo)
+		if !eol.expected("app.cfg") {
+			t.Error("a text/eol rule normalizes the path, as it did before the autocrlf default")
+		}
+		if !eol.expected("main.go") {
+			t.Error("a path outside the rule falls back to autocrlf=true")
+		}
+	})
+
 	t.Run("no policy leaves the path raw", func(t *testing.T) {
 		repo := newTestGitRepo(t)
 		mustRunGit(t, repo, "config", "core.autocrlf", "false")
@@ -102,9 +147,9 @@ func TestEOLNormalization_RepoPolicy(t *testing.T) {
 
 func TestEOLNormalization_PathProbeIsCached(t *testing.T) {
 	calls := 0
-	eol := &eolNormalization{lookup: func(string) bool {
+	eol := &eolNormalization{lookup: func(string) eolRule {
 		calls++
-		return true
+		return eolRuleNormalizes
 	}}
 	first := eol.expected("a.txt")
 	again := eol.expected("a.txt")
@@ -114,28 +159,50 @@ func TestEOLNormalization_PathProbeIsCached(t *testing.T) {
 	if calls != 1 {
 		t.Errorf("probed the path %d times, want it cached after 1", calls)
 	}
-	eol.lookup = func(string) bool {
+	eol.lookup = func(string) eolRule {
 		calls++
-		return false
+		return eolRuleRaw
 	}
 	if eol.expected("b.txt") || calls != 2 {
 		t.Error("the cache must be per path, not one answer for the repo")
 	}
 }
 
-// TestEOLNormalization_AutocrlfOverridesPathProbe pins the cost model: with
-// autocrlf on, no per-path git call is needed at all.
-func TestEOLNormalization_AutocrlfOverridesPathProbe(t *testing.T) {
-	calls := 0
-	eol := &eolNormalization{autocrlf: true, lookup: func(string) bool {
-		calls++
-		return false
+// TestEOLNormalization_AutocrlfDoesNotSkipThePathProbe pins PR #824 review
+// round 3, finding 1: autocrlf is the default for a path with no attribute
+// rule, not a short-circuit. The per-path rule is still consulted, so `-text`
+// can opt a path out inside an autocrlf checkout, and the explicit text/eol
+// rules keep their meaning.
+func TestEOLNormalization_AutocrlfDoesNotSkipThePathProbe(t *testing.T) {
+	probes := 0
+	eol := &eolNormalization{autocrlf: true, lookup: func(rel string) eolRule {
+		probes++
+		switch rel {
+		case "blob.bin":
+			return eolRuleRaw
+		case "notes.txt":
+			return eolRuleNormalizes
+		default:
+			return eolRuleUnspecified
+		}
 	}}
-	if !eol.expected("main.go") {
-		t.Error("autocrlf must normalize every path")
-	}
-	if calls != 0 {
-		t.Errorf("autocrlf answered for the path but the probe still ran %d time(s)", calls)
+	t.Run("-text outranks autocrlf", func(t *testing.T) {
+		if eol.expected("blob.bin") {
+			t.Error("a -text rule must keep the path raw even when autocrlf is on")
+		}
+	})
+	t.Run("an explicit text rule still normalizes", func(t *testing.T) {
+		if !eol.expected("notes.txt") {
+			t.Error("an explicit text rule normalizes under autocrlf too")
+		}
+	})
+	t.Run("a path with no attribute rule falls back to autocrlf", func(t *testing.T) {
+		if !eol.expected("main.go") {
+			t.Error("a path with no relevant attribute must inherit autocrlf=true")
+		}
+	})
+	if probes != 3 {
+		t.Errorf("ran %d attribute probe(s), want 3 — autocrlf must not short-circuit the per-path rule", probes)
 	}
 }
 
