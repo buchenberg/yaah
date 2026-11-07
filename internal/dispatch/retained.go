@@ -795,6 +795,11 @@ func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	sp := subParams
 	sp.Workdir = wt
 	sp.SeedMessages = seedMessages
+	if subParams.SeedFrom != "" {
+		// A threaded dispatch may carry the source's conversation; name the
+		// live root so the model does not echo a prior-run absolute path.
+		prompt = withWorkspaceNotice(wt, prompt)
+	}
 
 	// The dispatch budget is a wall-clock limit on the whole run. Track which
 	// deadline governed the run context so a parent deadline (or a provider's
@@ -1031,6 +1036,17 @@ func retainedStopReason(stop *jobs.SubAgentStop, bodyErr error) string {
 	}
 }
 
+// withWorkspaceNotice prepends the live workspace root to a re-run prompt.
+// Seeded conversations carry the prior run's absolute paths and the model
+// echoes them; stating the current root (and that prior paths are refused) is
+// the cheap mitigation for the one-turn containment refusal.
+func withWorkspaceNotice(workdir, prompt string) string {
+	if strings.TrimSpace(workdir) == "" {
+		return prompt
+	}
+	return fmt.Sprintf("WORKSPACE: your workspace root is %s. Prior-run absolute paths are refused; use paths relative to this root.\n\n%s", workdir, prompt)
+}
+
 // ContinueRetainedRun re-runs an open worktree proposal with extraTurns more
 // turns, seeded from its captured conversation and its sealed workspace state,
 // and seals the result as a new proposal. When consumeOriginal is set the
@@ -1114,6 +1130,7 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	if strings.TrimSpace(prompt) == "" {
 		prompt = fmt.Sprintf("SUPERVISOR: continue the task for up to %d more turns, then produce your complete final report.", extraTurns)
 	}
+	prompt = withWorkspaceNotice(wt, prompt)
 
 	budgetDeadline := time.Now().Add(p.timeout)
 	parentDeadline, parentHasDeadline := ctx.Deadline()

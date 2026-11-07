@@ -267,6 +267,43 @@ func TestRetained_StopReasonAndNotes(t *testing.T) {
 	}
 }
 
+// TestRetained_ContinuationPromptCarriesWorkspaceRoot: a re-run prompt names the
+// live workspace root so the model does not echo a prior run's absolute path.
+func TestRetained_ContinuationPromptCarriesWorkspaceRoot(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	seed := []types.Message{types.UserMsg("go")}
+	var calls int
+	var seenPrompt, seenWorkdir string
+	rt := RetainedRuntime{
+		Runner: func(ctx context.Context, prompt string, params SubAgentParams) (string, error) {
+			calls++
+			if calls > 1 {
+				seenPrompt, seenWorkdir = prompt, params.Workdir
+			}
+			writeTestFile(t, params.Workdir, "work.txt", "work\n")
+			jobs.CaptureSubAgentTranscript(ctx, seed)
+			return "done", nil
+		},
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+		Proposals:    NewProposalRegistry(),
+	}
+
+	res, err := StartRetainedRun(context.Background(), rt, "go", SubAgentParams{Role: "developer"}, 10*time.Second, false)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	env := decodeProposalEnvelope(t, res)
+	if _, err := ContinueRetainedRun(context.Background(), rt, env.ProposalID, 2, "", false); err != nil {
+		t.Fatalf("continue: %v", err)
+	}
+	if seenWorkdir == "" || !strings.Contains(seenPrompt, seenWorkdir) {
+		t.Errorf("continuation prompt %q does not name the workspace root %q", seenPrompt, seenWorkdir)
+	}
+}
+
 // TestProposalEnvelope_NextAdvertisesContinuation: `next` is a real eligibility
 // list — an open worktree proposal with a captured conversation advertises the
 // re-run verbs, on the dispatch envelope and on `show`.
