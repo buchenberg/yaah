@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.149.0](https://github.com/buchenberg/yaah/compare/v0.148.1...v0.149.0) (2026-11-07)
+
+
+### Features
+
+* **dispatch:** sub-agent continue/fork from a retained proposal ([25c7d1b](https://github.com/buchenberg/yaah/commit/25c7d1b6f613413bf5dc77ac7669069e197f14ce))
+
+
+### Documentation
+
+* document sub-agent continue/fork across the user-facing docs ([56dd6e0](https://github.com/buchenberg/yaah/commit/56dd6e0845fb2025019fdcf0583ad67b1a489336))
+
 ## [0.148.1](https://github.com/buchenberg/yaah/compare/v0.148.0...v0.148.1) (2026-11-07)
 
 
