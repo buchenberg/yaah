@@ -1021,30 +1021,34 @@ func retainedStopReason(stop *jobs.SubAgentStop, bodyErr error, source retainedF
 			return "iteration_budget"
 		case stop.TurnBudgetExhausted:
 			return "turn_budget"
-		case stop.FinishReason == "length":
-			// The provider truncated the output on max_tokens; the run did not
-			// finish, even though it returned no error.
-			return "max_tokens"
 		}
 	}
-	if bodyErr == nil {
-		return "completed"
-	}
-	if errors.Is(bodyErr, context.Canceled) {
-		return "canceled"
-	}
-	if errors.Is(bodyErr, context.DeadlineExceeded) {
-		// Only the role/global budget or the parent deadline is a "timeout". A
-		// provider-internal deadline while the dispatch was live is a provider
-		// error, matching the error text classifyRetainedBodyFailure produces.
-		switch source {
-		case retainedFailureBudget, retainedFailureParent:
-			return "timeout"
-		default:
-			return "provider_error"
+	// A terminal error wins over the last finish reason: LastFinishReason is
+	// only overwritten by a successful model call, so a stale "length" from an
+	// earlier turn must not mask a later timeout/cancel/provider error.
+	if bodyErr != nil {
+		if errors.Is(bodyErr, context.Canceled) {
+			return "canceled"
 		}
+		if errors.Is(bodyErr, context.DeadlineExceeded) {
+			// Only the role/global budget or the parent deadline is a "timeout".
+			// A provider-internal deadline while the dispatch was live is a
+			// provider error, matching the error text classifyRetainedBodyFailure
+			// produces.
+			switch source {
+			case retainedFailureBudget, retainedFailureParent:
+				return "timeout"
+			default:
+				return "provider_error"
+			}
+		}
+		return "provider_error"
 	}
-	return "provider_error"
+	if stop != nil && stop.FinishReason == "length" {
+		// The provider truncated the successful final answer on max_tokens.
+		return "max_tokens"
+	}
+	return "completed"
 }
 
 // withWorkspaceNotice prepends the live workspace root to a re-run prompt.

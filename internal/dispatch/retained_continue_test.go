@@ -287,6 +287,10 @@ func TestRetainedStopReason(t *testing.T) {
 		{name: "parent deadline", bodyErr: context.DeadlineExceeded, source: retainedFailureParent, want: "timeout"},
 		{name: "provider deadline", bodyErr: context.DeadlineExceeded, source: retainedFailureProvider, want: "provider_error"},
 		{name: "canceled", bodyErr: context.Canceled, source: retainedFailureProvider, want: "canceled"},
+		// LastFinishReason is stale across a failed final call; the terminal
+		// error must win over an earlier "length".
+		{name: "stale length does not mask timeout", stop: &jobs.SubAgentStop{FinishReason: "length"}, bodyErr: context.DeadlineExceeded, source: retainedFailureBudget, want: "timeout"},
+		{name: "stale length does not mask cancel", stop: &jobs.SubAgentStop{FinishReason: "length"}, bodyErr: context.Canceled, source: retainedFailureProvider, want: "canceled"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
