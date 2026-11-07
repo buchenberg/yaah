@@ -207,6 +207,22 @@ type proposalEnvelope struct {
 // mirroring Shepherd's run select | apply | release | discard.
 func proposalVerbs() []string { return []string{"select", "apply", "release", "discard"} }
 
+// continuableVerbs is the open-worktree vocabulary: the settlement verbs plus
+// the re-run verbs a proposal whose conversation was captured accepts.
+func continuableVerbs() []string {
+	return []string{"select", "apply", "release", "discard", "continue", "fork"}
+}
+
+// nextVerbsFor returns the legal next verbs for one proposal. A worktree
+// proposal with a captured transcript can be continued or forked; a container
+// proposal's world ended at seal, so it settles only.
+func nextVerbsFor(p *retainedProposal) []string {
+	if p != nil && p.delta == nil && len(p.transcript) > 0 {
+		return continuableVerbs()
+	}
+	return proposalVerbs()
+}
+
 // Apply strategies. Path-disjoint is the default and the only strategy a
 // container proposal can use. Three-way is an explicit worktree-only opt-in;
 // it never applies automatically and fails closed on a textual conflict.
@@ -499,7 +515,16 @@ func (r *ProposalRegistry) listEnvelope(ctx context.Context) string {
 	if duplicates == nil {
 		duplicates = []proposalConflict{}
 	}
-	env := proposalListEnvelope{Status: "open", Proposals: list, Conflicts: conflicts, Duplicates: duplicates, Next: proposalVerbs()}
+	// Advertise the re-run verbs when at least one listed proposal accepts
+	// them, so `next` is a real eligibility list (not settlement-only).
+	next := proposalVerbs()
+	for _, analysis := range analyses {
+		if analysis.proposal != nil && analysis.proposal.delta == nil && len(analysis.proposal.transcript) > 0 {
+			next = continuableVerbs()
+			break
+		}
+	}
+	env := proposalListEnvelope{Status: "open", Proposals: list, Conflicts: conflicts, Duplicates: duplicates, Next: next}
 	data, err := json.Marshal(env)
 	if err != nil {
 		return `{"status":"open","proposals":[],"conflicts":[],"duplicates":[]}`
@@ -916,6 +941,7 @@ func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	if err := persistWorktreeProposalMeta(rt, proposal); err != nil {
 		env.Notes = appendSettleNote(env.Notes, "durable sidecar: "+err.Error())
 	}
+	env.Next = nextVerbsFor(proposal)
 
 	env.Status = "proposal"
 	env.Result = trimResult(result)
@@ -1131,6 +1157,7 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	if err := persistWorktreeProposalMeta(rt, cont); err != nil {
 		notes = append(notes, "durable sidecar: "+err.Error())
 	}
+	env.Next = nextVerbsFor(cont)
 
 	env.Notes = "continuation of " + id
 	if consumeOriginal {

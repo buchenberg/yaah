@@ -210,7 +210,8 @@ returns a proposal the orchestrator settles.
   `agents.subagent.roles.<role>.turn_checkpoints: true` captures workspace and
   conversation before each turn, so a turn that fails in the tool phase or
   exhausts its iteration budget rewinds instead of losing the attempt.
-- **Continuation.** A turn-exhausted worktree proposal is not a dead end:
+- **Continuation.** An open worktree proposal is not a dead end (most often one
+  that ran out of turns):
   `proposal continue` re-runs it for `extra_turns` more turns, seeded from its
   captured conversation and sealed workspace, and seals a superseding proposal
   (the original is discarded so settlement stays consume-once).

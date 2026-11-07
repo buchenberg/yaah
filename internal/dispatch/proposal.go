@@ -112,7 +112,7 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 			ProposalID: p.id,
 			Result:     p.result,
 			Error:      p.runErr,
-			Next:       proposalVerbs(),
+			Next:       nextVerbsFor(p),
 		}
 		if p.delta != nil {
 			// A container proposal's world is gone; the manifest is the
@@ -174,8 +174,10 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 					Proposals: []string{conflict.ProposalID},
 					Changes:   conflict.Changes,
 				}
+				next := proposalVerbs()
 				if p, perr := t.Proposals.get(conflict.ProposalID); perr == nil {
 					conflictView = attachProposalConflictDetails(ctx, []proposalConflict{conflictView}, []proposalAnalysis{{proposal: p}})[0]
+					next = nextVerbsFor(p)
 				}
 				env := proposalEnvelope{
 					Status:     "conflict",
@@ -184,7 +186,7 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 					Strategy:   strategy,
 					Error:      conflict.Error(),
 					Conflicts:  []proposalConflict{conflictView},
-					Next:       proposalVerbs(),
+					Next:       next,
 				}
 				return marshalProposalEnvelope(env), nil
 			}

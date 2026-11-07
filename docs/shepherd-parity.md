@@ -433,7 +433,7 @@ to the shaped container before the body starts.
 
 ### D13 — sub-agent continuation is a fork, not a resume (yaah-hxk3.6)
 
-A turn-exhausted worktree proposal can be carried forward: `proposal continue`
+An open worktree proposal can be carried forward: `proposal continue`
 (and `proposal fork`) re-runs it for extra turns, seeded from its captured
 conversation and its sealed workspace state, and seals the result as a new
 proposal. This reverses the earlier D1 "seed messages live in the loop config,

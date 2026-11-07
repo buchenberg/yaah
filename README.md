@@ -208,7 +208,7 @@ restores to the state before it instead of losing the whole attempt
 untracked content: scratch files, freshly authored roles, and sub-agent output
 survive it, and anything that cannot be moved back is reported rather than lost.
 
-A turn-exhausted proposal is not a dead end either. If a sub-agent stops because
+An open proposal is not a dead end either. If a sub-agent stops because
 it hit its turn or iteration budget while close to finishing, `proposal continue`
 re-runs it for `extra_turns` more turns seeded from its captured conversation and
 sealed workspace, then seals a superseding proposal and discards the original.
