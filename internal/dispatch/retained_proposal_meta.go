@@ -56,13 +56,15 @@ func proposalSealOptions(meta retainedProposalMeta, transcript []types.Message) 
 	meta.Params = params
 
 	var opts goatherd.SealOptions
-	var transcriptErr error
 	if len(transcript) > 0 {
 		data, err := json.Marshal(transcript)
 		switch {
 		case err != nil:
+			// The conversation is best-effort; the proposal itself is still
+			// settleable, so this is a logged degradation rather than an
+			// error that could tempt a caller to discard the metadata.
 			meta.TranscriptOmitted = true
-			transcriptErr = fmt.Errorf("marshal transcript: %w", err)
+			slog.Warn("proposal seal: transcript is not JSON-encodable; sealed without a conversation snapshot", "err", err)
 		case len(data) <= maxDurableTranscriptBytes:
 			opts.Snapshot = data
 		default:
@@ -71,10 +73,10 @@ func proposalSealOptions(meta retainedProposalMeta, transcript []types.Message) 
 	}
 	data, err := json.Marshal(meta)
 	if err != nil {
-		return opts, fmt.Errorf("marshal proposal metadata: %w", err)
+		return goatherd.SealOptions{}, fmt.Errorf("marshal proposal metadata: %w", err)
 	}
 	opts.Metadata = data
-	return opts, transcriptErr
+	return opts, nil
 }
 
 // proposalMetaFromOutput reads what proposalSealOptions wrote. Missing
