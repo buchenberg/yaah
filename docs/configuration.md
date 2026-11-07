@@ -75,6 +75,9 @@ agents:
     compaction_threshold: 0.5          # fraction of context_window
     raw_compaction_threshold: 0.5      # ignore cached tokens
     compact_max_messages: 0            # force compaction above N messages
+    consolidate_turns_interval: 0      # 0 = off; nudge the consolidator every N turns
+    consolidate_iters_interval: 0      # 0 = off; nudge every N tool results
+    consolidate_deep_every: 1          # run the deep fork every Nth nudge
 
     directives:                        # orchestrator prompt policy
       - "always run tests after implementation"
@@ -292,6 +295,9 @@ rather than retrying a request that cannot succeed.
 | `compaction_threshold` | 0.5 | Fraction of `context_window` that triggers summarisation (effective tokens after cache subtraction) |
 | `raw_compaction_threshold` | 0.5 | Same, but ignores cached tokens |
 | `compact_max_messages` | 0 (off) | Force compaction above N messages |
+| `consolidate_turns_interval` | 0 (off) | Every N turns, nudge the consolidator to write durable atoms. Requires the `consolidate` middleware |
+| `consolidate_iters_interval` | 0 (off) | Same nudge, counted in tool results |
+| `consolidate_deep_every` | 1 | Run the deep consolidator fork on every Nth nudge (0 or 1 = every nudge); intervening nudges take the light path |
 | `directives` | — | Policy statements injected into the orchestrator prompt only |
 | `shepherd_trace_path` | ~/.yaah/trace.db | Path to the Shepherd trace store **file**. Tracing is always on — this only relocates the store. Facts include the session context (system prompt, cwd, model/config fingerprint), assistant content plus reasoning signature, and tool output bodies capped at 64KiB with truncation markers/spill refs |
 | `retained_repo_path` | cwd | Repository retained worktrees are cut from |
@@ -732,6 +738,28 @@ Two limits to know about:
   worktree's own tree": `/dev` is the one exception, and it comes with a
   world-writable tmpfs.
 - **Git index writes in a linked worktree** are refused, as above.
+
+### Containment across platforms
+
+The containment family is one contract with per-platform mechanisms
+(`goatherd-runtime/sandbox/*`). yaah picks the member per platform: `landlock`
+on Linux, `winacl` on Windows, `seatbelt` on macOS, and nothing (advisory only)
+elsewhere.
+
+| | Linux | Windows | macOS |
+|---|---|---|---|
+| Mechanism | Landlock rulesets: kernel-enforced filesystem rights, port-scoped network rules | Write-restricted token, per-root write capability SIDs, Low integrity level, no-write-up label | Seatbelt SBPL profiles |
+| Privilege | none | none (no elevation, container, or VM) | none (`sandbox-exec` ships with macOS) |
+| Writable root | worktree plus redirected scratch | worktree only (per-root write grants) | worktree plus platform temp directories |
+| Git rule | commit refusal with an explanation | same refusal; denials classified as discarded runs | profile denies writes under the repository's `.git` |
+| Egress | `allow_all` / `deny_all` / `broker` (port pin) | `allow_all` only — no kernel network axis; restrictive postures fail closed | `deny_all` enforceable; broker allowlists are cooperative, not kernel-pinned |
+| Placement & probe | `paddock` / `auto` / `advisory`, fail-closed probe | same contract, same fail-closed probe | same contract, same fail-closed probe |
+
+Mechanism differences are deliberate and reported with distinct enforcement
+tiers: Linux denies syscalls (`native-syscall-deny`), Windows denies access
+checks (`native-access-check-deny`), macOS denies policy evaluations
+(`native-sandbox-deny`). Seatbelt profiles need broad read access so toolchains
+work; that is the documented trade-off, not a silent widening.
 
 ### The isolation vs egress matrix
 

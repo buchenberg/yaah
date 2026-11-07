@@ -32,7 +32,9 @@ it with the `proposal` tool:
   sealed workspace, and seal a superseding proposal (the original is discarded
   so settlement stays consume-once). `fork` is the same re-run but keeps the
   original open so you can compare continuations. Container-lane proposals
-  cannot continue: their world ended at seal.
+  cannot continue: their world ended at seal. Only one continue/fork per parent
+  runs at a time; issue them sequentially. Each re-run gets a new workspace
+  root, so steer it with repo-relative paths.
 
 `proposal` with `action: "list"` answers with the same JSON envelope as the other
 verbs: `proposals` is a list of summaries (id, files), and it is an
