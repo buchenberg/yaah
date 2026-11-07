@@ -201,13 +201,26 @@ func (d *DB) SearchMessages(query string, limit int) ([]Message, error) {
 	return results, rows.Err()
 }
 
+// MessageVectorResult is a session message matched by semantic search. It
+// carries the originating session, role, and timestamp so a recall can point at
+// the conversation it came from — the pre-vec0 path returned only the content,
+// which left the session implicit.
+type MessageVectorResult struct {
+	ID        string
+	SessionID string
+	Role      string
+	Content   string
+	Timestamp int64
+	Score     float32
+}
+
 // SearchMessagesVector embeds the query, runs a vec0 nearest-neighbour search
 // over messages_vec (falling back to a brute-force scan when the index has not
 // been created yet), and returns the top-K by cosine similarity. Falls back to
 // empty when no embedder is configured; a failed embedding call degrades to
 // empty and is surfaced via the rate-limited warning log and the OTel
 // embed-failure counter.
-func (d *DB) SearchMessagesVector(ctx context.Context, query string, limit int) ([]VectorResult, error) {
+func (d *DB) SearchMessagesVector(ctx context.Context, query string, limit int) ([]MessageVectorResult, error) {
 	embedder := d.Embedder()
 	if embedder == nil {
 		return nil, nil
@@ -231,9 +244,9 @@ func (d *DB) SearchMessagesVector(ctx context.Context, query string, limit int) 
 
 // searchMessagesVectorScan is the pre-vec0 brute-force path: it scans messages
 // with non-null embeddings and scores by cosine similarity in Go.
-func (d *DB) searchMessagesVectorScan(ctx context.Context, qEmb Embedding, limit int) ([]VectorResult, error) {
+func (d *DB) searchMessagesVectorScan(ctx context.Context, qEmb Embedding, limit int) ([]MessageVectorResult, error) {
 	rows, err := d.sql.QueryContext(ctx, `
-		SELECT id, content, embedding
+		SELECT id, session_id, role, content, ts, embedding
 		FROM messages
 		WHERE embedding IS NOT NULL
 	`)
@@ -243,14 +256,13 @@ func (d *DB) searchMessagesVectorScan(ctx context.Context, qEmb Embedding, limit
 	defer rows.Close()
 
 	type candidate struct {
-		id      string
-		content string
-		blob    []byte
+		r    MessageVectorResult
+		blob []byte
 	}
 	var candidates []candidate
 	for rows.Next() {
 		var c candidate
-		if err := rows.Scan(&c.id, &c.content, &c.blob); err != nil {
+		if err := rows.Scan(&c.r.ID, &c.r.SessionID, &c.r.Role, &c.r.Content, &c.r.Timestamp, &c.blob); err != nil {
 			return nil, err
 		}
 		candidates = append(candidates, c)
@@ -259,17 +271,13 @@ func (d *DB) searchMessagesVectorScan(ctx context.Context, qEmb Embedding, limit
 		return nil, err
 	}
 
-	var results []VectorResult
+	var results []MessageVectorResult
 	for _, c := range candidates {
 		if len(c.blob) == 0 {
 			continue
 		}
-		emb := DecodeEmbedding(c.blob)
-		score := CosineSimilarity(qEmb, emb)
-		results = append(results, VectorResult{
-			Entry: Entry{ID: c.id, Text: c.content},
-			Score: score,
-		})
+		c.r.Score = CosineSimilarity(qEmb, DecodeEmbedding(c.blob))
+		results = append(results, c.r)
 	}
 
 	// Sort descending.

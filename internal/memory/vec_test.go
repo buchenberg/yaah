@@ -222,6 +222,17 @@ func TestVecStaleIndexFallsBackToScan(t *testing.T) {
 	}
 }
 
+// messageResultIDs maps message vector results to their message IDs, for
+// assertion messages (the message analogue of resultIDs, which takes
+// []VectorResult).
+func messageResultIDs(results []MessageVectorResult) []string {
+	ids := make([]string, len(results))
+	for i, r := range results {
+		ids[i] = r.ID
+	}
+	return ids
+}
+
 // TestVecMessagesSearchScore verifies the messages_vec path returns, for each
 // hit, Score == 1 - distance == CosineSimilarity(query, stored).
 func TestVecMessagesSearchScore(t *testing.T) {
@@ -235,7 +246,7 @@ func TestVecMessagesSearchScore(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(results) != 2 {
-		t.Fatalf("got %d results, want 2 (%v)", len(results), resultIDs(results))
+		t.Fatalf("got %d results, want 2 (%v)", len(results), messageResultIDs(results))
 	}
 
 	q, err := db.Embedder().Embed(context.Background(), "database")
@@ -278,7 +289,7 @@ func TestVecMessagesBackfillOnEnsure(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(results) != 1 || results[0].ID != "m1" {
-		t.Fatalf("backfilled messages index did not surface the pre-existing message: %v", resultIDs(results))
+		t.Fatalf("backfilled messages index did not surface the pre-existing message: %v", messageResultIDs(results))
 	}
 }
 
@@ -290,7 +301,7 @@ func TestVecMessagesDeleteRemovesIndexRow(t *testing.T) {
 	addMessageAndWait(t, db, Message{ID: "m1", SessionID: "ses-test", Idx: 0, Role: "user", Content: "delete this message", Timestamp: 1})
 
 	if got, _ := db.SearchMessagesVector(context.Background(), "delete", 10); len(got) != 1 {
-		t.Fatalf("precondition: got %v, want [m1]", resultIDs(got))
+		t.Fatalf("precondition: got %v, want [m1]", messageResultIDs(got))
 	}
 
 	if err := db.DeleteMessagesFrom("ses-test", 0); err != nil {
@@ -302,7 +313,7 @@ func TestVecMessagesDeleteRemovesIndexRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(got) != 0 {
-		t.Fatalf("deleted message still surfaces: %v", resultIDs(got))
+		t.Fatalf("deleted message still surfaces: %v", messageResultIDs(got))
 	}
 }
 
@@ -342,7 +353,7 @@ func TestReembedStaleMessageEmbeddings(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(results) != 1 || results[0].ID != "sm1" {
-		t.Fatalf("healed message not found by vector search: %v", resultIDs(results))
+		t.Fatalf("healed message not found by vector search: %v", messageResultIDs(results))
 	}
 }
 
@@ -368,6 +379,6 @@ func TestReconcileMessageEmbeddings(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(results) != 1 || results[0].ID != "rm1" {
-		t.Fatalf("reconciled message not found: %v", resultIDs(results))
+		t.Fatalf("reconciled message not found: %v", messageResultIDs(results))
 	}
 }

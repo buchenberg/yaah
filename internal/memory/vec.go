@@ -346,11 +346,11 @@ func (d *DB) mirrorMessageVec(id string, emb Embedding) error {
 }
 
 // searchMessagesVecIndex runs the vec0 nearest-neighbour search over messages
-// and joins back to the messages table for id and content. It preserves the
-// VectorResult{Entry{ID,Text}} shape the brute-force scan returned.
-func (d *DB) searchMessagesVecIndex(ctx context.Context, qEmb Embedding, limit int) ([]VectorResult, error) {
+// and joins back to the messages table for id, session, role, content, and
+// timestamp.
+func (d *DB) searchMessagesVecIndex(ctx context.Context, qEmb Embedding, limit int) ([]MessageVectorResult, error) {
 	rows, err := d.sql.QueryContext(ctx, `
-		SELECT m.id, m.content, v.distance
+		SELECT m.id, m.session_id, m.role, m.content, m.ts, v.distance
 		FROM messages_vec v
 		JOIN messages m ON m.rowid = v.rowid
 		WHERE v.embedding MATCH ? AND k = ?
@@ -362,14 +362,17 @@ func (d *DB) searchMessagesVecIndex(ctx context.Context, qEmb Embedding, limit i
 	}
 	defer rows.Close()
 
-	var results []VectorResult
+	var results []MessageVectorResult
 	for rows.Next() {
-		var id, content string
+		var r MessageVectorResult
 		var dist float64
-		if err := rows.Scan(&id, &content, &dist); err != nil {
+		if err := rows.Scan(&r.ID, &r.SessionID, &r.Role, &r.Content, &r.Timestamp, &dist); err != nil {
 			return nil, err
 		}
-		results = append(results, VectorResult{Entry: Entry{ID: id, Text: content}, Score: 1 - float32(dist)})
+		// vec0 returns cosine distance (1 - similarity); invert to match the
+		// brute-force path's Score, where higher is better.
+		r.Score = 1 - float32(dist)
+		results = append(results, r)
 	}
 	return results, rows.Err()
 }
