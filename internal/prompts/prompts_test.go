@@ -1,6 +1,7 @@
 package prompts
 
 import (
+	"fmt"
 	"runtime"
 	"strings"
 	"testing"
@@ -165,6 +166,178 @@ func TestInjectAfterIdentity_EmptyPrompt(t *testing.T) {
 	if !strings.HasPrefix(got, "## Session directives") {
 		t.Errorf("empty prompt should yield just the directives block, got %q", got)
 	}
+}
+
+func TestBuildMarked_MatchesBuild(t *testing.T) {
+	l := Layers{
+		Identity:    IdentityPrompt,
+		Environment: DetectEnvironment("/w"),
+		UserContext: "prefer terse answers",
+		Memory:      "fact one",
+	}
+	prompt, _ := BuildMarked(l)
+	if got, want := prompt, Build(l); got != want {
+		t.Errorf("BuildMarked prompt diverges from Build:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestBuildMarked_IdentityAnchor(t *testing.T) {
+	t.Run("default identity anchors at the legacy insertion point", func(t *testing.T) {
+		l := Layers{Identity: IdentityPrompt, Environment: "## Environment\nOS: test"}
+		prompt, end := BuildMarked(l)
+		identity := strings.TrimSpace(IdentityPrompt)
+		// The legacy search's insertion point: index of the trimmed identity
+		// plus its length.
+		want := strings.Index(prompt, identity) + len(identity)
+		if end != want {
+			t.Fatalf("anchor = %d; want the legacy insertion point %d", end, want)
+		}
+		if !strings.HasPrefix(prompt[end:], "\n\n") {
+			t.Errorf("anchor must sit at the layer boundary, got tail %q", prompt[end:])
+		}
+	})
+
+	t.Run("custom identity anchors past its own content", func(t *testing.T) {
+		custom := "You are a bespoke orchestrator persona."
+		prompt, end := BuildMarked(Layers{Identity: custom, UserContext: "prefs"})
+		if prompt[:end] != custom {
+			t.Errorf("prompt[:anchor] = %q; want the custom identity %q", prompt[:end], custom)
+		}
+		if !strings.HasPrefix(prompt[end:], "\n\n") {
+			t.Errorf("anchor must sit at the layer boundary, got tail %q", prompt[end:])
+		}
+	})
+
+	t.Run("no identity layer yields no anchor", func(t *testing.T) {
+		if _, end := BuildMarked(Layers{Environment: "## Environment\nOS: test"}); end != -1 {
+			t.Errorf("anchor = %d; want -1 without an identity layer", end)
+		}
+		if _, end := BuildMarked(Layers{Identity: "   \n\t  "}); end != -1 {
+			t.Errorf("anchor = %d; want -1 for a blank identity layer", end)
+		}
+	})
+
+	t.Run("identity-only prompt anchors at its end", func(t *testing.T) {
+		custom := "ONLY IDENTITY"
+		prompt, end := BuildMarked(Layers{Identity: custom})
+		if prompt != custom || end != len(custom) {
+			t.Errorf("prompt/anchor = %q/%d; want %q/%d", prompt, end, custom, len(custom))
+		}
+	})
+}
+
+// The byte-compatibility gate for the anchor mechanism (yaah-21uk): for the
+// embedded identity, anchor-based injection must produce byte-for-byte what
+// the legacy substring search produces — no marker residue, no whitespace
+// shifts — across layer combinations and through the two-step injection
+// chain the session performs (directives at construction, mode directive
+// per run).
+func TestInjectAfterIdentityAt_DefaultIdentityByteCompat(t *testing.T) {
+	dirs := []string{"always run tests", "never commit"}
+	modeDirs := []string{"Plan mode is active: withheld.", "Only the user switches modes."}
+	layers := []Layers{
+		{Identity: IdentityPrompt},
+		{Identity: IdentityPrompt, Environment: DetectEnvironment("/w")},
+		{Identity: IdentityPrompt, Environment: DetectEnvironment("/w"), Memory: "fact"},
+	}
+	for i, l := range layers {
+		t.Run(fmt.Sprintf("layers/%d", i), func(t *testing.T) {
+			prompt, end := BuildMarked(l)
+			full := Build(l)
+			got := InjectAfterIdentityAt(prompt, end, dirs)
+			if want := InjectAfterIdentity(full, dirs); got != want {
+				t.Fatalf("anchor injection diverged from legacy:\n got %q\nwant %q", got, want)
+			}
+			// The second injection (the per-run mode directive) must also
+			// match the legacy chain byte for byte.
+			chained := InjectAfterIdentityAt(got, end, modeDirs)
+			if want := InjectAfterIdentity(InjectAfterIdentity(full, dirs), modeDirs); chained != want {
+				t.Fatalf("chained anchor injection diverged from legacy:\n got %q\nwant %q", chained, want)
+			}
+		})
+	}
+}
+
+// The identity anchor exists so a non-default identity (an upcoming custom
+// persona) keeps injected blocks immediately after the identity block
+// instead of dropping them at the end of the prompt. Both consumers inject
+// through InjectAfterIdentityAt: directives at construction, mode directive
+// per run. Exact byte equality here also proves no marker residue — the
+// output is exactly identity + blocks + remaining layers.
+func TestInjectAfterIdentityAt_CustomIdentityPositionsBlock(t *testing.T) {
+	custom := "You are a bespoke agent persona. Nothing here matches the embedded identity."
+	env := "## Environment\nOS: test"
+	dirs := []string{"always run tests"}
+	modeDirs := []string{"Plan mode is active: withheld."}
+	prompt, end := BuildMarked(Layers{Identity: custom, Environment: env})
+
+	t.Run("directives land right after the custom identity", func(t *testing.T) {
+		got := InjectAfterIdentityAt(prompt, end, dirs)
+		want := custom + "\n\n" + FormatDirectives(dirs) + "\n\n" + env
+		if got != want {
+			t.Fatalf("directives must sit immediately after the custom identity:\n got %q\nwant %q", got, want)
+		}
+	})
+
+	t.Run("mode directive chains after the same anchor", func(t *testing.T) {
+		main := InjectAfterIdentityAt(prompt, end, dirs)
+		got := InjectAfterIdentityAt(main, end, modeDirs)
+		want := custom + "\n\n" + FormatDirectives(modeDirs) + "\n\n" + FormatDirectives(dirs) + "\n\n" + env
+		if got != want {
+			t.Fatalf("chained injection misplaced:\n got %q\nwant %q", got, want)
+		}
+	})
+
+	t.Run("anchor-less prompt falls back to the legacy append", func(t *testing.T) {
+		got := InjectAfterIdentityAt("custom prompt without identity", end, dirs)
+		if want := InjectAfterIdentity("custom prompt without identity", dirs); got != want {
+			t.Fatalf("got %q; want %q", got, want)
+		}
+	})
+}
+
+func TestInjectAfterIdentityAt_FallsBackWithoutAnchor(t *testing.T) {
+	dirs := []string{"d1"}
+	block := FormatDirectives(dirs)
+
+	t.Run("unset anchor behaves like InjectAfterIdentity", func(t *testing.T) {
+		prompt := "test-constructed prompt without identity"
+		if got, want := InjectAfterIdentityAt(prompt, 0, dirs), InjectAfterIdentity(prompt, dirs); got != want {
+			t.Fatalf("got %q; want %q", got, want)
+		}
+	})
+
+	t.Run("out-of-range and absent anchors fall back", func(t *testing.T) {
+		for _, end := range []int{-1, 100} {
+			prompt := "short"
+			if got, want := InjectAfterIdentityAt(prompt, end, dirs), InjectAfterIdentity(prompt, dirs); got != want {
+				t.Fatalf("anchor %d: got %q; want %q", end, got, want)
+			}
+		}
+	})
+
+	t.Run("empty directives are a noop with an anchor", func(t *testing.T) {
+		if got := InjectAfterIdentityAt("prompt", 3, nil); got != "prompt" {
+			t.Errorf("got %q; want prompt unchanged", got)
+		}
+		if got := InjectAfterIdentityAt("prompt", 3, []string{}); got != "prompt" {
+			t.Errorf("got %q; want prompt unchanged", got)
+		}
+	})
+
+	// The embedded identity still wins over a stale anchor when it is
+	// findable: this is what keeps a prompt restored by an older binary on
+	// the legacy placement.
+	t.Run("embedded identity outranks an anchor", func(t *testing.T) {
+		prompt := Build(Layers{Identity: IdentityPrompt, Environment: "## Environment\nOS: test"})
+		got := InjectAfterIdentityAt(prompt, len(prompt), dirs) // deliberately wrong anchor
+		if want := InjectAfterIdentity(prompt, dirs); got != want {
+			t.Fatalf("got %q; want %q", got, want)
+		}
+		if !strings.Contains(got, block) {
+			t.Errorf("directives block missing, got %q", got)
+		}
+	})
 }
 
 func TestDetectEnvironment_RendersSharedTemplate(t *testing.T) {

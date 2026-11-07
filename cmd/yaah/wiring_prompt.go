@@ -91,6 +91,16 @@ func storeHasRecall(db *memory.DB) bool {
 // directives. Sub-agents get their own lean base from
 // buildSubAgentBasePrompt instead of this one.
 func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSessionID string, mem prompts.MemoryGuidance) string {
+	base, _ := buildSystemPromptMarked(cfg, cwd, db, resumeSessionID, mem)
+	return base
+}
+
+// buildSystemPromptMarked is buildSystemPrompt plus the identity anchor
+// BuildMarked returns: the byte offset just past the identity block, the
+// point every after-identity injection anchors on. The prompt bytes are
+// identical to buildSystemPrompt's — the anchor travels beside them, never
+// inside them.
+func buildSystemPromptMarked(cfg *config.Config, cwd string, db *memory.DB, resumeSessionID string, mem prompts.MemoryGuidance) (string, int) {
 	layers := prompts.Layers{
 		Identity:               prompts.IdentityPrompt,
 		Environment:            prompts.DetectEnvironment(cwd),
@@ -101,7 +111,8 @@ func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSess
 		Memory:                 memoryLayer(db),
 	}
 
-	return prompts.Build(layers) + memoryGuidanceBlock(mem, resumeSessionID)
+	base, identityEnd := prompts.BuildMarked(layers)
+	return base + memoryGuidanceBlock(mem, resumeSessionID), identityEnd
 }
 
 // subAgentDispatchLine describes the resolved sub-agent dispatch defaults
@@ -156,13 +167,16 @@ func providerUsable(cfg *config.Config, name string) bool {
 // buildMainPrompt derives the top-level agent prompt from the system prompt
 // by injecting session directives after the identity block. The systemPrompt
 // stays clean so child sub-agent prompts never inherit top-level directives.
+// identityEnd is the anchor buildSystemPromptMarked returned for
+// systemPrompt; it keeps the block anchored when the identity is not the
+// embedded default.
 //
 // The old tool quick-reference card is gone (yaah-w8x): it re-rendered every
 // registered tool's name, signature, and description that the request's
 // tools array already carries — ~3.4K tokens of pure duplication per call.
 // The schemas are the single source of tool truth on the wire.
-func buildMainPrompt(cfg *config.Config, opts SessionOptions, systemPrompt string) string {
-	return prompts.InjectAfterIdentity(systemPrompt, resolveDirectives(cfg, opts))
+func buildMainPrompt(cfg *config.Config, opts SessionOptions, systemPrompt string, identityEnd int) string {
+	return prompts.InjectAfterIdentityAt(systemPrompt, identityEnd, resolveDirectives(cfg, opts))
 }
 
 // buildSubAgentBasePrompt assembles the lean base prompt handed to every

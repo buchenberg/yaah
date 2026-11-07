@@ -56,7 +56,7 @@ func (s *agentSession) modeDirective(mode string) string {
 	// cannot describe a regime this session does not enforce.
 	level := s.toolsLevelForMode(mode)
 	label := modeLabel(mode)
-	return prompts.InjectAfterIdentity(s.mainPrompt, []string{
+	return prompts.InjectAfterIdentityAt(s.mainPrompt, s.identityEnd, []string{
 		label + " mode is active: " + regimeSentence(level),
 		"Only the user switches modes: /plan and /build in the TUI and REPL, the web palette, or ACP session/set_mode. You may ask for a switch with the question tool or in your reply.",
 		"A mode-change notice appears in-band in the conversation when the mode switches.",

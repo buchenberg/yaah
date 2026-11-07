@@ -495,6 +495,10 @@ func FormatDirectives(directives []string) string {
 // identity block is not present (e.g. a custom system prompt override),
 // the block is appended at the end instead. Returns prompt unchanged
 // when directives is empty.
+//
+// This is the anchor-less entry point: prompts assembled by BuildMarked
+// should inject through InjectAfterIdentityAt, which keeps the placement
+// correct even when the identity text is not the embedded default.
 func InjectAfterIdentity(prompt string, directives []string) string {
 	if len(directives) == 0 {
 		return prompt
@@ -510,6 +514,36 @@ func InjectAfterIdentity(prompt string, directives []string) string {
 		return block
 	}
 	return prompt + "\n\n" + block
+}
+
+// InjectAfterIdentityAt inserts the directives block after the identity
+// block, anchoring on identityEnd — the offset BuildMarked returns — when
+// the embedded identity cannot be located by substring search, which is
+// the case for a prompt whose identity is not the embedded default (a
+// custom persona). A prompt that does carry the embedded identity resolves
+// the anchor to exactly the position InjectAfterIdentity finds, so both
+// entry points place the block byte-for-byte identically there. A prompt
+// with neither the embedded identity nor a usable anchor (unset or out of
+// bounds, e.g. test-constructed) falls back to InjectAfterIdentity, whose
+// last resort is appending at the end. Returns prompt unchanged when
+// directives is empty.
+func InjectAfterIdentityAt(prompt string, identityEnd int, directives []string) string {
+	if len(directives) == 0 {
+		return prompt
+	}
+	anchor := -1
+	if identity := strings.TrimSpace(IdentityPrompt); identity != "" {
+		if i := strings.Index(prompt, identity); i >= 0 {
+			anchor = i + len(identity)
+		}
+	}
+	if anchor < 0 && identityEnd > 0 && identityEnd <= len(prompt) {
+		anchor = identityEnd
+	}
+	if anchor < 0 {
+		return InjectAfterIdentity(prompt, directives)
+	}
+	return prompt[:anchor] + "\n\n" + FormatDirectives(directives) + prompt[anchor:]
 }
 
 // InjectNoToolsIdentity swaps the standard sub-agent identity inside
@@ -562,12 +596,34 @@ type Layers struct {
 }
 
 // Build assembles the full system prompt from the given layers by
-// joining non-empty components with double-newline separators.
+// joining non-empty components with double-newline separators. Callers
+// that inject after the identity block use BuildMarked instead, so the
+// injection can anchor without re-locating the identity by substring
+// search.
 func Build(l Layers) string {
-	var parts []string
+	prompt, _ := BuildMarked(l)
+	return prompt
+}
 
-	if strings.TrimSpace(l.Identity) != "" {
+// BuildMarked assembles the prompt exactly as Build does and additionally
+// returns the identity anchor: the byte offset just past the identity
+// layer's content — the exact position InjectAfterIdentity has always
+// inserted at. InjectAfterIdentityAt consumes the anchor to place injected
+// blocks immediately after the identity block whatever its text is: a
+// prompt whose identity is not the embedded default (an upcoming custom
+// persona) is invisible to the substring search and would otherwise push
+// every injected block to the end of the prompt. The anchor is -1 when no
+// identity layer is present, and it never appears in the prompt bytes.
+func BuildMarked(l Layers) (string, int) {
+	var parts []string
+	identityEnd := -1
+	if identity := strings.TrimSpace(l.Identity); identity != "" {
 		parts = append(parts, l.Identity)
+		// Mirror InjectAfterIdentity's insertion point — the index of the
+		// trimmed identity plus its length. The identity layer leads the
+		// assembled prompt, so the offset within the layer is the offset
+		// within the prompt.
+		identityEnd = strings.Index(l.Identity, identity) + len(identity)
 	}
 
 	if l.MaxSubAgentConcurrency > 0 {
@@ -605,7 +661,7 @@ func Build(l Layers) string {
 		parts = append(parts, l.Skills)
 	}
 
-	return strings.Join(parts, "\n\n")
+	return strings.Join(parts, "\n\n"), identityEnd
 }
 
 // skillDescMaxChars caps each skill description inlined into the always-on

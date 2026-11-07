@@ -421,6 +421,12 @@ func buildToolRegistry(cfg *config.Config, opts SessionOptions, ws *workspaceSta
 // out), and the host process manager behind the background_process tool.
 type mcpSkillsStage struct {
 	systemPrompt string
+	// identityEnd is the anchor BuildMarked returned for systemPrompt: the
+	// byte offset just past the identity block, where directive and mode
+	// injections anchor. It threads to the session so per-run injections
+	// never re-locate the identity by substring search, which a non-default
+	// identity would fail.
+	identityEnd  int
 	mcpClients   []mcp.MCPClient
 	mcpInfos     []mcp.ServerInfo
 	mcpToolNames map[string]bool
@@ -446,7 +452,7 @@ func buildMCPSkills(cfg *config.Config, opts SessionOptions, ws *workspaceStage,
 		Writers: tr.reg.Get("memory_add") != nil && tr.reg.Get("memory_update") != nil &&
 			tr.reg.Get("memory_delete") != nil && tr.reg.Get("memory_promote") != nil,
 	}
-	st.systemPrompt = buildSystemPrompt(cfg, ws.cwd, tr.db, opts.ResumeSessionID, mem)
+	st.systemPrompt, st.identityEnd = buildSystemPromptMarked(cfg, ws.cwd, tr.db, opts.ResumeSessionID, mem)
 
 	// --- MCP servers ------------------------------------------------------
 	// Isolated mode omits MCP tools by policy: they execute on the host
@@ -557,6 +563,10 @@ type loopInfraStage struct {
 	usage        restoredUsage
 	systemPrompt string
 	mainPrompt   string
+	// identityEnd anchors after-identity injections (see mcpSkillsStage);
+	// it stays valid across the tool-guidance appends, which only extend
+	// the prompt's tail.
+	identityEnd int
 
 	tracker        *tools.ConflictTracker
 	backgroundJobs *jobs.BackgroundJobs
@@ -679,10 +689,16 @@ func restoreTranscript(st *loopInfraStage, cfg *config.Config, opts SessionOptio
 		}
 	}
 
+	// The identity anchor travels with the prompt: a resumed row's stored
+	// prompt was produced by this same assembly, so the offset still points
+	// at its identity block, and InjectAfterIdentityAt re-checks the
+	// embedded identity before trusting the offset on a foreign prompt.
+	st.identityEnd = mcps.identityEnd
+
 	// Derive the top-level agent prompt (with directives) from the clean
 	// system prompt. systemPrompt stays clean so child sub-agent prompts
 	// never inherit top-level directives.
-	st.mainPrompt = buildMainPrompt(cfg, opts, st.systemPrompt)
+	st.mainPrompt = buildMainPrompt(cfg, opts, st.systemPrompt, st.identityEnd)
 	return nil
 }
 

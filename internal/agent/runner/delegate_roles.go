@@ -1,10 +1,10 @@
 package runner
 
 import (
+	"os"
 	"path/filepath"
 
 	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
@@ -45,9 +45,9 @@ func BuiltinRoleFiles() map[string][]byte {
 
 // RoleSearchPaths returns directories to scan for user-defined role
 // definitions. Mirrors the skill search hierarchy: project-level
-// (walked up from cwd) then user-level (~/.agents/roles/).
+// (walked up from cwd) then user-level (~/.agents/roles/ in the real
+// home dir — the cross-tool convention, not ~/.yaah).
 func RoleSearchPaths(cwd string) []string {
-	home := config.HomeDir()
 	var dirs []string
 	for dir := cwd; ; dir = filepath.Dir(dir) {
 		dirs = append(dirs, filepath.Join(dir, ".agents", "roles"))
@@ -56,6 +56,7 @@ func RoleSearchPaths(cwd string) []string {
 			break
 		}
 	}
-	dirs = append(dirs, filepath.Join(home, ".agents", "roles"))
+	userHome, _ := os.UserHomeDir()
+	dirs = append(dirs, filepath.Join(userHome, ".agents", "roles"))
 	return dirs
 }

@@ -119,10 +119,17 @@ type agentSession struct {
 	// it; sub-agents receive systemPrompt as their base so default
 	// directives never leak into child prompts.
 	mainPrompt string
-	toolReg    *tools.Registry
-	db         *memory.DB
-	mcpClients []mcp.MCPClient
-	mcpInfos   []mcp.ServerInfo
+	// identityEnd is the identity anchor BuildMarked computed for
+	// systemPrompt: the byte offset just past the identity block, where
+	// the per-run mode directive injects. Zero means the session was
+	// built without an anchor (tests); injection then falls back to
+	// locating the embedded identity, or appending at the end when there
+	// is none.
+	identityEnd int
+	toolReg     *tools.Registry
+	db          *memory.DB
+	mcpClients  []mcp.MCPClient
+	mcpInfos    []mcp.ServerInfo
 	// deepGate is the light/deep sleep policy, created once per session so
 	// its every-Nth cadence spans prompt runs instead of resetting each turn.
 	deepGate     *deepSleepGate

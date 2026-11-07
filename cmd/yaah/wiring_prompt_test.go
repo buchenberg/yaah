@@ -272,3 +272,45 @@ func TestStoreHasRecall(t *testing.T) {
 		t.Error("a store holding a past transcript has something to recall")
 	}
 }
+
+// The anchor threads through buildMainPrompt so a non-default identity (an
+// upcoming custom persona) keeps the directives block immediately after the
+// identity rather than falling to the end-of-prompt append.
+func TestBuildMainPrompt_CustomIdentityAnchor(t *testing.T) {
+	custom := "BESPOKE ORCHESTRATOR PERSONA"
+	systemPrompt := custom + "\n\n## Environment\nOS: test"
+	opts := SessionOptions{DirectiveOverrides: []string{"always run tests"}}
+
+	got := buildMainPrompt(&config.Config{}, opts, systemPrompt, len(custom))
+	want := custom + "\n\n" + prompts.FormatDirectives([]string{"always run tests"}) + "\n\n## Environment\nOS: test"
+	if got != want {
+		t.Fatalf("buildMainPrompt misplaced the directives block:\n got %q\nwant %q", got, want)
+	}
+}
+
+// Byte-compatibility gate at the composition root (yaah-21uk): the
+// anchor-threaded derivation must produce byte-for-byte what the legacy
+// substring-search derivation produces for the default embedded identity —
+// the anchor travels beside the prompt bytes, never inside them.
+func TestBuildMainPrompt_DefaultIdentityByteCompat(t *testing.T) {
+	t.Setenv("YAAH_HOME", t.TempDir())
+
+	cfg := &config.Config{
+		Providers: map[string]config.Provider{"zai": {}},
+		Agent: config.AgentConfig{
+			Default: config.Defaults{Provider: "zai", Model: "GLM-5.3", Directives: []string{"always run tests"}},
+		},
+	}
+	dir := t.TempDir()
+	mem := prompts.MemoryGuidance{}
+
+	sp, end := buildSystemPromptMarked(cfg, dir, nil, "", mem)
+	if sp != buildSystemPrompt(cfg, dir, nil, "", mem) {
+		t.Fatal("buildSystemPromptMarked diverged from buildSystemPrompt; the anchor must travel beside the bytes")
+	}
+	got := buildMainPrompt(cfg, SessionOptions{}, sp, end)
+	want := prompts.InjectAfterIdentity(buildSystemPrompt(cfg, dir, nil, "", mem), resolveDirectives(cfg, SessionOptions{}))
+	if got != want {
+		t.Fatal("anchor-threaded main prompt diverged from the legacy substring-search derivation")
+	}
+}

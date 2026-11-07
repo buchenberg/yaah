@@ -155,6 +155,7 @@ func newSessionFromStages(lc *sessionConfig, opts SessionOptions, ws *workspaceS
 		modelName:      lc.modelName,
 		systemPrompt:   loop.systemPrompt,
 		mainPrompt:     mainPrompt,
+		identityEnd:    loop.identityEnd,
 		toolReg:        tr.reg,
 		db:             tr.db,
 		mcpClients:     mcps.mcpClients,

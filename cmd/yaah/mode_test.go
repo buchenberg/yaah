@@ -375,3 +375,33 @@ func TestSetModeWithoutStoreStillSwitches(t *testing.T) {
 		t.Fatalf("Mode() = %q; want %q", got, acpModePlan)
 	}
 }
+
+// The identity anchor lets the mode directive sit immediately after a
+// non-default identity block (the upcoming custom personas) instead of
+// falling to the end-of-prompt append. The block goes right after the
+// custom identity and the rest of the prompt follows verbatim.
+func TestModeDirective_CustomIdentityAnchor(t *testing.T) {
+	custom := "BESPOKE ORCHESTRATOR PERSONA"
+	s := &agentSession{
+		mainPrompt:  custom + "\n\n## Environment\nOS: test",
+		identityEnd: len(custom),
+	}
+
+	for _, mode := range []string{acpModePlan, acpModeBuild} {
+		t.Run(mode, func(t *testing.T) {
+			got := s.modeDirective(mode)
+
+			if !strings.HasPrefix(got, custom+"\n\n## Session directives") {
+				t.Fatalf("mode directive must sit immediately after the custom identity, got:\n%s", got)
+			}
+			if !strings.HasSuffix(got, "\n\n## Environment\nOS: test") {
+				t.Errorf("the base prompt must follow verbatim after the directive, got:\n%s", got)
+			}
+			idxDirectives := strings.Index(got, "## Session directives")
+			idxEnv := strings.Index(got, "## Environment")
+			if !(0 < idxDirectives && idxDirectives < idxEnv) {
+				t.Errorf("wrong section order identity=0 directives=%d env=%d", idxDirectives, idxEnv)
+			}
+		})
+	}
+}
