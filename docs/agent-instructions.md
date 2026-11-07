@@ -61,6 +61,8 @@ From `retained.md` (injected when the retained lane is live):
   it for `extra_turns` more turns (default 5, max 50), seeded from its captured
   conversation and sealed workspace, and supersedes the original; `fork` keeps
   the original open for comparison. Container-lane proposals cannot continue.
+  Only one continue/fork per parent runs at a time; issue them sequentially.
+  Each re-run gets a new workspace root, so steer it with repo-relative paths.
 - A new dispatch can build on an existing proposal's work:
   `delegate(seed_from: <proposal_id>)` seeds a fresh clone from that proposal's
   sealed workspace (its own role/prompt/toolset), and `seed_mode: conversation`

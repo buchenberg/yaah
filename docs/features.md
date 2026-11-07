@@ -106,6 +106,15 @@ embedded via any `/v1/embeddings` endpoint and searched by cosine similarity;
 FTS5 remains the exact-match fallback. See
 [configuration.md](./configuration.md#embeddings-reference).
 
+Context management and durable memory have different triggers. **Compaction**
+is pressure-driven: when the conversation passes
+`agents.default.compaction_threshold` (about 50% of `context_window` by
+default) or you run `:compact`, history is summarized into one `system`
+message. **Consolidation** is cadence-driven: every
+`agents.default.consolidate_turns_interval` /
+`agents.default.consolidate_iters_interval`, a restricted consolidator sub-agent
+writes durable atoms while the agent works.
+
 Memory is **tiered**: `global` atoms are durable across sessions, while
 `session` atoms are working context distilled by the consolidator (see
 [compaction and consolidation](./compaction-as-sleep.md)). A cadence-driven nudge

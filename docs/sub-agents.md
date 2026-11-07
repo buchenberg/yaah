@@ -210,26 +210,40 @@ returns a proposal the orchestrator settles.
   `agents.subagent.roles.<role>.turn_checkpoints: true` captures workspace and
   conversation before each turn, so a turn that fails in the tool phase or
   exhausts its iteration budget rewinds instead of losing the attempt.
-- **Continuation.** An open worktree proposal is not a dead end (most often one
-  that ran out of turns):
-  `proposal continue` re-runs it for `extra_turns` more turns, seeded from its
-  captured conversation and sealed workspace, and seals a superseding proposal
-  (the original is discarded so settlement stays consume-once).
-  `proposal fork` re-runs the same way but leaves the original open, so one
-  proposal can be branched into several continuations and compared. A
-  continuation is a fresh clone with its own worktree and scope, so it cleans up
-  at settlement like any other proposal. Container-lane proposals cannot be
-  continued: their world ended at seal.
+- **Continuation.** Any open worktree proposal with a captured transcript can be
+  carried forward, not only a turn-exhausted one. `proposal continue` re-runs it
+  for `extra_turns` more turns (default 5, max 50), seeded from its captured
+  conversation and sealed workspace, and seals a superseding proposal; the
+  original is discarded so settlement stays consume-once. `proposal fork` does
+  the same but leaves the original open, so one attempt can be branched into
+  several continuations and compared. A continuation is a fresh clone with its
+  own worktree and scope, so it cleans up at settlement like any other proposal.
+  A continuation that itself exhausts its budget is eligible again. Only one
+  re-run per parent runs at a time, so issue `continue`/`fork` calls
+  sequentially. Container-lane proposals cannot be continued: their world ended
+  at seal. Every re-run gets a new workspace root, so steer it with
+  repo-relative paths; paths from a prior run are refused by containment. The
+  sealed envelope's `notes` records `continued from <id>` (or `fork of <id>` for `fork`) plus
+  `(original discarded)` for `continue`, and `(no delta vs parent)` when the
+  re-run produced the same delta.
 - **Threading.** `delegate(seed_from: <proposal_id>, seed_mode: workspace)`
   starts a new dispatch — its own role, prompt, and toolset — from a retained
   proposal's sealed workspace, in a fresh clone; the source proposal stays open.
   `seed_mode: conversation` also carries the captured messages and is same-role
-  only. Worktree lane only.
+  only. Worktree lane only; report-lane roles cannot be seed sources. The same
+  new-workspace-root rule applies.
 - **Durable proposals.** A worktree proposal's result, transcript, and dispatch
   params are written to a sidecar beside the worktree, and at startup the
   proposal registry is rebuilt from the kernel-recovered scopes and sealed
   outputs. A recovered proposal can be listed, shown, settled, and continued
-  after a restart; a sidecar-less output is reported and skipped.
+  after a restart; a sidecar-less output is reported and skipped. Proposal ids
+  embed a timestamp plus a per-boot sequence suffix: the suffix restarts at
+  `:1` after a restart, so treat the whole id as opaque and never assume
+  monotonic suffixes across boots.
+- **Stop reason.** Dispatch and continuation envelopes carry `stop_reason` —
+  `completed`, `turn_budget`, `iteration_budget`, `max_tokens`, `timeout`,
+  `halted`, `canceled`, or `provider_error` — so the orchestrator can choose
+  continue, fork, or redispatch without parsing the report prose.
 
 Because every retained dispatch is isolated, several can be compared safely:
 issue two or three calls for one task in a single turn, read the proposals,
