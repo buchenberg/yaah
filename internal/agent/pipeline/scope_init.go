@@ -40,8 +40,8 @@ type TraceSink interface {
 type ScopeSource interface {
 	Get(id string) (*goatherd.Scope, bool)
 	Create(ownerID string, sb sandbox.Sandbox) (*goatherd.Scope, error)
-	Fork(parentID, childOwnerID string, snapshot any) (*goatherd.Scope, error)
-	ForkIsolated(parentID, childOwnerID string, snapshot any, sb sandbox.Sandbox) (*goatherd.Scope, error)
+	Fork(parentID, childOwnerID string, snapshot any, opts ...goatherd.ForkOptions) (*goatherd.Scope, error)
+	ForkIsolated(parentID, childOwnerID string, snapshot any, sb sandbox.Sandbox, opts ...goatherd.ForkOptions) (*goatherd.Scope, error)
 	ActiveScopes() []*goatherd.Scope
 	Discard(childID string) error
 
@@ -79,12 +79,12 @@ func (k kernelScopeSource) Create(ownerID string, sb sandbox.Sandbox) (*goatherd
 	return k.mgr.Create(ownerID, sb)
 }
 
-func (k kernelScopeSource) Fork(parentID, childOwnerID string, snapshot any) (*goatherd.Scope, error) {
-	return k.mgr.Fork(parentID, childOwnerID, snapshot)
+func (k kernelScopeSource) Fork(parentID, childOwnerID string, snapshot any, opts ...goatherd.ForkOptions) (*goatherd.Scope, error) {
+	return k.mgr.Fork(parentID, childOwnerID, snapshot, opts...)
 }
 
-func (k kernelScopeSource) ForkIsolated(parentID, childOwnerID string, snapshot any, sb sandbox.Sandbox) (*goatherd.Scope, error) {
-	return k.mgr.ForkIsolated(parentID, childOwnerID, snapshot, sb)
+func (k kernelScopeSource) ForkIsolated(parentID, childOwnerID string, snapshot any, sb sandbox.Sandbox, opts ...goatherd.ForkOptions) (*goatherd.Scope, error) {
+	return k.mgr.ForkIsolated(parentID, childOwnerID, snapshot, sb, opts...)
 }
 
 func (k kernelScopeSource) ActiveScopes() []*goatherd.Scope { return k.mgr.ActiveScopes() }

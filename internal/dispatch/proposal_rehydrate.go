@@ -68,7 +68,7 @@ func LoadProposalRegistry(repoPath string, mgr *goatherd.ScopeManager, rootScope
 	}
 
 	// Worktree proposals: the kernel recovered the scopes and sealed outputs
-	// from the trace; the sidecar beside each worktree adds result/transcript.
+	// from the trace; the sealed output carries the proposal state itself.
 	warnings = append(warnings, loadWorktreeProposals(reg, mgr, repoPath, rootScopeID, sessionID)...)
 
 	return reg, warnings
@@ -76,9 +76,11 @@ func LoadProposalRegistry(repoPath string, mgr *goatherd.ScopeManager, rootScope
 
 // loadWorktreeProposals rebuilds the worktree lane's open proposals from the
 // recovered scope tree. A scope that is active and owns a re-adopted worktree
-// sandbox, with an unconsumed sealed output, is an open proposal; its sidecar
-// supplies the id, result, transcript, and continuation params. A sidecar-less
-// output is reported and skipped rather than surfaced half-formed.
+// sandbox, with an unconsumed sealed output, is an open proposal; the sealed
+// output's metadata supplies the id, result, and continuation params, its
+// snapshot supplies the conversation, and its retained diff is the review
+// text. Recovery also rebuilds the proposal half of the review pair, so the
+// decision can still be recorded after a restart.
 func loadWorktreeProposals(reg *ProposalRegistry, mgr *goatherd.ScopeManager, repoPath, rootScopeID, sessionID string) []string {
 	if mgr == nil {
 		return nil
@@ -97,15 +99,15 @@ func loadWorktreeProposals(reg *ProposalRegistry, mgr *goatherd.ScopeManager, re
 			if out.State() != goatherd.OutputUnconsumed {
 				continue
 			}
-			meta, err := readWorktreeProposalMeta(workdir)
+			meta, transcript, err := proposalMetaFromOutput(out)
 			if err != nil {
 				warnings = append(warnings, fmt.Sprintf("proposal rehydrate: %s: %v", workdir, err))
 				continue
 			}
-			// Scope by session like the container lane: the durable session id
-			// is the key, and the recorded parent scope is the fallback for
-			// sidecars written before that field existed. Anything that cannot
-			// prove it belongs to this session is skipped, never surfaced.
+			// Scope by session: the durable session id is the key, and the
+			// recorded parent scope is the fallback for old seals. Anything
+			// that cannot prove it belongs to this session is skipped, never
+			// surfaced.
 			switch {
 			case sessionID != "" && meta.SessionID != "":
 				if meta.SessionID != sessionID {
@@ -115,31 +117,46 @@ func loadWorktreeProposals(reg *ProposalRegistry, mgr *goatherd.ScopeManager, re
 				warnings = append(warnings, fmt.Sprintf("proposal %s: session id unavailable and the root scope differs; not rehydrated", meta.ID))
 				continue
 			case meta.SessionID == "" && meta.ParentScopeID != rootScopeID:
-				// A legacy sidecar from another session: not ours to settle.
+				// A seal from another session (or one that cannot prove its
+				// session): not ours to settle.
+				continue
+			}
+			id := meta.ID
+			if id == "" {
+				// proposalSealOptions always writes the id; a missing one is a
+				// malformed seal, not a reason to invent an opaque id.
+				warnings = append(warnings, fmt.Sprintf("proposal rehydrate: %s: sealed proposal metadata has no id", workdir))
 				continue
 			}
 			parent := rootScopeID
 			if parent == "" && scope.Parent() != nil {
 				parent = scope.Parent().ID()
 			}
+			// Rebuild the review pair. A decided proposal is left without a
+			// fact id so settlement does not record a second decision.
+			var reviewProposal *goatherd.MergeProposal
+			reviewFactID := ""
+			if review, ok := mgr.MergeReview(scope.ID()); ok && review.Decision == nil {
+				reviewProposal = review.Proposal
+				reviewFactID = review.ProposedFactID
+			}
 			reg.add(&retainedProposal{
-				id:      meta.ID,
-				scopeID: scope.ID(),
-				workdir: workdir,
-				output:  out,
-				// review carries the diff persisted in the sidecar: the kernel's
-				// recovered output has none, and reviewDiff() prefers it.
-				review:     meta.Diff,
-				result:     meta.Result,
-				runErr:     meta.RunErr,
-				transcript: meta.Transcript,
-				params:     meta.Params,
-				timeout:    time.Duration(meta.TimeoutMS) * time.Millisecond,
-				stopReason: meta.StopReason,
-				parentID:   parent,
-				mgr:        mgr,
-				repoPath:   repoPath,
-				world:      "worktree",
+				id:             id,
+				scopeID:        scope.ID(),
+				workdir:        workdir,
+				output:         out,
+				result:         meta.Result,
+				runErr:         meta.RunErr,
+				transcript:     transcript,
+				params:         meta.Params,
+				timeout:        time.Duration(meta.TimeoutMS) * time.Millisecond,
+				stopReason:     meta.StopReason,
+				parentID:       parent,
+				mgr:            mgr,
+				repoPath:       repoPath,
+				reviewProposal: reviewProposal,
+				reviewFactID:   reviewFactID,
+				world:          "worktree",
 			})
 		}
 	}

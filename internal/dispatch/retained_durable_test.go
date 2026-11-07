@@ -2,8 +2,8 @@ package dispatch
 
 // retained_durable_test.go covers durable worktree proposals: after a simulated
 // restart the kernel recovers the scope + sealed output from the trace, and the
-// sidecar restores the result, transcript, and params so the proposal is
-// listable, settle-able, and continuable.
+// output's snapshot/metadata restore the result, transcript, and params so the
+// proposal is listable, settle-able, and continuable.
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 	"github.com/buchenberg/yaah/internal/types"
 )
 
-// TestRetained_RehydrateScopesBySession pins the session boundary: a sidecar
+// TestRetained_RehydrateScopesBySession pins the session boundary: a proposal
 // from another session is not surfaced even when it lives in the same repo.
 func TestRetained_RehydrateScopesBySession(t *testing.T) {
 	fx, repo, rootID := newSessionFixtures(t)
@@ -118,7 +118,7 @@ func TestRetained_WorktreeProposalSurvivesRestart(t *testing.T) {
 	if p.params.Role != "developer" {
 		t.Errorf("recovered params role = %q, want developer", p.params.Role)
 	}
-	// The kernel seal payload omits the diff; the sidecar must restore it so a
+	// The sealed output retains the diff; recovery must restore it so a
 	// recovered proposal still shows and releases its change.
 	if p.reviewDiff() != wantDiff {
 		t.Errorf("recovered diff = %q, want %q", p.reviewDiff(), wantDiff)

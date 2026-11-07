@@ -30,8 +30,8 @@ func TestLedgerPinsMatchGoMod(t *testing.T) {
 	ledger := read(t, ledgerPath)
 
 	pins := []string{
-		"github.com/buchenberg/goatherd-kernel v0.20.0",
-		"github.com/buchenberg/goatherd-runtime v0.23.0",
+		"github.com/buchenberg/goatherd-kernel v0.21.0",
+		"github.com/buchenberg/goatherd-runtime v0.24.0",
 		"github.com/buchenberg/goatherd-runtime/sandbox/croft v0.2.1-0.20261031192038-da4e06c59318",
 		"github.com/buchenberg/goatherd-runtime/sandbox/landlock v0.1.2",
 		"github.com/buchenberg/goatherd-runtime/sandbox/winacl v0.1.1",
