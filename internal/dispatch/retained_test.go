@@ -1035,7 +1035,7 @@ func TestStartRetainedRun_SealFailureClosesReviewPair(t *testing.T) {
 		RootScopeID:  rootID,
 		WorktreeRoot: t.TempDir(),
 		Proposals:    NewProposalRegistry(),
-		sealOutput: func(context.Context, string) (*goatherd.RetainedOutput, error) {
+		sealOutput: func(context.Context, string, ...goatherd.SealOptions) (*goatherd.RetainedOutput, error) {
 			return nil, errors.New("forced seal failure")
 		},
 	}

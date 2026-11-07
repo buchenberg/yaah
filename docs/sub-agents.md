@@ -232,14 +232,15 @@ returns a proposal the orchestrator settles.
   `seed_mode: conversation` also carries the captured messages and is same-role
   only. Worktree lane only; report-lane roles cannot be seed sources. The same
   new-workspace-root rule applies.
-- **Durable proposals.** A worktree proposal's result, transcript, and dispatch
-  params are written to a sidecar beside the worktree, and at startup the
-  proposal registry is rebuilt from the kernel-recovered scopes and sealed
-  outputs. A recovered proposal can be listed, shown, settled, and continued
-  after a restart; a sidecar-less output is reported and skipped. Proposal ids
-  embed a timestamp plus a per-boot sequence suffix: the suffix restarts at
-  `:1` after a restart, so treat the whole id as opaque and never assume
-  monotonic suffixes across boots.
+- **Durable proposals.** A worktree proposal's conversation, result, and
+  dispatch params are carried by the sealed output itself (execution snapshot +
+  metadata + retained diff), and at startup the proposal registry is rebuilt
+  from the kernel-recovered scopes and sealed outputs. A recovered proposal can
+  be listed, shown, settled, and continued after a restart; an output without
+  proposal metadata is reported and skipped. Proposal ids embed a timestamp
+  plus a per-boot sequence suffix: the suffix restarts at `:1` after a restart,
+  so treat the whole id as opaque and never assume monotonic suffixes across
+  boots.
 - **Stop reason.** Dispatch and continuation envelopes carry `stop_reason` —
   `completed`, `turn_budget`, `iteration_budget`, `max_tokens`, `timeout`,
   `halted`, `canceled`, or `provider_error` — so the orchestrator can choose

@@ -35,7 +35,7 @@ not claim it wholesale.
 
 | Layer | Shepherd (Python) | yaah | Status |
 |---|---|---|---|
-| Kernel / record | `shepherd2` `abi.v0` | `goatherd-kernel v0.20.0`, golden vectors | **Shipped, exact** |
+| Kernel / record | `shepherd2` `abi.v0` | `goatherd-kernel v0.21.0`, golden vectors | **Shipped, exact** |
 | Retained runs / settlement | `workspace.run` + four settlement verbs | `delegate` + `proposal` verbs | **Shipped** |
 | Context continuation | not shipped (paper's fork/revert vision) | `proposal continue` / `proposal fork` over retained proposals | **Shipped, beyond reference**; `yaah-hxk3.6` |
 | Retained-result threading | not shipped (roadmap row) | `delegate(seed_from)` over retained proposals; worktree proposals survive restart | **Shipped, beyond reference**; `yaah-hxk3.7` |
@@ -520,43 +520,54 @@ sealed worktree state; `conversation` also carries the captured messages and is
 same-role only, so a different role's system prompt cannot leak in. Threading is
 worktree-lane only: a container world ends at seal.
 
-Worktree proposals are now durable. At seal a sidecar beside the worktree records
-the result, failure note, transcript, and dispatch params; at startup the
-registry is rebuilt from the kernel-recovered scopes + sealed outputs and
-enriched from that sidecar. The kernel already recovered scope/output state; the
-transcript was the missing half. A recovered proposal is listable, settleable,
-and continuable. A sidecar-less output is reported and skipped rather than
-surfaced half-formed, and a transcript over the sidecar bound is omitted (never
-truncated) so a continuation cannot inherit an invalid message sequence.
+Worktree proposals are now durable in the substrate. At seal the conversation
+rides in the output's execution snapshot, the result/failure note/stop
+reason/params/session id in its metadata, and the review diff is retained by the
+seal; at startup the registry is rebuilt from the kernel-recovered scopes +
+sealed outputs and reads those fields back. A recovered proposal is listable,
+settleable, and continuable, and can still record its settlement decision
+because the review proposal half is recovered from the trace. An output without
+proposal metadata is reported and skipped rather than surfaced half-formed, and
+a transcript over the snapshot bound is omitted (never truncated) so a
+continuation cannot inherit an invalid message sequence.
 
 Non-goals: durable *live* background loops (a loop cannot survive restart without
 deterministic replay); container-lane threading.
 
-### D15 — retained outputs become first-class in goatherd (cross-repo)
+### D15 — retained outputs are first-class in goatherd (cross-repo) — shipped
 
-yaah's continue/fork, threading, and durable proposals (D13/D14) are implemented
-host-side: a sidecar persists result/transcript/params, and fork-from-a-state is a
-manual Create + ForkIsolated + Apply. Two of those belong in the substrate, and
-the seal record is currently lossy — it omits the diff, carries no execution
-snapshot, and recovery rebuilds neither (so a recovered worktree proposal shows
-no diff).
-
-Target substrate — goatherd-runtime epic `shepherd-runtime-go-owf`, with the
-goatherd-kernel named-blob primitive `goatherd-kernel-vkg`:
+Shipped in `goatherd-runtime v0.24.0` / `goatherd-kernel v0.21.0` (runtime epic
+`shepherd-runtime-go-owf`, kernel named-blob primitive `goatherd-kernel-vkg`):
 
 1. **Seal is complete.** `SealOptions{Snapshot, Metadata, DiffCap}` persists the
    execution snapshot, the diff, and opaque caller metadata; recovery rebuilds
    them.
 2. **Fork has explicit Baseline/Seed/Snapshot.** A child can be seeded from a
-   retained output while settling against the parent's current tree, with the
-   snapshot persisted in the fork record.
-3. **Lineage is first-class.** Settled outputs cite the output they
+   retained output while settling against a chosen basis, with the snapshot
+   persisted in the fork record. `ForkFromOutput` does the seed and baseline in
+   one step, so there is no host capture between them.
+3. **Lineage is first-class.** Sealed and settled outputs cite the output they
    supersede/derive from, and the review pair is recoverable.
 
-When those land, yaah deletes the worktree sidecar, routes continue/threading
-through the substrate, and keeps only host policy (loop seeding and transcript
-meaning, roles/budgets, same-role/seed-mode rules, conflict analysis, the tool
-surface). Tracked as `yaah-hxk3.8`, blocked on the goatherd epic.
+yaah now keeps only host policy (loop seeding and transcript meaning,
+roles/budgets, same-role/seed-mode rules, conflict analysis, the tool surface):
+
+- The worktree proposal's result, failure note, stop reason, params, and session
+  id ride in the sealed output's metadata; its conversation rides in the
+  execution snapshot; its diff is retained by the seal. The `.proposal.json`
+  sidecar is gone, and `LoadProposalRegistry` rebuilds from
+  `RetainedOutput.Snapshot() / Metadata() / Diff()`.
+- Continuations and `seed_from` fork through `ForkFromOutput` with the source
+  output's recorded baseline, so the delta is cumulative against the original
+  basis. Host commits or uncommitted sibling changes landing between the
+  original dispatch and the re-run no longer appear as phantom
+  deletions/reversions (`yaah-9m0c`).
+- Continuations record `derived_from` / `supersedes` natively (fork records
+  `derived_from` only), and the review pair is recovered through
+  `ScopeManager.MergeReview`, so a recovered proposal can still record its
+  settlement decision.
+
+Tracked as `yaah-hxk3.8` (with the seed-basis bug as `yaah-9m0c`).
 
 ## Review provenance
 
@@ -584,8 +595,8 @@ Pinned inputs (drift guard: `internal/parity`):
 |---|---|
 | reference | Shepherd (Python) `v0.3.1` |
 | trace ABI | `shepherd2` abi.v0, golden vectors |
-| kernel | `goatherd-kernel v0.20.0` |
-| runtime | `goatherd-runtime v0.23.0` |
+| kernel | `goatherd-kernel v0.21.0` |
+| runtime | `goatherd-runtime v0.24.0` |
 | container world | `goatherd-runtime/sandbox/croft v0.2.1-0.20261031192038-da4e06c59318` / `goatherd-croft v0.9.2-0.20261031191238-a6d5f72a9b04` |
 | containment | landlock v0.1.2, winacl v0.1.1, seatbelt v0.1.0 |
 | grants | world-relative RW/RO roots, disjoint (config, not tools) |

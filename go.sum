@@ -53,8 +53,12 @@ github.com/buchenberg/goatherd-croft v0.9.2-0.20261031191238-a6d5f72a9b04 h1:Fce
 github.com/buchenberg/goatherd-croft v0.9.2-0.20261031191238-a6d5f72a9b04/go.mod h1:JPx8oRUJq8UDkOxcDxPRGljycvWrUn2GRHtpFKSAcbw=
 github.com/buchenberg/goatherd-kernel v0.20.0 h1:7/Ch6BkHQHBRQQ5xGAKBBZFC7sQG5D+XolyKlKssrAg=
 github.com/buchenberg/goatherd-kernel v0.20.0/go.mod h1:qi265Btsp+N1OcMtmZuAgmsp1SpGyAHAZObuJ24hvKE=
+github.com/buchenberg/goatherd-kernel v0.21.0 h1:3ejw0Ak0gFLRrUy9v8lQK0K6oXAybiSov5ZEN7DzIQU=
+github.com/buchenberg/goatherd-kernel v0.21.0/go.mod h1:qi265Btsp+N1OcMtmZuAgmsp1SpGyAHAZObuJ24hvKE=
 github.com/buchenberg/goatherd-runtime v0.23.0 h1:GGmA9YnTzC+yrXSPR7oCGjwKTv7q8jAFCpz/1ZBxFm0=
 github.com/buchenberg/goatherd-runtime v0.23.0/go.mod h1:T6Vam4zl18XT292JH09quNFZUkPqhpEgsgaCkGqMWTc=
+github.com/buchenberg/goatherd-runtime v0.24.0 h1:fLYDKE7mew27/zuz6ZL5ICUXWj1lcfogR4CYw3I5WN4=
+github.com/buchenberg/goatherd-runtime v0.24.0/go.mod h1:hCPQ7WoFYaSvTnG8oDczZz3Vbc2GEQnaV7fYwAg392g=
 github.com/buchenberg/goatherd-runtime/sandbox/croft v0.2.1-0.20261031192038-da4e06c59318 h1:swdgIvOoFqccZWlsviOUwYd3Ze+wZoUoBqt4czilAgI=
 github.com/buchenberg/goatherd-runtime/sandbox/croft v0.2.1-0.20261031192038-da4e06c59318/go.mod h1:YgzYbzTO3JqeuAOO6WiqSazTwQpSa69acujXbE/vsBI=
 github.com/buchenberg/goatherd-runtime/sandbox/landlock v0.1.2 h1:IyUEHKkKEjuRIY2A+jRgWcS1jAMfLexoZUnbXT/JnBQ=
