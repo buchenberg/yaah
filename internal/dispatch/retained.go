@@ -25,6 +25,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/jobs"
+	"github.com/buchenberg/yaah/internal/types"
 	"github.com/buchenberg/yaah/internal/worldinfo"
 )
 
@@ -240,6 +241,14 @@ type retainedProposal struct {
 	parentID string
 	mgr      *goatherd.ScopeManager
 
+	// transcript is the sub-agent's final conversation, captured so a
+	// continuation can resume from its context instead of restarting cold.
+	transcript []types.Message
+	// params and timeout are the dispatch's role/config and wall-clock budget,
+	// reused when this proposal is continued or forked.
+	params  jobs.SubAgentParams
+	timeout time.Duration
+
 	// Review provenance for a worktree proposal: the proposal recorded before
 	// sealing and the fact it was recorded as. The decision is recorded when
 	// the sealed output is settled, so review rationale is part of the trace
@@ -305,6 +314,9 @@ type ProposalRegistry struct {
 	mu            sync.Mutex
 	byID          map[string]*retainedProposal
 	conflictFacts map[string]bool
+	// continuing reserves a proposal for one in-flight continue/fork so two
+	// callers cannot both seal a continuation from the same sealed output.
+	continuing map[string]bool
 }
 
 // NewProposalRegistry returns an empty registry for one session.
@@ -341,6 +353,30 @@ func (r *ProposalRegistry) remove(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.byID, id)
+}
+
+// claimContinue reserves a proposal for one continue/fork. It reports false
+// when another continue/fork is already in flight for id, which is what keeps
+// two callers from both seeding a continuation from the same sealed output.
+func (r *ProposalRegistry) claimContinue(id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.continuing == nil {
+		r.continuing = make(map[string]bool)
+	}
+	if r.continuing[id] {
+		return false
+	}
+	r.continuing[id] = true
+	return true
+}
+
+// releaseContinue clears a claimContinue reservation (deferred by the continue
+// path, including on refusal/failure).
+func (r *ProposalRegistry) releaseContinue(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.continuing, id)
 }
 
 // all returns the open proposals, ordered by id so a listing is stable.
@@ -708,10 +744,13 @@ func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	parentDeadline, parentHasDeadline := ctx.Deadline()
 	budgetGoverns := timeout > 0 && (!parentHasDeadline || parentDeadline.After(budgetDeadline))
 
-	runCtx := ctx
+	// Capture the sub-agent's final conversation so a continuation can resume
+	// from its context instead of restarting cold.
+	var transcript []types.Message
+	runCtx := jobs.WithSubAgentTranscript(ctx, &transcript)
 	var cancel context.CancelFunc
 	if timeout > 0 {
-		runCtx, cancel = context.WithTimeout(ctx, timeout)
+		runCtx, cancel = context.WithTimeout(runCtx, timeout)
 	}
 	// The worktree world exists and the child is about to start in it:
 	// provisioning time is over, so the stuck-child deadline may start
@@ -843,9 +882,195 @@ func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		repoPath:       rt.RepoPath,
 		reviewProposal: reviewProposal,
 		reviewFactID:   reviewFactID,
+		transcript:     transcript,
+		params:         subParams,
+		timeout:        timeout,
 	}
 	rt.Proposals.add(proposal)
 	rt.Proposals.recordSealConflictFacts(ctx, proposal)
+
+	env.Status = "proposal"
+	env.Result = trimResult(result)
+	env.Diff = clipDiff(output.Diff())
+	env.Files = changesPaths(output.Changes())
+	return marshalProposalEnvelope(env), nil
+}
+
+// ContinueRetainedRun re-runs an open worktree proposal with extraTurns more
+// turns, seeded from its captured conversation and its sealed workspace state,
+// and seals the result as a new proposal. When consumeOriginal is set the
+// original is discarded so settlement stays consume-once ("continue"); when
+// clear the original stays settle-able and the new proposal is a branch
+// ("fork"). Container-lane proposals are refused: their world ended at seal.
+//
+// The continuation's world is a fresh clone seeded with Apply(sealed state) —
+// the same "fork = Create + Apply" recipe provisionRetainedBranch already uses
+// — so each proposal owns its own world and is cleaned up when it settles.
+func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, extraTurns int, prompt string, consumeOriginal bool) (string, error) {
+	if rt.Runner == nil {
+		return "", fmt.Errorf("delegate: sub-agent runner not configured")
+	}
+	mgr := rt.ScopeManager
+	if mgr == nil {
+		return "", fmt.Errorf("delegate: retained mode needs the goatherd scope manager (trace store unavailable)")
+	}
+	if rt.Proposals == nil {
+		return "", fmt.Errorf("delegate: retained mode needs a proposal registry — runner.NewDelegateTool creates one per session")
+	}
+	parent, ok := mgr.Get(rt.RootScopeID)
+	if !ok {
+		return "", fmt.Errorf("delegate: root scope %s not found", rt.RootScopeID)
+	}
+	p, err := rt.Proposals.get(id)
+	if err != nil {
+		return "", err
+	}
+	if p.delta != nil {
+		return "", fmt.Errorf("proposal %s: continue/fork is worktree-lane only; a container proposal's world ended at seal", id)
+	}
+	if p.output == nil {
+		return "", fmt.Errorf("proposal %s has no sealed output to continue", id)
+	}
+	if extraTurns <= 0 {
+		return "", fmt.Errorf("proposal %s: extra_turns must be positive", id)
+	}
+	if extraTurns > maxContinueTurns {
+		extraTurns = maxContinueTurns
+	}
+	if len(p.transcript) == 0 {
+		return "", fmt.Errorf("proposal %s has no captured conversation to continue from", id)
+	}
+
+	// One continue/fork per proposal at a time: without this, two concurrent
+	// calls both seed from the same sealed output and both register a
+	// continuation before either discards the original.
+	if !rt.Proposals.claimContinue(id) {
+		return "", fmt.Errorf("proposal %s: a continue/fork is already in progress", id)
+	}
+	defer rt.Proposals.releaseContinue(id)
+
+	// Seed the continuation's world from the original's sealed state, not the
+	// parent's current state, so it resumes exactly where the original stopped.
+	seed := p.output.Workspace()
+	newID := fmt.Sprintf("proposal:%d:%d", time.Now().UnixNano(), proposalSeq.Add(1))
+	wt := retainedWorktreePath(rt, newID)
+	rt.BeginDispatchScope(newID)
+	defer rt.EndDispatchScope(newID)
+
+	scopeID, provErr := provisionRetainedBranch(ctx, rt, newID, wt, seed)
+	if scopeID == "" {
+		return "", fmt.Errorf("continue: %w", provErr)
+	}
+	recordWorldFact(ctx, mgr, scopeID, subagent.WorldResolution{Resolved: subagent.WorldWorktree})
+
+	sp := p.params
+	sp.Workdir = wt
+	sp.SeedMessages = p.transcript
+	sp.MaxToolTurns = extraTurns
+	if strings.TrimSpace(prompt) == "" {
+		prompt = fmt.Sprintf("SUPERVISOR: continue the task for up to %d more turns, then produce your complete final report.", extraTurns)
+	}
+
+	budgetDeadline := time.Now().Add(p.timeout)
+	parentDeadline, parentHasDeadline := ctx.Deadline()
+	budgetGoverns := p.timeout > 0 && (!parentHasDeadline || parentDeadline.After(budgetDeadline))
+
+	var transcript []types.Message
+	runCtx := jobs.WithSubAgentTranscript(ctx, &transcript)
+	var cancel context.CancelFunc
+	if p.timeout > 0 {
+		runCtx, cancel = context.WithTimeout(runCtx, p.timeout)
+	}
+	NotifySubAgentReady(runCtx)
+	result, bodyErr := runRetainedBody(runCtx, rt, prompt, sp)
+	runErr := runCtx.Err()
+	parentErr := ctx.Err()
+	if cancel != nil {
+		cancel()
+	}
+
+	ScrubConfinementScratch(wt)
+	reviewProposal, reviewFactID, reviewErr := recordRetainedReview(ctx, mgr, scopeID)
+	seal := mgr.Seal
+	if rt.sealOutput != nil {
+		seal = rt.sealOutput
+	}
+	output, sealErr := seal(ctx, scopeID)
+
+	var notes []string
+	if reviewErr != nil {
+		notes = append(notes, "review proposal: "+reviewErr.Error())
+	}
+	bodyFailure := ""
+	if bodyErr != nil {
+		source := classifyRetainedBodyFailure(bodyErr, p.timeout, runErr, parentErr, budgetGoverns)
+		bodyFailure = retainedBodyFailure(bodyErr, sp.Role, p.timeout, source)
+		notes = append(notes, bodyFailure)
+	}
+	if provErr != nil {
+		notes = append(notes, provErr.Error())
+	}
+	if sealErr != nil {
+		notes = append(notes, "seal: "+sealErr.Error())
+	}
+
+	env := proposalEnvelope{
+		ProposalID: newID,
+		Next:       proposalVerbs(),
+		World:      string(subagent.WorldWorktree),
+	}
+	if output == nil {
+		// Sealing failed: discard the isolated scope rather than strand it,
+		// and close the review pair so the proposal fact is not an orphan.
+		if derr := recordFailedReviewDecision(ctx, mgr, reviewProposal, reviewFactID, sealErr); derr != nil {
+			notes = append(notes, "review decision: "+derr.Error())
+		}
+		if scope, gok := mgr.Get(scopeID); gok {
+			if derr := parent.Discard(scope); derr != nil {
+				notes = append(notes, "scope discard: "+derr.Error())
+			}
+		} else {
+			rt.EndDispatchScope(scopeID)
+		}
+		env.Status = "error"
+		env.Result = trimResult(result)
+		if len(notes) > 0 {
+			env.Error = trimResult(strings.Join(notes, "; "))
+		}
+		return marshalProposalEnvelope(env), nil
+	}
+
+	cont := &retainedProposal{
+		id:             newID,
+		scopeID:        scopeID,
+		workdir:        wt,
+		output:         output,
+		result:         trimResult(result),
+		runErr:         bodyFailure,
+		parentID:       rt.RootScopeID,
+		mgr:            mgr,
+		repoPath:       rt.RepoPath,
+		reviewProposal: reviewProposal,
+		reviewFactID:   reviewFactID,
+		transcript:     transcript,
+		params:         p.params,
+		timeout:        p.timeout,
+	}
+	rt.Proposals.add(cont)
+	rt.Proposals.recordSealConflictFacts(ctx, cont)
+
+	env.Notes = "continuation of " + id
+	if consumeOriginal {
+		if _, derr := rt.Proposals.settleRetainedProposalWithStrategy(ctx, id, "discard", ""); derr != nil {
+			notes = append(notes, "original proposal "+id+" could not be discarded: "+derr.Error())
+			env.Notes += " (original could not be discarded)"
+		} else {
+			env.Notes += " (original discarded)"
+		}
+	}
+	if len(notes) > 0 {
+		env.Error = trimResult(strings.Join(notes, "; "))
+	}
 
 	env.Status = "proposal"
 	env.Result = trimResult(result)

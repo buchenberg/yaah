@@ -229,3 +229,24 @@ var ErrDispatchStartup = errors.New("sub-agent dispatch failed to start: the chi
 // provisioned and before the watchdog arms, so it is never a
 // reclassification of a hang.
 var ErrScopeExhausted = errors.New("dispatch scope capacity exceeded: too many concurrently active dispatch scopes")
+
+// subAgentTranscriptKey stores a *[]types.Message the sub-agent runner writes
+// its final conversation into after the loop returns. A dispatch body installs
+// it before invoking the runner so a turn-exhausted sub-agent's context survives
+// the run and can seed a continuation instead of being thrown away.
+type subAgentTranscriptKey struct{}
+
+// WithSubAgentTranscript stores ptr in ctx so the sub-agent runner can report
+// the final conversation it ended with. Only safe when the caller reads *ptr
+// after joining the runner (the foreground retained lane does).
+func WithSubAgentTranscript(ctx context.Context, ptr *[]types.Message) context.Context {
+	return context.WithValue(ctx, subAgentTranscriptKey{}, ptr)
+}
+
+// CaptureSubAgentTranscript writes messages through the transcript sink stored
+// in ctx, if present. The runner calls it once, after its loop returns.
+func CaptureSubAgentTranscript(ctx context.Context, messages []types.Message) {
+	if ptr, ok := ctx.Value(subAgentTranscriptKey{}).(*[]types.Message); ok && ptr != nil {
+		*ptr = messages
+	}
+}

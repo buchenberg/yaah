@@ -57,6 +57,10 @@ From `retained.md` (injected when the retained lane is live):
   (export the sealed delta to a retention path; tear down a worktree, or
   consume the already-ended container manifest), `discard` (throw it away and
   free the worktree or manifest directory). A proposal settles exactly once.
+- A turn-exhausted proposal can be carried forward: `proposal continue` re-runs
+  it for `extra_turns` more turns (default 5, max 50), seeded from its captured
+  conversation and sealed workspace, and supersedes the original; `fork` keeps
+  the original open for comparison. Container-lane proposals cannot continue.
 - The dispatch envelope names `world` (`worktree` or `container`); a
   container proposal also names `target` (`host` or `session`). It can include
   `warning` for a degraded dispatch or `notes` for settlement caveats.
@@ -68,7 +72,9 @@ From `retained.md` (injected when the retained lane is live):
   are refused. In the container lane a commit stays in the disposable world.
   Changes arrive as file edits at settlement.
 - Retrying means `discard` + dispatch again with what was learned — a
-  discarded attempt costs one dispatch and leaves the tree untouched.
+  discarded attempt costs one dispatch and leaves the tree untouched. When a
+  proposal stopped only for lack of turns, `continue` reuses its captured
+  context instead of starting cold.
 
 ## The supervisor tool's verbs
 

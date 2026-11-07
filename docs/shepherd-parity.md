@@ -37,6 +37,7 @@ not claim it wholesale.
 |---|---|---|---|
 | Kernel / record | `shepherd2` `abi.v0` | `goatherd-kernel v0.20.0`, golden vectors | **Shipped, exact** |
 | Retained runs / settlement | `workspace.run` + four settlement verbs | `delegate` + `proposal` verbs | **Shipped** |
+| Context continuation | not shipped (paper's fork/revert vision) | `proposal continue` / `proposal fork` over retained proposals | **Shipped, beyond reference**; `yaah-hxk3.6` |
 | Dispatch worlds | `vcs-core` carriers | git worktree + croft container | **Shipped**; live container verification in `yaah-kit` |
 | Authority | Landlock / Seatbelt | Landlock / winacl / Seatbelt | **Shipped** |
 | Per-binding grants | `May[GitRepo, ReadOnly/ReadWrite]` | world-relative RW/RO config grants | **Shipped**, different surface |
@@ -428,6 +429,28 @@ writable, so writes under them are refused. A declared all-read-only set sets
 container). A host-session copy-in uses an unshaped staging container because
 the shaped view cannot accept bootstrap writes; the captured state is applied
 to the shaped container before the body starts.
+
+### D13 — sub-agent continuation is a fork, not a resume (yaah-hxk3.6)
+
+A turn-exhausted worktree proposal can be carried forward: `proposal continue`
+(and `proposal fork`) re-runs it for extra turns, seeded from its captured
+conversation and its sealed workspace state, and seals the result as a new
+proposal. This reverses the earlier D1 "seed messages live in the loop config,
+not the trace" stance: the sub-agent loop's final messages are now captured on
+the proposal, so a run that exhausts its budget no longer throws its context
+away along with its files.
+
+The continuation is a **fork**, not an in-place resume. The runner discards the
+sub-scope at run end, so re-entering any worktree is a new scope; the
+continuation clones via `Apply(sealed WorkspaceState)` — the same
+"fork = Create + Apply" recipe the retained lane already uses — so each proposal
+owns its own world and is torn down at settlement. `continue` discards the
+original (consume-once settlement stays intact); `fork` leaves it open for
+comparison. Container-lane proposals cannot be continued: their world ended at
+seal.
+
+Non-goals: deterministic replay (needs a deterministic provider neither project
+ships); container-lane continuation; `oversee` / task-as-value delegation.
 
 ## Review provenance
 

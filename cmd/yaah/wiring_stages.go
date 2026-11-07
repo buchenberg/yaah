@@ -1211,7 +1211,12 @@ func registerSubAgentTools(st *loopInfraStage, cfg *config.Config, tr *toolRegis
 			// back out. Passing that same registry here keeps the two halves
 			// on one session, so under `web`/`acp-serve` a session can
 			// neither see nor settle another session's proposals.
-			tr.reg.Register(&dispatch.ProposalTool{Proposals: st.taskTool.Retained.Proposals})
+			// Pass the runtime too: continue/fork re-run a proposal through
+			// the same session runner the dispatch used.
+			tr.reg.Register(&dispatch.ProposalTool{
+				Proposals: st.taskTool.Retained.Proposals,
+				Runtime:   st.taskTool.Retained,
+			})
 		} else {
 			tr.belt.Know("proposal")
 		}
