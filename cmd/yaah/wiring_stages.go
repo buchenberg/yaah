@@ -66,6 +66,12 @@ type sessionConfig struct {
 	providerName string
 	otelShutdown func(context.Context) error
 	otelActive   bool
+
+	// persona is the session's resolved orchestrator persona (yaah-21uk
+	// D4 plumbing), set right after buildWorkspace rebuilds the role
+	// registry. Phase 2 prompt binding (yaah-21uk.6) consumes it; until
+	// then it changes no behavior.
+	persona sessionPersona
 }
 
 // loadConfig loads and validates the configuration, resolves the provider and

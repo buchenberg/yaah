@@ -117,6 +117,16 @@ const (
 type Defaults struct {
 	Provider string `yaml:"provider"`
 	Model    string `yaml:"model"`
+	// Agent names the persona the session's orchestrator runs as
+	// (yaah-21uk D4): a role file with mode "primary" or "all", or a
+	// built-in persona ("build", "plan"). Empty means the default
+	// "build" persona. Deliberately not fail-fast validated here — the
+	// value space is the dynamic role registry, which the config layer
+	// cannot see — so a configured-but-missing or delegate-only name
+	// warns and falls back to "build" at session wiring time (OpenCode
+	// semantics), mirroring how a broken role file warns rather than
+	// bricks startup.
+	Agent string `yaml:"agent"`
 	// CompactionModel summarizes old context when compaction runs. An
 	// unset value means compaction runs on the main model, which is both
 	// slower and worse at summarizing; a warning fires at resolution.
