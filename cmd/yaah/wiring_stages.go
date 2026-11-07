@@ -281,10 +281,12 @@ type toolRegistryStage struct {
 // whose dependencies are available this early (the leaf tools through the belt,
 // the accept seam, the memory tools). The session persona narrows the belt
 // (yaah-21uk.7): a persona that names tools intersects the configured
-// allowlist, narrow-only. It has no failure of its own: a store that will not
-// open only disables persistence.
-func buildToolRegistry(cfg *config.Config, opts SessionOptions, ws *workspaceStage, persona subagent.Persona) (*toolRegistryStage, error) {
-	st := &toolRegistryStage{}
+// allowlist, narrow-only. The session store arrives pre-opened (yaah-21uk.9:
+// the wiring opens it before persona resolution so a resumed session's belt
+// can be shaped from the stored persona name). It has no failure of its own:
+// an open failure was already reported warn-and-continue by the wiring.
+func buildToolRegistry(cfg *config.Config, opts SessionOptions, ws *workspaceStage, persona subagent.Persona, db *memory.DB) (*toolRegistryStage, error) {
+	st := &toolRegistryStage{db: db}
 
 	// The tool registry (plan §3, Option A): local mode installs every
 	// built-in; isolated mode curates the set — the host-only leaf tools
@@ -364,17 +366,6 @@ func buildToolRegistry(cfg *config.Config, opts SessionOptions, ws *workspaceSta
 			st.omittedTools = append(st.omittedTools, name)
 		}
 	}
-
-	// The substrate is attached by buildContainment, which runs after this
-	// stage: it needs the registry (to hand it the path validator and to
-	// register the accept seam), but the sandbox's startup must not happen
-	// before the registry and its gates are known good.
-	db, err := memory.OpenDefault()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: db open failed, persistence disabled: %v\n", err)
-		db = nil
-	}
-	st.db = db
 
 	// --- Embedding server ------------------------------------------------
 	// The embedder is attached here (skillTool reads it below), but the
@@ -711,12 +702,19 @@ func restoreTranscript(st *loopInfraStage, cfg *config.Config, opts SessionOptio
 	if opts.ResumeSessionID == "" {
 		st.sessionID = fmt.Sprintf("sess-%d", time.Now().UnixNano())
 		if tr.db != nil {
+			// The resolved persona rides the row (yaah-21uk.9): resume
+			// reads the name back and re-resolves it against the registry
+			// of that day, so budget and belt keep the session's own
+			// selection after the config default moves on. The prompt
+			// needs no such restore — its persona layer is already in
+			// system_prompt's bytes.
 			tr.db.CreateSession(memory.Session{
 				ID:           st.sessionID,
 				StartedAt:    time.Now().Unix(),
 				CWD:          canonicalStoredCwd(ws.cwd),
 				Model:        lc.modelName,
 				SystemPrompt: st.systemPrompt,
+				Persona:      lc.persona.Persona.Name,
 			})
 		}
 	}

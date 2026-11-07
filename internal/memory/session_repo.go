@@ -30,18 +30,21 @@ const maxSessionTitleRunes = 80
 
 // CreateSession inserts a new session. The system_prompt column is
 // capped so an unbounded prompt cannot bloat the database (review A6/S7).
-// A session's activity timestamp starts at its start: pickers show
-// freshly created sessions with their creation time instead of an
-// epoch-zero updatedAt.
+// Persona records the resolved orchestrator persona the session was
+// created with (yaah-21uk.9): resume reads the name back and re-resolves
+// it against that day's registry instead of re-reading
+// agents.default.agent. A session's activity timestamp starts at its
+// start: pickers show freshly created sessions with their creation time
+// instead of an epoch-zero updatedAt.
 func (d *DB) CreateSession(s Session) error {
 	updated := s.UpdatedAt
 	if updated == 0 {
 		updated = s.StartedAt
 	}
 	_, err := d.sql.Exec(
-		`INSERT INTO sessions (id, started_at, ended_at, cwd, model, tokens_in, tokens_out, system_prompt, workspace_backend, workspace_omitted_tools, title, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO sessions (id, started_at, ended_at, cwd, model, tokens_in, tokens_out, system_prompt, workspace_backend, workspace_omitted_tools, title, updated_at, persona) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		s.ID, s.StartedAt, s.EndedAt, s.CWD, s.Model, s.TokensIn, s.TokensOut, truncateWithMarker(s.SystemPrompt, maxSessionPromptBytes),
-		s.WorkspaceBackend, s.WorkspaceOmittedTools, s.Title, updated,
+		s.WorkspaceBackend, s.WorkspaceOmittedTools, s.Title, updated, s.Persona,
 	)
 	return err
 }
@@ -67,14 +70,14 @@ func (d *DB) GetSession(id string) (Session, error) {
 			COALESCE(tokens_cached, 0), COALESCE(sub_tokens_in, 0), COALESCE(sub_tokens_out, 0),
 			COALESCE(system_prompt, ''), COALESCE(compacted_summary, ''),
 			COALESCE(workspace_backend, ''), COALESCE(workspace_omitted_tools, ''),
-			COALESCE(title, ''), COALESCE(updated_at, 0)
+			COALESCE(title, ''), COALESCE(updated_at, 0), COALESCE(persona, '')
 		FROM sessions WHERE id = ?
 	`, id)
 	var s Session
 	err := row.Scan(&s.ID, &s.StartedAt, &s.EndedAt, &s.CWD, &s.Model, &s.TokensIn, &s.TokensOut,
 		&s.TokensCached, &s.SubTokensIn, &s.SubTokensOut,
 		&s.SystemPrompt, &s.CompactedSummary, &s.WorkspaceBackend, &s.WorkspaceOmittedTools,
-		&s.Title, &s.UpdatedAt)
+		&s.Title, &s.UpdatedAt, &s.Persona)
 	return s, err
 }
 
@@ -85,7 +88,7 @@ func (d *DB) ListSessions(limit int) ([]Session, error) {
 			COALESCE(tokens_cached, 0), COALESCE(sub_tokens_in, 0), COALESCE(sub_tokens_out, 0),
 			COALESCE(system_prompt, ''), COALESCE(compacted_summary, ''),
 			COALESCE(workspace_backend, ''), COALESCE(workspace_omitted_tools, ''),
-			COALESCE(title, ''), COALESCE(updated_at, 0)
+			COALESCE(title, ''), COALESCE(updated_at, 0), COALESCE(persona, '')
 		FROM sessions
 		ORDER BY started_at DESC
 		LIMIT ?
@@ -101,7 +104,7 @@ func (d *DB) ListSessions(limit int) ([]Session, error) {
 		if err := rows.Scan(&s.ID, &s.StartedAt, &s.EndedAt, &s.CWD, &s.Model, &s.TokensIn, &s.TokensOut,
 			&s.TokensCached, &s.SubTokensIn, &s.SubTokensOut,
 			&s.SystemPrompt, &s.CompactedSummary, &s.WorkspaceBackend, &s.WorkspaceOmittedTools,
-			&s.Title, &s.UpdatedAt); err != nil {
+			&s.Title, &s.UpdatedAt, &s.Persona); err != nil {
 			return nil, err
 		}
 		results = append(results, s)
@@ -390,4 +393,24 @@ func (d *DB) SessionMode(id string) (string, error) {
 		return "", err
 	}
 	return mode, nil
+}
+
+// SessionPersona reads the session's persisted orchestrator persona name
+// (yaah-21uk.9): the name CreateSession stored at creation, which a
+// resume re-resolves against that day's registry instead of re-reading
+// agents.default.agent — the persona is selection state, so a config
+// default change never rewrites an existing session. The empty string is
+// "nothing stored": a row created before the column existed (the
+// column's DEFAULT) reads as build at the resolution sites, the
+// zero-change migration. An unknown id returns the underlying
+// sql.ErrNoRows so a caller can tell "no persona stored" from "no such
+// session".
+func (d *DB) SessionPersona(id string) (string, error) {
+	var persona string
+	if err := d.sql.QueryRow(
+		`SELECT COALESCE(persona, '') FROM sessions WHERE id = ?`, id,
+	).Scan(&persona); err != nil {
+		return "", err
+	}
+	return persona, nil
 }

@@ -71,7 +71,7 @@ func TestEffectiveBeltNames(t *testing.T) {
 	})
 
 	t.Run("golden: default session keeps the full surface and a silent belt", func(t *testing.T) {
-		sp := resolveSessionPersona("")
+		sp := resolveSessionPersona("agents.default.agent", "")
 		if sp.Persona.Name != subagent.BuildPersonaName || len(sp.Persona.Tools) != 0 {
 			t.Fatalf("default session persona = %+v; want the tool-less build persona", sp.Persona)
 		}
@@ -257,7 +257,7 @@ func TestPersonaNarrowing_ReadOnlyStillApplies(t *testing.T) {
 	t.Cleanup(func() { subagent.SetDefaultRoleRegistry(saved) })
 
 	t.Run("registry persona allowing write tools: belt admits, plan mode strips", func(t *testing.T) {
-		sp := resolveSessionPersona("builder")
+		sp := resolveSessionPersona("agents.default.agent", "builder")
 		if sp.Persona.Name != "builder" || !slices.Equal(sp.Persona.Tools, []string{"read", "bash"}) {
 			t.Fatalf("session persona = %+v; want builder with tools [read bash]", sp.Persona)
 		}
@@ -281,7 +281,7 @@ func TestPersonaNarrowing_ReadOnlyStillApplies(t *testing.T) {
 	})
 
 	t.Run("plan persona: belt untouched, plan mode strips writes", func(t *testing.T) {
-		sp := resolveSessionPersona("plan")
+		sp := resolveSessionPersona("agents.default.agent", "plan")
 		if !sp.Persona.ReadOnly {
 			t.Fatalf("plan persona = %+v; want ReadOnly", sp.Persona)
 		}

@@ -37,7 +37,8 @@ func (t *RoleTool) Schema() json.RawMessage {
 			"description": {"type": "string", "description": "One-line role description (required for create, optional for edit)"},
 			"body": {"type": "string", "description": "Role system prompt body in markdown (required for create, optional for edit)"},
 			"tools": {"type": "string", "description": "JSON array or comma-separated tool names (optional)"},
-			"specialty": {"type": "string", "description": "Short specialty label (optional)"}
+			"specialty": {"type": "string", "description": "Short specialty label (optional)"},
+			"mode": {"type": "string", "enum": ["primary", "subagent", "all"], "description": "Capability mode: primary = orchestrator-eligible, subagent = delegate-only (default), all = both. create: omitted means subagent and the key is omitted from the file. edit: omitted means unchanged; there is no unset via this tool — an explicit \"subagent\" restores the default capability but keeps the key; removing the key is a direct file edit, not a tool operation."}
 		},
 		"required": ["action"]
 	}`)
@@ -51,6 +52,7 @@ func (t *RoleTool) Execute(ctx context.Context, args string) (string, error) {
 		Body        string `json:"body"`
 		Tools       string `json:"tools"`
 		Specialty   string `json:"specialty"`
+		Mode        string `json:"mode"`
 	}
 	if err := json.Unmarshal([]byte(args), &params); err != nil {
 		return "", fmt.Errorf("role: invalid arguments: %w", err)
@@ -68,16 +70,23 @@ func (t *RoleTool) Execute(ctx context.Context, args string) (string, error) {
 		if params.Name == "" {
 			return "", fmt.Errorf("role 'create' requires a 'name'")
 		}
+		if err := validateRoleMode(params.Mode); err != nil {
+			return "", err
+		}
 		return t.createRole(roleParams{
 			Name:        params.Name,
 			Description: params.Description,
 			Body:        params.Body,
 			Tools:       params.Tools,
 			Specialty:   params.Specialty,
+			Mode:        params.Mode,
 		})
 	case "edit":
 		if params.Name == "" {
 			return "", fmt.Errorf("role 'edit' requires a 'name'")
+		}
+		if err := validateRoleMode(params.Mode); err != nil {
+			return "", err
 		}
 		return t.editRole(roleParams{
 			Name:        params.Name,
@@ -85,6 +94,7 @@ func (t *RoleTool) Execute(ctx context.Context, args string) (string, error) {
 			Body:        params.Body,
 			Tools:       params.Tools,
 			Specialty:   params.Specialty,
+			Mode:        params.Mode,
 		})
 	case "delete":
 		if params.Name == "" {
@@ -106,18 +116,18 @@ func (t *RoleTool) listRoles() (string, error) {
 		return "no roles defined", nil
 	}
 	names := make([]string, 0, len(roles))
+	// Build name→description and name→mode maps for sorted output.
+	desc := make(map[string]string, len(roles))
+	modes := make(map[string]string, len(roles))
 	for _, r := range roles {
 		names = append(names, r.Name)
+		desc[r.Name] = r.Description
+		modes[r.Name] = r.Mode
 	}
 	sort.Strings(names)
-	// Build a name→description map for sorted output.
-	desc := make(map[string]string, len(roles))
-	for _, r := range roles {
-		desc[r.Name] = r.Description
-	}
 	var b strings.Builder
 	for _, name := range names {
-		fmt.Fprintf(&b, "- **%s**: %s\n", name, desc[name])
+		fmt.Fprintf(&b, "- **%s**%s: %s\n", name, roleModeAnnotation(modes[name]), desc[name])
 	}
 	return strings.TrimSpace(b.String()), nil
 }
@@ -141,6 +151,7 @@ type roleParams struct {
 	Body        string
 	Tools       string
 	Specialty   string
+	Mode        string
 }
 
 // createRole writes a new role .md file and reloads the registry.
@@ -164,6 +175,10 @@ func (t *RoleTool) createRole(p roleParams) (string, error) {
 		Name:        p.Name,
 		Description: p.Description,
 		Specialty:   p.Specialty,
+		// Marshal emits keys in struct field order, so a provided mode lands
+		// with the other create-written keys (after tools, before the budget
+		// block); empty omits the key entirely (omitempty).
+		Mode: p.Mode,
 	}
 	fm.Tools = parseToolsList(p.Tools)
 
@@ -200,7 +215,7 @@ func (t *RoleTool) editRole(p roleParams) (string, error) {
 		return "", fmt.Errorf("parsing %s: %w", path, err)
 	}
 
-	if p.Description == "" && p.Body == "" && p.Specialty == "" && p.Tools == "" {
+	if p.Description == "" && p.Body == "" && p.Specialty == "" && p.Tools == "" && p.Mode == "" {
 		return "nothing to edit — no fields provided", nil
 	}
 	if p.Description != "" {
@@ -208,6 +223,12 @@ func (t *RoleTool) editRole(p roleParams) (string, error) {
 	}
 	if p.Specialty != "" {
 		existing.Specialty = p.Specialty
+	}
+	// Mirror description/specialty: empty means unchanged, non-empty
+	// replaces. There is no unset — passing "subagent" restores the default
+	// capability but keeps the key; removing the key is a file edit.
+	if p.Mode != "" {
+		existing.Mode = p.Mode
 	}
 	if p.Body != "" {
 		existingBody = strings.TrimSpace(p.Body)
@@ -285,6 +306,34 @@ func validateRoleName(name string) error {
 		return fmt.Errorf("invalid role name %q: must be a bare name, not a path", name)
 	}
 	return nil
+}
+
+// defaultRoleMode is the capability every role file without a mode key
+// resolves to. It mirrors subagent.normalizeRoleMode's default; the tools
+// package cannot import agent/subagent, so the value is restated here.
+const defaultRoleMode = "subagent"
+
+// validateRoleMode enforces the tool-call vocabulary for the mode field
+// (yaah-21uk.13). Unlike the registry's file-load path — which warns and
+// falls back so a broken project role cannot brick startup — this is a
+// direct tool call: reject the bad value so no role file is written with
+// a mode that would silently downgrade to the default.
+func validateRoleMode(mode string) error {
+	switch mode {
+	case "", "primary", "subagent", "all":
+		return nil
+	}
+	return fmt.Errorf("invalid mode %q: must be \"primary\", \"subagent\" or \"all\"", mode)
+}
+
+// roleModeAnnotation renders the capability tag shown after a role name in
+// list output. Only non-default capabilities are annotated; the default
+// (subagent, or an unset mode) keeps today's rendering byte-identical.
+func roleModeAnnotation(mode string) string {
+	if mode == "" || mode == defaultRoleMode {
+		return ""
+	}
+	return " [" + mode + "]"
 }
 
 // roleFilePath joins a search directory and a validated role name into the

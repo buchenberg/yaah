@@ -129,8 +129,9 @@ Build things.
 
 // TestRoleTool_editPreservesMode pins yaah-21uk D1: the mode capability
 // field round-trips through the role tool's edit path (Parse→Marshal),
-// and unmodeled extension keys around it survive. The tool exposes no
-// mode argument — the field is file-owned; the tool only preserves it.
+// and unmodeled extension keys around it survive. Since yaah-21uk.13 the
+// tool also exposes a mode argument; this pins the preserve path — an
+// edit that omits mode leaves the file's value untouched.
 func TestRoleTool_editPreservesMode(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "moded.md")

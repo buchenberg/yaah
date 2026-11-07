@@ -19,6 +19,7 @@ import (
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/cwdpath"
 	"github.com/buchenberg/yaah/internal/dispatch"
+	"github.com/buchenberg/yaah/internal/memory"
 )
 
 func newAgentSession() (*agentSession, error) {
@@ -185,17 +186,36 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	if err != nil {
 		return nil, err
 	}
-	// Effective orchestrator persona (yaah-21uk D4): resolve
-	// agents.default.agent against the registry buildWorkspace just
-	// rebuilt. A configured-but-missing or delegate-only name warns and
-	// falls back to the built-in "build" persona — OpenCode semantics,
-	// never a session failure. buildMCPSkills binds the resolved body
-	// into the system prompt (yaah-21uk.6); the build persona's empty
-	// body leaves the prompt byte-identical. buildToolRegistry takes
+	// Session store (yaah-21uk.9): opened before the persona resolves,
+	// so a resumed session can read its stored persona name — the
+	// resolution has to exist before buildToolRegistry shapes the belt
+	// from it, and the open is what makes the read possible that early.
+	// Same warn-and-continue posture the open had inside
+	// buildToolRegistry: a store that will not open only disables
+	// persistence, so the nil store hands every reader its degradation
+	// path (config-default persona, no transcript persistence).
+	store, dberr := memory.OpenDefault()
+	if dberr != nil {
+		fmt.Fprintf(os.Stderr, "warning: db open failed, persistence disabled: %v\n", dberr)
+		store = nil
+	}
+	// Effective orchestrator persona (yaah-21uk D4): resolve the
+	// session's persona against the registry buildWorkspace just
+	// rebuilt — agents.default.agent on a fresh session, the stored
+	// sessions.persona name on a resume (yaah-21uk.9: the persona is
+	// selection state, so a config-default change never rewrites an
+	// existing session). A configured-but-missing or delegate-only name
+	// warns and falls back to the built-in "build" persona — OpenCode
+	// semantics, never a session failure. buildMCPSkills binds the
+	// resolved body into the system prompt (yaah-21uk.6); the build
+	// persona's empty body leaves the prompt byte-identical, and a
+	// resumed session discards the re-assembled prompt entirely — its
+	// persisted SystemPrompt wins byte-for-byte, while the restored
+	// persona drives the budget and belt seams. buildToolRegistry takes
 	// the same persona and narrows the session's tool belt to its
 	// tools (yaah-21uk.7).
-	lc.persona = resolveSessionPersona(lc.cfg.Agent.Default.Agent)
-	if toolsStage, err = buildToolRegistry(lc.cfg, opts, ws, lc.persona.Persona); err != nil {
+	lc.persona = resolveSessionPersonaFor(store, opts, lc.cfg)
+	if toolsStage, err = buildToolRegistry(lc.cfg, opts, ws, lc.persona.Persona, store); err != nil {
 		return nil, err
 	}
 	// The containment substrate comes after the registry and its gates: starting

@@ -174,6 +174,16 @@ type Session struct {
 	// UpdatedAt is the ts of the last persisted message; 0 on a session
 	// with no messages yet (list queries COALESCE it to started_at).
 	UpdatedAt int64 `json:"updated_at,omitempty"`
+	// Persona is the resolved orchestrator persona the session was
+	// created with (yaah-21uk.9): the built-in "build"/"plan" name, or
+	// a role-file persona's file stem, persisted at creation so a
+	// resume restores the session's own budget
+	// (resolveOrchestratorBudget) and tool-belt selection even after
+	// agents.default.agent — or the role files themselves — change. The
+	// empty string is a row from before the column existed and reads as
+	// build at the read sites: pre-persona sessions all ran the plain
+	// build orchestrator, so build is all there is to restore.
+	Persona string `json:"persona,omitempty"`
 }
 
 // Message represents a single message in a session.

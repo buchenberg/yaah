@@ -51,6 +51,7 @@ func (SubAgentRoleResolver) ListRoles() []tools.RoleEntry {
 				Fields:  ConvertContractFields(def.Contract.Fields),
 			},
 			Tools: def.Tools,
+			Mode:  def.Mode,
 		})
 	}
 	return out

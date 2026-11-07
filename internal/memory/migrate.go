@@ -268,6 +268,14 @@ func (d *DB) migrate() error {
 		// rows read as build and no backfill (and no schema-version bump)
 		// is needed — nothing has to run exactly once.
 		{"sessions", "mode", "ALTER TABLE sessions ADD COLUMN mode TEXT DEFAULT ''"},
+		// Persisted orchestrator persona (yaah-21uk.9): the resolved
+		// persona name a session was created with, so a resume keeps the
+		// session's own budget/belt selection after agents.default.agent
+		// changes. Additive with a '' default — pre-persona rows read as
+		// build at the read sites (SessionPersona, GetSession), the
+		// zero-change migration; no backfill and no schema-version bump
+		// needed.
+		{"sessions", "persona", "ALTER TABLE sessions ADD COLUMN persona TEXT DEFAULT ''"},
 		// Watch ownership: a resumed process claims the session's watches,
 		// and a fire is delivered only by the owner that claims it.
 		{"session_watches", "owner", "ALTER TABLE session_watches ADD COLUMN owner TEXT NOT NULL DEFAULT ''"},
