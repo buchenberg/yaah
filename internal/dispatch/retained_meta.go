@@ -39,7 +39,10 @@ type worktreeProposalMeta struct {
 	// Diff is the reviewable diff computed at seal. The kernel's sealed payload
 	// omits it (see parity D15), so without this a recovered proposal would show
 	// and release with no diff text.
-	Diff       string              `json:"diff,omitempty"`
+	Diff string `json:"diff,omitempty"`
+	// StopReason is the typed run outcome (completed, turn_budget, …), persisted
+	// so show after a restart reports it too.
+	StopReason string              `json:"stop_reason,omitempty"`
 	Params     jobs.SubAgentParams `json:"params,omitempty"`
 	TimeoutMS  int64               `json:"timeout_ms,omitempty"`
 	Transcript []types.Message     `json:"transcript,omitempty"`
@@ -78,6 +81,7 @@ func persistWorktreeProposalMeta(rt RetainedRuntime, p *retainedProposal) error 
 		Result:        p.result,
 		RunErr:        p.runErr,
 		Diff:          p.reviewDiff(),
+		StopReason:    p.stopReason,
 		Params:        params,
 		TimeoutMS:     p.timeout.Milliseconds(),
 		Transcript:    p.transcript,

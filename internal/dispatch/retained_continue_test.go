@@ -209,6 +209,135 @@ func TestRetained_ContinueRefusesWithoutConversation(t *testing.T) {
 	}
 }
 
+// TestRetained_StopReasonAndNotes: the envelope reports why the run ended, and
+// the notes distinguish continue (consumes) from fork (preserves), flagging a
+// byte-identical continuation.
+func TestRetained_StopReasonAndNotes(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	seed := []types.Message{types.UserMsg("go")}
+	rt := RetainedRuntime{
+		Runner: func(ctx context.Context, prompt string, params SubAgentParams) (string, error) {
+			writeTestFile(t, params.Workdir, "work.txt", "work\n")
+			jobs.CaptureSubAgentTranscript(ctx, seed)
+			jobs.CaptureSubAgentStop(ctx, jobs.SubAgentStop{TurnBudgetExhausted: true})
+			return "done", nil
+		},
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+		Proposals:    NewProposalRegistry(),
+	}
+
+	res, err := StartRetainedRun(context.Background(), rt, "go", SubAgentParams{Role: "developer"}, 10*time.Second, false)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	env := decodeProposalEnvelope(t, res)
+	if env.StopReason != "turn_budget" {
+		t.Errorf("dispatch stop_reason = %q, want turn_budget", env.StopReason)
+	}
+
+	// Fork: preserves the parent, notes read "fork of".
+	resFork, err := ContinueRetainedRun(context.Background(), rt, env.ProposalID, 2, "", false)
+	if err != nil {
+		t.Fatalf("fork: %v", err)
+	}
+	fork := decodeProposalEnvelope(t, resFork)
+	if fork.StopReason != "turn_budget" {
+		t.Errorf("fork stop_reason = %q, want turn_budget", fork.StopReason)
+	}
+	if !strings.HasPrefix(fork.Notes, "fork of ") || strings.Contains(fork.Notes, "original discarded") {
+		t.Errorf("fork notes = %q, want a preserving 'fork of' note", fork.Notes)
+	}
+	// The runner writes the same file the source already had, so the
+	// continuation is byte-identical and must say so.
+	if !strings.Contains(fork.Notes, "no delta vs parent") {
+		t.Errorf("fork notes = %q, want a no-delta note", fork.Notes)
+	}
+
+	// Continue: consumes the parent, notes read "continued from".
+	resCont, err := ContinueRetainedRun(context.Background(), rt, fork.ProposalID, 2, "", true)
+	if err != nil {
+		t.Fatalf("continue: %v", err)
+	}
+	cont := decodeProposalEnvelope(t, resCont)
+	if !strings.HasPrefix(cont.Notes, "continued from ") || !strings.Contains(cont.Notes, "original discarded") {
+		t.Errorf("continue notes = %q, want a consuming 'continued from' note", cont.Notes)
+	}
+}
+
+// TestRetainedStopReason pins the typed stop classification, including the
+// distinctions the envelope's error text already makes: a provider-internal
+// deadline is not a role-budget timeout, and a truncated finish is max_tokens.
+func TestRetainedStopReason(t *testing.T) {
+	tests := []struct {
+		name    string
+		stop    *jobs.SubAgentStop
+		bodyErr error
+		source  retainedFailureSource
+		want    string
+	}{
+		{name: "completed", want: "completed"},
+		{name: "turn budget", stop: &jobs.SubAgentStop{TurnBudgetExhausted: true}, want: "turn_budget"},
+		{name: "iteration budget", stop: &jobs.SubAgentStop{IterationBudgetExhausted: true}, want: "iteration_budget"},
+		{name: "max tokens", stop: &jobs.SubAgentStop{FinishReason: "length"}, want: "max_tokens"},
+		{name: "halted", stop: &jobs.SubAgentStop{HaltedBySupervisor: true}, want: "halted"},
+		{name: "role budget deadline", bodyErr: context.DeadlineExceeded, source: retainedFailureBudget, want: "timeout"},
+		{name: "parent deadline", bodyErr: context.DeadlineExceeded, source: retainedFailureParent, want: "timeout"},
+		{name: "provider deadline", bodyErr: context.DeadlineExceeded, source: retainedFailureProvider, want: "provider_error"},
+		{name: "canceled", bodyErr: context.Canceled, source: retainedFailureProvider, want: "canceled"},
+		// LastFinishReason is stale across a failed final call; the terminal
+		// error must win over an earlier "length".
+		{name: "stale length does not mask timeout", stop: &jobs.SubAgentStop{FinishReason: "length"}, bodyErr: context.DeadlineExceeded, source: retainedFailureBudget, want: "timeout"},
+		{name: "stale length does not mask cancel", stop: &jobs.SubAgentStop{FinishReason: "length"}, bodyErr: context.Canceled, source: retainedFailureProvider, want: "canceled"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := retainedStopReason(tc.stop, tc.bodyErr, tc.source); got != tc.want {
+				t.Errorf("retainedStopReason(...) = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRetained_ContinuationPromptCarriesWorkspaceRoot: a re-run prompt names the
+// live workspace root so the model does not echo a prior run's absolute path.
+func TestRetained_ContinuationPromptCarriesWorkspaceRoot(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	seed := []types.Message{types.UserMsg("go")}
+	var calls int
+	var seenPrompt, seenWorkdir string
+	rt := RetainedRuntime{
+		Runner: func(ctx context.Context, prompt string, params SubAgentParams) (string, error) {
+			calls++
+			if calls > 1 {
+				seenPrompt, seenWorkdir = prompt, params.Workdir
+			}
+			writeTestFile(t, params.Workdir, "work.txt", "work\n")
+			jobs.CaptureSubAgentTranscript(ctx, seed)
+			return "done", nil
+		},
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+		Proposals:    NewProposalRegistry(),
+	}
+
+	res, err := StartRetainedRun(context.Background(), rt, "go", SubAgentParams{Role: "developer"}, 10*time.Second, false)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	env := decodeProposalEnvelope(t, res)
+	if _, err := ContinueRetainedRun(context.Background(), rt, env.ProposalID, 2, "", false); err != nil {
+		t.Fatalf("continue: %v", err)
+	}
+	if seenWorkdir == "" || !strings.Contains(seenPrompt, seenWorkdir) {
+		t.Errorf("continuation prompt %q does not name the workspace root %q", seenPrompt, seenWorkdir)
+	}
+}
+
 // TestProposalEnvelope_NextAdvertisesContinuation: `next` is a real eligibility
 // list — an open worktree proposal with a captured conversation advertises the
 // re-run verbs, on the dispatch envelope and on `show`.

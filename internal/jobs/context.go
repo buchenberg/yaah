@@ -250,3 +250,35 @@ func CaptureSubAgentTranscript(ctx context.Context, messages []types.Message) {
 		*ptr = messages
 	}
 }
+
+// SubAgentStop is the typed outcome of one sub-agent run: why it ended, so a
+// dispatch envelope can report a stop_reason instead of leaving the
+// orchestrator to infer it from result prose.
+type SubAgentStop struct {
+	// TurnBudgetExhausted reports that the soft tool-turn cap stripped tools
+	// and forced a text-only final turn.
+	TurnBudgetExhausted bool
+	// IterationBudgetExhausted reports a MaxIterationsError hard stop.
+	IterationBudgetExhausted bool
+	// HaltedBySupervisor reports a deliberate supervisor halt/cancel.
+	HaltedBySupervisor bool
+	// FinishReason is the provider's last finish reason, when known.
+	FinishReason string
+}
+
+// subAgentStopKey stores a *SubAgentStop the runner writes after its loop
+// returns. A dispatch body installs it before invoking the runner.
+type subAgentStopKey struct{}
+
+// WithSubAgentStop stores ptr in ctx so the runner can report the run's typed
+// stop outcome. Only safe when the caller reads *ptr after joining the runner.
+func WithSubAgentStop(ctx context.Context, ptr *SubAgentStop) context.Context {
+	return context.WithValue(ctx, subAgentStopKey{}, ptr)
+}
+
+// CaptureSubAgentStop writes stop through the sink stored in ctx, if present.
+func CaptureSubAgentStop(ctx context.Context, stop SubAgentStop) {
+	if ptr, ok := ctx.Value(subAgentStopKey{}).(*SubAgentStop); ok && ptr != nil {
+		*ptr = stop
+	}
+}
