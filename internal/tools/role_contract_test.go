@@ -112,3 +112,61 @@ func TestRoleTool_createWithoutContractOmitsBlock(t *testing.T) {
 		t.Errorf("created role without contract should not contain a contract block:\n%s", data)
 	}
 }
+
+const roleWithMode = `---
+name: moded
+description: carries a capability mode
+mode: all
+owner: platform-team
+specialty: building
+tools:
+    - read
+max_iterations: 10
+---
+
+Build things.
+`
+
+// TestRoleTool_editPreservesMode pins yaah-21uk D1: the mode capability
+// field round-trips through the role tool's edit path (Parse→Marshal),
+// and unmodeled extension keys around it survive. The tool exposes no
+// mode argument — the field is file-owned; the tool only preserves it.
+func TestRoleTool_editPreservesMode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "moded.md")
+	if err := os.WriteFile(path, []byte(roleWithMode), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &RoleTool{Dirs: []string{dir}}
+	out, err := tool.Execute(context.Background(),
+		`{"action":"edit","name":"moded","description":"updated description"}`)
+	if err != nil {
+		t.Fatalf("edit failed: %v (output: %s)", err, out)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+
+	for _, want := range []string{
+		"mode: all",
+		"owner: platform-team",
+		"updated description",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("edited role file lost %q\n--- file content ---\n%s", want, content)
+		}
+	}
+
+	// The rewritten file must still parse, with the mode intact.
+	fm, _, err := rolefile.Parse(content)
+	if err != nil {
+		t.Fatalf("edited file no longer parses: %v", err)
+	}
+	if fm.Mode != "all" {
+		t.Errorf("mode = %q; want all", fm.Mode)
+	}
+}

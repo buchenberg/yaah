@@ -137,6 +137,116 @@ body
 	}
 }
 
+// TestRoundTripModeField pins the modeled mode field (yaah-21uk D1): all
+// three vocabulary values parse and survive parse→marshal, a missing key
+// stays omitted (omitempty), and the field joins the recorded key order
+// so rewrites do not move it relative to extension keys.
+func TestRoundTripModeField(t *testing.T) {
+	tests := []struct {
+		name string
+		mode string // declared value; "" = key absent from the source
+	}{
+		{"primary", "primary"},
+		{"subagent", "subagent"},
+		{"all", "all"},
+		{"missing", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			front := ""
+			if tt.mode != "" {
+				front = "mode: " + tt.mode + "\n"
+			}
+			input := "---\nname: reviewer\n" + front + "tools: [read, grep]\n---\nbody\n"
+			fm, body, err := Parse(input)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if fm.Mode != tt.mode {
+				t.Fatalf("Mode = %q, want %q", fm.Mode, tt.mode)
+			}
+			out, err := Marshal(fm, body)
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			if tt.mode == "" && strings.Contains(out, "\nmode:") {
+				t.Errorf("empty mode must stay omitted:\n%s", out)
+			}
+			fm2, body2, err := Parse(out)
+			if err != nil {
+				t.Fatalf("re-parse after Marshal: %v\n--- output ---\n%s", err, out)
+			}
+			if fm2.Mode != tt.mode {
+				t.Errorf("mode changed on round trip: %q vs %q", fm2.Mode, tt.mode)
+			}
+			if tt.mode != "" && !slices.Contains(fm2.order, "mode") {
+				t.Errorf("key order lost the mode field: %v", fm2.order)
+			}
+			if body2 != body {
+				t.Errorf("body changed on round trip: %q vs %q", body2, body)
+			}
+		})
+	}
+}
+
+// TestRoundTripModeWithExtraKeys pins that mode round-trips alongside
+// unmodeled extension keys and keeps its source-order position between
+// them — the same rewrite-stability guarantee the extra-key machinery
+// gives every other field.
+func TestRoundTripModeWithExtraKeys(t *testing.T) {
+	input := `---
+owner: platform-team
+name: tester
+mode: all
+metadata:
+  tier: 2
+tools: [bash]
+---
+body
+`
+	fm, body, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	out, err := Marshal(fm, body)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	for _, want := range []string{"owner: platform-team", "mode: all", "tier: 2"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("marshaled role lost %q:\n%s", want, out)
+		}
+	}
+	keys := topLevelKeys(t, out)
+	pos := func(name string) int {
+		for i, key := range keys {
+			if key == name {
+				return i
+			}
+		}
+		t.Fatalf("missing key %q in %v", name, keys)
+		return -1
+	}
+	if !(pos("owner") < pos("mode") && pos("mode") < pos("metadata")) {
+		t.Errorf("mode moved relative to extension keys: %v", keys)
+	}
+
+	fm2, body2, err := Parse(out)
+	if err != nil {
+		t.Fatalf("re-parse: %v\n%s", err, out)
+	}
+	if fm2.Mode != "all" {
+		t.Errorf("mode changed on round trip: %q", fm2.Mode)
+	}
+	out2, err := Marshal(fm2, body2)
+	if err != nil {
+		t.Fatalf("re-marshal: %v", err)
+	}
+	if out2 != out {
+		t.Errorf("round trip changed the file:\n--- first ---\n%s\n--- second ---\n%s", out, out2)
+	}
+}
+
 func TestParseCRLF(t *testing.T) {
 	crlf := strings.ReplaceAll(sampleRole, "\n", "\r\n")
 	fm, body, err := Parse(crlf)

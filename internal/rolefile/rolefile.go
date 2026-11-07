@@ -59,7 +59,13 @@ type Frontmatter struct {
 	// sub-agent's text directly (isolated-report or shared lane), "proposal"
 	// seals an isolated worktree delta for the orchestrator to settle. Empty
 	// means proposal — the historical behavior.
-	Output        string `yaml:"output,omitempty"`
+	Output string `yaml:"output,omitempty"`
+	// Mode selects the agent capability (yaah-21uk D1): "primary" is
+	// orchestrator-eligible, "subagent" is delegate-only, "all" is both.
+	// Empty means subagent — files without the key keep today's behavior.
+	// Schema only: the registry normalizes on load; nothing here filters
+	// dispatch behavior.
+	Mode          string `yaml:"mode,omitempty"`
 	MaxLoopCycles int    `yaml:"max_iterations"`
 	MinLoopCycles int    `yaml:"min_iterations"` // budget floor; 0 = none
 	MaxToolTurns  int    `yaml:"max_turns"`
