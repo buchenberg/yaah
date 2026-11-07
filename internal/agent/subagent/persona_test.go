@@ -156,3 +156,65 @@ func TestResolvePersona(t *testing.T) {
 		}
 	})
 }
+
+// TestPersonaTools pins the yaah-21uk.7 surface: a registry persona
+// carries its role file's tools list for belt narrowing, the built-ins
+// name nothing (empty means no narrowing, not zero tools), and a
+// shadowing rolefile cannot give a built-in a tools list.
+func TestPersonaTools(t *testing.T) {
+	reg := NewRoleRegistry()
+	if err := reg.LoadBytes(map[string][]byte{
+		"boss.md":  []byte("---\nname: Boss\nmode: primary\ntools: [read, grep]\ndescription: runs the session\n---\nprimary body"),
+		"wide.md":  []byte("---\nname: Wide\nmode: all\ndescription: no tools key\n---\nall body"),
+		"build.md": []byte("---\nname: Build\nmode: primary\ntools: [write]\ndescription: shadow build\n---\nshadow body"),
+	}); err != nil {
+		t.Fatalf("LoadBytes: %v", err)
+	}
+	SetDefaultRoleRegistry(reg)
+	defer SetDefaultRoleRegistry(nil)
+
+	tests := []struct {
+		name      string
+		lookup    string
+		want      []string
+		wantEmpty bool
+	}{
+		{"file role carries its tools list", "boss", []string{"read", "grep"}, false},
+		{"role file without tools narrows nothing", "wide", nil, true},
+		{"built-in build narrows nothing", "build", nil, true},
+		{"built-in plan narrows nothing", "plan", nil, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, ok := ResolvePersona(tt.lookup)
+			if !ok {
+				t.Fatalf("ResolvePersona(%q) did not resolve", tt.lookup)
+			}
+			if tt.wantEmpty {
+				if len(p.Tools) != 0 {
+					t.Errorf("Tools = %v, want empty (no narrowing)", p.Tools)
+				}
+				return
+			}
+			if !slices.Equal(p.Tools, tt.want) {
+				t.Errorf("Tools = %v, want %v", p.Tools, tt.want)
+			}
+		})
+	}
+
+	t.Run("rolefile cannot give the built-in build a tools list", func(t *testing.T) {
+		count := 0
+		for _, p := range Personas() {
+			if p.Name != BuildPersonaName {
+				continue
+			}
+			count++
+			if len(p.Tools) != 0 {
+				t.Errorf("shadowing rolefile gave build tools %v", p.Tools)
+			}
+		}
+		if count != 1 {
+			t.Errorf("build persona listed %d times, want exactly the built-in one", count)
+		}
+	})
+}

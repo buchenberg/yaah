@@ -191,9 +191,11 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// falls back to the built-in "build" persona — OpenCode semantics,
 	// never a session failure. buildMCPSkills binds the resolved body
 	// into the system prompt (yaah-21uk.6); the build persona's empty
-	// body leaves the prompt byte-identical.
+	// body leaves the prompt byte-identical. buildToolRegistry takes
+	// the same persona and narrows the session's tool belt to its
+	// tools (yaah-21uk.7).
 	lc.persona = resolveSessionPersona(lc.cfg.Agent.Default.Agent)
-	if toolsStage, err = buildToolRegistry(lc.cfg, opts, ws); err != nil {
+	if toolsStage, err = buildToolRegistry(lc.cfg, opts, ws, lc.persona.Persona); err != nil {
 		return nil, err
 	}
 	// The containment substrate comes after the registry and its gates: starting

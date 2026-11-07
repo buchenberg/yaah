@@ -268,13 +268,22 @@ type toolRegistryStage struct {
 	applyOutTool     *tools.ApplyOutTool
 	db               *memory.DB
 	embedderAttached bool
+
+	// personaName/personaTools carry the resolved session persona into
+	// the guidance-time unknown-name check (yaah-21uk.7). personaTools
+	// is the normalized tools list — empty means no narrowing — and the
+	// name keeps the warning truthful about where a bad name came from.
+	personaName  string
+	personaTools []string
 }
 
 // buildToolRegistry builds the session's tool registry and registers the tools
 // whose dependencies are available this early (the leaf tools through the belt,
-// the accept seam, the memory tools). It has no failure of its own: a store
-// that will not open only disables persistence.
-func buildToolRegistry(cfg *config.Config, opts SessionOptions, ws *workspaceStage) (*toolRegistryStage, error) {
+// the accept seam, the memory tools). The session persona narrows the belt
+// (yaah-21uk.7): a persona that names tools intersects the configured
+// allowlist, narrow-only. It has no failure of its own: a store that will not
+// open only disables persistence.
+func buildToolRegistry(cfg *config.Config, opts SessionOptions, ws *workspaceStage, persona subagent.Persona) (*toolRegistryStage, error) {
 	st := &toolRegistryStage{}
 
 	// The tool registry (plan §3, Option A): local mode installs every
@@ -289,7 +298,22 @@ func buildToolRegistry(cfg *config.Config, opts SessionOptions, ws *workspaceSta
 	// is enforced by the registry at registration — a tool it does not
 	// admit is never installed, so a late registration is refused like
 	// any other. An unset list admits every tool (the default).
-	belt := tools.NewBelt(cfg.Agent.Default.Tools)
+	//
+	// Persona narrowing (yaah-21uk.7) rides that same belt: a persona
+	// that names tools intersects the configured allowlist when both
+	// are set, becomes the belt when it is the only list, and narrows
+	// nothing when empty (the built-in build persona — today's surface,
+	// byte-identical). Narrow-only by construction, and the merged list
+	// flows through the same NewBelt the configured list always did, so
+	// enforcement, the prompt delta (belt.Refused) and the unknown-name
+	// warning all keep one mechanism. Ordering with plan mode is
+	// persona first, level second: this shrinks what is registered; the
+	// read-only tools level (toolsLevelForMode) still strips write
+	// tools on top at loop build.
+	pTools := normalizeToolNames(persona.Tools)
+	st.personaName = persona.Name
+	st.personaTools = pTools
+	belt := tools.NewBelt(effectiveBeltNames(cfg.Agent.Default.Tools, persona.Tools))
 	st.belt = belt
 	if isolated {
 		st.reg = tools.NewIsolatedRegistryWithBelt(belt)

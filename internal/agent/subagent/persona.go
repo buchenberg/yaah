@@ -24,6 +24,16 @@ type Persona struct {
 	// Description is the one-line summary shown to whoever picks a
 	// persona, worded like the built-in role files' descriptions.
 	Description string
+	// Tools narrows the orchestrator's tool surface to the role file's
+	// tools list (yaah-21uk.7): at wiring the list is intersected with
+	// the configured tool belt (agents.default.tools) and the result
+	// becomes the session's belt, so a persona can only ever shrink
+	// the surface, never grow it. Empty means NO narrowing — the
+	// default full surface, or the configured belt if one is set —
+	// never zero tools. The synthetic built-ins leave it empty: build
+	// is today's full-surface orchestrator, and plan's restriction is
+	// the read-only tools level (yaah-21uk.12), not a belt.
+	Tools []string
 	// ReadOnly marks personas whose session must not mutate the
 	// workspace. Only the synthetic "plan" persona sets it.
 	ReadOnly bool
@@ -138,5 +148,6 @@ func registryPersona(reg *RoleRegistry, role SubAgentRole) (Persona, bool) {
 		Mode:        def.Mode,
 		Body:        def.Body,
 		Description: def.Description,
+		Tools:       def.Tools,
 	}, true
 }

@@ -80,8 +80,12 @@ func appendToolGuidance(opts SessionOptions, ws *workspaceStage, tr *toolRegistr
 	if opts.OneShot {
 		mainPrompt += "\n\n" + prompts.OneShotGuidance()
 	}
-	for _, name := range tr.belt.Unknown() {
-		fmt.Fprintf(os.Stderr, "warning: config `agents.default.tools` names unknown tool %q; ignored\n", name)
+	// Unknown allowlist names warn here, at prompt-assembly time, when
+	// the belt's know/refuse accounting is final. unknownToolWarnings
+	// keeps the configured belt's wording and adds persona names the
+	// intersection dropped (yaah-21uk.7).
+	for _, line := range unknownToolWarnings(tr) {
+		fmt.Fprintln(os.Stderr, line)
 	}
 	return mainPrompt
 }
