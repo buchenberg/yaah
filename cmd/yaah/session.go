@@ -51,6 +51,7 @@ import (
 	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/memory"
 	processpkg "github.com/buchenberg/yaah/internal/process"
+	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 	"github.com/buchenberg/yaah/internal/wake"
@@ -118,10 +119,23 @@ type agentSession struct {
 	// D4). Its Body binds into the system prompt (yaah-21uk.6) and its
 	// budget fields bound every loop the session builds (yaah-21uk.8,
 	// resolveOrchestratorBudget). The zero persona — hand-built test
-	// sessions — resolves today's limits unchanged. Fixed at
-	// construction: role reloads refresh the registry for new sessions
-	// only; nothing re-resolves this field mid-session (yaah-21uk.11).
-	persona      subagent.Persona
+	// sessions — resolves today's limits unchanged. Mutable since the
+	// mid-session switch (yaah-21uk.12, the reversal recorded on
+	// yaah-21uk.2): SetPersona re-resolves it under the session lock;
+	// role reloads still only refresh the registry for new sessions.
+	// Guarded by mu, like the mode.
+	persona subagent.Persona
+	// promptLayers retains the construction-time persona-independent
+	// prompt layers (yaah-21uk.12): a persona switch rebinds only the
+	// persona body and re-renders from them, so the memory snapshot and
+	// the environment stay byte-frozen across switches. Zero Identity
+	// means the session never captured them (hand-built test sessions)
+	// and a switch cannot rebuild the prompt. Immutable after wiring.
+	promptLayers prompts.Layers
+	// promptMemory is the MemoryGuidance the construction-time memory
+	// guidance block rendered from; a prompt rebuild reuses it so the
+	// block stays byte-identical. Immutable after wiring.
+	promptMemory prompts.MemoryGuidance
 	systemPrompt string
 	// mainPrompt is systemPrompt plus the default-agent directives
 	// injected after the identity block. Only the top-level loop sees

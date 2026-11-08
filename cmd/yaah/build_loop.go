@@ -133,6 +133,12 @@ func (s *agentSession) loopBuilder(
 	// Sample the mode once: tools and prompt must describe the same mode even
 	// if session/set_mode lands concurrently with this build.
 	mode := s.Mode()
+	// Sample the persona once too (yaah-21uk.12): the advertised tools, the
+	// gate, and the prompt's regime sentence must describe the same persona
+	// even if /agent lands concurrently with this build.
+	s.mu.RLock()
+	persona := s.persona
+	s.mu.RUnlock()
 	// The usage hooks are installed on the builder so EVERY loop this
 	// session builds — interactive (runPrompt), serve (runHeadless),
 	// compact — flushes incrementally. usageBeforeRun anchors the
@@ -235,8 +241,10 @@ func (s *agentSession) loopBuilder(
 	// The orchestrator loop budget (yaah-21uk.8): the session persona's
 	// max_iterations/max_turns fill the gaps agents.default leaves,
 	// config-authoritative. Zero-budget personas — the built-ins —
-	// resolve to today's limits unchanged.
-	loopBudget := s.orchestratorBudget()
+	// resolve to today's limits unchanged. Resolved from the persona
+	// sampled above, not a fresh read, so budget and tools describe the
+	// same persona.
+	loopBudget := resolveOrchestratorBudget(s.cfg, persona)
 
 	return &agent.LoopBuilder{
 		OnUsage:                    onUsage,
@@ -245,7 +253,8 @@ func (s *agentSession) loopBuilder(
 		ConsolidateFn:              s.consolidateFn(),
 		Provider:                   prov,
 		Registry:                   s.toolReg,
-		ToolsLevel:                 s.toolsLevelForMode(mode),
+		ToolsLevel:                 sampledToolsLevel(mode, persona),
+		PersonaTools:               normalizeToolNames(persona.Tools),
 		Model:                      modelName,
 		SystemPrompt:               s.modeDirective(mode),
 		Messages:                   msgs,

@@ -16,6 +16,11 @@ type SessionRepository interface {
 	// a resumed session is not silently widened back to build.
 	SetSessionMode(id, mode string) error
 	SessionMode(id string) (string, error)
+	// Persona and system-prompt selection state a mid-session persona
+	// switch persists on the switch (yaah-21uk.12), so a resume restores
+	// both the persona name and the prompt bytes the session ran with.
+	SetSessionPersona(id, persona string) error
+	SetSessionSystemPrompt(id, prompt string) error
 	// Session-lifecycle surface for pickers and multi-session hosts
 	// (ACP session/list, resume, delete; `yaah sessions`).
 	DeleteSession(id string) error

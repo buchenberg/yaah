@@ -4,21 +4,58 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strings"
 
 	"github.com/buchenberg/yaah/internal/agent/llm"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
-// buildToolsForLevel selects tool definitions based on ToolsLevel config.
+// buildToolsForLevel selects tool definitions based on ToolsLevel config,
+// then intersects the advertised set with the session persona's tools
+// list (yaah-21uk.12): the level strips first, the persona narrows
+// second, and an empty persona list narrows nothing — today's surface
+// exactly. Narrowing lives here, at loop build, so a mid-session persona
+// switch re-narrows on the next run without registry surgery.
 func (l *Loop) buildToolsForLevel() []types.ToolDef {
+	var defs []types.ToolDef
 	switch l.Config.ToolsLevel {
 	case SubAgentsOnly:
-		return l.agentTools()
+		defs = l.agentTools()
 	case ReadOnlyTools:
-		return l.readOnlyTools()
+		defs = l.readOnlyTools()
 	default:
-		return l.buildToolDefs()
+		defs = l.buildToolDefs()
 	}
+	return narrowToPersonaTools(defs, l.Config.PersonaTools)
+}
+
+// narrowToPersonaTools intersects the advertised set with the persona's
+// tools list. Narrow-only by construction — a persona can shrink the
+// surface, never grow it — and names compare trimmed, mirroring the
+// belt's normalization, so a padded role-file entry still matches its
+// clean twin.
+func narrowToPersonaTools(defs []types.ToolDef, personaTools []string) []types.ToolDef {
+	if len(personaTools) == 0 {
+		return defs
+	}
+	var out []types.ToolDef
+	for _, d := range defs {
+		if personaToolAllows(personaTools, d.Function.Name) {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// personaToolAllows reports whether name is in the persona's tools list,
+// trimming both sides. An empty list means no narrowing; callers decide.
+func personaToolAllows(personaTools []string, name string) bool {
+	for _, n := range personaTools {
+		if strings.TrimSpace(n) == strings.TrimSpace(name) {
+			return true
+		}
+	}
+	return false
 }
 
 // readOnlyToolNames is the plan-mode surface — the inspection set: the tools
@@ -73,6 +110,12 @@ func InspectionSetNames() []string {
 // (git) is let through here and refused per call by classifyGate, which sees
 // the arguments.
 func (l *Loop) allowsTool(name string) bool {
+	// The persona's narrowing is an execution-time gate too: dialect
+	// recovery can synthesize calls for tools the advertised array never
+	// carried, so the intersection applies to names, not just defs.
+	if len(l.Config.PersonaTools) > 0 && !personaToolAllows(l.Config.PersonaTools, name) {
+		return false
+	}
 	switch l.Config.ToolsLevel {
 	case ReadOnlyTools:
 		return readOnlyToolNames[name]

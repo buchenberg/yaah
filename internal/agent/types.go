@@ -205,6 +205,13 @@ type LoopConfig struct {
 	BudgetIterationsSource string // provenance of MaxLoopCycles ("call", "floor", ...); "" unknown
 	BudgetTurnsSource      string // provenance of MaxToolTurns; "" unknown
 	JSONMode               bool
+	// PersonaTools narrows the advertised toolset to the session
+	// persona's tools list (yaah-21uk.12): a non-empty list intersects
+	// the level's surface — narrow-only, trimmed like the belt — and an
+	// empty list narrows nothing. allowsTool enforces the same
+	// intersection at execution time, so a synthesized call cannot reach
+	// a tool the persona does not name.
+	PersonaTools           []string
 	ToolsLevel             ToolsLevel
 	ContextWindow          int
 	CompactionThreshold    float64

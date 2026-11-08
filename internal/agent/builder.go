@@ -25,6 +25,9 @@ type LoopBuilder struct {
 	// ToolsLevel narrows the advertised tool set for this run. Zero means
 	// FullTools.
 	ToolsLevel ToolsLevel
+	// PersonaTools narrows the advertised tool set to the session
+	// persona's tools list (yaah-21uk.12); empty means no narrowing.
+	PersonaTools []string
 	// Model is the model name for the primary provider.
 	Model string
 	// SystemPrompt is the assembled system prompt.
@@ -135,6 +138,7 @@ func (b *LoopBuilder) Build(opts LoopBuildOptions) *Loop {
 		WithBackgroundJobs(b.BackgroundJobs),
 		WithConflictTracker(b.ConflictTracker),
 		WithToolsLevel(b.ToolsLevel),
+		WithPersonaTools(b.PersonaTools),
 		WithOtel(otelEnabled, opts.OtelVerbose),
 		WithSubAgentConcurrency(
 			b.SubAgentMaxConcurrency,

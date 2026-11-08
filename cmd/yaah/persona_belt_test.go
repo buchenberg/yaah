@@ -6,6 +6,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/tools"
 )
 
@@ -92,12 +93,14 @@ func TestEffectiveBeltNames(t *testing.T) {
 	})
 }
 
-// personaBeltRegistry builds a registry over the seam's effective belt
-// so admission is asserted against the real enforcement point (registry
-// registration), not a reimplementation of it.
-func personaBeltRegistry(t *testing.T, configured, personaTools []string) *tools.Registry {
+// personaBeltRegistry builds a registry over the effective belt the
+// construction wiring feeds: config-only since the switch (yaah-21uk.12)
+// — buildToolRegistry passes persona=nil to effectiveBeltNames — so
+// admission is asserted against the real enforcement point (registry
+// registration) for the belt that remains construction-time.
+func personaBeltRegistry(t *testing.T, configured []string) *tools.Registry {
 	t.Helper()
-	belt := tools.NewBelt(effectiveBeltNames(configured, personaTools))
+	belt := tools.NewBelt(effectiveBeltNames(configured, nil))
 	reg := tools.NewRegistryWithBelt(belt)
 	for _, name := range []string{"read", "grep", "bash", "write", "edit"} {
 		reg.Register(tools.NewLeafTool(name))
@@ -105,52 +108,45 @@ func personaBeltRegistry(t *testing.T, configured, personaTools []string) *tools
 	return reg
 }
 
-// TestPersonaBeltAdmission walks the four combinations through a real
-// belted registry: what the effective belt names is what registers,
-// and nothing else.
+// TestPersonaBeltAdmission pins the belt half of the seam: the
+// construction registry admits exactly the configured belt's surface.
+// Persona narrowing no longer rides this belt — a persona's tools list
+// intersects the ADVERTISED set at loop build (TestPersonaToolsSeam in
+// persona_switch_test.go, internal/agent's TestPersonaToolsNarrowAdvertisedSet)
+// so a mid-session switch re-narrows without registry surgery.
 func TestPersonaBeltAdmission(t *testing.T) {
-	t.Run("persona allowing write tools admits them absent a belt", func(t *testing.T) {
-		reg := personaBeltRegistry(t, nil, []string{"read", "bash"})
-		for _, name := range []string{"read", "bash"} {
-			if reg.Get(name) == nil {
-				t.Errorf("persona-narrowed belt dropped %q", name)
-			}
-		}
-		for _, name := range []string{"write", "edit"} {
-			if reg.Get(name) != nil {
-				t.Errorf("persona [read bash] admitted %q", name)
-			}
-		}
-	})
-
-	t.Run("configured belt alone keeps today's surface", func(t *testing.T) {
-		reg := personaBeltRegistry(t, []string{"read", "grep"}, nil)
+	t.Run("configured belt alone shapes the registry", func(t *testing.T) {
+		reg := personaBeltRegistry(t, []string{"read", "grep"})
 		if reg.Get("read") == nil || reg.Get("grep") == nil {
 			t.Error("configured belt lost its tools")
 		}
-		if reg.Get("bash") != nil {
-			t.Error("configured belt grew a tool")
-		}
-	})
-
-	t.Run("both set: intersection only", func(t *testing.T) {
-		reg := personaBeltRegistry(t, []string{"read", "grep"}, []string{"read", "bash"})
-		if reg.Get("read") == nil {
-			t.Error("intersection lost the shared tool")
-		}
-		for _, name := range []string{"grep", "bash"} {
+		for _, name := range []string{"bash", "write", "edit"} {
 			if reg.Get(name) != nil {
-				t.Errorf("intersection admitted %q — persona narrowing must never widen", name)
+				t.Errorf("configured belt grew %q", name)
 			}
 		}
 	})
 
-	t.Run("neither set: full surface", func(t *testing.T) {
-		reg := personaBeltRegistry(t, nil, nil)
+	t.Run("no configured belt: full surface", func(t *testing.T) {
+		reg := personaBeltRegistry(t, nil)
 		for _, name := range []string{"read", "grep", "bash", "write", "edit"} {
 			if reg.Get(name) == nil {
 				t.Errorf("full surface lost %q", name)
 			}
+		}
+	})
+
+	t.Run("persona tools do not shape the construction belt", func(t *testing.T) {
+		// The registry a persona-carrying session builds is the same
+		// config-only surface: narrowing happens per run, not at
+		// registration. This is the pin that keeps a switch cheap.
+		sp := resolveSessionPersona("agents.default.agent", "plan")
+		if len(sp.Persona.Tools) != 0 {
+			t.Fatalf("plan persona carries tools %v; it must narrow nothing", sp.Persona.Tools)
+		}
+		reg := personaBeltRegistry(t, nil)
+		if reg.Get("bash") == nil {
+			t.Error("a persona-carrying session must still register the full config surface")
 		}
 	})
 }
@@ -158,15 +154,17 @@ func TestPersonaBeltAdmission(t *testing.T) {
 // TestUnknownToolWarnings pins the unknown-name handling at the seam:
 // a configured belt name that matches no tool keeps today's warning
 // verbatim, and a persona name gets the same treatment — warn and
-// ignore — with the persona named as the source. The registered and
-// refused fields simulate the belt accounting the registry and the
-// gates produce; the helper must not distinguish simulation from the
-// real thing.
+// ignore — with the persona named as the source. Since the belt went
+// config-only (yaah-21uk.12), persona names are checked against the
+// REGISTRY, not the belt: the helper registers a real registry so the
+// lookup is exercised, and belt.Refuse marks a real tool the config
+// belt turned away (known, never a typo).
 func TestUnknownToolWarnings(t *testing.T) {
 	tests := []struct {
 		name         string
 		beltNames    []string
-		registered   []string // belt.Know — the registry installed them
+		registered   []string // belt.Know + a real registration
+		knownOnly    []string // belt.Know only — gated/runtime-wired tools
 		refused      []string // belt.Refuse — real tools the belt turned away
 		personaName  string
 		personaTools []string
@@ -180,15 +178,15 @@ func TestUnknownToolWarnings(t *testing.T) {
 		},
 		{
 			name:         "persona-only typo warns with the persona wording",
-			beltNames:    []string{"read", "ghost"}, // the persona list IS the belt here
+			beltNames:    []string{"read"},
 			registered:   []string{"read"},
 			personaName:  "planner",
 			personaTools: []string{"read", "ghost"},
 			want:         []string{"warning: persona \"planner\" names unknown tool \"ghost\"; ignored"},
 		},
 		{
-			name:         "persona typo dropped by the intersection is not lost",
-			beltNames:    []string{"read"}, // the intersection of [read] and [read ghost]
+			name:         "persona typo with no configured belt still warns",
+			beltNames:    nil, // allow-all belt: the registry is the only oracle
 			registered:   []string{"read"},
 			personaName:  "planner",
 			personaTools: []string{"read", "ghost"},
@@ -204,9 +202,12 @@ func TestUnknownToolWarnings(t *testing.T) {
 			want:         nil,
 		},
 		{
-			name:         "gated-off tool the persona names is not a typo",
-			beltNames:    []string{"read", "memory_add"},
-			registered:   []string{"read", "memory_add"}, // the gate Knows it without a registration
+			name:       "real tool the persona names is not a typo",
+			beltNames:  []string{"read", "memory_add"},
+			registered: []string{"read"},
+			// memory_add is runtime-wired, never a leaf tool: the belt
+			// knows it (gate admission) without a registry registration.
+			knownOnly:    []string{"memory_add"},
 			personaName:  "recaller",
 			personaTools: []string{"read", "memory_add"},
 			want:         nil,
@@ -225,13 +226,22 @@ func TestUnknownToolWarnings(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			belt := tools.NewBelt(tt.beltNames)
+			reg := tools.NewRegistry()
 			for _, name := range tt.registered {
+				belt.Know(name)
+				// NewRegistry installs the built-ins already; registering a
+				// built-in name again hands Register a nil leaf wrapper.
+				if reg.Get(name) == nil {
+					reg.Register(tools.NewLeafTool(name))
+				}
+			}
+			for _, name := range tt.knownOnly {
 				belt.Know(name)
 			}
 			for _, name := range tt.refused {
 				belt.Refuse(name)
 			}
-			tr := &toolRegistryStage{belt: belt, personaName: tt.personaName, personaTools: tt.personaTools}
+			tr := &toolRegistryStage{belt: belt, reg: reg, personaName: tt.personaName, personaTools: tt.personaTools}
 			got := unknownToolWarnings(tr)
 			if !slices.Equal(got, tt.want) {
 				t.Errorf("unknownToolWarnings() = %q, want %q", got, tt.want)
@@ -240,12 +250,13 @@ func TestUnknownToolWarnings(t *testing.T) {
 	}
 }
 
-// TestPersonaNarrowing_ReadOnlyStillApplies pins the ordering contract:
-// persona narrowing happens first (at registry construction), plan
-// mode's read-only level strips after (at loop build, via
-// toolsLevelForMode). A persona whose role file allows write tools gets
-// them past the belt — and still loses them in plan mode.
-func TestPersonaNarrowing_ReadOnlyStillApplies(t *testing.T) {
+// TestPersonaNarrowing_PerRunLoopSeam pins the ordering contract after
+// the switch (yaah-21uk.12): the construction belt is config-only, the
+// persona's tools list narrows the ADVERTISED set at loop build (so a
+// switch re-narrows), and plan mode's read-only level still strips on
+// top. A ReadOnly persona gates the level even in build mode — the
+// transition seam part 2 retires.
+func TestPersonaNarrowing_PerRunLoopSeam(t *testing.T) {
 	reg := subagent.NewRoleRegistry()
 	if err := reg.LoadBytes(map[string][]byte{
 		"builder.md": []byte("---\nname: Builder\nmode: primary\ntools: [read, bash]\ndescription: builds\n---\nbody"),
@@ -256,31 +267,59 @@ func TestPersonaNarrowing_ReadOnlyStillApplies(t *testing.T) {
 	subagent.SetDefaultRoleRegistry(reg)
 	t.Cleanup(func() { subagent.SetDefaultRoleRegistry(saved) })
 
-	t.Run("registry persona allowing write tools: belt admits, plan mode strips", func(t *testing.T) {
+	t.Run("registry persona allowing write tools: belt admits, per-run seam narrows", func(t *testing.T) {
 		sp := resolveSessionPersona("agents.default.agent", "builder")
 		if sp.Persona.Name != "builder" || !slices.Equal(sp.Persona.Tools, []string{"read", "bash"}) {
 			t.Fatalf("session persona = %+v; want builder with tools [read bash]", sp.Persona)
 		}
-		belt := tools.NewBelt(effectiveBeltNames(nil, sp.Persona.Tools))
+		// Construction: the config-only belt admits the role file's write
+		// tools — narrowing no longer happens at registration.
+		belt := tools.NewBelt(effectiveBeltNames(nil, nil))
 		sessionReg := tools.NewRegistryWithBelt(belt)
 		sessionReg.Register(tools.NewLeafTool("read"))
 		sessionReg.Register(tools.NewLeafTool("bash"))
 		if sessionReg.Get("bash") == nil {
-			t.Fatal("belt refused bash; persona narrowing must admit the role file's write tools")
+			t.Fatal("belt refused bash; the construction belt is config-only and must admit")
 		}
-		// On top of the narrowed belt: the plan-mode level.
-		s := &agentSession{}
-		if got := s.toolsLevelForMode(acpModePlan); got != agent.ReadOnlyTools {
-			t.Fatalf("toolsLevelForMode(plan) = %v; want agent.ReadOnlyTools", got)
+		// The next loop build narrows the advertised set instead.
+		s := &agentSession{cfg: &config.Config{}, persona: sp.Persona}
+		b := s.loopBuilder(nil, "test-model", nil, "", nil, "", "")
+		if !slices.Equal(b.PersonaTools, []string{"read", "bash"}) {
+			t.Errorf("builder PersonaTools = %v; want [read bash]", b.PersonaTools)
 		}
-		// InspectionSetNames is exactly the membership allowsTool checks
-		// at the ReadOnlyTools level, so this is the strip.
+		// Plan mode still strips on top: the read-only level names no bash.
+		if got := s.effectiveToolsLevel(acpModePlan); got != agent.ReadOnlyTools {
+			t.Fatalf("effectiveToolsLevel(plan) = %v; want agent.ReadOnlyTools", got)
+		}
 		if slices.Contains(agent.InspectionSetNames(), "bash") {
 			t.Error("plan mode's inspection set admits bash; the read-only level must strip persona-admitted write tools")
 		}
 	})
 
-	t.Run("plan persona: belt untouched, plan mode strips writes", func(t *testing.T) {
+	t.Run("switch re-narrows the advertised set without registry surgery", func(t *testing.T) {
+		buildPersona, ok := subagent.ResolvePersona(subagent.BuildPersonaName)
+		if !ok {
+			t.Fatal("build persona did not resolve")
+		}
+		s := &agentSession{cfg: &config.Config{}, persona: buildPersona}
+		b := s.loopBuilder(nil, "test-model", nil, "", nil, "", "")
+		if len(b.PersonaTools) != 0 {
+			t.Fatalf("build persona PersonaTools = %v; want no narrowing", b.PersonaTools)
+		}
+		builderPersona, ok := subagent.ResolvePersona("builder")
+		if !ok {
+			t.Fatal("builder persona did not resolve")
+		}
+		s.mu.Lock()
+		s.persona = builderPersona
+		s.mu.Unlock()
+		b = s.loopBuilder(nil, "test-model", nil, "", nil, "", "")
+		if !slices.Equal(b.PersonaTools, []string{"read", "bash"}) {
+			t.Errorf("after the switch PersonaTools = %v; want [read bash]", b.PersonaTools)
+		}
+	})
+
+	t.Run("plan persona: belt untouched, ReadOnly gates even in build mode", func(t *testing.T) {
 		sp := resolveSessionPersona("agents.default.agent", "plan")
 		if !sp.Persona.ReadOnly {
 			t.Fatalf("plan persona = %+v; want ReadOnly", sp.Persona)
@@ -288,13 +327,11 @@ func TestPersonaNarrowing_ReadOnlyStillApplies(t *testing.T) {
 		if got := effectiveBeltNames(nil, sp.Persona.Tools); got != nil {
 			t.Fatalf("plan persona narrowed the belt to %q; it must narrow nothing", got)
 		}
-		fullBelt := tools.NewBelt(nil)
-		if !fullBelt.Allows("bash") {
-			t.Fatal("full belt refuses bash; the plan persona's belt must not be the thing that strips")
-		}
-		s := &agentSession{}
-		if got := s.toolsLevelForMode(acpModePlan); got != agent.ReadOnlyTools {
-			t.Fatalf("toolsLevelForMode(plan) = %v; want agent.ReadOnlyTools", got)
+		s := &agentSession{cfg: &config.Config{}, persona: sp.Persona}
+		for _, mode := range []string{acpModeBuild, ""} {
+			if got := s.effectiveToolsLevel(mode); got != agent.ReadOnlyTools {
+				t.Errorf("effectiveToolsLevel(%q) on a ReadOnly persona = %v; want agent.ReadOnlyTools", mode, got)
+			}
 		}
 		if slices.Contains(agent.InspectionSetNames(), "bash") {
 			t.Error("plan mode's inspection set admits bash")

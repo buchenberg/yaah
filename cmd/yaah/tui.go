@@ -141,12 +141,12 @@ func runTUI() error {
 		app.SetMode(mode)
 		app.SetEphemeral("session mode: " + mode)
 	}
-	// Persona palette (yaah-21uk.10): pick validates and sets the
-	// process-level next-session override; the reply states that the
-	// current session keeps its persona. The ephemeral line is the status.
+	// Persona palette (yaah-21uk.12): pick validates and SWITCHES the
+	// current session — the persona body, budget and tool gate land on
+	// the next run. The ephemeral line is the confirmation.
 	app.SetAgentPicker(personaNames(), personaDescriptions())
 	app.OnAgentSelect = func(name string) {
-		reply, _ := sess.selectNextPersona(name)
+		reply, _ := sess.switchPersona(name)
 		app.SetEphemeral(reply)
 	}
 

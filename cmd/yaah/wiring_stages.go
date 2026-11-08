@@ -279,12 +279,14 @@ type toolRegistryStage struct {
 
 // buildToolRegistry builds the session's tool registry and registers the tools
 // whose dependencies are available this early (the leaf tools through the belt,
-// the accept seam, the memory tools). The session persona narrows the belt
-// (yaah-21uk.7): a persona that names tools intersects the configured
-// allowlist, narrow-only. The session store arrives pre-opened (yaah-21uk.9:
-// the wiring opens it before persona resolution so a resumed session's belt
-// can be shaped from the stored persona name). It has no failure of its own:
-// an open failure was already reported warn-and-continue by the wiring.
+// the accept seam, the memory tools). The construction belt is config-only
+// since the mid-session persona switch (yaah-21uk.12): the persona's tools
+// list narrows the ADVERTISED set at loop build instead of the belt, so a
+// switch re-narrows without registry surgery. The persona still rides this
+// stage — its name and tools feed the unknown-name warning at guidance
+// time. The session store arrives pre-opened (yaah-21uk.9). It has no
+// failure of its own: an open failure was already reported warn-and-continue
+// by the wiring.
 func buildToolRegistry(cfg *config.Config, opts SessionOptions, ws *workspaceStage, persona subagent.Persona, db *memory.DB) (*toolRegistryStage, error) {
 	st := &toolRegistryStage{db: db}
 
@@ -301,21 +303,20 @@ func buildToolRegistry(cfg *config.Config, opts SessionOptions, ws *workspaceSta
 	// admit is never installed, so a late registration is refused like
 	// any other. An unset list admits every tool (the default).
 	//
-	// Persona narrowing (yaah-21uk.7) rides that same belt: a persona
-	// that names tools intersects the configured allowlist when both
-	// are set, becomes the belt when it is the only list, and narrows
-	// nothing when empty (the built-in build persona — today's surface,
-	// byte-identical). Narrow-only by construction, and the merged list
-	// flows through the same NewBelt the configured list always did, so
-	// enforcement, the prompt delta (belt.Refused) and the unknown-name
-	// warning all keep one mechanism. Ordering with plan mode is
-	// persona first, level second: this shrinks what is registered; the
-	// read-only tools level (toolsLevelForMode) still strips write
+	// Persona narrowing (yaah-21uk.7) rode this belt; since the
+	// mid-session switch (yaah-21uk.12) it happens per loop build — the
+	// advertised set intersects the session persona's tools list, so a
+	// switch re-narrows without registry surgery. The belt is
+	// config-only: agents.default.tools shapes what registers, and the
+	// persona feeds the per-run seam instead. personaName/personaTools
+	// are still carried for the unknown-name warning below. Ordering
+	// with plan mode is unchanged: this shapes what is registered; the
+	// read-only tools level (effectiveToolsLevel) still strips write
 	// tools on top at loop build.
 	pTools := normalizeToolNames(persona.Tools)
 	st.personaName = persona.Name
 	st.personaTools = pTools
-	belt := tools.NewBelt(effectiveBeltNames(cfg.Agent.Default.Tools, persona.Tools))
+	belt := tools.NewBelt(effectiveBeltNames(cfg.Agent.Default.Tools, nil))
 	st.belt = belt
 	if isolated {
 		st.reg = tools.NewIsolatedRegistryWithBelt(belt)
@@ -447,7 +448,14 @@ type mcpSkillsStage struct {
 	// injections anchor. It threads to the session so per-run injections
 	// never re-locate the identity by substring search, which a non-default
 	// identity would fail.
-	identityEnd  int
+	identityEnd int
+	// layers retains the construction-time persona-independent prompt
+	// layers (yaah-21uk.12): the session keeps them so a mid-session
+	// persona switch rebinds only the persona body and re-renders a
+	// byte-exact-except-the-persona prompt. promptMemory is the guidance
+	// the memory guidance block rendered from (resumes render none).
+	layers       prompts.Layers
+	promptMemory prompts.MemoryGuidance
 	mcpClients   []mcp.MCPClient
 	mcpInfos     []mcp.ServerInfo
 	mcpToolNames map[string]bool
@@ -475,7 +483,9 @@ func buildMCPSkills(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 		Writers: tr.reg.Get("memory_add") != nil && tr.reg.Get("memory_update") != nil &&
 			tr.reg.Get("memory_delete") != nil && tr.reg.Get("memory_promote") != nil,
 	}
-	st.systemPrompt, st.identityEnd = buildSystemPromptMarked(cfg, ws.cwd, tr.db, opts.ResumeSessionID, mem, lc.persona.Persona.Body)
+	st.layers = orchestratorPromptLayers(cfg, ws.cwd, tr.db)
+	st.promptMemory = mem
+	st.systemPrompt, st.identityEnd = buildMarkedPrompt(st.layers, opts.ResumeSessionID, mem, lc.persona.Persona.Body)
 
 	// --- MCP servers ------------------------------------------------------
 	// Isolated mode omits MCP tools by policy: they execute on the host

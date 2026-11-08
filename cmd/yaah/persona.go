@@ -3,6 +3,7 @@ package yaah
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -128,13 +129,18 @@ func storedPersonaName(db *memory.DB, sessionID, fallback string) string {
 	return stored
 }
 
-// PersonaName reports the persona the session runs as, fixed at
-// construction (yaah-21uk.11: role reloads refresh the registry for new
-// sessions only; nothing re-resolves this mid-session). Immutable after
-// wiring, like WorldStatus, so it reads without the session lock. The
-// ACP server reports it on session/new and session/load so a client can
-// show which persona the session actually is.
-func (s *agentSession) PersonaName() string { return s.persona.Name }
+// PersonaName reports the persona the session currently runs as
+// (yaah-21uk.12: a mid-session switch — REPL /agent, the TUI palette —
+// re-resolves it under the session lock; role reloads still only refresh
+// the registry for new sessions). Guarded by mu like its one mutable
+// peer, the mode. The ACP server reports it on session/new and
+// session/load so a client can show which persona the session actually
+// is.
+func (s *agentSession) PersonaName() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.persona.Name
+}
 
 // NextPersonaName reports the persona a session built after this call
 // would resolve in this process — the yaah-21uk.10 precedence for a
@@ -166,9 +172,101 @@ func (s *agentSession) NextPersonaName() string {
 // buffers for views that cannot take writes between runs (REPL, ACP),
 // so the notice there rides the first run's drain.
 func (s *agentSession) announcePersona() {
-	name := s.persona.Name
+	s.mu.RLock()
+	name, readOnly := s.persona.Name, s.persona.ReadOnly
+	s.mu.RUnlock()
 	if name == "" || name == subagent.BuildPersonaName {
 		return
 	}
-	s.dispatchEvent(&agent.AgentChangedEvent{Persona: name, ReadOnly: s.persona.ReadOnly})
+	s.dispatchEvent(&agent.AgentChangedEvent{Persona: name, ReadOnly: readOnly})
+}
+
+// SetPersona switches the session's orchestrator persona mid-session
+// (yaah-21uk.12, the decision reversal recorded on yaah-21uk.2 — it
+// supersedes the fixed-at-construction rule of yaah-21uk.11). The
+// switch is effective at the NEXT loop build: the persona body rebinds
+// into the system prompt (from the layers retained at construction),
+// the loop budget re-resolves, and the tool narrowing and read-only
+// gate re-derive from the new persona. The mode is untouched — plan
+// mode keeps narrowing until part 2 retires the seam.
+//
+// Following SetMode's locking pattern: validate first (missing or
+// delegate-only names keep the pick surfaces' refusal wording), no-op
+// on a switch to the persona the session already runs, rebuild prompts
+// and mutate under the session lock, persist best-effort ON THE SWITCH
+// (a crash, a harness timeout or a kill never reaches close), and
+// announce in-band after the lock is released. Unlike the session-start
+// announcement — build is the silent majority there — a switch TO build
+// is announced: the event itself is the change.
+func (s *agentSession) SetPersona(name string) error {
+	trimmed := strings.TrimSpace(name)
+	persona, ok := subagent.ResolvePersona(trimmed)
+	if !ok {
+		return fmt.Errorf("%q is not a primary-capable persona (%s) — available: %s",
+			trimmed, subagent.PersonaMissReason(trimmed), strings.Join(personaNames(), ", "))
+	}
+	s.mu.Lock()
+	// A switch to the persona the session already runs is not a switch:
+	// it must not announce, persist, or rebuild one.
+	if s.persona.Name == persona.Name {
+		s.mu.Unlock()
+		return nil
+	}
+	system, main, promptChanged := s.rebuildPromptsLocked(persona.Body)
+	s.persona = persona
+	s.systemPrompt = system
+	s.mainPrompt = main
+	db, sessionID := s.db, s.sessionID
+	s.mu.Unlock()
+	// Persist the switch so the selection and its prompt survive the
+	// process: resume re-resolves the persona column and reads the
+	// stored SystemPrompt verbatim. Best-effort, like the session's
+	// other bookkeeping (mode, usage flush, title): the switch has
+	// already taken effect in this process and the notice below
+	// announces it, so a store failure must not be reported as a refused
+	// switch — the warning names the real consequence instead (the next
+	// resume falls back to the creation-time persona and prompt).
+	if db != nil && sessionID != "" {
+		if err := db.SetSessionPersona(sessionID, persona.Name); err != nil {
+			slog.Warn("session: persisting persona failed", "persona", persona.Name, "err", err)
+		}
+		if promptChanged {
+			if err := db.SetSessionSystemPrompt(sessionID, system); err != nil {
+				slog.Warn("session: persisting the rebuilt system prompt failed", "persona", persona.Name, "err", err)
+			}
+		}
+	}
+	// Announce the switch in-band, after the lock is released.
+	// dispatchEvent buffers it for views that cannot take writes between
+	// runs (REPL, ACP).
+	s.dispatchEvent(&agent.AgentChangedEvent{Persona: persona.Name, ReadOnly: persona.ReadOnly})
+	return nil
+}
+
+// rebuildPromptsLocked re-renders the system and main prompts with
+// personaBody bound into the persona layer, from the layers captured at
+// construction. Caller holds s.mu.
+//
+// The rebuild is only adopted when the layers still derive the session's
+// CURRENT systemPrompt — the fresh-construction state, where they differ
+// by exactly the persona block. On a resume the persisted SystemPrompt
+// won at construction (restoreSession), so these re-derived layers
+// describe a DIFFERENT prompt than the one the session actually runs;
+// rebuilding from them would rewrite environment, project instructions
+// and memory alongside the persona. The recorded prompt stands in that
+// case, and the switch lands everywhere else (budget, tools, gate).
+// promptChanged reports whether the caller should persist new prompt
+// bytes; a session that never captured layers (hand-built tests) cannot
+// rebuild at all.
+func (s *agentSession) rebuildPromptsLocked(personaBody string) (system, main string, promptChanged bool) {
+	if s.promptLayers.Identity == "" {
+		return s.systemPrompt, s.mainPrompt, false
+	}
+	system, _ = buildMarkedPrompt(s.promptLayers, s.opts.ResumeSessionID, s.promptMemory, personaBody)
+	if system != s.systemPrompt {
+		// A resume: the persisted prompt bytes are the session's truth.
+		return s.systemPrompt, s.mainPrompt, false
+	}
+	main = buildMainPrompt(s.cfg, s.opts, system, s.identityEnd)
+	return system, main, true
 }

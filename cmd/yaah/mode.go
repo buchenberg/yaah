@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
@@ -46,6 +47,35 @@ func (s *agentSession) toolsLevelForMode(mode string) agent.ToolsLevel {
 	return agent.FullTools
 }
 
+// effectiveToolsLevel is the tool gate this session's next loop build
+// enforces: the mode's level, upgraded to the read-only inspection set
+// when the session persona is ReadOnly — during the yaah-21uk.12
+// transition a read-only persona rides the same gate plan mode uses
+// (part 2 retires the mode seam). modeDirective and modeChangeNotice
+// derive their wording from this same method, so a directive can never
+// promise a regime the loop does not enforce.
+func (s *agentSession) effectiveToolsLevel(mode string) agent.ToolsLevel {
+	s.mu.RLock()
+	persona := s.persona
+	s.mu.RUnlock()
+	return sampledToolsLevel(mode, persona)
+}
+
+// sampledToolsLevel is effectiveToolsLevel's pure core over an already
+// sampled mode and persona — the loop build samples both once, so the
+// advertised set, the prompt's regime sentence, and the gate agree even
+// if a switch lands concurrently with the build. planModeSpec stays the
+// single source of the plan-mode level.
+func sampledToolsLevel(mode string, persona subagent.Persona) agent.ToolsLevel {
+	if mode == planModeSpec.Mode {
+		return planModeSpec.ToolsLevel
+	}
+	if persona.ReadOnly {
+		return agent.ReadOnlyTools
+	}
+	return agent.FullTools
+}
+
 // modeDirective returns the system prompt for mode: mainPrompt with one mode
 // directive injected after the identity block. Every mode carries a directive
 // so the model can tell which regime it is in, who switches it, and that a
@@ -54,7 +84,7 @@ func (s *agentSession) toolsLevelForMode(mode string) agent.ToolsLevel {
 func (s *agentSession) modeDirective(mode string) string {
 	// Level from the same derivation the loop's gate uses, so the directive
 	// cannot describe a regime this session does not enforce.
-	level := s.toolsLevelForMode(mode)
+	level := s.effectiveToolsLevel(mode)
 	label := modeLabel(mode)
 	return prompts.InjectAfterIdentityAt(s.mainPrompt, s.identityEnd, []string{
 		label + " mode is active: " + regimeSentence(level),
@@ -70,7 +100,7 @@ func (s *agentSession) modeDirective(mode string) string {
 // toolsLevelForMode — the same derivation the loop's gate uses — rather than a
 // second copy of the plan-mode condition.
 func (s *agentSession) modeChangeNotice(mode string) string {
-	return "Mode changed to " + modeLabel(mode) + " — " + regimeSentence(s.toolsLevelForMode(mode))
+	return "Mode changed to " + modeLabel(mode) + " — " + regimeSentence(s.effectiveToolsLevel(mode))
 }
 
 // regimeSentence states what the tool gate actually enforces at level. It is

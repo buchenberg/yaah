@@ -10,7 +10,6 @@ package yaah
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 )
 
@@ -69,11 +68,12 @@ func effectiveBeltNames(configured, persona []string) []string {
 // that matched no tool the session knows about. It runs from
 // appendToolGuidance, after every registration and gate, when the
 // belt's know/refuse accounting is final. The configured belt's names
-// keep their existing warning verbatim; a persona-sourced name warns
-// the same way but names the persona, and a persona name the
-// configured belt's intersection dropped is not silently lost — it
-// warns too, unless it matches a real tool (then the belt refused it
-// at registration and the tool delta already reports it).
+// keep their existing warning verbatim. Persona names are checked
+// against the registry rather than the belt: since narrowing moved to
+// the per-run seam (yaah-21uk.12) the belt is config-only, so a persona
+// name is a typo exactly when the registry holds no tool under it and
+// the belt never met the name — not known via a gate (memory tools,
+// role) and not refused as a real tool the config belt turned away.
 func unknownToolWarnings(tr *toolRegistryStage) []string {
 	if tr.belt == nil {
 		return nil
@@ -82,19 +82,10 @@ func unknownToolWarnings(tr *toolRegistryStage) []string {
 	warned := make(map[string]bool)
 	for _, name := range tr.belt.Unknown() {
 		warned[name] = true
-		if slices.Contains(tr.personaTools, name) {
-			out = append(out, fmt.Sprintf("warning: persona %q names unknown tool %q; ignored", tr.personaName, name))
-			continue
-		}
 		out = append(out, fmt.Sprintf("warning: config `agents.default.tools` names unknown tool %q; ignored", name))
 	}
-	// Persona names outside the belt's allowed set were dropped by the
-	// configured belt's intersection. A real tool among them was
-	// refused and known at registration; one that matches nothing is a
-	// typo in the role file and deserves the same warning as a typo in
-	// the config.
 	for _, name := range tr.personaTools {
-		if warned[name] || tr.belt.Allows(name) || tr.belt.Knows(name) {
+		if warned[name] || tr.reg.Get(name) != nil || tr.belt.Knows(name) {
 			continue
 		}
 		out = append(out, fmt.Sprintf("warning: persona %q names unknown tool %q; ignored", tr.personaName, name))

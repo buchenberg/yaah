@@ -414,3 +414,30 @@ func (d *DB) SessionPersona(id string) (string, error) {
 	}
 	return persona, nil
 }
+
+// SetSessionPersona records the session's orchestrator persona name
+// (yaah-21uk.12): a mid-session switch rewrites the column a resume
+// re-resolves, so the session comes back as the persona it was switched
+// to rather than the one it was created with. Written on the switch
+// rather than at close, mirroring SetSessionMode — a crash, a harness
+// timeout or a kill never reaches the close path.
+//
+// updated_at is deliberately untouched: persona selection state, not
+// activity (same rule as SetSessionMode).
+func (d *DB) SetSessionPersona(id, persona string) error {
+	_, err := d.sql.Exec(`UPDATE sessions SET persona = ? WHERE id = ?`, persona, id)
+	return err
+}
+
+// SetSessionSystemPrompt replaces the persisted system prompt: a persona
+// switch rebinds the persona body into the prompt, and resume reads this
+// column byte-for-byte, so the row must carry the switched prompt or the
+// resume would run the old persona body under the new persona name. The
+// create-time truncation cap applies, same as CreateSession.
+//
+// updated_at is deliberately untouched (selection state, not activity).
+func (d *DB) SetSessionSystemPrompt(id, prompt string) error {
+	_, err := d.sql.Exec(`UPDATE sessions SET system_prompt = ? WHERE id = ?`,
+		truncateWithMarker(prompt, maxSessionPromptBytes), id)
+	return err
+}

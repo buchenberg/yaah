@@ -111,9 +111,20 @@ func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSess
 // an empty body, which omits the layer entirely and leaves the prompt
 // byte-identical to the pre-persona assembly.
 func buildSystemPromptMarked(cfg *config.Config, cwd string, db *memory.DB, resumeSessionID string, mem prompts.MemoryGuidance, personaBody string) (string, int) {
-	layers := prompts.Layers{
+	return buildMarkedPrompt(orchestratorPromptLayers(cfg, cwd, db), resumeSessionID, mem, personaBody)
+}
+
+// orchestratorPromptLayers assembles the persona-independent prompt
+// layers the main-session system prompt renders from (yaah-21uk.12): the
+// identity, environment, dispatch line, user/project context, and the
+// memory snapshot. The wiring retains the struct on the session, so a
+// mid-session persona switch rebinds only the Persona field and
+// re-renders: the memory snapshot and the environment stay byte-frozen
+// across switches, which is the desired semantics — a switch moves the
+// identity the orchestrator runs as, not what it knows.
+func orchestratorPromptLayers(cfg *config.Config, cwd string, db *memory.DB) prompts.Layers {
+	return prompts.Layers{
 		Identity:               prompts.IdentityPrompt,
-		Persona:                personaBody,
 		Environment:            prompts.DetectEnvironment(cwd),
 		SubAgentDispatch:       subAgentDispatchLine(cfg),
 		UserContext:            prompts.LoadUserContext(config.HomeDir()),
@@ -121,7 +132,14 @@ func buildSystemPromptMarked(cfg *config.Config, cwd string, db *memory.DB, resu
 		MaxSubAgentConcurrency: cfg.Agent.SubAgent.MaxConcurrency,
 		Memory:                 memoryLayer(db),
 	}
+}
 
+// buildMarkedPrompt renders the layered prompt with personaBody bound
+// into the persona layer, plus the identity anchor BuildMarked returns.
+// The memory-guidance block (fresh sessions only) is appended outside
+// the layers, exactly as buildSystemPromptMarked has always done.
+func buildMarkedPrompt(layers prompts.Layers, resumeSessionID string, mem prompts.MemoryGuidance, personaBody string) (string, int) {
+	layers.Persona = personaBody
 	base, identityEnd := prompts.BuildMarked(layers)
 	return base + memoryGuidanceBlock(mem, resumeSessionID), identityEnd
 }
