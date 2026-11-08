@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.152.1](https://github.com/buchenberg/yaah/compare/v0.152.0...v0.152.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **pubsub:** close Publish race and subscribe-after-close leak (yaah-8jou.1/.2) ([e93d58a](https://github.com/buchenberg/yaah/commit/e93d58ab5d9afe5508093fc253857904e3e4db3e))
+* **pubsub:** drop Publish reorder — send-on-closed was not reachable (review) ([fe36fc0](https://github.com/buchenberg/yaah/commit/fe36fc07d572292230706e432c45b37b4c1ec4db))
+* **pubsub:** Subscribe on a closed broker returned a channel that never closes ([ea8803b](https://github.com/buchenberg/yaah/commit/ea8803b3606dec3e0234b0c4c4ae0bcf9aa92313))
+
 ## [0.152.0](https://github.com/buchenberg/yaah/compare/v0.151.1...v0.152.0) (2026-11-07)
 
 
