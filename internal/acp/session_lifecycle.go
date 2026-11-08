@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/cwdpath"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -205,7 +206,7 @@ func (s *Server) handleSessionNew(ctx context.Context, msg Message, sendUpdate u
 	respOK(msg.ID, SessionNewResult{
 		SessionID:     st.id,
 		ConfigOptions: buildSessionConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName(), st.sess.Mode()),
-		Meta:          worldMetaOf(st.sess.WorldStatus()),
+		Meta:          sessionMetaOf(st),
 	})
 	s.refreshAvailableCommands(st, sendUpdate)
 }
@@ -383,7 +384,7 @@ func (s *Server) handleSessionLoad(
 	s.replayConversation(st, sendUpdate)
 	respOK(msg.ID, SessionLoadResult{
 		ConfigOptions: s.loadConfigOptions(ctx, st),
-		Meta:          worldMetaOf(st.sess.WorldStatus()),
+		Meta:          sessionMetaOf(st),
 	})
 	s.refreshAvailableCommands(st, sendUpdate)
 }
@@ -402,7 +403,13 @@ func (s *Server) loadConfigOptions(ctx context.Context, st *sessionState) []Sess
 // doubles with no persona and no world posture.
 func sessionMetaOf(st *sessionState) *SessionMeta {
 	meta := worldMetaOf(st.sess.WorldStatus())
+	// The default build persona stays silent in _meta — the same rule as
+	// the session-start announcement: build is the majority case, and the
+	// zero-world/zero-persona session must keep omitting the block.
 	persona := st.sess.PersonaName()
+	if persona == "" || persona == subagent.BuildPersonaName {
+		persona = ""
+	}
 	if meta == nil {
 		if persona == "" {
 			return nil

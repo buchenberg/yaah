@@ -144,7 +144,7 @@ func launchEmbeddingBackfill(tr *toolRegistryStage) {
 // wake engine is attached but not rehydrated here: durable watches are resumed
 // by Start, after the driver has installed its view and its idle-wake policy.
 // Rehydrating during construction would race both.
-func newSessionFromStages(lc *sessionConfig, opts SessionOptions, ws *workspaceStage, tr *toolRegistryStage, mcps *mcpSkillsStage, loop *loopInfraStage, mainPrompt string) *agentSession {
+func newSessionFromStages(lc *sessionConfig, opts SessionOptions, ws *workspaceStage, tr *toolRegistryStage, mcps *mcpSkillsStage, loop *loopInfraStage, mainPrompt, promptGuidance string) *agentSession {
 	// Wrap the provider with OTel instrumentation if enabled.
 	provider := wrapProviderWithOtel(lc.provider, lc.otelActive, lc.cfg.Observability.Otel.Verbose)
 
@@ -162,6 +162,7 @@ func newSessionFromStages(lc *sessionConfig, opts SessionOptions, ws *workspaceS
 		promptMemory:   mcps.promptMemory,
 		systemPrompt:   loop.systemPrompt,
 		mainPrompt:     mainPrompt,
+		promptGuidance: promptGuidance,
 		identityEnd:    loop.identityEnd,
 		toolReg:        tr.reg,
 		db:             tr.db,

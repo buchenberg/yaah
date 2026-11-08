@@ -55,6 +55,14 @@ func resolveOrchestratorBudget(cfg *config.Config, persona subagent.Persona) bud
 	if b.TurnsSource == budget.SourceFallback {
 		b.Turns = cfg.Agent.Default.MaxToolTurns
 	}
+	// An explicit config zero ("off") must not read as absent: without
+	// this a persona file's budget would fill a gap the user closed.
+	if cfg.ExplicitDefaultBudget.MaxIterationsSet && cfg.ExplicitDefaultBudget.MaxIterations == 0 {
+		b.Iterations = 0
+	}
+	if cfg.ExplicitDefaultBudget.MaxTurnsSet && cfg.ExplicitDefaultBudget.MaxTurns == 0 {
+		b.Turns = 0
+	}
 	return b
 }
 

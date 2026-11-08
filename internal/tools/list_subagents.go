@@ -72,7 +72,7 @@ func (t *ListSubAgentsTool) Execute(ctx context.Context, args string) (string, e
 		}
 	}
 	if len(roles) == 0 {
-		return "No sub-agent roles registered. Add role definitions under .agents/roles/ or ~/.agents/roles/.", nil
+		return "No delegatable sub-agent roles registered (primary-only personas are not dispatch targets). Add role definitions under .agents/roles/ or ~/.agents/roles/.", nil
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%d sub-agent role(s) available:\n\n", len(roles))

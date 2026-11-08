@@ -12,11 +12,15 @@ import "gopkg.in/yaml.v3"
 // Zero means the key was absent (or the Config was built by hand
 // rather than loaded), which resolves today's limits unchanged.
 type ExplicitDefaultBudget struct {
-	// MaxIterations is the raw agents.default.max_iterations value;
-	// 0 = key absent.
+	// MaxIterations is the raw agents.default.max_iterations value.
 	MaxIterations int
-	// MaxTurns is the raw agents.default.max_turns value; 0 = key absent.
-	MaxTurns int
+	// MaxIterationsSet reports the key was present in the file: an
+	// explicit 0 (cycles off) must win over a persona file's budget, so
+	// presence and value are tracked separately.
+	MaxIterationsSet bool
+	// MaxTurns is the raw agents.default.max_turns value.
+	MaxTurns    int
+	MaxTurnsSet bool
 }
 
 // captureExplicitDefaultBudget re-decodes the raw config bytes into a
@@ -28,16 +32,20 @@ func captureExplicitDefaultBudget(data []byte) ExplicitDefaultBudget {
 	var probe struct {
 		Agents struct {
 			Default struct {
-				MaxIterations int `yaml:"max_iterations"`
-				MaxTurns      int `yaml:"max_turns"`
+				MaxIterations *int `yaml:"max_iterations"`
+				MaxTurns      *int `yaml:"max_turns"`
 			} `yaml:"default"`
 		} `yaml:"agents"`
 	}
 	if err := yaml.Unmarshal(data, &probe); err != nil {
 		return ExplicitDefaultBudget{}
 	}
-	return ExplicitDefaultBudget{
-		MaxIterations: probe.Agents.Default.MaxIterations,
-		MaxTurns:      probe.Agents.Default.MaxTurns,
+	out := ExplicitDefaultBudget{}
+	if v := probe.Agents.Default.MaxIterations; v != nil {
+		out.MaxIterations, out.MaxIterationsSet = *v, true
 	}
+	if v := probe.Agents.Default.MaxTurns; v != nil {
+		out.MaxTurns, out.MaxTurnsSet = *v, true
+	}
+	return out
 }

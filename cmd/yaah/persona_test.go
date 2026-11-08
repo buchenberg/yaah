@@ -11,6 +11,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // captureSlogWarnings redirects the default logger for the duration of
@@ -363,5 +364,42 @@ func TestResumeKeepsStoredPromptBytes(t *testing.T) {
 	}
 	if restored.SystemPrompt != stored {
 		t.Fatalf("resumed SystemPrompt = %q; want the stored bytes verbatim (resume must not rebuild the prompt from the re-resolved persona)", restored.SystemPrompt)
+	}
+}
+
+// TestSetPersonaPreservesToolGuidanceSuffix pins review F1: a fresh
+// session's live mainPrompt carries the tool-guidance blocks
+// appendToolGuidance appended at construction; a mid-session switch
+// rebuilds the base from the retained layers and must RE-APPLY the
+// suffix, not silently drop it.
+func TestSetPersonaPreservesToolGuidanceSuffix(t *testing.T) {
+	personaTestRegistry(t)
+
+	const guidance = "\n\n## Sub-agents\nDelegate independent subtasks to specialist sub-agents."
+	build, _ := subagent.ResolvePersona(subagent.BuildPersonaName)
+
+	layers := prompts.Layers{Identity: prompts.IdentityPrompt}
+	sys, end := prompts.BuildMarked(layers)
+	s := &agentSession{cfg: &config.Config{}}
+	s.promptLayers = layers
+	s.systemPrompt = sys
+	s.identityEnd = end
+	s.persona = build
+	base := buildMainPrompt(s.cfg, SessionOptions{}, sys, end)
+	s.mainPrompt = base + guidance
+	s.promptGuidance = guidance
+	s.SetView(&safeCaptureView{})
+
+	if err := s.SetPersona("planner"); err != nil {
+		t.Fatalf("SetPersona(planner): %v", err)
+	}
+	if !strings.Contains(s.mainPrompt, guidance) {
+		t.Errorf("switch dropped the tool-guidance suffix from mainPrompt:\n%s", s.mainPrompt)
+	}
+	if !strings.HasSuffix(s.mainPrompt, guidance) {
+		t.Errorf("guidance must remain the prompt's tail after the rebuilt base:\n%s", s.mainPrompt)
+	}
+	if !strings.Contains(s.systemPrompt, "plan body") {
+		t.Errorf("switch did not rebind the persona body into systemPrompt")
 	}
 }

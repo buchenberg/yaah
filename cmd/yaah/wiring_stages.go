@@ -1355,10 +1355,18 @@ func assemble(lc *sessionConfig, opts SessionOptions, ws *workspaceStage, tr *to
 	// configured to have but does not. It feeds both the prompt (the model
 	// is told which are missing) and the session record (D4).
 	beltRemoved := tr.belt.Refused()
+	bare := loop.mainPrompt
 	mainPrompt := appendToolGuidance(opts, ws, tr, mcps, loop, beltRemoved)
+	// Retain everything appendToolGuidance appended so a mid-session
+	// persona switch can rebind the prompt body without losing the
+	// tool-guidance blocks (delegate/retained/belt/isolated/one-shot).
+	guidance := ""
+	if len(mainPrompt) > len(bare) {
+		guidance = mainPrompt[len(bare):]
+	}
 	recordSessionWorkspace(lc, tr, mcps, loop, beltRemoved)
 	launchEmbeddingBackfill(tr)
-	sess := newSessionFromStages(lc, opts, ws, tr, mcps, loop, mainPrompt)
+	sess := newSessionFromStages(lc, opts, ws, tr, mcps, loop, mainPrompt, guidance)
 	wireSessionHooks(lc, opts, ws, loop, sess)
 	return sess, nil
 }

@@ -61,6 +61,9 @@ Implemented:
   session/set_mode            Switch Plan/Build mode (backed by personas);
                               plan withholds mutating
                               tools and emits config_option_update
+  session/set_agent           Switch the session's persona; validates against
+                              the persona registry and answers the effective
+                              persona
   session/update              Streaming updates: message/thought chunks,
                               tool calls, plans, usage, compaction
   session/request_permission  Tool approvals delegated to the client

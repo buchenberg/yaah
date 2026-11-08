@@ -141,7 +141,11 @@ type agentSession struct {
 	// guidance block rendered from; a prompt rebuild reuses it so the
 	// block stays byte-identical. Immutable after wiring.
 	promptMemory prompts.MemoryGuidance
-	systemPrompt string
+	// promptGuidance is the tool-guidance suffix appendToolGuidance added
+	// to mainPrompt at construction; a mid-session persona switch re-applies
+	// it over the rebuilt base so no guidance block is lost.
+	promptGuidance string
+	systemPrompt   string
 	// mainPrompt is systemPrompt plus the default-agent directives
 	// injected after the identity block. Only the top-level loop sees
 	// it; sub-agents receive systemPrompt as their base so default

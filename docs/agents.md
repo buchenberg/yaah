@@ -59,7 +59,8 @@ How a session picks its persona, in precedence order:
 The persona is persisted on the session row at creation. Resume restores it:
 the budget, tool narrowing, and read-only gate re-derive from the stored
 name, while the prompt stays the recorded bytes. The `sessions.mode` column
-is vestigial: nothing reads or writes it; an empty persona reads as `build`.
+is vestigial: nothing writes it and no behavior keys off it (the column
+survives in older stores only); an empty persona reads as `build`.
 
 ## Switching
 

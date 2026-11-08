@@ -43,10 +43,11 @@ History persists at `~/.yaah/history` (or `$YAAH_HOME/history` when `YAAH_HOME` 
 
 The session persona is the only axis: the orchestrator runs as a persona
 (`build` by default, `plan` for read-only planning), and the old plan/build
-mode surfaces are deprecated aliases of `/agent plan` / `/agent build` —
-REPL `/plan` and `/build`, the TUI and web palette entries, and ACP
-`session/set_mode` all map onto the personas of the same name and remain
-for one more release. See [agents.md](./agents.md) for the persona model.
+mode surfaces are gone: switching is `/agent <name>` in the REPL, `:agent`
+in the TUI, the web palette's agent action, and ACP
+`session/set_agent`. ACP `session/set_mode` remains as a spec-level
+method mapping `plan`/`build` onto the personas of the same name. See
+[agents.md](./agents.md) for the persona model.
 
 The `plan` persona narrows the toolset to the **inspection set** — the
 tools that look at a workspace instead of changing it:

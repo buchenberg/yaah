@@ -37,8 +37,8 @@ type RoleDef struct {
 	Output string
 	// Mode is the agent capability (yaah-21uk D1): "primary" is
 	// orchestrator-eligible, "subagent" delegate-only, "all" both.
-	// Normalized on load — see roleDefFrom; no dispatch behavior keys
-	// off it yet.
+	// Normalized on load — see roleDefFrom; delegate-surface filtering
+	// keys off it (delegatable.go).
 	Mode          string
 	MaxLoopCycles int
 	MinLoopCycles int // per-call overrides may not go below; 0 = none

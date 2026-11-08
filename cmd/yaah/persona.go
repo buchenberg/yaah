@@ -230,11 +230,26 @@ func (s *agentSession) rebuildPromptsLocked(personaBody string) (system, main st
 	if s.promptLayers.Identity == "" {
 		return s.systemPrompt, s.mainPrompt, false
 	}
-	system, _ = buildMarkedPrompt(s.promptLayers, s.opts.ResumeSessionID, s.promptMemory, personaBody)
-	if system != s.systemPrompt {
-		// A resume: the persisted prompt bytes are the session's truth.
+	// Verify the retained layers still derive the session's CURRENT
+	// prompt — rebuild with the CURRENT persona body must reproduce
+	// s.systemPrompt byte-for-byte. On a resume the persisted prompt
+	// won at construction (restoreSession), so the layers describe a
+	// different prompt than the session runs; rebuilding from them would
+	// rewrite environment, project instructions and memory alongside the
+	// persona. The recorded prompt stands in that case, and the switch
+	// lands everywhere else (budget, tools, gate).
+	if cur, _ := buildMarkedPrompt(s.promptLayers, s.opts.ResumeSessionID, s.promptMemory, s.persona.Body); cur != s.systemPrompt {
 		return s.systemPrompt, s.mainPrompt, false
 	}
-	main = buildMainPrompt(s.cfg, s.opts, system, s.identityEnd)
+	// The identity anchor is discarded deliberately: the persona layer
+	// renders after the anchor, so the construction-time identityEnd
+	// stays valid for the rebuilt prompt.
+	system, _ = buildMarkedPrompt(s.promptLayers, s.opts.ResumeSessionID, s.promptMemory, personaBody)
+	// Re-apply the construction-time tool-guidance suffix: the fresh
+	// base is bare buildMainPrompt output, but the session's live prompt
+	// carries the guidance blocks appendToolGuidance added — without
+	// this, a switch would silently drop the delegate/retained/belt/
+	// isolated/one-shot guidance from every subsequent loop.
+	main = buildMainPrompt(s.cfg, s.opts, system, s.identityEnd) + s.promptGuidance
 	return system, main, true
 }

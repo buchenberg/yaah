@@ -16,9 +16,11 @@ func TestCaptureExplicitDefaultBudget(t *testing.T) {
 		{"agents stanza absent", "editor: vi\n", ExplicitDefaultBudget{}},
 		{"default stanza absent", "agents:\n  subagent:\n    max_concurrency: 2\n", ExplicitDefaultBudget{}},
 		{"neither budget key", "agents:\n  default:\n    model: m\n", ExplicitDefaultBudget{}},
-		{"iterations only", "agents:\n  default:\n    max_iterations: 42\n", ExplicitDefaultBudget{MaxIterations: 42}},
-		{"turns only", "agents:\n  default:\n    max_turns: 7\n", ExplicitDefaultBudget{MaxTurns: 7}},
-		{"both", "agents:\n  default:\n    max_iterations: 42\n    max_turns: 7\n", ExplicitDefaultBudget{MaxIterations: 42, MaxTurns: 7}},
+		{"iterations only", "agents:\n  default:\n    max_iterations: 42\n", ExplicitDefaultBudget{MaxIterations: 42, MaxIterationsSet: true}},
+		{"turns only", "agents:\n  default:\n    max_turns: 7\n", ExplicitDefaultBudget{MaxTurns: 7, MaxTurnsSet: true}},
+		{"both", "agents:\n  default:\n    max_iterations: 42\n    max_turns: 7\n", ExplicitDefaultBudget{MaxIterations: 42, MaxIterationsSet: true, MaxTurns: 7, MaxTurnsSet: true}},
+		{"explicit zero iterations is present, not absent", "agents:\n  default:\n    max_iterations: 0\n", ExplicitDefaultBudget{MaxIterationsSet: true}},
+		{"explicit zero turns is present, not absent", "agents:\n  default:\n    max_turns: 0\n", ExplicitDefaultBudget{MaxTurnsSet: true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -44,7 +46,7 @@ func TestLoadCapturesExplicitDefaultBudget(t *testing.T) {
 		{
 			"explicit values survive the merge",
 			"agents:\n  default:\n    max_iterations: 42\n    max_turns: 7\n",
-			42, 7, ExplicitDefaultBudget{MaxIterations: 42, MaxTurns: 7},
+			42, 7, ExplicitDefaultBudget{MaxIterations: 42, MaxIterationsSet: true, MaxTurns: 7, MaxTurnsSet: true},
 		},
 		{
 			"unset keys keep the defaults and no explicit record",

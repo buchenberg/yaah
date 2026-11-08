@@ -40,10 +40,10 @@ func sampledToolsLevel(persona subagent.Persona) agent.ToolsLevel {
 	return personaLevel(persona)
 }
 
-// effectiveToolsLevel is the tool gate this session's next loop build
-// enforces, derived from the current persona under the session lock.
-// modeDirective derives its wording from this same derivation, so a
-// directive can never promise a regime the loop does not enforce.
+// effectiveToolsLevel is a test seam over personaLevel (the loop build
+// and modeDirective sample the persona once and call personaLevel
+// directly); it exists so tests can assert the session-state derivation
+// without hand-building a loop.
 func (s *agentSession) effectiveToolsLevel() agent.ToolsLevel {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
