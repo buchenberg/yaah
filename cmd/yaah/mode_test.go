@@ -1,18 +1,15 @@
 package yaah
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/memory"
 )
 
-// The tool gate derives from the persona alone since part 2: a read-only
+// The tool gate derives from the persona alone: a read-only
 // persona gets the inspection set, everything else the full toolset. There is
 // no mode input left to vary.
 func TestSampledToolsLevel_PersonaMatrix(t *testing.T) {
@@ -151,7 +148,7 @@ func TestModeDirective_NamesLeavingMechanismAndNotice(t *testing.T) {
 	}
 }
 
-// Golden byte-stability (part 2): with no persona change, the per-run
+// Golden byte-stability: with no persona change, the per-run
 // directive is byte-identical across repeated builds, and a switch round
 // trip restores the original prompt bytes exactly — the directive is a pure
 // function of the sampled persona.
@@ -169,212 +166,6 @@ func TestModeDirective_ByteStableAcrossRuns(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-// The deprecated SetMode wrapper maps the mode name onto the persona of the
-// same name, announces via AgentChangedEvent (ModeChangedEvent is gone), and
-// touches neither the persona column semantics nor the mode column: the
-// persona is the only persisted axis.
-func TestSetModeMapsOntoPersona(t *testing.T) {
-	sess := &agentSession{}
-	view := &safeCaptureView{}
-	sess.SetView(view)
-
-	if err := sess.SetMode(acpModePlan); err != nil {
-		t.Fatalf("SetMode(%q) = %v", acpModePlan, err)
-	}
-	if got := sess.PersonaName(); got != subagent.PlanPersonaName {
-		t.Fatalf("PersonaName() = %q; want %q", got, subagent.PlanPersonaName)
-	}
-	if got := sess.Mode(); got != acpModePlan {
-		t.Fatalf("Mode() = %q; want %q (derived from the persona)", got, acpModePlan)
-	}
-	if len(view.events) != 1 {
-		t.Fatalf("view received %d event(s) on a mode-alias switch, want 1", len(view.events))
-	}
-	evt, ok := view.events[0].(*agent.AgentChangedEvent)
-	if !ok {
-		t.Fatalf("dispatched event = %T; want *agent.AgentChangedEvent", view.events[0])
-	}
-	if evt.Persona != subagent.PlanPersonaName {
-		t.Errorf("event Persona = %q; want %q", evt.Persona, subagent.PlanPersonaName)
-	}
-	for _, want := range []string{"persona: plan", "withheld", "deprecat", "/agent"} {
-		if !strings.Contains(evt.Notice(), want) {
-			t.Errorf("plan notice %q missing %q", evt.Notice(), want)
-		}
-	}
-
-	// Switching back works and re-derives build.
-	if err := sess.SetMode(acpModeBuild); err != nil {
-		t.Fatalf("SetMode(%q) = %v", acpModeBuild, err)
-	}
-	if got := sess.PersonaName(); got != subagent.BuildPersonaName {
-		t.Fatalf("PersonaName() = %q after switching back; want %q", got, subagent.BuildPersonaName)
-	}
-	if got := sess.Mode(); got != acpModeBuild {
-		t.Fatalf("Mode() = %q after switching back; want %q", got, acpModeBuild)
-	}
-}
-
-// An unknown mode is still refused, changes nothing, and announces nothing.
-func TestSetModeRejectsUnknownModeWithoutNotice(t *testing.T) {
-	sess := &agentSession{}
-	view := &safeCaptureView{}
-	sess.SetView(view)
-
-	if err := sess.SetMode("yolo"); err == nil {
-		t.Fatalf("SetMode(%q) = nil; want an error", "yolo")
-	}
-	if len(view.events) != 0 {
-		t.Fatalf("view received %d event(s) for a refused mode, want 0", len(view.events))
-	}
-	if got := sess.Mode(); got != acpModeBuild {
-		t.Errorf("Mode() = %q after a refused switch; want %q", got, acpModeBuild)
-	}
-}
-
-// Views that must not be written between runs (REPL, ACP) get the notice when
-// the next run drains the buffer, so it still appears in-band.
-func TestSetModeNoticeBuffersForUnsafeView(t *testing.T) {
-	sess := &agentSession{}
-	view := &captureView{}
-	sess.SetView(view)
-
-	if err := sess.SetMode(acpModePlan); err != nil {
-		t.Fatalf("SetMode(%q) = %v", acpModePlan, err)
-	}
-	if len(view.events) != 0 {
-		t.Fatalf("unsafe view received %d event(s) between runs, want 0", len(view.events))
-	}
-	sess.deliverPendingEvents()
-	if len(view.events) != 1 {
-		t.Fatalf("view received %d event(s) after drain, want 1", len(view.events))
-	}
-	if _, ok := view.events[0].(*agent.AgentChangedEvent); !ok {
-		t.Fatalf("delivered event = %T; want *agent.AgentChangedEvent", view.events[0])
-	}
-}
-
-// The alias path must NOT write the mode column: the persona column is the
-// truth, and a legacy mode value left in the row never re-narrows a session
-// the persona has widened.
-func TestSetModeLeavesModeColumnUntouched(t *testing.T) {
-	db, err := memory.Open(filepath.Join(t.TempDir(), "mode.db"))
-	if err != nil {
-		t.Fatalf("memory.Open() error: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	if err := db.CreateSession(memory.Session{ID: "sess-mode", StartedAt: time.Now().Unix()}); err != nil {
-		t.Fatalf("CreateSession() error: %v", err)
-	}
-	sess := &agentSession{db: db, sessionID: "sess-mode"}
-
-	if err := sess.SetMode(acpModePlan); err != nil {
-		t.Fatalf("SetMode(%q) = %v", acpModePlan, err)
-	}
-	if got, err := db.SessionPersona("sess-mode"); err != nil || got != subagent.PlanPersonaName {
-		t.Fatalf("persisted persona = %q (err %v); want %q", got, err, subagent.PlanPersonaName)
-	}
-	if got, err := db.SessionMode("sess-mode"); err != nil || got != "" {
-		t.Fatalf("persisted mode = %q (err %v); want \"\" — the persona column is the only written axis", got, err)
-	}
-
-	// Switching back persists the persona, still without a mode write.
-	if err := sess.SetMode(acpModeBuild); err != nil {
-		t.Fatalf("SetMode(%q) = %v", acpModeBuild, err)
-	}
-	if got, err := db.SessionPersona("sess-mode"); err != nil || got != subagent.BuildPersonaName {
-		t.Fatalf("persisted persona = %q (err %v); want %q", got, err, subagent.BuildPersonaName)
-	}
-}
-
-// A session with no store still switches: persistence is bookkeeping on top of
-// the switch, never a precondition for it.
-func TestSetModeWithoutStoreStillSwitches(t *testing.T) {
-	sess := &agentSession{}
-
-	if err := sess.SetMode(acpModePlan); err != nil {
-		t.Fatalf("SetMode(%q) = %v", acpModePlan, err)
-	}
-	if got := sess.Mode(); got != acpModePlan {
-		t.Fatalf("Mode() = %q; want %q", got, acpModePlan)
-	}
-}
-
-// Legacy resume migration (part 2): a row with an empty persona column and
-// mode==plan was narrowed by the retired plan mode, so resume resolves the
-// plan persona. Every other legacy shape — empty mode, build mode, junk from
-// a newer binary — reads as build, the pre-persona default.
-func TestStoredPersonaName_MigratesLegacyPlanMode(t *testing.T) {
-	db, err := memory.Open(filepath.Join(t.TempDir(), "migrate.db"))
-	if err != nil {
-		t.Fatalf("memory.Open() error: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	for _, id := range []string{"legacy-plan", "legacy-build", "legacy-empty", "legacy-junk", "modern-plan"} {
-		if err := db.CreateSession(memory.Session{ID: id, StartedAt: time.Now().Unix()}); err != nil {
-			t.Fatalf("CreateSession(%s) error: %v", id, err)
-		}
-	}
-	if err := db.SetSessionMode("legacy-plan", acpModePlan); err != nil {
-		t.Fatalf("SetSessionMode() error: %v", err)
-	}
-	if err := db.SetSessionMode("legacy-build", acpModeBuild); err != nil {
-		t.Fatalf("SetSessionMode() error: %v", err)
-	}
-	if err := db.SetSessionMode("legacy-junk", "yolo"); err != nil {
-		t.Fatalf("SetSessionMode() error: %v", err)
-	}
-	if err := db.SetSessionPersona("modern-plan", subagent.PlanPersonaName); err != nil {
-		t.Fatalf("SetSessionPersona() error: %v", err)
-	}
-
-	cases := []struct {
-		id   string
-		want string
-	}{
-		{"legacy-plan", subagent.PlanPersonaName},
-		{"legacy-build", ""},
-		{"legacy-empty", ""},
-		{"legacy-junk", ""},
-		{"modern-plan", subagent.PlanPersonaName},
-	}
-	for _, tc := range cases {
-		t.Run(tc.id, func(t *testing.T) {
-			if got := storedPersonaName(db, tc.id, "fallback"); got != tc.want {
-				t.Fatalf("storedPersonaName(%q) = %q; want %q", tc.id, got, tc.want)
-			}
-		})
-	}
-}
-
-// The migration must reach the real resume selection: resolveSessionPersonaFor
-// over a legacy plan-mode row yields the plan persona, so a resumed session
-// comes back narrowed with the read-only gate.
-func TestResolveSessionPersonaFor_MigratesLegacyPlanRow(t *testing.T) {
-	db, err := memory.Open(filepath.Join(t.TempDir(), "migrate.db"))
-	if err != nil {
-		t.Fatalf("memory.Open() error: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	const id = "legacy-plan"
-	if err := db.CreateSession(memory.Session{ID: id, StartedAt: time.Now().Unix()}); err != nil {
-		t.Fatalf("CreateSession() error: %v", err)
-	}
-	if err := db.SetSessionMode(id, acpModePlan); err != nil {
-		t.Fatalf("SetSessionMode() error: %v", err)
-	}
-
-	opts := SessionOptions{ResumeSessionID: id}
-	cfg := &config.Config{}
-	got := resolveSessionPersonaFor(db, opts, cfg)
-	if got.Persona.Name != subagent.PlanPersonaName {
-		t.Fatalf("resume persona = %q; want %q", got.Persona.Name, subagent.PlanPersonaName)
-	}
-	if !got.Persona.ReadOnly {
-		t.Fatal("migrated plan persona is not ReadOnly; the resumed session would get the full toolset")
 	}
 }
 
@@ -403,5 +194,27 @@ func TestModeDirective_CustomIdentityAnchor(t *testing.T) {
 	idxEnv := strings.Index(got, "## Environment")
 	if !(0 < idxDirectives && idxDirectives < idxEnv) {
 		t.Errorf("wrong section order identity=0 directives=%d env=%d", idxDirectives, idxEnv)
+	}
+}
+
+// Mode() is a pure derivation from the persona: the plan persona reads as
+// the plan mode word, everything else — including a hand-built zero persona
+// — as build. The session never stores a mode.
+func TestModeDerivesFromPersona(t *testing.T) {
+	if got := (&agentSession{}).Mode(); got != acpModeBuild {
+		t.Fatalf("zero persona Mode() = %q; want %q", got, acpModeBuild)
+	}
+	if got := (&agentSession{persona: subagent.Persona{Name: subagent.PlanPersonaName, ReadOnly: true}}).Mode(); got != acpModePlan {
+		t.Fatalf("plan persona Mode() = %q; want %q", got, acpModePlan)
+	}
+}
+
+// The fresh-session resolution is the config default, straight through:
+// an unset key resolves build (there is no process-level override branch
+// left to fall through), and a store is never consulted.
+func TestResolveSessionPersonaFor_FreshUnsetUsesBuild(t *testing.T) {
+	got := resolveSessionPersonaFor(nil, SessionOptions{}, &config.Config{})
+	if got.Persona.Name != subagent.BuildPersonaName || got.Fallback {
+		t.Fatalf("fresh resolution = %+v; want the built-in build persona", got)
 	}
 }

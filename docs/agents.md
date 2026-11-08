@@ -53,15 +53,13 @@ How a session picks its persona, in precedence order:
 | Order | Source | Scope |
 |---|---|---|
 | 1 | `agents.default.agent` in config | Durable default for fresh sessions |
-| 2 | The process-level next-session override (`session/set_agent`) | Applies when the config key is unset; does not survive a restart |
-| 3 | The stored `sessions.persona` value | Resumed sessions only — the stored persona always wins on resume; a config change or override never rewrites an existing session |
+| 2 | The stored `sessions.persona` value | Resumed sessions only — the stored persona always wins on resume; a config change never rewrites an existing session |
 | fallback | `build` | An unknown or delegate-only name warns and falls back (never fails the session) |
 
 The persona is persisted on the session row at creation. Resume restores it:
 the budget, tool narrowing, and read-only gate re-derive from the stored
-name, while the prompt stays the recorded bytes. A legacy row that still
-carries a `plan` mode value migrates to the `plan` persona on resume; every
-other legacy value reads as `build`.
+name, while the prompt stays the recorded bytes. The `sessions.mode` column
+is vestigial: nothing reads or writes it; an empty persona reads as `build`.
 
 ## Switching
 
@@ -70,14 +68,14 @@ other legacy value reads as `build`.
 | REPL `/agents` | List personas, current marked | — |
 | REPL `/agent [name]` | Report status (bare) or switch this session | Current session, next run |
 | TUI `:agent` palette | Pick a persona | Current session, next run |
-| ACP `session/set_agent` | Set the next-session override | Fresh sessions only |
-| Deprecated aliases: REPL `/plan`/`/build`, TUI `:plan`/`:build`, web palette mode entries, ACP `session/set_mode` and `session/set_config_option("mode")` | Map onto the personas of the same name | Current session, next run |
+| ACP `session/set_agent` | Switch the addressed session | Current session, next run |
+| ACP `session/set_mode`, `session/set_config_option("mode")` | Spec mode ids map onto the personas of the same name | Current session, next run |
 
 A switch is effective at the next loop build: the persona body rebinds into
 the prompt, the budget re-resolves, and the tool narrowing and read-only
 gate re-derive. An in-flight turn finishes on the persona it started with.
 
 `AgentChangedEvent` announces non-`build` personas at session start and
-every switch, including a switch back to `build` and switches made through
-the deprecated aliases; the in-band notice names the persona and the regime
-it enforces. Plain `build` sessions announce nothing at start.
+every switch, including a switch back to `build`; the in-band notice names
+the persona and the regime it enforces. Plain `build` sessions announce
+nothing at start.

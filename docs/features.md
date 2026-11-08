@@ -14,8 +14,7 @@ sub-agent team, see [sub-agents.md](./sub-agents.md); for agent personas, see
   collapsible tool cards (`ctrl+t`)
 - Sub-agent dispatch cards with role, duration, and status
 - A command palette (`ctrl+p`) with `:help`, `:clear`, `:compact`,
-  `:banner`, `:model`, `:agent`, `:plan`/`:build` (deprecated persona
-  aliases), `:search`, `:steer`, `:followup`, `:verbose`, `:quit`, and
+  `:banner`, `:model`, `:agent`, `:search`, `:steer`, `:followup`, `:verbose`, `:quit`, and
   `:stop`
 - A paned layout: conversation, info pane (session, context, MCP, config),
   todo sidebar, and background sub-agent jobs
@@ -37,7 +36,6 @@ Running `yaah` with no arguments starts a readline REPL:
 | `/login`, `/logout` | Manage provider OAuth login |
 | `/agents` | List agent personas |
 | `/agent [name]` | Switch this session's persona (bare `/agent` reports the current and next persona) |
-| `/plan`, `/build` | Deprecated aliases of `/agent plan` / `/agent build`; kept for one more release |
 
 History persists at `~/.yaah/history` (or `$YAAH_HOME/history` when `YAAH_HOME` is set).
 
@@ -94,9 +92,8 @@ that default.
 ## Web UI
 
 `yaah web` serves a browser interface with SSE streaming, tool cards,
-reasoning display, approval/question modals, and a command palette whose
-`Plan mode` / `Build mode` entries are deprecated persona aliases (there is
-no persona picker yet). It is token-gated: startup
+reasoning display, approval/question modals, and a command palette with a persona picker (the `ctrl.agents` payload drives
+the agent group). It is token-gated: startup
 prints a URL containing the access token. See [web-ui.md](./web-ui.md) for
 the wire protocol and current feature differences from the TUI.
 

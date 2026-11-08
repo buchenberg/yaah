@@ -12,8 +12,6 @@ func TestParseSlashCommand_recognizesBuiltinCommands(t *testing.T) {
 		{"/clear", CmdClear},
 		{"/?", CmdHelp},
 		{"/help", CmdHelp},
-		{"/plan", CmdPlan},
-		{"/build", CmdBuild},
 	}
 
 	for _, tt := range tests {
@@ -32,6 +30,10 @@ func TestParseSlashCommand_returnsNoneForRegularInput(t *testing.T) {
 		"/unknown-command",
 		"",
 		"just text",
+		// The retired plan/build mode aliases are gone: they are regular
+		// text now, not hidden commands.
+		"/plan",
+		"/build",
 	}
 
 	for _, input := range tests {

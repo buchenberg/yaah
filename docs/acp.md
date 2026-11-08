@@ -51,8 +51,8 @@ sub-agents, and prompts all resolve against it.
 | `session/delete` | supported | removes the conversation from the store; unknown/deleted ids succeed silently |
 | `session/prompt` | supported | streams updates, then answers with a `stopReason` |
 | `session/cancel` | supported | notification; cancels the in-flight turn |
-| `session/set_mode` | deprecated alias | maps the legacy `build`/`plan` ids onto the personas of the same name (see [agents.md](./agents.md)); unknown ids are invalid params and the change is pushed as `config_option_update`; kept for one more release |
-| `session/set_agent` | supported | stores the process-level next-session persona override: applies to fresh sessions when `agents.default.agent` is unset, never touches a resumed session; validates against the persona registry (a miss is invalid params) and answers the persona a session created after the call would run as |
+| `session/set_mode` | supported | maps the spec `build`/`plan` mode ids onto the personas of the same name (see [agents.md](./agents.md)); unknown ids are invalid params and the change is pushed as `config_option_update` |
+| `session/set_agent` | supported | switches the ADDRESSED session's persona: validates against the persona registry (a miss is invalid params) and answers the session's effective persona plus its read-only posture; effective at the next loop build |
 | `session/set_config_option` | supported | the mode picker (`configId: "mode"` with `category: "mode"`, backed by personas) and model picker (`configId: "model"`); validates the value, applies it to subsequent turns, emits `config_option_update` for persona changes, and echoes the recomputed `configOptions` set |
 | `session/update` | supported | variants below |
 | `session/request_permission` | supported | tool approvals delegated to the client; all four option kinds (`allow_once`/`allow_always`/`reject_once`/`reject_always`) are offered, and an always-decision is remembered for the rest of the session |
@@ -140,13 +140,12 @@ a session whose turn is still in flight is rejected busy (`-32002`),
 as is a `session/load` for a live id while its prompt runs — both retry
 after the turn ends. The session persona is the only axis (see
 [agents.md](./agents.md)): a fresh session resolves `agents.default.agent`
-(or the `session/set_agent` override when the config key is unset) and
-defaults to the `build` persona. The `build`/`plan` selector is still
+and defaults to the `build` persona. The `build`/`plan` selector is still
 advertised as `configOptions` (`id: "mode"`, `category: "mode"`, values
 `build`/`plan`) — a persona selector in mode clothing; this server is
 greenfield and does not emit the legacy `modes` field, so clients must
-support config options. `session/set_mode` remains a deprecated alias that
-maps the mode ids onto the personas of the same name and pushes
+support config options. `session/set_mode` maps the mode ids onto the
+personas of the same name and pushes
 `config_option_update`. The `plan` persona withholds the mutating tool set,
 leaving the inspection set (see [features.md](./features.md#plan-mode) for
 the full list), and injects a planning directive; an in-flight turn keeps

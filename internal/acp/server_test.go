@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
@@ -40,8 +41,8 @@ type fakeSession struct {
 	// assert the switch reached the session.
 	provider string
 	model    string
-	// mode tracks SetMode for session-mode tests.
-	mode string
+	// persona tracks SetPersona for session-mode/agent tests.
+	persona string
 	// budgetExhausted is what TurnBudgetExhausted reports; stop-reason
 	// tests set it to simulate a soft tool-turn cap ending the turn.
 	budgetExhausted bool
@@ -114,10 +115,26 @@ func (f *fakeSession) WorldStatus() worldinfo.Status {
 	return f.world
 }
 
-// The fake runs as the default build persona (yaah-21uk.10): no
-// per-session persona, and a next-session resolution of build.
-func (f *fakeSession) PersonaName() string     { return "build" }
-func (f *fakeSession) NextPersonaName() string { return "build" }
+// The fake starts on the default build persona (yaah-21uk.12); the
+// mode word derives from the persona, exactly like the real session.
+func (f *fakeSession) PersonaName() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.persona == "" {
+		return "build"
+	}
+	return f.persona
+}
+
+func (f *fakeSession) SetPersona(name string) error {
+	if _, ok := subagent.ResolvePersona(name); !ok {
+		return fmt.Errorf("%q is not a primary-capable persona (%s)", name, subagent.PersonaMissReason(name))
+	}
+	f.mu.Lock()
+	f.persona = name
+	f.mu.Unlock()
+	return nil
+}
 
 func (f *fakeSession) SetModel(provider, model string) {
 	f.mu.Lock()
@@ -139,22 +156,10 @@ func (f *fakeSession) ModelName() string {
 }
 
 func (f *fakeSession) Mode() string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.mode == "" {
-		return SessionModeBuild
+	if f.PersonaName() == "plan" {
+		return SessionModePlan
 	}
-	return f.mode
-}
-
-func (f *fakeSession) SetMode(mode string) error {
-	if !validSessionMode(mode) {
-		return fmt.Errorf("unknown mode %q", mode)
-	}
-	f.mu.Lock()
-	f.mode = mode
-	f.mu.Unlock()
-	return nil
+	return SessionModeBuild
 }
 
 // History returns a copy of the fake's history, mirroring
@@ -1016,6 +1021,47 @@ func TestServer_setModeSameModeIsSilent(t *testing.T) {
 	msg := h.recv(t)
 	if msg.Error != nil || msg.Method == "session/update" {
 		t.Fatalf("set_mode same mode = %+v, want plain ack", msg)
+	}
+}
+
+// TestServer_setAgentSwitchesAddressedSession pins the semantics: set_agent
+// switches the ADDRESSED session's persona, validates the name against the
+// persona registry (a miss is invalid params), and answers the effective
+// persona plus its read-only posture.
+func TestServer_setAgentSwitchesAddressedSession(t *testing.T) {
+	sess := &fakeSession{id: "sess-agent"}
+	h := newACPHarness(t, sess)
+	initialize(t, h)
+	sid := newSession(t, h)
+
+	if err := h.send("session/set_agent", 4, fmt.Sprintf(`{"sessionId":%q,"agent":"plan"}`, sid)); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recv(t)
+	if msg.Error != nil {
+		t.Fatalf("set_agent error: %+v", msg.Error)
+	}
+	var result SetAgentResult
+	if err := json.Unmarshal(msg.Result, &result); err != nil {
+		t.Fatalf("set_agent result: %v", err)
+	}
+	if result.Persona != "plan" || !result.ReadOnly {
+		t.Fatalf("set_agent result = %+v, want persona plan read-only", result)
+	}
+	if sess.PersonaName() != "plan" || sess.Mode() != SessionModePlan {
+		t.Fatalf("session persona/mode = %q/%q, want plan/plan", sess.PersonaName(), sess.Mode())
+	}
+
+	// A miss is invalid params and leaves the session untouched.
+	if err := h.send("session/set_agent", 5, fmt.Sprintf(`{"sessionId":%q,"agent":"ghost"}`, sid)); err != nil {
+		t.Fatal(err)
+	}
+	rejected := h.recv(t)
+	if rejected.Error == nil || rejected.Error.Code != codeInvalidParams {
+		t.Fatalf("unknown agent response = %+v, want invalid params", rejected)
+	}
+	if sess.PersonaName() != "plan" {
+		t.Fatalf("rejected agent switched the session to %q", sess.PersonaName())
 	}
 }
 

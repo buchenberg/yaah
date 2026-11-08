@@ -39,11 +39,13 @@ func (s *Server) handleCancel(msg Message) {
 	st.run.cancel()
 }
 
-// handleSetMode switches the Plan/Build session mode. The id must be one of
-// the modes advertised on session/new; unknown ids fail closed instead of
-// being silently accepted. The canonical notification is
-// config_option_update; the change applies to the next prompt (an in-flight
-// turn keeps the mode it started with).
+// handleSetMode switches the session persona through the ACP mode
+// vocabulary: the spec's plan/build ids map onto the personas of the
+// same name. The id must be one of the modes advertised on session/new;
+// unknown ids fail closed instead of being silently accepted. The
+// canonical notification is config_option_update; the change applies to
+// the next prompt (an in-flight turn keeps the persona it started
+// with).
 func (s *Server) handleSetMode(
 	ctx context.Context,
 	msg Message,
@@ -78,25 +80,28 @@ func (s *Server) handleSetMode(
 		respOK(msg.ID, nil)
 		return
 	}
-	if err := st.sess.SetMode(p.ModeID); err != nil {
+	name := subagent.BuildPersonaName
+	if p.ModeID == SessionModePlan {
+		name = subagent.PlanPersonaName
+	}
+	if err := st.sess.SetPersona(name); err != nil {
 		respErr(msg.ID, codeInvalidParams, err.Error())
 		return
 	}
 	sendUpdate(st.id, ConfigOptionUpdate{
 		SessionUpdate: UpdateConfigOption,
-		ConfigOptions: buildSessionConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName(), p.ModeID),
+		ConfigOptions: buildSessionConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName(), st.sess.Mode()),
 	})
 	respOK(msg.ID, nil)
 }
 
-// handleSetAgent stores the process-level next-session persona override
-// (yaah-21uk.10). The override applies to sessions created AFTER the
-// call — the addressed session keeps its persona, which was fixed at
-// its construction (yaah-21uk.11) — and an explicit agents.default.agent
-// config still outranks it, which is why the result reports the
-// effective next persona rather than echoing the request. The name must
-// resolve primary-capable; an unknown session id or empty name is
-// invalid params, mirroring session/set_mode.
+// handleSetAgent switches the persona of the ADDRESSED session
+// (yaah-21uk.12): SetPersona rebinds the persona body, budget, tool
+// narrowing and read-only gate at the next loop build, and the switch
+// announces in-band like every other pick surface. The name must
+// resolve primary-capable — a miss is invalid params with the persona
+// registry's reason wording (typo vs delegate-only). The result reports
+// the session's effective persona and whether it is read-only.
 func (s *Server) handleSetAgent(
 	msg Message,
 	respOK func(id json.RawMessage, result any),
@@ -125,13 +130,17 @@ func (s *Server) handleSetAgent(
 		respErr(msg.ID, codeInvalidParams, "unknown session id")
 		return
 	}
-	if _, resolvable := subagent.ResolvePersona(name); !resolvable {
+	persona, resolvable := subagent.ResolvePersona(name)
+	if !resolvable {
 		respErr(msg.ID, codeInvalidParams,
 			fmt.Sprintf("%q is not a primary-capable agent (%s)", name, subagent.PersonaMissReason(name)))
 		return
 	}
-	subagent.SetNextPersona(name)
-	respOK(msg.ID, SetAgentResult{Persona: st.sess.NextPersonaName()})
+	if err := st.sess.SetPersona(name); err != nil {
+		respErr(msg.ID, codeInvalidParams, err.Error())
+		return
+	}
+	respOK(msg.ID, SetAgentResult{Persona: st.sess.PersonaName(), ReadOnly: persona.ReadOnly})
 }
 
 // modelCatalog returns the models discovery reports for the picker, or
@@ -186,13 +195,20 @@ func (s *Server) handleSetConfigOption(
 			return
 		}
 		if st.sess.Mode() != p.Value {
-			if err := st.sess.SetMode(p.Value); err != nil {
+			// The mode selector is backed by personas: the value maps onto
+			// the persona of the same name (the same seam session/set_mode
+			// drives).
+			name := subagent.BuildPersonaName
+			if p.Value == SessionModePlan {
+				name = subagent.PlanPersonaName
+			}
+			if err := st.sess.SetPersona(name); err != nil {
 				respErr(msg.ID, codeInvalidParams, err.Error())
 				return
 			}
 			sendUpdate(st.id, ConfigOptionUpdate{
 				SessionUpdate: UpdateConfigOption,
-				ConfigOptions: buildSessionConfigOptions(catalog, st.sess.ProviderName(), st.sess.ModelName(), p.Value),
+				ConfigOptions: buildSessionConfigOptions(catalog, st.sess.ProviderName(), st.sess.ModelName(), st.sess.Mode()),
 			})
 		}
 		respOK(msg.ID, SetConfigOptionResult{

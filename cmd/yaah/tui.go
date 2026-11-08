@@ -133,24 +133,14 @@ func runTUI() error {
 		app.SetProvider(providerName)
 		app.SetModel(modelName)
 	}
-	app.OnModeSelect = func(mode string) {
-		// Deprecated alias (yaah-21uk.12 part 2): SetMode maps the mode name
-		// onto the persona of the same name; the switch announces in-band
-		// with the regime sentence and the deprecation note. The badge
-		// derives from the persona, so a refused switch leaves it alone.
-		if err := sess.SetMode(mode); err != nil {
-			app.SetEphemeral(err.Error())
-			return
-		}
-		app.SetMode(sess.Mode())
-		app.SetEphemeral("session mode: " + mode + " " + modeDeprecationNote)
-	}
 	// Persona palette (yaah-21uk.12): pick validates and SWITCHES the
 	// current session — the persona body, budget and tool gate land on
-	// the next run. The ephemeral line is the confirmation.
+	// the next run. The ephemeral line is the confirmation and the
+	// info-pane mode badge re-derives from the persona.
 	app.SetAgentPicker(personaNames(), personaDescriptions())
 	app.OnAgentSelect = func(name string) {
 		reply, _ := sess.switchPersona(name)
+		app.SetMode(sess.Mode())
 		app.SetEphemeral(reply)
 	}
 

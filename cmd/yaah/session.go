@@ -92,7 +92,12 @@ type Session interface {
 	ProviderName() string
 	ModelName() string
 	Mode() string
-	SetMode(mode string) error
+	// PersonaName reports the persona the session runs as; the web
+	// switch notice names it.
+	PersonaName() string
+	// SetPersona switches the persona the session runs as; effective at
+	// the next loop build. An invalid name is refused with an error.
+	SetPersona(name string) error
 	MCPInfos() []mcp.ServerInfo
 	// WorldStatus reports the session's workspace and dispatch-world
 	// posture for display. The zero value means it was never derived;

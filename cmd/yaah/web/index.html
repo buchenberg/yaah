@@ -488,7 +488,7 @@ document.addEventListener('alpine:init', () => {
       status: 'connecting…', ctx: null,
       head: {}, todos: [], todosOpen: true, mcpOpen: false,
       palOpen: false, palQuery: '', palIdx: 0, palKeyLabel: 'Ctrl+K',
-      models: [], providerNames: {},
+        models: [], providerNames: {}, agents: [],
       modal: {type:'',title:'',q:'',opts:[],multi:false,name:'',args:'',aid:null,err:''},
       _es: null,
       _tools: {},
@@ -673,6 +673,8 @@ document.addEventListener('alpine:init', () => {
             }); break
           case 'ctrl.header':
             this.head = d.meta || {}; break
+          case 'ctrl.agents':
+            this.agents = d.agents || []; break
           case 'ctrl.models':
             this.models = d.models || []
             this.providerNames = d.providers || {}; break
@@ -688,8 +690,6 @@ document.addEventListener('alpine:init', () => {
       palCommands() {
         const cur = this.head.provider && this.head.model ? this.head.provider + '/' + this.head.model : ''
         const cmds = [
-          {id:'mode:plan', group:'session', icon:'▤', label:'Plan mode', hint:'inspection tools', current: this.head.sessionMode === 'plan', run: () => this.post({type:'mode', mode:'plan'})},
-          {id:'mode:build', group:'session', icon:'⚒', label:'Build mode', hint:'full tools', current: this.head.sessionMode === 'build', run: () => this.post({type:'mode', mode:'build'})},
           {id:'compact', group:'session', icon:'⧗', label:'Compact context', hint:'free tokens', run: () => this.post({type:'compact'})},
           {id:'stop', group:'session', icon:'■', label:'Stop agent', hint:'abort run', disabled: !this.live, run: () => this.stop()},
           {id:'reconnect', group:'session', icon:'↻', label:'Reconnect stream', hint:'SSE', run: () => this.connect()},
@@ -701,6 +701,9 @@ document.addEventListener('alpine:init', () => {
           const prov = i > 0 ? m.slice(0, i) : ''
           const name = i > 0 ? m.slice(i + 1) : m
           cmds.push({id:'model:' + m, group:'models', icon:'', label:name, hint:this.providerNames[prov] || prov, current: m === cur, run: () => this.post({type:'model', provider:prov, model:name})})
+        }
+        for (const a of this.agents) {
+          cmds.push({id:'agent:' + a.name, group:'agents', icon:'◎', label:a.name, hint:a.description, current: this.head.sessionMode === a.name, run: () => this.post({type:'agent', agent:a.name})})
         }
         return cmds
       },
@@ -715,7 +718,7 @@ document.addEventListener('alpine:init', () => {
           return Object.assign({}, c, {first})
         })
       },
-      palGroupLabel(g) { return g === 'models' ? 'switch model' : g },
+      palGroupLabel(g) { return g === 'models' ? 'switch model' : g === 'agents' ? 'switch agent' : g },
       palFirstEnabled() {
         const items = this.palItems()
         for (let i = 0; i < items.length; i++) if (!items[i].disabled) return i

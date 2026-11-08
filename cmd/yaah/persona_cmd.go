@@ -7,11 +7,10 @@ package yaah
 // on yaah-21uk.2 supersedes the fixed-at-construction rule
 // (yaah-21uk.11). A switch is effective at the next loop build: the
 // persona body rebinds into the prompt, the budget re-resolves, and the
-// tool narrowing and read-only gate re-derive (SetPersona). The ACP
-// session/set_agent seam still sets the process-level next-session
-// override (subagent.SetNextPersona); part 2 reconciles the two. Durable
-// selection remains agents.default.agent in the config file, which new
-// sessions resolve.
+// tool narrowing and read-only gate re-derive (SetPersona). ACP
+// session/set_agent switches its addressed session through the same
+// path. Durable selection remains agents.default.agent in the config
+// file, which new sessions resolve.
 
 import (
 	"fmt"
@@ -45,9 +44,7 @@ func personaDescriptions() map[string]string {
 
 // personaListLines renders the /agents listing: one line per
 // primary-capable persona (name + description), the current session's
-// persona marked, and a trailing line naming what the next SESSION would
-// resolve — the fresh-session pick after yaah-21uk.10 precedence (the
-// switch seam does not touch it).
+// persona marked.
 func (s *agentSession) personaListLines() []string {
 	current := s.PersonaName()
 	lines := []string{"agent personas — /agent <name> switches this session (next run):"}
@@ -58,14 +55,13 @@ func (s *agentSession) personaListLines() []string {
 		}
 		lines = append(lines, line)
 	}
-	lines = append(lines, "next session: "+s.NextPersonaName())
 	return lines
 }
 
 // personaStatusLine renders /agent with no argument: the current
-// session's persona plus what a fresh session would pick.
+// session's persona.
 func (s *agentSession) personaStatusLine() string {
-	return fmt.Sprintf("session persona: %s — next session: %s", s.PersonaName(), s.NextPersonaName())
+	return "session persona: " + s.PersonaName()
 }
 
 // switchPersona validates name as a primary-capable persona and switches
@@ -115,8 +111,8 @@ func (s *agentSession) showAgents() {
 	}
 }
 
-// agentCommand handles REPL /agent: no argument reports the current and
-// next persona; a name validates and SWITCHES the current session
+// agentCommand handles REPL /agent: no argument reports the current
+// persona; a name validates and SWITCHES the current session
 // (yaah-21uk.12). Refusals and confirmations both go through the same
 // status sink.
 func (s *agentSession) agentCommand(arg string) {

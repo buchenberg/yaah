@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/cwdpath"
 	"github.com/buchenberg/yaah/internal/memory"
@@ -245,7 +246,7 @@ type actionRequest struct {
 	Value    string `json:"value"`
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
-	Mode     string `json:"mode"`
+	Agent    string `json:"agent"`
 }
 
 func runWeb(cmd *cobra.Command, args []string) error {
@@ -404,6 +405,9 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 	running := ws.running.Load()
 	v.write(marshalWire(sseWireEvent{Type: "ctrl.state", Running: &running}))
 
+	// The persona picker payload: one entry per primary-capable persona.
+	v.write(marshalWire(sseWireEvent{Type: "ctrl.agents", Agents: personaWireList()}))
+
 	// If the shared catalog is already warm, deliver it immediately; otherwise
 	// the startup warm goroutine sends it when discovery settles.
 	if snap := ws.modelSnapshot(r.Context()); len(snap.IDs) > 0 {
@@ -460,6 +464,17 @@ func (ws *webServer) releaseStream(v *sseView) (owned bool) {
 	ws.view = nil
 	ws.sseDone = nil
 	return true
+}
+
+// personaWireList renders the palette payload from the persona view
+// (built-ins first, then sorted registry personas).
+func personaWireList() []wireAgent {
+	ps := subagent.Personas()
+	list := make([]wireAgent, 0, len(ps))
+	for _, p := range ps {
+		list = append(list, wireAgent{Name: p.Name, Description: p.Description})
+	}
+	return list
 }
 
 // modelSnapshot returns the shared model catalog's snapshot, or the empty one
@@ -567,8 +582,8 @@ func (ws *webServer) handleAction(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(http.StatusOK)
 
-	case "mode":
-		if err := ws.sess.SetMode(req.Mode); err != nil {
+	case "agent":
+		if err := ws.sess.SetPersona(req.Agent); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -576,7 +591,9 @@ func (ws *webServer) handleAction(w http.ResponseWriter, r *http.Request) {
 		v := ws.view
 		ws.mu.Unlock()
 		if v != nil {
-			v.SetSessionMode(req.Mode)
+			v.SetSessionMode(ws.sess.Mode())
+			v.write(marshalWire(sseWireEvent{Type: "ctrl.status",
+				Text: "session persona switched: " + ws.sess.PersonaName() + " — the new prompt, budgets and tools take effect on the next run"}))
 		}
 		w.WriteHeader(http.StatusOK)
 

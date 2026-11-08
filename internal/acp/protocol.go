@@ -756,7 +756,9 @@ type RequestPermissionResult struct {
 
 // === session/set_mode and session/cancel ===
 
-// SetModeParams are the params of session/set_mode.
+// SetModeParams are the params of session/set_mode. The id is the spec's
+// mode vocabulary (build/plan); it maps onto the persona of the same
+// name.
 type SetModeParams struct {
 	SessionID string `json:"sessionId"`
 	ModeID    string `json:"modeId"`
@@ -788,23 +790,22 @@ func validSessionMode(mode string) bool {
 
 // === session/set_agent ===
 
-// SetAgentParams are the params of session/set_agent (yaah-21uk.10).
+// SetAgentParams are the params of session/set_agent.
 type SetAgentParams struct {
 	SessionID string `json:"sessionId"`
-	// Agent is the persona name to apply to sessions created after the
-	// call. It must resolve primary-capable (the built-ins plus registry
-	// roles with mode primary/all); the addressed session keeps its own
-	// persona — the persona is fixed at session construction.
+	// Agent is the persona name to switch the ADDRESSED session to. It
+	// must resolve primary-capable (the built-ins plus registry roles
+	// with mode primary/all); a miss is invalid params.
 	Agent string `json:"agent"`
 }
 
-// SetAgentResult reports the persona a session created after the call
-// will resolve. An explicit agents.default.agent config outranks the
-// override this method sets (yaah-21uk.10 precedence), so the effective
-// name can differ from the requested one — the result is the truth, not
-// an echo.
+// SetAgentResult reports the addressed session's effective persona and
+// whether that persona is read-only. The switch takes effect at the
+// next loop build; an in-flight turn keeps the persona it started
+// with.
 type SetAgentResult struct {
-	Persona string `json:"persona"`
+	Persona  string `json:"persona"`
+	ReadOnly bool   `json:"readOnly"`
 }
 
 // CancelParams are the params of the session/cancel notification.

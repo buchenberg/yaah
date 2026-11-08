@@ -60,21 +60,16 @@ func resolveSessionPersona(source, configured string) sessionPersona {
 
 // resolveSessionPersonaFor picks the persona name a session resolves
 // against and runs the D4 chain on it (yaah-21uk.9). A fresh session
-// resolves agents.default.agent — the D4 default selection — and falls
-// through the process-level next-session override when that key is
-// unset (yaah-21uk.10 precedence for a fresh session: explicit config,
-// then the override, then build; the plain string key makes "" mean
-// unset, so an override may apply). A resumed session resolves its OWN
-// stored sessions.persona name instead: the persona is selection state
-// captured at creation, so a later change to the config default — or a
-// role file that has since appeared or vanished, or an override a
-// pick surface set — never rewrites an existing session. What the
-// restored name drives is the persona's budget (resolveOrchestratorBudget)
-// and belt (buildToolRegistry) effects, the same seams a fresh session
-// feeds; the prompt is NOT rebuilt from it — a resumed session's
-// persisted SystemPrompt wins byte-for-byte (restoreSession), so the
-// persona body the session actually ran with stays in the prompt it
-// recorded.
+// resolves agents.default.agent — the D4 default selection. A resumed
+// session resolves its OWN stored sessions.persona name instead: the
+// persona is selection state captured at creation, so a later change to
+// the config default — or a role file that has since appeared or vanished
+// — never rewrites an existing session. What the restored name drives is
+// the persona's budget (resolveOrchestratorBudget) and belt
+// (buildToolRegistry) effects, the same seams a fresh session feeds; the
+// prompt is NOT rebuilt from it — a resumed session's persisted
+// SystemPrompt wins byte-for-byte (restoreSession), so the persona body
+// the session actually ran with stays in the prompt it recorded.
 //
 // A store that cannot serve the read (nil, closed, failing) falls back
 // to the configured default with a warning — the resolution today's
@@ -86,38 +81,22 @@ func resolveSessionPersonaFor(db *memory.DB, opts SessionOptions, cfg *config.Co
 	name := cfg.Agent.Default.Agent
 	source := "agents.default.agent"
 	if opts.ResumeSessionID != "" {
-		// The override never reaches the resume path: the fallback handed
-		// to storedPersonaName stays the config default, so a failed read
-		// degrades to the resolution a store-less build would have made,
-		// not to whatever a pick surface last set.
 		name = storedPersonaName(db, opts.ResumeSessionID, name)
 		source = "the session's stored persona"
-		return resolveSessionPersona(source, name)
-	}
-	if name == "" {
-		if override := subagent.NextPersona(); override != "" {
-			name = override
-			source = "the next-session persona override"
-		}
 	}
 	return resolveSessionPersona(source, name)
 }
 
 // storedPersonaName reads a resumed session's persisted persona name.
-// Nothing stored — a row from before the persona column existed, the
-// zero-change migration default — reads as build: pre-persona sessions
-// all ran the plain build orchestrator, so build is what there is to
-// restore, and the config default stays out of it (reading "" as the
-// config default would let a later config change rewrite old sessions).
-// The one exception is the part-2 migration: a legacy row with an empty
-// persona and mode==plan was narrowed by the retired plan mode, so it
-// resolves the plan persona — one-time, read-only, mirrored here at the
-// resume wiring (SetMode no longer writes the mode column). A missing
-// row is not warned about: the resume fails moments later with
-// restoreSession's precise "cannot resume session" error, and a
-// persona warning ahead of it would only be noise. Any other read
-// failure warns and hands back the configured default, the resolution
-// a store-less build would make.
+// Nothing stored — a row from before the persona column existed — reads
+// as build: pre-persona sessions all ran the plain build orchestrator,
+// so build is what there is to restore, and the config default stays
+// out of it (reading "" as the config default would let a later config
+// change rewrite old sessions). A missing row is not warned about: the
+// resume fails moments later with restoreSession's precise "cannot
+// resume session" error, and a persona warning ahead of it would only
+// be noise. Any other read failure warns and hands back the configured
+// default, the resolution a store-less build would make.
 func storedPersonaName(db *memory.DB, sessionID, fallback string) string {
 	if db == nil {
 		return fallback
@@ -130,50 +109,20 @@ func storedPersonaName(db *memory.DB, sessionID, fallback string) string {
 		}
 		return fallback
 	}
-	if stored == "" {
-		// Legacy plan-mode row: the persona column never existed for it.
-		if mode, err := db.SessionMode(sessionID); err != nil {
-			slog.Warn("resume: reading the legacy mode for the persona migration failed; falling back to build",
-				"session", sessionID, "err", err)
-		} else if mode == acpModePlan {
-			return subagent.PlanPersonaName
-		}
-	}
 	return stored
 }
 
 // PersonaName reports the persona the session currently runs as
 // (yaah-21uk.12: a mid-session switch — REPL /agent, the TUI palette —
 // re-resolves it under the session lock; role reloads still only refresh
-// the registry for new sessions). Guarded by mu like its one mutable
-// peer, the mode. The ACP server reports it on session/new and
+// the registry for new sessions). Guarded by mu like every other mutable
+// session field. The ACP server reports it on session/new and
 // session/load so a client can show which persona the session actually
 // is.
 func (s *agentSession) PersonaName() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.persona.Name
-}
-
-// NextPersonaName reports the persona a session built after this call
-// would resolve in this process — the yaah-21uk.10 precedence for a
-// fresh session: an explicit agents.default.agent config wins, then the
-// process-level next-session override a pick surface set, then the
-// built-in build persona. It never consults this session's own stored
-// persona: that is selection state a resume reads, not something a
-// fresh build inherits. The name is the raw resolution input — a
-// configured name that no longer resolves still lands on build through
-// resolveSessionPersona's warn+fallback at actual build time.
-func (s *agentSession) NextPersonaName() string {
-	if s.cfg != nil {
-		if explicit := strings.TrimSpace(s.cfg.Agent.Default.Agent); explicit != "" {
-			return explicit
-		}
-	}
-	if override := subagent.NextPersona(); override != "" {
-		return override
-	}
-	return subagent.BuildPersonaName
 }
 
 // announcePersona publishes the session-start persona notice when the
@@ -200,33 +149,18 @@ func (s *agentSession) announcePersona() {
 // switch is effective at the NEXT loop build: the persona body rebinds
 // into the system prompt (from the layers retained at construction),
 // the loop budget re-resolves, and the tool narrowing and read-only
-// gate re-derive from the new persona. Since part 2 the persona is the
-// session's only axis — the former plan/build mode seam retired into
-// SetMode's alias mapping.
+// gate re-derive from the new persona. The persona is the session's
+// only axis.
 //
-// Following SetMode's locking pattern: validate first (missing or
-// delegate-only names keep the pick surfaces' refusal wording), no-op
-// on a switch to the persona the session already runs, rebuild prompts
-// and mutate under the session lock, persist best-effort ON THE SWITCH
-// (a crash, a harness timeout or a kill never reaches close), and
-// announce in-band after the lock is released. Unlike the session-start
-// announcement — build is the silent majority there — a switch TO build
-// is announced: the event itself is the change.
-func (s *agentSession) SetPersona(name string) error {
-	return s.setPersonaNoticed(name, "")
-}
-
-// setPersonaNoticed is SetPersona's core with an optional extra clause for
-// the switch notice. SetPersona passes none; the deprecated SetMode alias
-// appends the mode-retirement note. Validation, no-op detection, prompt
-// rebuild, persistence and announcement all follow the pattern documented on
-// SetPersona: validate first, no-op on a switch to the persona the session
-// already runs, rebuild prompts and mutate under the session lock, persist
-// best-effort ON THE SWITCH (a crash, a harness timeout or a kill never
-// reaches close), and announce in-band after the lock is released. Unlike
-// the session-start announcement — build is the silent majority there — a
+// Validation comes first (missing or delegate-only names keep the pick
+// surfaces' refusal wording), a switch to the persona the session
+// already runs is a no-op, prompts are rebuilt and mutated under the
+// session lock, persistence is best-effort ON THE SWITCH (a crash, a
+// harness timeout or a kill never reaches close), and the announcement
+// is published in-band after the lock is released. Unlike the
+// session-start announcement — build is the silent majority there — a
 // switch TO build is announced: the event itself is the change.
-func (s *agentSession) setPersonaNoticed(name, noticeExtra string) error {
+func (s *agentSession) SetPersona(name string) error {
 	trimmed := strings.TrimSpace(name)
 	persona, ok := subagent.ResolvePersona(trimmed)
 	if !ok {
@@ -249,7 +183,7 @@ func (s *agentSession) setPersonaNoticed(name, noticeExtra string) error {
 	// Persist the switch so the selection and its prompt survive the
 	// process: resume re-resolves the persona column and reads the
 	// stored SystemPrompt verbatim. Best-effort, like the session's
-	// other bookkeeping (mode, usage flush, title): the switch has
+	// other bookkeeping (usage flush, title): the switch has
 	// already taken effect in this process and the notice below
 	// announces it, so a store failure must not be reported as a refused
 	// switch — the warning names the real consequence instead (the next
@@ -265,15 +199,14 @@ func (s *agentSession) setPersonaNoticed(name, noticeExtra string) error {
 		}
 	}
 	// Announce the switch in-band, after the lock is released. The notice
-	// carries the regime sentence the next run's directive enforces (and the
-	// deprecation note on the SetMode alias path), so the switch is
-	// observable from inside the conversation rather than only from the next
-	// prompt's directive. dispatchEvent buffers it for views that cannot
-	// take writes between runs (REPL, ACP).
+	// carries the regime sentence the next run's directive enforces, so the
+	// switch is observable from inside the conversation rather than only
+	// from the next prompt's directive. dispatchEvent buffers it for views
+	// that cannot take writes between runs (REPL, ACP).
 	s.dispatchEvent(&agent.AgentChangedEvent{
 		Persona:  persona.Name,
 		ReadOnly: persona.ReadOnly,
-		Detail:   regimeSentence(personaLevel(persona)) + noticeExtra,
+		Detail:   regimeSentence(personaLevel(persona)),
 	})
 	return nil
 }

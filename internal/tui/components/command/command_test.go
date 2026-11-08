@@ -273,11 +273,13 @@ func TestName_PrefersCanonicalSpelling(t *testing.T) {
 	}
 }
 
-func TestParse_Modes(t *testing.T) {
-	if got := Parse("plan"); got != CmdPlan {
-		t.Errorf("Parse(plan) = %v, want CmdPlan", got)
-	}
-	if got := Parse("build"); got != CmdBuild {
-		t.Errorf("Parse(build) = %v, want CmdBuild", got)
+// TestParse_RetiredModeAliasesAreUnknown pins the retired plan/build
+// colon commands: they parse as CmdNone so the text goes to the model
+// like any other unknown command.
+func TestParse_RetiredModeAliasesAreUnknown(t *testing.T) {
+	for _, input := range []string{"plan", "build"} {
+		if got := Parse(input); got != CmdNone {
+			t.Errorf("Parse(%q) = %v, want CmdNone", input, got)
+		}
 	}
 }

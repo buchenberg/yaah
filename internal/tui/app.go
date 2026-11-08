@@ -182,10 +182,9 @@ type App struct {
 	version string
 
 	OnModelSelect func(model string)
-	OnModeSelect  func(mode string)
 	// OnAgentSelect receives the persona the user picked in the :agent
-	// palette. The driver validates it and sets the process-level
-	// next-session override; the current session keeps its persona.
+	// palette. The driver validates it and switches the current
+	// session to it (SetPersona).
 	OnAgentSelect func(name string)
 }
 

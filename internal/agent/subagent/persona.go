@@ -149,6 +149,18 @@ func ResolvePersona(name string) (Persona, bool) {
 	return registryPersona(reg, SubAgentRole(name))
 }
 
+// PersonaMissReason names why a persona name did not resolve, so pick
+// surfaces can separate a typo from a delegate-only role in their error
+// wording. ResolvePersona collapses both into one miss: mode
+// "subagent" is a registered role the orchestrator cannot be; anything
+// else (unknown name, no registry) is missing.
+func PersonaMissReason(name string) string {
+	if RoleProfileFor(SubAgentRole(name)).Mode == "subagent" {
+		return "delegate-only"
+	}
+	return "missing"
+}
+
 // registryPersona converts one registry entry into its persona view,
 // reporting false when the entry is missing or not primary-capable.
 func registryPersona(reg *RoleRegistry, role SubAgentRole) (Persona, bool) {

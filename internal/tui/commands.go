@@ -90,15 +90,6 @@ func (t *App) HandleCommand(cmd command.Cmd, arg string) bool {
 	case command.CmdBanner:
 		t.toggleBanner()
 		return true
-	case command.CmdPlan, command.CmdBuild:
-		mode := "plan"
-		if cmd == command.CmdBuild {
-			mode = "build"
-		}
-		if t.OnModeSelect != nil {
-			t.OnModeSelect(mode)
-		}
-		return true
 	case command.CmdModel:
 		t.ShowModelPicker(t.availableModels, t.providerNames, func(model string) {
 			if t.OnModelSelect != nil {

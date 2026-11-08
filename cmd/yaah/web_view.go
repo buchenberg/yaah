@@ -16,6 +16,12 @@ import (
 	"github.com/buchenberg/yaah/internal/worldinfo"
 )
 
+// wireAgent is one persona in the palette payload.
+type wireAgent struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
 type wireOption struct {
 	Label       string `json:"label"`
 	Description string `json:"description,omitempty"`
@@ -144,6 +150,10 @@ type sseWireEvent struct {
 
 	Models    []string          `json:"models,omitempty"`
 	Providers map[string]string `json:"providers,omitempty"`
+
+	// Agents is the persona picker payload: every primary-capable
+	// persona with its description (the palette's agent group).
+	Agents []wireAgent `json:"agents,omitempty"`
 }
 
 func marshalWire(we sseWireEvent) []byte {
