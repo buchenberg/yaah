@@ -19,7 +19,6 @@ type CompactionStartedEvent = events.CompactionStartedEvent
 type CompactionDoneEvent = events.CompactionDoneEvent
 type EscalationEvent = events.EscalationEvent
 type TitleSetEvent = events.TitleSetEvent
-type ModeChangedEvent = events.ModeChangedEvent
 type AgentChangedEvent = events.AgentChangedEvent
 type WakeEvent = events.WakeEvent
 

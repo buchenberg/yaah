@@ -58,7 +58,8 @@ Implemented:
   session/delete              Remove a session from the store
   session/prompt              Run a turn; responds with a stopReason
   session/cancel              Cancel the in-flight turn (notification)
-  session/set_mode            Switch Plan/Build mode; plan withholds mutating
+  session/set_mode            Switch Plan/Build mode (deprecated alias of
+                              session/set_agent); plan withholds mutating
                               tools and emits config_option_update
   session/update              Streaming updates: message/thought chunks,
                               tool calls, plans, usage, compaction

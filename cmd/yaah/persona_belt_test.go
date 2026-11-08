@@ -287,12 +287,11 @@ func TestPersonaNarrowing_PerRunLoopSeam(t *testing.T) {
 		if !slices.Equal(b.PersonaTools, []string{"read", "bash"}) {
 			t.Errorf("builder PersonaTools = %v; want [read bash]", b.PersonaTools)
 		}
-		// Plan mode still strips on top: the read-only level names no bash.
-		if got := s.effectiveToolsLevel(acpModePlan); got != agent.ReadOnlyTools {
-			t.Fatalf("effectiveToolsLevel(plan) = %v; want agent.ReadOnlyTools", got)
-		}
-		if slices.Contains(agent.InspectionSetNames(), "bash") {
-			t.Error("plan mode's inspection set admits bash; the read-only level must strip persona-admitted write tools")
+		// A write-capable persona gets the full level — the read-only
+		// strip belongs to read-only personas (the plan-persona subtest
+		// pins it); this one only narrows the advertised set.
+		if got := s.effectiveToolsLevel(); got != agent.FullTools {
+			t.Fatalf("effectiveToolsLevel() = %v; want agent.FullTools", got)
 		}
 	})
 
@@ -328,10 +327,8 @@ func TestPersonaNarrowing_PerRunLoopSeam(t *testing.T) {
 			t.Fatalf("plan persona narrowed the belt to %q; it must narrow nothing", got)
 		}
 		s := &agentSession{cfg: &config.Config{}, persona: sp.Persona}
-		for _, mode := range []string{acpModeBuild, ""} {
-			if got := s.effectiveToolsLevel(mode); got != agent.ReadOnlyTools {
-				t.Errorf("effectiveToolsLevel(%q) on a ReadOnly persona = %v; want agent.ReadOnlyTools", mode, got)
-			}
+		if got := s.effectiveToolsLevel(); got != agent.ReadOnlyTools {
+			t.Errorf("effectiveToolsLevel() on a ReadOnly persona = %v; want agent.ReadOnlyTools", got)
 		}
 		if slices.Contains(agent.InspectionSetNames(), "bash") {
 			t.Error("plan mode's inspection set admits bash")

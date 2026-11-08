@@ -134,22 +134,14 @@ type TitleSetEvent struct {
 
 func (*TitleSetEvent) eventMarker() {}
 
-// ModeChangedEvent is emitted when the session mode switches (plan ↔ build).
-// It carries the new mode and a ready-to-render one-line notice so every view
-// can show the switch in-band, with the regime the new mode actually
-// enforces — the cue an agent (and a user) could not observe before.
-type ModeChangedEvent struct {
-	Mode   string // new mode: "plan" or "build"
-	Notice string // one-line in-band notice: new mode + effective regime
-}
-
-func (*ModeChangedEvent) eventMarker() {}
-
-// AgentChangedEvent is emitted once at session start when the session
-// runs as a persona other than the default build orchestrator
-// (yaah-21uk.10): views can show which persona the session actually is
-// ("Session persona: plan") instead of the identity being invisible.
-// Plain build sessions emit nothing — build is the silent default.
+// AgentChangedEvent is emitted at session start when the session runs as a
+// persona other than the default build orchestrator (yaah-21uk.10), and on
+// every mid-session persona switch including the deprecated plan/build mode
+// aliases (yaah-21uk.12 part 2 removed ModeChangedEvent — persona is the
+// only axis). Views can show which persona the session actually is
+// ("Session persona: plan") instead of the identity being invisible. Plain
+// build sessions emit nothing at start — build is the silent default; a
+// switch TO build is announced, because the event itself is the change.
 type AgentChangedEvent struct {
 	// Persona is the resolved persona name ("plan", or a registry
 	// persona's file stem).
@@ -157,14 +149,25 @@ type AgentChangedEvent struct {
 	// ReadOnly reports that the persona's session must not mutate the
 	// workspace (the synthetic plan persona).
 	ReadOnly bool
+	// Detail is the optional clause appended after the persona in the
+	// notice — the regime sentence the next run enforces, plus the
+	// deprecation note on the SetMode alias path. Empty on the session-start
+	// announcement, which keeps its short wording.
+	Detail string
 }
 
 func (*AgentChangedEvent) eventMarker() {}
 
 // Notice renders the one-line in-band notice every view shows, so all
-// consumers describe the persona identically (mirrors StartedSummary).
+// consumers describe the persona identically (mirrors StartedSummary). A
+// switch notice carries the Detail clause (regime sentence, deprecation);
+// the session-start announcement keeps the bare wording with the
+// read-only marker.
 func (e *AgentChangedEvent) Notice() string {
 	n := "Session persona: " + e.Persona
+	if e.Detail != "" {
+		return n + " — " + e.Detail
+	}
 	if e.ReadOnly {
 		n += " (read-only)"
 	}
@@ -256,7 +259,6 @@ var (
 	_ Event = (*ToolEndEvent)(nil)
 	_ Event = (*SubAgentStartEvent)(nil)
 	_ Event = (*SubAgentEndEvent)(nil)
-	_ Event = (*ModeChangedEvent)(nil)
 	_ Event = (*AgentChangedEvent)(nil)
 	_ Event = (*WakeEvent)(nil)
 	_ Event = (*DoneEvent)(nil)

@@ -175,13 +175,6 @@ type agentSession struct {
 	// outcome (tool-stripped final answer or hard iteration limit) so
 	// the ACP server can report max_turn_requests instead of end_turn.
 	turnBudgetExhausted bool
-	// mode is the ACP session mode ("build" or "plan"). Empty means build.
-	// It is persisted to the session row on every switch (SetMode) and
-	// restored on resume (restoreSession), so a session left in plan mode
-	// comes back in plan mode rather than silently widening to build. The
-	// restore sets this field directly: it is a recovery, not a switch, so
-	// no ModeChangedEvent is announced for it.
-	mode string
 	// titlePublished tracks the persisted session title (empty until the
 	// first user message derives one). Cached across prompt runs so the
 	// store's one-shot title adoption is known without re-reading; built
@@ -670,64 +663,6 @@ func (s *agentSession) TurnBudgetExhausted() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.turnBudgetExhausted
-}
-
-// ACP session modes. Build is the normal coding mode; plan exposes only the
-// inspection/planning tool surface and a planning directive. planModeSpec in
-// mode.go is the single source of truth for both.
-const (
-	acpModeBuild = "build"
-	acpModePlan  = "plan"
-)
-
-func (s *agentSession) Mode() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.mode == "" {
-		return acpModeBuild
-	}
-	return s.mode
-}
-
-func (s *agentSession) SetMode(mode string) error {
-	if !validMode(mode) {
-		return fmt.Errorf("unknown session mode %q (available: %s, %s)", mode, acpModeBuild, acpModePlan)
-	}
-	s.mu.Lock()
-	// A switch to the mode the session is already in is not a switch: it must
-	// not announce, persist, or report one. The comparison is on the mode the
-	// session REPORTS (Mode() normalizes the empty storage form to build), so
-	// switching a session that never switched to build is a no-op too.
-	if sameMode(mode, s.mode) {
-		s.mu.Unlock()
-		return nil
-	}
-	s.mode = mode
-	db, sessionID := s.db, s.sessionID
-	s.mu.Unlock()
-	// Persist the switch so the selection survives the process: resume reads
-	// the column back (restoreSession), so a session narrowed to plan mode is
-	// not silently widened to build by the next attachment. Written here, on
-	// the switch, because a crash, a harness timeout or a kill never reaches
-	// close — and a mode is selection state, not turn data.
-	//
-	// Best-effort, like the session's other bookkeeping (usage flush, title,
-	// workspace metadata): the switch has already taken effect in this
-	// process and the notice below announces it, so a store failure must not
-	// be reported as a refused switch — the warning names the real
-	// consequence instead (the next resume falls back to build).
-	if db != nil && sessionID != "" {
-		if err := db.SetSessionMode(sessionID, mode); err != nil {
-			slog.Warn("session: persisting mode failed", "mode", mode, "err", err)
-		}
-	}
-	// Announce the switch in-band, after the lock is released: the notice
-	// states the regime the next run's tool gate enforces, so a mode change
-	// is observable from inside the conversation rather than only from the
-	// next prompt's directive. dispatchEvent buffers it for views that
-	// cannot take writes between runs (REPL, ACP).
-	s.dispatchEvent(&agent.ModeChangedEvent{Mode: mode, Notice: s.modeChangeNotice(mode)})
-	return nil
 }
 
 // RunPrompt runs one prompt under a context the session owns: derived

@@ -312,14 +312,12 @@ func (v *sseView) HandleEvent(evt agent.Event) {
 		// Intentionally ignored: the web UI has no session-title display
 		// yet; the /api/sessions endpoint serves titles from the store.
 		return
-	case *agent.ModeChangedEvent:
-		// One-line in-band marker in the status line, alongside the
-		// compaction notices. The header's mode badge is updated
-		// separately by SetSessionMode.
-		we = sseWireEvent{Type: "ctrl.status", Text: e.Notice}
 	case *agent.AgentChangedEvent:
-		// One-line persona marker in the status line, alongside the mode
-		// notice. Only non-build personas announce (yaah-21uk.10).
+		// One-line persona marker in the status line, alongside the
+		// compaction notices — session start and mid-session switches
+		// (including the deprecated mode aliases). Only non-build personas
+		// announce at start (yaah-21uk.10); the header's mode badge is
+		// updated separately by SetSessionMode.
 		we = sseWireEvent{Type: "ctrl.status", Text: e.Notice()}
 	case *agent.WakeEvent:
 		// A watch fired between turns. The status line carries the digest's

@@ -91,15 +91,11 @@ func (v *terminalView) HandleEvent(evt agent.Event) {
 	case *agent.TitleSetEvent:
 		// Intentionally ignored: the terminal view has no session-title
 		// line; pickers read titles from the store.
-	case *agent.ModeChangedEvent:
-		// In-band mode marker: the REPL reaches this on the next run, when
-		// the buffered event is drained, so the transcript records which
-		// regime the turn runs under.
-		fmt.Fprintf(os.Stderr, "\n  %s\n", Dim(e.Notice))
 	case *agent.AgentChangedEvent:
-		// In-band persona marker, drained like the mode marker on the next
-		// run for buffered views: the transcript records which persona the
-		// session runs as. Only non-build personas announce.
+		// In-band persona marker (session start and mid-session switches,
+		// including the deprecated mode aliases), drained like the compaction
+		// notes on the next run for buffered views: the transcript records
+		// which persona the session runs as and which regime it enforces.
 		fmt.Fprintf(os.Stderr, "\n  %s\n", Dim(e.Notice()))
 	case *agent.EscalationEvent:
 		severity := e.Severity

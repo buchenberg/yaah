@@ -135,6 +135,9 @@ func startREPL() error {
 			replLogout(sess)
 			continue
 		case repl.CmdPlan, repl.CmdBuild:
+			// Deprecated alias (yaah-21uk.12 part 2): SetMode maps the mode
+			// name onto the persona of the same name; the switch and its
+			// regime sentence announce in-band. The alias stays one release.
 			mode := "plan"
 			if repl.ParseSlashCommand(input) == repl.CmdBuild {
 				mode = "build"
@@ -143,7 +146,7 @@ func startREPL() error {
 				fmt.Fprintf(os.Stderr, "%s\n", replYellow("error: "+err.Error()))
 				continue
 			}
-			fmt.Printf("%s\n", repl.Dim("session mode: "+mode))
+			fmt.Printf("%s\n", repl.Dim("session mode: "+mode+" "+modeDeprecationNote))
 			continue
 		}
 
@@ -226,8 +229,8 @@ func printHelp() {
 	fmt.Printf("  %s  %s\n", repl.Bold("/compact"), repl.Dim("summarize old messages to free context"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/login"), repl.Dim("authenticate with an OAuth provider"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/logout"), repl.Dim("remove stored OAuth credentials"))
-	fmt.Printf("  %s  %s\n", repl.Bold("/plan"), repl.Dim("inspection/planning mode: inspection tools only, no edits"))
-	fmt.Printf("  %s  %s\n", repl.Bold("/build"), repl.Dim("full toolset mode"))
+	fmt.Printf("  %s  %s\n", repl.Bold("/plan"), repl.Dim("inspection tools only (deprecated: use /agent plan)"))
+	fmt.Printf("  %s  %s\n", repl.Bold("/build"), repl.Dim("full toolset (deprecated: use /agent build)"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/agents"), repl.Dim("list agent personas"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/agent [name]"), repl.Dim("pick the persona for new sessions"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/?"), repl.Dim("show this help"))

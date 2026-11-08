@@ -109,8 +109,12 @@ func resolveSessionPersonaFor(db *memory.DB, opts SessionOptions, cfg *config.Co
 // all ran the plain build orchestrator, so build is what there is to
 // restore, and the config default stays out of it (reading "" as the
 // config default would let a later config change rewrite old sessions).
-// A missing row is not warned about: the resume fails moments later
-// with restoreSession's precise "cannot resume session" error, and a
+// The one exception is the part-2 migration: a legacy row with an empty
+// persona and mode==plan was narrowed by the retired plan mode, so it
+// resolves the plan persona — one-time, read-only, mirrored here at the
+// resume wiring (SetMode no longer writes the mode column). A missing
+// row is not warned about: the resume fails moments later with
+// restoreSession's precise "cannot resume session" error, and a
 // persona warning ahead of it would only be noise. Any other read
 // failure warns and hands back the configured default, the resolution
 // a store-less build would make.
@@ -125,6 +129,15 @@ func storedPersonaName(db *memory.DB, sessionID, fallback string) string {
 				"session", sessionID, "err", err)
 		}
 		return fallback
+	}
+	if stored == "" {
+		// Legacy plan-mode row: the persona column never existed for it.
+		if mode, err := db.SessionMode(sessionID); err != nil {
+			slog.Warn("resume: reading the legacy mode for the persona migration failed; falling back to build",
+				"session", sessionID, "err", err)
+		} else if mode == acpModePlan {
+			return subagent.PlanPersonaName
+		}
 	}
 	return stored
 }
@@ -187,8 +200,9 @@ func (s *agentSession) announcePersona() {
 // switch is effective at the NEXT loop build: the persona body rebinds
 // into the system prompt (from the layers retained at construction),
 // the loop budget re-resolves, and the tool narrowing and read-only
-// gate re-derive from the new persona. The mode is untouched — plan
-// mode keeps narrowing until part 2 retires the seam.
+// gate re-derive from the new persona. Since part 2 the persona is the
+// session's only axis — the former plan/build mode seam retired into
+// SetMode's alias mapping.
 //
 // Following SetMode's locking pattern: validate first (missing or
 // delegate-only names keep the pick surfaces' refusal wording), no-op
@@ -199,6 +213,20 @@ func (s *agentSession) announcePersona() {
 // announcement — build is the silent majority there — a switch TO build
 // is announced: the event itself is the change.
 func (s *agentSession) SetPersona(name string) error {
+	return s.setPersonaNoticed(name, "")
+}
+
+// setPersonaNoticed is SetPersona's core with an optional extra clause for
+// the switch notice. SetPersona passes none; the deprecated SetMode alias
+// appends the mode-retirement note. Validation, no-op detection, prompt
+// rebuild, persistence and announcement all follow the pattern documented on
+// SetPersona: validate first, no-op on a switch to the persona the session
+// already runs, rebuild prompts and mutate under the session lock, persist
+// best-effort ON THE SWITCH (a crash, a harness timeout or a kill never
+// reaches close), and announce in-band after the lock is released. Unlike
+// the session-start announcement — build is the silent majority there — a
+// switch TO build is announced: the event itself is the change.
+func (s *agentSession) setPersonaNoticed(name, noticeExtra string) error {
 	trimmed := strings.TrimSpace(name)
 	persona, ok := subagent.ResolvePersona(trimmed)
 	if !ok {
@@ -236,10 +264,17 @@ func (s *agentSession) SetPersona(name string) error {
 			}
 		}
 	}
-	// Announce the switch in-band, after the lock is released.
-	// dispatchEvent buffers it for views that cannot take writes between
-	// runs (REPL, ACP).
-	s.dispatchEvent(&agent.AgentChangedEvent{Persona: persona.Name, ReadOnly: persona.ReadOnly})
+	// Announce the switch in-band, after the lock is released. The notice
+	// carries the regime sentence the next run's directive enforces (and the
+	// deprecation note on the SetMode alias path), so the switch is
+	// observable from inside the conversation rather than only from the next
+	// prompt's directive. dispatchEvent buffers it for views that cannot
+	// take writes between runs (REPL, ACP).
+	s.dispatchEvent(&agent.AgentChangedEvent{
+		Persona:  persona.Name,
+		ReadOnly: persona.ReadOnly,
+		Detail:   regimeSentence(personaLevel(persona)) + noticeExtra,
+	})
 	return nil
 }
 

@@ -130,12 +130,11 @@ func (s *agentSession) loopBuilder(
 	fallbackModel string,
 	fallbackProviderName string,
 ) *agent.LoopBuilder {
-	// Sample the mode once: tools and prompt must describe the same mode even
-	// if session/set_mode lands concurrently with this build.
-	mode := s.Mode()
-	// Sample the persona once too (yaah-21uk.12): the advertised tools, the
+	// Sample the persona once (yaah-21uk.12): the advertised tools, the
 	// gate, and the prompt's regime sentence must describe the same persona
-	// even if /agent lands concurrently with this build.
+	// even if /agent or a deprecated session/set_mode alias lands
+	// concurrently with this build. The persona is the only axis — there is
+	// no separate mode sample since part 2.
 	s.mu.RLock()
 	persona := s.persona
 	s.mu.RUnlock()
@@ -253,10 +252,10 @@ func (s *agentSession) loopBuilder(
 		ConsolidateFn:              s.consolidateFn(),
 		Provider:                   prov,
 		Registry:                   s.toolReg,
-		ToolsLevel:                 sampledToolsLevel(mode, persona),
+		ToolsLevel:                 sampledToolsLevel(persona),
 		PersonaTools:               normalizeToolNames(persona.Tools),
 		Model:                      modelName,
-		SystemPrompt:               s.modeDirective(mode),
+		SystemPrompt:               s.modeDirective(persona),
 		Messages:                   msgs,
 		SessionID:                  s.sessionID,
 		TraceStore:                 agent.TraceSinkOf(s.traceStore),

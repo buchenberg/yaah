@@ -25,41 +25,36 @@ type restoredUsage struct {
 
 // restoredSession is what resume recovery yields for a session being attached:
 // the transcript, the conversation id its rows are keyed by, the next message
-// index, a possibly-replaced system prompt, and the mode the session was left
-// in. One struct rather than a widening return list — the fields travel
-// together and every caller wants all of them.
+// index, a possibly-replaced system prompt. One struct rather than a
+// widening return list — the fields travel together and every caller wants
+// all of them. The legacy mode column is not read here: the persona restore
+// path (resolveSessionPersonaFor → storedPersonaName) migrates a legacy
+// plan-mode row onto the plan persona, and the persona column is the only
+// persisted axis since part 2.
 type restoredSession struct {
 	Messages     []types.Message
 	SessionID    string
 	MsgIdx       int
 	SystemPrompt string
-	// Mode is the persisted session mode: "build", or "plan". The empty
-	// string is build's storage form and means the same thing (it is also
-	// what an unenforceable persisted value normalizes to). A resumed
-	// plan-mode session starts in plan mode — the mode is a selection the
-	// user made, so losing it on resume would silently widen the toolset of
-	// a session they had narrowed.
-	Mode string
 	// Usage is the persisted token accounting, so the resumed session shows
 	// and continues the running totals instead of restarting them at zero.
 	Usage restoredUsage
 }
 
 // sessionRestoreStore is the slice of the session store restore needs: the
-// session row, its messages, and its persisted mode. A narrow interface so a
-// test can fail the mode read alone while the transcript reads succeed — the
-// fail-closed path is exactly the one that must be exercised, not the
-// pre-existing "cannot resume session" error.
+// session row and its messages.
 type sessionRestoreStore interface {
 	GetSession(id string) (memory.Session, error)
 	GetMessages(sessionID string) ([]memory.Message, error)
-	SessionMode(id string) (string, error)
 }
 
 // restoreSession loads a prior session from the DB (resumeSessionID) or
 // prepares a fresh one. The returned struct carries the transcript, the
-// conversation id, the next message index, a possibly-replaced system prompt,
-// and the persisted mode.
+// conversation id, the next message index, and a possibly-replaced system
+// prompt. The legacy mode column is NOT read here: the persona restore path
+// (resolveSessionPersonaFor → storedPersonaName) migrates a legacy plan-mode
+// row onto the plan persona, and the persona column is the only persisted
+// axis since part 2.
 func restoreSession(db sessionRestoreStore, resumeSessionID, systemPrompt string) (restoredSession, error) {
 	out := restoredSession{SystemPrompt: systemPrompt}
 
@@ -104,35 +99,10 @@ func restoreSession(db sessionRestoreStore, resumeSessionID, systemPrompt string
 				"Previous execution was interrupted. Please continue from where you left off."))
 		}
 	}
-	mode, err := persistedMode(db, resumeSessionID)
-	if err != nil {
-		return restoredSession{}, fmt.Errorf("cannot resume session %s: %w", resumeSessionID, err)
-	}
 	out.Messages = messages
 	out.SessionID = resumeSessionID
 	out.MsgIdx = len(dbMsgs)
-	out.Mode = mode
 	return out, nil
-}
-
-// persistedMode reads the session's stored mode and normalizes it to a mode
-// this binary can actually enforce. Anything unrecognized — a row written by a
-// newer yaah, a hand-edited value — falls back to build, the full-toolset
-// default, rather than putting the session in a regime the loop cannot honour.
-//
-// Only an unenforceable stored VALUE falls back. A read FAILURE is returned:
-// normalizing it to build would silently widen a session the user narrowed, so
-// the fail-open direction is the one thing this recovery must not do. The
-// caller fails the resume loudly instead.
-func persistedMode(db sessionRestoreStore, sessionID string) (string, error) {
-	mode, err := db.SessionMode(sessionID)
-	if err != nil {
-		return "", fmt.Errorf("read the persisted mode: %w", err)
-	}
-	if !validMode(mode) {
-		return "", nil
-	}
-	return mode, nil
 }
 
 // restoreMessage maps a persisted message row back into a conversation

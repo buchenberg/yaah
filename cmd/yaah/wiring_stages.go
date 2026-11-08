@@ -592,7 +592,6 @@ type loopInfraStage struct {
 	messages     []types.Message
 	sessionID    string
 	msgIdx       int
-	mode         string
 	usage        restoredUsage
 	systemPrompt string
 	mainPrompt   string
@@ -707,7 +706,6 @@ func restoreTranscript(st *loopInfraStage, cfg *config.Config, opts SessionOptio
 		return err
 	}
 	st.messages, st.sessionID, st.msgIdx, st.systemPrompt = restored.Messages, restored.SessionID, restored.MsgIdx, restored.SystemPrompt
-	st.mode = restored.Mode
 	st.usage = restored.Usage
 	if opts.ResumeSessionID == "" {
 		st.sessionID = fmt.Sprintf("sess-%d", time.Now().UnixNano())

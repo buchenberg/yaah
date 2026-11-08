@@ -172,7 +172,6 @@ func newSessionFromStages(lc *sessionConfig, opts SessionOptions, ws *workspaceS
 		sessionID:      loop.sessionID,
 		messages:       loop.messages,
 		msgIdx:         loop.msgIdx,
-		mode:           loop.mode,
 		otelShutdown:   lc.otelShutdown,
 		tracker:        loop.tracker,
 		backgroundJobs: loop.backgroundJobs,
