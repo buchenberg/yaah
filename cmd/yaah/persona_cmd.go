@@ -2,7 +2,7 @@ package yaah
 
 // persona_cmd.go implements the persona-selection UX shared by the
 // interactive surfaces (yaah-21uk.10/.12): the REPL /agents and /agent
-// commands, the TUI palette handler, and the web action validate the
+// commands and the TUI palette handler validate the
 // name and SWITCH the current session — the decision reversal recorded
 // on yaah-21uk.2 supersedes the fixed-at-construction rule
 // (yaah-21uk.11). A switch is effective at the next loop build: the

@@ -43,6 +43,7 @@ systemPrompt := prompts.Build(layers)
 | Layer | Source | Injected as | Format |
 |---|---|---|---|
 | Identity | `identity.md` (embedded) | Root block | Defines yaah's personality, principles, tools |
+| Persona | the session persona's role-file body (`agents.default.agent` or a switch) | Block immediately after identity | Orchestrator-only guidance; empty for `build`, and sub-agent prompts never carry it. See [agents.md](./agents.md) |
 | Environment | `prompts.DetectEnvironment(cwd)` | `## Environment` | `OS: windows/amd64. Default shell: powershell.` |
 | Sub-agent dispatch | `wiring_prompt.go:subAgentDispatchLine` | Inline line | `Sub-agent dispatch: provider=zai model=GLM-5.3-Flash max_concurrency=5` |
 | User context | `~/.yaah/AGENTS.md` | `<user-preferences>` block | Cross-project user preferences |

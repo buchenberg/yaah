@@ -281,6 +281,7 @@ rather than retrying a request that cannot succeed.
 |---|---|---|
 | `provider` | first usable provider | Resolution: explicit value, then a provider prefix in `model`, then the first provider alphabetically |
 | `model` | `deepseek/deepseek-v4-pro` | Model for the main agent |
+| `agent` | `build` | Persona the session's orchestrator runs as: a built-in (`build`, `plan`) or a role file with `mode: primary`/`all`. Unknown or delegate-only names warn and fall back to `build` at session start. A persona file's `max_iterations`/`max_turns` fill gaps only — an explicit value here wins. See [agents.md](./agents.md) |
 | `compaction_model` | `deepseek/deepseek-v4-flash` | Model for context compaction. Unset or unresolvable values fall back to the main model with a warning — summarizing with the main model is slower and produces worse summaries |
 | `max_iterations` | 50 | Safety cap on loop turns |
 | `max_turns` | 0 | Soft cap; tools are stripped at this iteration and a final-report notice tells the model why. `0` = no soft cap (the derive rule applies only to `agents.subagent.default_max_turns`). In ACP, a turn ended by this cap reports `stopReason: max_turn_requests` |

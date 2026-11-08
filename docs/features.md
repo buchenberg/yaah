@@ -2,7 +2,8 @@
 
 yaah's runtime capabilities: interfaces, persistence, MCP, the tool belt,
 observability, approval, workspace isolation, and provider support. For the
-sub-agent team, see [sub-agents.md](./sub-agents.md); for configuration, see
+sub-agent team, see [sub-agents.md](./sub-agents.md); for agent personas, see
+[agents.md](./agents.md); for configuration, see
 [configuration.md](./configuration.md).
 
 ## Terminal UI
@@ -13,8 +14,9 @@ sub-agent team, see [sub-agents.md](./sub-agents.md); for configuration, see
   collapsible tool cards (`ctrl+t`)
 - Sub-agent dispatch cards with role, duration, and status
 - A command palette (`ctrl+p`) with `:help`, `:clear`, `:compact`,
-  `:banner`, `:model`, `:plan`, `:build`, `:search`, `:steer`, `:followup`,
-  `:verbose`, `:quit`, and `:stop`
+  `:banner`, `:model`, `:agent`, `:plan`/`:build` (deprecated persona
+  aliases), `:search`, `:steer`, `:followup`, `:verbose`, `:quit`, and
+  `:stop`
 - A paned layout: conversation, info pane (session, context, MCP, config),
   todo sidebar, and background sub-agent jobs
 - Mouse and keyboard navigation, input history, and multi-line input
@@ -33,16 +35,23 @@ Running `yaah` with no arguments starts a readline REPL:
 | `/help`, `/?` | Show commands |
 | `/roles`, `/reload-roles` | Reload role files |
 | `/login`, `/logout` | Manage provider OAuth login |
-| `/plan`, `/build` | Switch the session mode (`/plan` narrows to the inspection set, see [Plan mode](#plan-mode)) |
+| `/agents` | List agent personas |
+| `/agent [name]` | Switch this session's persona (bare `/agent` reports the current and next persona) |
+| `/plan`, `/build` | Deprecated aliases of `/agent plan` / `/agent build`; kept for one more release |
 
 History persists at `~/.yaah/history` (or `$YAAH_HOME/history` when `YAAH_HOME` is set).
 
 ## Plan mode
 
-`/plan` switches the session into plan mode, `/build` switches back; the TUI
-and web palettes and ACP `session/set_mode` reach the same switch. Plan mode
-narrows the toolset to the **inspection set** — the tools that look at a
-workspace instead of changing it:
+The session persona is the only axis: the orchestrator runs as a persona
+(`build` by default, `plan` for read-only planning), and the old plan/build
+mode surfaces are deprecated aliases of `/agent plan` / `/agent build` —
+REPL `/plan` and `/build`, the TUI and web palette entries, and ACP
+`session/set_mode` all map onto the personas of the same name and remain
+for one more release. See [agents.md](./agents.md) for the persona model.
+
+The `plan` persona narrows the toolset to the **inspection set** — the
+tools that look at a workspace instead of changing it:
 
 `read`, `grep`, `glob`, `ls`, `file_info`, `go_outline`, `calculate`, `diff`,
 `question`, `git` (inspection actions only), `staticcheck`, `plan`.
@@ -54,7 +63,7 @@ pass, while `add`, `commit`, `push`, `pull` and every mutating `branch` option
 `--force`, `--force-with-lease`, `-u`, `--set-upstream-to`,
 `--unset-upstream`, `-t`, `--track`, `--no-track`, `--edit-description`,
 `--create-reflog`, `--no-create-reflog`, `--recurse-submodules` — are
-**denied** in plan mode rather than offered for approval, as is any option the
+**denied** in the plan persona rather than offered for approval, as is any option the
 tool does not recognize. A positional argument (`paths`) is read as a ref
 pattern, not a branch name to create, only when the call also carries a
 listing selector: `--list`, `-a`/`--all`, `-r`/`--remotes`,
@@ -65,7 +74,7 @@ listing selector: `--list`, `-a`/`--all`, `-r`/`--remotes`,
 do not make a call a listing, because git accepts them when creating a branch
 too, so `git branch -q <name>`, `git branch -v <name>` and
 `git branch --sort=refname <name>` are denied while `git branch -q --list`,
-`git branch -v --list` and `git branch --sort=refname --list` pass. The mode's
+`git branch -v --list` and `git branch --sort=refname --list` pass. The persona's
 promise is that the capability is absent, not that the user may grant it, and
 the denial is enforced at dispatch, so `middleware.disabled: [approval]`
 cannot switch it off.
@@ -74,18 +83,20 @@ and `-toolexec` flags are denied — both make `go vet` execute a caller-named
 binary — and a `packages` value that opens with `-` is refused outright,
 because that field is forwarded where the analyzer expects options.
 
-The `plan` **tool** is not plan **mode**. The tool drafts and updates `PLAN.md`
+The `plan` **tool** is not the `plan` **persona**. The tool drafts and updates `PLAN.md`
 files under `.agents/plans/` (see [Plans and todos](#plans-and-todos)); the
-mode is the toolset regime that work runs in, and it admits the tool so the
+persona is the identity the session runs as, and its gate admits the tool so the
 plan artifact it exists to produce can be written.
 
-Every other mode, including the default, is build mode with the full toolset.
+Every other persona, including the default, runs the full toolset; `build` is
+that default.
 
 ## Web UI
 
 `yaah web` serves a browser interface with SSE streaming, tool cards,
-reasoning display, approval/question modals, and a command palette with
-`Plan mode` / `Build mode` entries. It is token-gated: startup
+reasoning display, approval/question modals, and a command palette whose
+`Plan mode` / `Build mode` entries are deprecated persona aliases (there is
+no persona picker yet). It is token-gated: startup
 prints a URL containing the access token. See [web-ui.md](./web-ui.md) for
 the wire protocol and current feature differences from the TUI.
 
@@ -225,7 +236,7 @@ Kilo works unchanged.
 The `plan` tool manages `PLAN.md` files under `.agents/plans/` with a
 `draft → approved → in_progress → completed → cancelled` workflow. The
 `todowrite` tool tracks in-flight work and feeds the TUI sidebar. The `plan`
-tool is unrelated to plan mode — that is the session mode described in
+tool is unrelated to the plan persona — that is the read-only planning persona described in
 [Plan mode](#plan-mode).
 
 ## Tool belt

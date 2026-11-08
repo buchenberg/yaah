@@ -88,6 +88,7 @@ durable conversation-log line; `DoneEvent.Error` is dialog-only.
 | `components/command` | Colon-command parser + Ctrl+P command palette |
 | `components/modal` | Shared modal wrapper for consistent sizing/centering |
 | `components/modelpicker` | Live-filtered provider/model picker |
+| `components/agentpicker` | Persona picker modal: one entry per primary-capable persona with its description; the driver switches the session's persona |
 | `components/help` | Keybinding reference overlay |
 | `components/banner` | Figlet+lolcat banner rendering |
 | `components/infopane` | Info pane container; embeds the session, context, and MCP sections and renders usage/sub-agents/embedding/middleware inline. Background jobs render in a separate right-pane item. |

@@ -174,7 +174,7 @@ func DefaultEntries() []Entry {
 		{"steer", "Inject steering text (requires arg)", CmdSteer},
 		{"followup", "Queue text as a follow-up message (requires arg)", CmdFollowUp},
 		{"model", "Switch model", CmdModel},
-		{"agent", "Pick the persona for new sessions", CmdAgent},
+		{"agent", "Pick the persona (switches this session)", CmdAgent},
 		{"plan", "Switch to plan mode (deprecated: use :agent plan)", CmdPlan},
 		{"build", "Switch to build mode (deprecated: use :agent build)", CmdBuild},
 		{"search", "Search messages (requires arg)", CmdSearch},
