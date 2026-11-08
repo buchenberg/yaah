@@ -100,6 +100,14 @@ func (b *Broker[T]) Subscribe(id string, bufSize int) <-chan T {
 	ch := make(chan T, bufSize)
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	// Subscribing after Close (yaah-8jou.2): return an already-closed
+	// channel instead of appending a subscription that Close will
+	// never drain or close. Consumers ranging over it (e.g. the
+	// BrokerView forwarder) exit immediately rather than leaking.
+	if b.closed.Load() {
+		close(ch)
+		return ch
+	}
 	b.subs = append(b.subs, subscriber[T]{id: id, ch: ch})
 	return ch
 }
