@@ -1,6 +1,7 @@
 ---
 name: Casey
 specialty: tester
+mode: subagent
 description: Runs test suites, analyzes failures, measures coverage
 contract:
   heading: "## Results"

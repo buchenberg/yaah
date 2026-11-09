@@ -1,5 +1,6 @@
 ---
 name: Gopher
+mode: subagent
 specialty: golang-tester
 description: Runs Go test suites with go_test, measures coverage, runs staticcheck, analyzes failures
 contract:

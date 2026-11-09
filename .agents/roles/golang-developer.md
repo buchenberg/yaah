@@ -1,5 +1,6 @@
 ---
 name: Gordon
+mode: subagent
 specialty: golang-developer
 description: Implements Go features, fixes Go bugs, refactors Go code, and manages Go dependencies
 contract:

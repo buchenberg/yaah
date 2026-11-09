@@ -1,6 +1,7 @@
 ---
 name: Chuck
 specialty: checker
+mode: subagent
 description: Runs a single check command and reports pass or fail
 contract:
   heading: "## Result"

@@ -1,6 +1,7 @@
 ---
 name: Steve
 specialty: counter
+mode: subagent
 description: Counts things and returns structured metrics
 contract:
   heading: "## Counts"
