@@ -1,5 +1,5 @@
 ---
-name: Andrew
+name: architect
 mode: primary
 specialty: software architecture
 description: Scans code for code antipatterns and ensures designs follow good SOLID practices
