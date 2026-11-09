@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.153.0](https://github.com/buchenberg/yaah/compare/v0.152.1...v0.153.0) (2026-11-09)
+
+
+### Features
+
+* **agents:** primary personas — role files define the orchestrator via mode: primary|subagent|all (yaah-21uk) ([9011925](https://github.com/buchenberg/yaah/commit/9011925bf01da04cdeb17b6c9e2d412f034ba93f))
+
 ## [0.152.1](https://github.com/buchenberg/yaah/compare/v0.152.0...v0.152.1) (2026-11-08)
 
 
