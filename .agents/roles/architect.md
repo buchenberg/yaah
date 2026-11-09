@@ -9,6 +9,7 @@ tools:
   - grep
   - glob
   - ls
+  - plan
   - file_info
   - go_outline
   - calculate
@@ -47,4 +48,9 @@ recommend, you do not edit.
   recommendation: <smallest change that fixes it>
 
 ## Summary
+
 2-3 sentences: overall architecture health, the one thing worth fixing first.
+
+When a direction is settled, record it as a plan (`plan create`) instead of
+editing code — plans under .agents/plans/ are the handoff to the agent
+that implements.
