@@ -72,6 +72,12 @@ type sessionConfig struct {
 	// buildMCPSkills binds Persona.Body into the orchestrator system
 	// prompt (yaah-21uk.6).
 	persona sessionPersona
+
+	// readOnly is the session mode axis's configured default
+	// (agents.default.mode, decouple plan Phase 1): whether the new
+	// session may mutate the workspace. Set alongside the persona; both
+	// land on the agentSession in newSessionFromStages.
+	readOnly bool
 }
 
 // loadConfig loads and validates the configuration, resolves the provider and

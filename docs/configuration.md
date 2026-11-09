@@ -56,6 +56,7 @@ agents:
     context_window: 1048576            # 0 = use the model's known window
     approval: ask                      # ask | allow | deny
     mcp_approval: ask                  # ask | allow | deny for MCP tools
+    mode: full                         # full | read-only — the session mode axis default
     workspace_ask: false               # prompt before denying out-of-workspace paths
     idle_wake_turns: true              # a watch may start a turn while idle
     max_inline_tools_per_turn: 0       # 0 = unlimited
@@ -288,6 +289,7 @@ rather than retrying a request that cannot succeed.
 | `context_window` | 1048576 | Caps the model's resolved window. `0` = use the model's known window, not "disabled" |
 | `approval` | `ask` | `allow`, `ask`, or `deny` |
 | `mcp_approval` | `ask` | `allow`, `ask`, or `deny` for MCP-served tools |
+| `mode` | `full` | The session mode axis default: `full` allows mutation, `read-only` withholds the mutating tools (the inspection set only). Independent of the persona — any agent can run in either mode — and switchable mid-session over ACP |
 | `workspace_ask` | `false` | With `--workspace`: prompt before denying out-of-bounds access |
 | `workspace_deny_patterns` | nil (built-in secret defaults) | Globs denied even inside the workspace. `nil` applies `.env`, `*.pem`, `*.key`, SSH keys; `[]` disables the built-ins |
 | `idle_wake_turns` | `true` | Allow a watch that fires while an interactive session is idle to start a turn. `false` queues the digest as a follow-up instead; the tool belt still controls whether `wait_for`/`watch` exist |

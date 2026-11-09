@@ -39,13 +39,13 @@ func (s *Server) handleCancel(msg Message) {
 	st.run.cancel()
 }
 
-// handleSetMode switches the session persona through the ACP mode
-// vocabulary: the spec's plan/build ids map onto the personas of the
-// same name. The id must be one of the modes advertised on session/new;
-// unknown ids fail closed instead of being silently accepted. The
-// canonical notification is config_option_update; the change applies to
-// the next prompt (an in-flight turn keeps the persona it started
-// with).
+// handleSetMode sets the session's mode axis through the ACP mode
+// vocabulary: the spec's plan/build ids map onto read-only/full. The id
+// must be one of the modes advertised on session/new; unknown ids fail
+// closed instead of being silently accepted. The canonical notification
+// is config_option_update; the change applies to the next prompt (an
+// in-flight turn keeps the mode it started with). The persona is
+// untouched — the axes are independent.
 func (s *Server) handleSetMode(
 	ctx context.Context,
 	msg Message,
@@ -80,17 +80,13 @@ func (s *Server) handleSetMode(
 		respOK(msg.ID, nil)
 		return
 	}
-	name := subagent.BuildPersonaName
-	if p.ModeID == SessionModePlan {
-		name = subagent.PlanPersonaName
-	}
-	if err := st.sess.SetPersona(name); err != nil {
-		respErr(msg.ID, codeInvalidParams, err.Error())
-		return
-	}
+	// The mode id maps onto the mode axis, not a persona: "plan" makes
+	// the session read-only, "build" gives it full access. The persona is
+	// untouched.
+	st.sess.SetReadOnly(p.ModeID == SessionModePlan)
 	sendUpdate(st.id, ConfigOptionUpdate{
 		SessionUpdate: UpdateConfigOption,
-		ConfigOptions: buildSessionConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName(), st.sess.Mode()),
+		ConfigOptions: sessionConfigOptions(s.modelCatalog(ctx), st.sess),
 	})
 	respOK(msg.ID, nil)
 }
@@ -132,8 +128,7 @@ func (s *Server) handleSetAgent(
 		respErr(msg.ID, codeInvalidParams, "unknown session id")
 		return
 	}
-	persona, resolvable := subagent.ResolvePersona(name)
-	if !resolvable {
+	if _, resolvable := subagent.ResolvePersona(name); !resolvable {
 		respErr(msg.ID, codeInvalidParams,
 			fmt.Sprintf("%q is not a primary-capable agent (%s)", name, subagent.PersonaMissReason(name)))
 		return
@@ -143,13 +138,15 @@ func (s *Server) handleSetAgent(
 		return
 	}
 	// A client that changed the persona must hear the config selector
-	// moved, exactly as session/set_mode pushes it — the mode word and
-	// the persona are the same axis now.
+	// moved: the agent axis has its own selector now, and the mode axis
+	// is untouched by an agent switch.
 	sendUpdate(st.id, ConfigOptionUpdate{
 		SessionUpdate: UpdateConfigOption,
-		ConfigOptions: buildSessionConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName(), st.sess.Mode()),
+		ConfigOptions: sessionConfigOptions(s.modelCatalog(ctx), st.sess),
 	})
-	respOK(msg.ID, SetAgentResult{Persona: st.sess.PersonaName(), ReadOnly: persona.ReadOnly})
+	// The result reports the session's mode axis, not a persona property:
+	// read-only-ness is session state, independent of which persona runs.
+	respOK(msg.ID, SetAgentResult{Persona: st.sess.PersonaName(), ReadOnly: st.sess.IsReadOnly()})
 }
 
 // modelCatalog returns the models discovery reports for the picker, or
@@ -163,14 +160,14 @@ func (s *Server) modelCatalog(ctx context.Context) []ModelOption {
 	return s.catalog.Options(ctx)
 }
 
-// handleSetConfigOption switches one session config option, which is
-// the model picker and nothing else: any other configId is rejected
-// rather than silently accepted. The value must be one of the values
-// the session currently advertises (a client echoes back exactly what
-// it was given); an unknown value leaves the session untouched and is
-// invalid params. The response echoes the whole configOptions set
-// recomputed from the new selection, as the spec requires. ctx bounds the
-// model-catalog wait as in session/new.
+// handleSetConfigOption switches one session config option: the three
+// session axes (agent / mode / approval) and the model picker. Any other
+// configId is rejected rather than silently accepted. A value must be one
+// of the values the session currently advertises (a client echoes back
+// exactly what it was given); an unknown value leaves the session
+// untouched and is invalid params. The response echoes the whole
+// configOptions set recomputed from the new selection, as the spec
+// requires. ctx bounds the model-catalog wait as in session/new.
 func (s *Server) handleSetConfigOption(
 	ctx context.Context,
 	msg Message,
@@ -197,37 +194,62 @@ func (s *Server) handleSetConfigOption(
 		return
 	}
 	catalog := s.modelCatalog(ctx)
+	// echo recomputes the full selector set from the session's CURRENT
+	// state, so every response describes the axes as they now stand.
+	echo := func() SetConfigOptionResult {
+		return SetConfigOptionResult{ConfigOptions: sessionConfigOptions(catalog, st.sess)}
+	}
+	pushUpdate := func() {
+		sendUpdate(st.id, ConfigOptionUpdate{SessionUpdate: UpdateConfigOption, ConfigOptions: echo().ConfigOptions})
+	}
 	switch p.ConfigID {
+	case ConfigOptionAgentID:
+		// The agent axis: switch the persona the session runs as. The
+		// value must be one the session advertises (same contract as the
+		// model picker), which also keeps session/set_agent and this
+		// path agreeing on the refusal wording.
+		advertised := sessionConfigOptions(catalog, st.sess)
+		if !configOptionHasValue(advertised, ConfigOptionAgentID, p.Value) {
+			respErr(msg.ID, codeInvalidParams, fmt.Sprintf("unknown value %q for configId %q", p.Value, p.ConfigID))
+			return
+		}
+		if err := st.sess.SetPersona(p.Value); err != nil {
+			respErr(msg.ID, codeInvalidParams, err.Error())
+			return
+		}
+		pushUpdate()
+		respOK(msg.ID, echo())
 	case ConfigOptionModeID:
 		if !validSessionMode(p.Value) {
 			respErr(msg.ID, codeInvalidParams, fmt.Sprintf("unknown mode %q (available: %s, %s)", p.Value, SessionModeBuild, SessionModePlan))
 			return
 		}
+		// The mode axis: read-only vs full, independent of the persona
+		// (the same seam session/set_mode drives).
 		if st.sess.Mode() != p.Value {
-			// The mode selector is backed by personas: the value maps onto
-			// the persona of the same name (the same seam session/set_mode
-			// drives).
-			name := subagent.BuildPersonaName
-			if p.Value == SessionModePlan {
-				name = subagent.PlanPersonaName
-			}
-			if err := st.sess.SetPersona(name); err != nil {
-				respErr(msg.ID, codeInvalidParams, err.Error())
-				return
-			}
-			sendUpdate(st.id, ConfigOptionUpdate{
-				SessionUpdate: UpdateConfigOption,
-				ConfigOptions: buildSessionConfigOptions(catalog, st.sess.ProviderName(), st.sess.ModelName(), st.sess.Mode()),
-			})
+			st.sess.SetReadOnly(p.Value == SessionModePlan)
+			pushUpdate()
 		}
-		respOK(msg.ID, SetConfigOptionResult{
-			ConfigOptions: buildSessionConfigOptions(catalog, st.sess.ProviderName(), st.sess.ModelName(), p.Value),
-		})
+		respOK(msg.ID, echo())
+	case ConfigOptionApprovalID:
+		// The approval axis: the posture dangerous calls meet. Validate
+		// against the advertised options so an unknown value never lands.
+		if !configOptionHasValue(sessionConfigOptions(catalog, st.sess), ConfigOptionApprovalID, p.Value) {
+			respErr(msg.ID, codeInvalidParams, fmt.Sprintf("unknown value %q for configId %q", p.Value, p.ConfigID))
+			return
+		}
+		if err := st.sess.SetApprovalMode(p.Value); err != nil {
+			respErr(msg.ID, codeInvalidParams, err.Error())
+			return
+		}
+		s.logf("session %s: approval set to %s", st.id, p.Value)
+		pushUpdate()
+		respOK(msg.ID, echo())
 	case ConfigOptionModelID:
 		// Validate against the options the session advertises right now,
 		// not against the raw catalog: the picker also lists a current model
 		// discovery no longer reports, and re-selecting it must stay valid.
-		advertised := buildSessionConfigOptions(catalog, st.sess.ProviderName(), st.sess.ModelName(), st.sess.Mode())
+		advertised := sessionConfigOptions(catalog, st.sess)
 		if !configOptionHasValue(advertised, ConfigOptionModelID, p.Value) {
 			respErr(msg.ID, codeInvalidParams, fmt.Sprintf("unknown value %q for configId %q", p.Value, p.ConfigID))
 			return
@@ -239,11 +261,9 @@ func (s *Server) handleSetConfigOption(
 		}
 		st.sess.SetModel(provider, model)
 		s.logf("session %s: model set to %s/%s", st.id, provider, model)
-		respOK(msg.ID, SetConfigOptionResult{
-			ConfigOptions: buildSessionConfigOptions(catalog, provider, model, st.sess.Mode()),
-		})
+		respOK(msg.ID, echo())
 	default:
-		respErr(msg.ID, codeInvalidParams, fmt.Sprintf("unsupported configId %q (supported: %s, %s)", p.ConfigID, ConfigOptionModeID, ConfigOptionModelID))
+		respErr(msg.ID, codeInvalidParams, fmt.Sprintf("unsupported configId %q (supported: %s, %s, %s, %s)", p.ConfigID, ConfigOptionAgentID, ConfigOptionModeID, ConfigOptionApprovalID, ConfigOptionModelID))
 	}
 }
 

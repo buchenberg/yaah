@@ -12,9 +12,12 @@ import (
 // identity the session's orchestrator can run as. Personas come from
 // role files whose mode is "primary" or "all" — including the two
 // shipped built-ins "build" (the default orchestrator) and "plan"
-// (its read-only sibling), defined in the embedded prompts FS. A
+// (the planning persona), defined in the embedded prompts FS. A
 // persona is not a dispatch target: primary-only roles are filtered
-// from every dispatch-facing surface (see delegatable.go).
+// from every dispatch-facing surface (see delegatable.go). A persona
+// carries no mutability: read-only-ness is the session's mode axis,
+// set independently of which persona runs (decouple-persona-
+// mode-approval).
 type Persona struct {
 	// Name is the persona identifier: the rolefile's file stem for
 	// registry personas, the built-in constant for the shipped ones.
@@ -55,10 +58,6 @@ type Persona struct {
 	MaxLoopCycles int
 	MaxToolTurns  int
 	Timeout       int
-	// ReadOnly marks personas whose session must not mutate the
-	// workspace. Only the shipped "plan" persona sets it (read_only:
-	// true in its file).
-	ReadOnly bool
 }
 
 // The built-in personas are defined by role files shipped in the
@@ -114,7 +113,6 @@ func loadBuiltinPersonas() map[string]Persona {
 			Name:        def.name,
 			Mode:        "primary",
 			Description: fm.Description,
-			ReadOnly:    fm.ReadOnly,
 		}
 	}
 	return personas
@@ -219,6 +217,5 @@ func registryPersona(reg *RoleRegistry, role SubAgentRole) (Persona, bool) {
 		MaxLoopCycles: def.MaxLoopCycles,
 		MaxToolTurns:  def.MaxToolTurns,
 		Timeout:       def.Timeout,
-		ReadOnly:      def.ReadOnly,
 	}, true
 }

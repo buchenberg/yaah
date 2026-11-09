@@ -43,6 +43,10 @@ type fakeSession struct {
 	model    string
 	// persona tracks SetPersona for session-mode/agent tests.
 	persona string
+	// readOnly and approvalMode track the mode and approval axes, so
+	// config-option tests can assert the switch reached the session.
+	readOnly     bool
+	approvalMode string
 	// budgetExhausted is what TurnBudgetExhausted reports; stop-reason
 	// tests set it to simulate a soft tool-turn cap ending the turn.
 	budgetExhausted bool
@@ -115,8 +119,8 @@ func (f *fakeSession) WorldStatus() worldinfo.Status {
 	return f.world
 }
 
-// The fake starts on the default build persona (yaah-21uk.12); the
-// mode word derives from the persona, exactly like the real session.
+// The fake starts full (agents.default.mode unset); the mode word derives
+// from the mode axis, exactly like the real session.
 func (f *fakeSession) PersonaName() string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -136,6 +140,46 @@ func (f *fakeSession) SetPersona(name string) error {
 	return nil
 }
 
+func (f *fakeSession) IsReadOnly() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.readOnly
+}
+
+func (f *fakeSession) SetReadOnly(readOnly bool) {
+	f.mu.Lock()
+	f.readOnly = readOnly
+	f.mu.Unlock()
+}
+
+func (f *fakeSession) ApprovalMode() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.approvalMode == "" {
+		return "ask"
+	}
+	return f.approvalMode
+}
+
+func (f *fakeSession) SetApprovalMode(mode string) error {
+	switch mode {
+	case "allow", "ask", "deny":
+	default:
+		return fmt.Errorf("invalid approval mode %q (must be allow, ask, or deny)", mode)
+	}
+	f.mu.Lock()
+	f.approvalMode = mode
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *fakeSession) Mode() string {
+	if f.IsReadOnly() {
+		return SessionModePlan
+	}
+	return SessionModeBuild
+}
+
 func (f *fakeSession) SetModel(provider, model string) {
 	f.mu.Lock()
 	f.provider = provider
@@ -153,13 +197,6 @@ func (f *fakeSession) ModelName() string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.model
-}
-
-func (f *fakeSession) Mode() string {
-	if f.PersonaName() == "plan" {
-		return SessionModePlan
-	}
-	return SessionModeBuild
 }
 
 // History returns a copy of the fake's history, mirroring
@@ -606,7 +643,7 @@ func TestServer_modelPickerAdvertisedOnSessionNewAndLoad(t *testing.T) {
 		assertModeConfigOption(t, result.ConfigOptions, SessionModeBuild)
 	})
 
-	t.Run("no catalog still advertises mode only", func(t *testing.T) {
+	t.Run("no catalog still advertises the three axes", func(t *testing.T) {
 		h := newACPHarness(t, nil)
 		initialize(t, h)
 		cwd, _ := json.Marshal(h.cwd)
@@ -621,8 +658,19 @@ func TestServer_modelPickerAdvertisedOnSessionNewAndLoad(t *testing.T) {
 		if err := json.Unmarshal(msg.Result, &result); err != nil {
 			t.Fatal(err)
 		}
-		if len(result.ConfigOptions) != 1 || result.ConfigOptions[0].ID != ConfigOptionModeID {
-			t.Errorf("configOptions = %+v, want mode only", result.ConfigOptions)
+		if len(result.ConfigOptions) != 3 {
+			t.Errorf("configOptions = %+v, want the three axis selectors (agent, mode, approval)", result.ConfigOptions)
+		}
+		for _, id := range []string{ConfigOptionAgentID, ConfigOptionModeID, ConfigOptionApprovalID} {
+			found := false
+			for _, opt := range result.ConfigOptions {
+				if opt.ID == id {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("configOptions missing the %q selector", id)
+			}
 		}
 	})
 }
@@ -1037,8 +1085,8 @@ func TestServer_setAgentSwitchesAddressedSession(t *testing.T) {
 	if err := h.send("session/set_agent", 4, fmt.Sprintf(`{"sessionId":%q,"agent":"plan"}`, sid)); err != nil {
 		t.Fatal(err)
 	}
-	// A real switch pushes config_option_update (the mode selector is
-	// the persona axis) before the response — same ordering as set_mode.
+	// A real switch pushes config_option_update (the agent selector
+	// moved) before the response — same ordering as set_mode.
 	option := h.recv(t)
 	if option.Method != "session/update" || !strings.Contains(string(option.Params), "config_option_update") {
 		t.Fatalf("expected config_option_update on a persona switch, got %+v", option)
@@ -1051,11 +1099,30 @@ func TestServer_setAgentSwitchesAddressedSession(t *testing.T) {
 	if err := json.Unmarshal(msg.Result, &result); err != nil {
 		t.Fatalf("set_agent result: %v", err)
 	}
-	if result.Persona != "plan" || !result.ReadOnly {
-		t.Fatalf("set_agent result = %+v, want persona plan read-only", result)
+	// The persona no longer implies read-only (decouple-persona-
+	// mode-approval): the result reports the session's mode axis, which
+	// an agent switch does not touch.
+	if result.Persona != "plan" || result.ReadOnly {
+		t.Fatalf("set_agent result = %+v, want persona plan, full (axes independent)", result)
 	}
-	if sess.PersonaName() != "plan" || sess.Mode() != SessionModePlan {
-		t.Fatalf("session persona/mode = %q/%q, want plan/plan", sess.PersonaName(), sess.Mode())
+	if sess.PersonaName() != "plan" || sess.Mode() != SessionModeBuild {
+		t.Fatalf("session persona/mode = %q/%q, want plan/build", sess.PersonaName(), sess.Mode())
+	}
+
+	// The mode axis is set through session/set_mode, independently.
+	if err := h.send("session/set_mode", 6, fmt.Sprintf(`{"sessionId":%q,"modeId":"plan"}`, sid)); err != nil {
+		t.Fatal(err)
+	}
+	option = h.recv(t)
+	if option.Method != "session/update" || !strings.Contains(string(option.Params), "config_option_update") {
+		t.Fatalf("expected config_option_update on a mode switch, got %+v", option)
+	}
+	msg = h.recv(t)
+	if msg.Error != nil {
+		t.Fatalf("set_mode error: %+v", msg.Error)
+	}
+	if sess.Mode() != SessionModePlan {
+		t.Fatalf("after set_mode plan, mode = %q; want plan", sess.Mode())
 	}
 
 	// A miss is invalid params and leaves the session untouched.
@@ -2407,5 +2474,87 @@ func TestServer_setConfigOptionSwitchesMode(t *testing.T) {
 	}
 	if sess.Mode() != SessionModePlan {
 		t.Fatalf("session mode = %q, want plan", sess.Mode())
+	}
+	// The mode axis is session state: the persona is untouched.
+	if sess.PersonaName() != "build" {
+		t.Fatalf("mode switch moved the persona to %q; the axes are independent", sess.PersonaName())
+	}
+}
+
+// TestServer_setConfigOptionSwitchesApproval pins the approval axis: the
+// option validates against the advertised values, reaches the session,
+// and an unknown value is invalid params that leaves the session
+// untouched.
+func TestServer_setConfigOptionSwitchesApproval(t *testing.T) {
+	sess := &fakeSession{id: "sess-approval-cfg"}
+	h := newACPHarness(t, sess)
+	initialize(t, h)
+	if id := newSession(t, h); id != "sess-approval-cfg" {
+		t.Fatalf("session/new returned %q", id)
+	}
+	if err := h.send("session/set_config_option", 2, `{"sessionId":"sess-approval-cfg","configId":"approval","value":"allow"}`); err != nil {
+		t.Fatal(err)
+	}
+	if update := h.recv(t); !strings.Contains(string(update.Params), "config_option_update") {
+		t.Fatalf("config update = %+v", update)
+	}
+	msg := h.recv(t)
+	if msg.Error != nil {
+		t.Fatalf("approval config error: %+v", msg.Error)
+	}
+	if got := sess.ApprovalMode(); got != "allow" {
+		t.Fatalf("session approval = %q, want allow", got)
+	}
+
+	// An unknown value is invalid params and changes nothing.
+	if err := h.send("session/set_config_option", 3, `{"sessionId":"sess-approval-cfg","configId":"approval","value":"yolo"}`); err != nil {
+		t.Fatal(err)
+	}
+	rejected := h.recv(t)
+	if rejected.Error == nil || rejected.Error.Code != codeInvalidParams {
+		t.Fatalf("unknown approval value response = %+v, want invalid params", rejected)
+	}
+	if got := sess.ApprovalMode(); got != "allow" {
+		t.Fatalf("rejected approval value changed the session to %q", got)
+	}
+}
+
+// TestServer_setConfigOptionSwitchesAgent pins the agent axis through the
+// config-option seam: the value switches the persona exactly like
+// session/set_agent, and the mode axis is untouched.
+func TestServer_setConfigOptionSwitchesAgent(t *testing.T) {
+	sess := &fakeSession{id: "sess-agent-cfg"}
+	h := newACPHarness(t, sess)
+	initialize(t, h)
+	if id := newSession(t, h); id != "sess-agent-cfg" {
+		t.Fatalf("session/new returned %q", id)
+	}
+	if err := h.send("session/set_config_option", 2, `{"sessionId":"sess-agent-cfg","configId":"agent","value":"plan"}`); err != nil {
+		t.Fatal(err)
+	}
+	if update := h.recv(t); !strings.Contains(string(update.Params), "config_option_update") {
+		t.Fatalf("config update = %+v", update)
+	}
+	msg := h.recv(t)
+	if msg.Error != nil {
+		t.Fatalf("agent config error: %+v", msg.Error)
+	}
+	if sess.PersonaName() != "plan" {
+		t.Fatalf("session persona = %q, want plan", sess.PersonaName())
+	}
+	if sess.Mode() != SessionModeBuild {
+		t.Fatalf("agent switch moved the mode to %q; the axes are independent", sess.Mode())
+	}
+
+	// An unknown persona is invalid params and leaves the session alone.
+	if err := h.send("session/set_config_option", 3, `{"sessionId":"sess-agent-cfg","configId":"agent","value":"ghost"}`); err != nil {
+		t.Fatal(err)
+	}
+	rejected := h.recv(t)
+	if rejected.Error == nil || rejected.Error.Code != codeInvalidParams {
+		t.Fatalf("unknown agent response = %+v, want invalid params", rejected)
+	}
+	if sess.PersonaName() != "plan" {
+		t.Fatalf("rejected agent switched the session to %q", sess.PersonaName())
 	}
 }

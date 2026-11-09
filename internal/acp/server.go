@@ -76,8 +76,20 @@ type Session interface {
 	// An in-flight turn finishes on the model it started with.
 	SetModel(provider, model string)
 	// Mode reports the ACP mode vocabulary value ("build" or "plan")
-	// the session's persona derives to.
+	// the session's mode axis derives to.
 	Mode() string
+	// IsReadOnly reports the session's mode axis: whether this session
+	// may mutate the workspace. Independent of the persona.
+	IsReadOnly() bool
+	// SetReadOnly switches the session's mode axis; effective at the
+	// next loop build.
+	SetReadOnly(readOnly bool)
+	// ApprovalMode reports the session's approval axis
+	// ("allow"/"ask"/"deny").
+	ApprovalMode() string
+	// SetApprovalMode switches the approval axis; an invalid value is
+	// refused with an error.
+	SetApprovalMode(mode string) error
 	// PersonaName reports the persona the session runs as. session/new
 	// and session/load report it in _meta so a client can show which
 	// persona the session actually is.

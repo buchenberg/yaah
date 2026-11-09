@@ -318,20 +318,24 @@ func TestPersonaNarrowing_PerRunLoopSeam(t *testing.T) {
 		}
 	})
 
-	t.Run("plan persona: belt untouched, ReadOnly gates even in build mode", func(t *testing.T) {
+	t.Run("plan persona: belt untouched, read-only is the session's call", func(t *testing.T) {
 		sp := resolveSessionPersona("agents.default.agent", "plan")
-		if !sp.Persona.ReadOnly {
-			t.Fatalf("plan persona = %+v; want ReadOnly", sp.Persona)
-		}
 		if got := effectiveBeltNames(nil, sp.Persona.Tools); got != nil {
 			t.Fatalf("plan persona narrowed the belt to %q; it must narrow nothing", got)
 		}
+		// The persona carries no mutability: in a full session the plan
+		// persona gets the full level; read-only is the session's mode
+		// axis (decouple-persona-mode-approval).
 		s := &agentSession{cfg: &config.Config{}, persona: sp.Persona}
+		if got := s.effectiveToolsLevel(); got != agent.FullTools {
+			t.Errorf("effectiveToolsLevel() on the plan persona in a full session = %v; want agent.FullTools", got)
+		}
+		s.readOnly = true
 		if got := s.effectiveToolsLevel(); got != agent.ReadOnlyTools {
-			t.Errorf("effectiveToolsLevel() on a ReadOnly persona = %v; want agent.ReadOnlyTools", got)
+			t.Errorf("effectiveToolsLevel() in a read-only session = %v; want agent.ReadOnlyTools", got)
 		}
 		if slices.Contains(agent.InspectionSetNames(), "bash") {
-			t.Error("plan mode's inspection set admits bash")
+			t.Error("read-only mode's inspection set admits bash")
 		}
 	})
 }

@@ -30,6 +30,7 @@ func TestConfigAgentConfigParity(t *testing.T) {
 		"CompactionModel":       true, // → compact provider resolution
 		"Approval":              true, // → WithApprovalMode
 		"MCPApproval":           true, // → WithMCPApproval (LoopBuilder)
+		"Mode":                  true, // → session mode axis default (resolveReadOnlyMode), not an agent-loop knob
 		"Provider":              true, // → provider resolution
 		"WorkspaceAsk":          true, // → path validator
 		"WorkspaceDenyPatterns": true, // → path validator deny patterns

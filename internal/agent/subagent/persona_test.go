@@ -16,8 +16,11 @@ func personaRegistryFixtures() map[string][]byte {
 		"flex.md":  []byte("---\nname: Flex\nmode: all\ntools: [read]\ndescription: does either\n---\nall body"),
 		"base.md":  []byte("---\nname: Legacy\ntools: [read]\ndescription: old default\n---\nlegacy body"),
 		"build.md": []byte("---\nname: Build\nmode: primary\ntools: [write]\ndescription: shadow build\n---\nshadow body"),
-		"roo.md":   []byte("---\nname: Roo\nmode: primary\nread_only: true\ntools: [read]\ndescription: ro primary\n---\nro body"),
-		"ral.md":   []byte("---\nmode: all\nname: Ral\nread_only: true\ntools: [read]\ndescription: ro all\n---\nral body"),
+		// read_only is no longer a modeled key (decouple-persona-
+		// mode-approval): it rides the extras preservation, and no
+		// persona carries mutability from it.
+		"roo.md": []byte("---\nname: Roo\nmode: primary\nread_only: true\ntools: [read]\ndescription: ro primary\n---\nro body"),
+		"ral.md": []byte("---\nmode: all\nname: Ral\nread_only: true\ntools: [read]\ndescription: ro all\n---\nral body"),
 	}
 }
 
@@ -61,8 +64,8 @@ func TestPersonas(t *testing.T) {
 			t.Fatal("boss did not resolve as a persona")
 		}
 		if p.Mode != "primary" || p.Body != "primary body" ||
-			p.Description != "runs the session" || p.ReadOnly {
-			t.Errorf("boss persona = %+v, want mode primary, the file body and description, not read-only", p)
+			p.Description != "runs the session" {
+			t.Errorf("boss persona = %+v, want mode primary, the file body and description", p)
 		}
 	})
 
@@ -73,7 +76,7 @@ func TestPersonas(t *testing.T) {
 				continue
 			}
 			count++
-			if p.Body != "" || p.ReadOnly || p.Description != builtinPersonas[BuildPersonaName].Description {
+			if p.Body != "" || p.Description != builtinPersonas[BuildPersonaName].Description {
 				t.Errorf("built-in build persona shadowed by its rolefile: %+v", p)
 			}
 		}
@@ -114,17 +117,18 @@ func TestResolvePersona(t *testing.T) {
 		wantMode string
 		wantBody string
 		wantDesc string
-		wantRO   bool
 	}{
-		{"built-in build", "build", true, "primary", "", "Default coding agent. Full tool surface.", false},
-		{"built-in plan", "plan", true, "primary", "", "Explores and plans without editing; read-only enforcement.", true},
-		{"read-only primary file", "roo", true, "primary", "ro body", "ro primary", true},
-		{"read-only all-mode file", "ral", true, "all", "ral body", "ro all", true},
-		{"file role mode primary", "boss", true, "primary", "primary body", "runs the session", false},
-		{"file role mode all", "flex", true, "all", "all body", "does either", false},
-		{"file role mode subagent", "work", false, "", "", "", false},
-		{"file role mode omitted", "base", false, "", "", "", false},
-		{"unknown name", "ghost", false, "", "", "", false},
+		{"built-in build", "build", true, "primary", "", "Default coding agent. Full tool surface."},
+		{"built-in plan", "plan", true, "primary", "", "Explores and plans; run it in read-only mode to enforce no edits."},
+		// read_only in the file is not a persona property: the persona
+		// resolves like any other, carrying no mutability.
+		{"file with read_only key", "roo", true, "primary", "ro body", "ro primary"},
+		{"read_only all-mode file", "ral", true, "all", "ral body", "ro all"},
+		{"file role mode primary", "boss", true, "primary", "primary body", "runs the session"},
+		{"file role mode all", "flex", true, "all", "all body", "does either"},
+		{"file role mode subagent", "work", false, "", "", ""},
+		{"file role mode omitted", "base", false, "", "", ""},
+		{"unknown name", "ghost", false, "", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -146,9 +150,6 @@ func TestResolvePersona(t *testing.T) {
 			}
 			if p.Description != tt.wantDesc {
 				t.Errorf("Description = %q, want %q", p.Description, tt.wantDesc)
-			}
-			if p.ReadOnly != tt.wantRO {
-				t.Errorf("ReadOnly = %v, want %v", p.ReadOnly, tt.wantRO)
 			}
 		})
 	}

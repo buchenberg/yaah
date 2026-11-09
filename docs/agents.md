@@ -16,7 +16,7 @@ is never merged, only displaced.
 | Persona | Default | Behavior |
 |---|---|---|
 | `build` | yes | Today's full-surface orchestrator: no body, no narrowing, no budget |
-| `plan` | — | Read-only planning: the inspection tool set plus a planning directive; announces with a `(read-only)` marker |
+| `plan` | — | Planning: a planning directive; pair it with read-only mode to withhold the mutating tools |
 
 ## Role files as personas
 
@@ -45,7 +45,24 @@ What a persona file changes for the session that runs it:
 | `max_iterations:` / `max_turns:` | Bound the orchestrator loop, config-authoritatively: an explicit `agents.default` value wins, the persona file fills the gap, and the shipped defaults apply last. |
 | `timeout:` | Carried but unconsumed — the orchestrator loop has no wall-clock knob yet. The `min_*` floors are dispatch-specific and do not apply. |
 | `provider:` / `model:` | **Accepted but ignored, with a warning.** Routing is config-only: a persona session uses `agents.default.provider`/`model` like any other session. |
-| read-only | Only the `plan` persona sets it: the loop's tool gate withholds the mutating set and admits the inspection set (see [features.md](./features.md#plan-mode)); the gate is enforced at dispatch, so `middleware.disabled: [approval]` cannot bypass it. |
+
+There is no `read_only` persona field: read-only-ness is the session's
+**mode axis**, not a persona property. Any persona can run read-only or
+full; see [Mode and approval axes](#mode-and-approval-axes).
+
+## Mode and approval axes
+
+A session has three independent axes: the **agent** (which persona runs),
+the **mode** (may it mutate the workspace), and **approval** (the posture
+dangerous calls meet). The mode defaults from `agents.default.mode`
+(`full`, or `read-only`); in read-only mode the loop's tool gate withholds
+the mutating set and admits the inspection set (see
+[features.md](./features.md#plan-mode)) — the gate is enforced at dispatch,
+so `middleware.disabled: [approval]` cannot bypass it. The approval axis
+defaults from `agents.default.approval` (`ask`). Both are switchable
+mid-session through ACP `session/set_mode`, `session/set_config_option`
+(ids `mode` and `approval`), and — in a future change — the interactive
+surfaces.
 
 ## Selection
 
@@ -58,8 +75,10 @@ How a session picks its persona, in precedence order:
 | fallback | `build` | An unknown or delegate-only name warns and falls back (never fails the session) |
 
 The persona is persisted on the session row at creation. Resume restores it:
-the budget, tool narrowing, and read-only gate re-derive from the stored
-name, while the prompt stays the recorded bytes. The `sessions.mode` column
+the budget and tool narrowing re-derive from the stored name, while the
+prompt stays the recorded bytes. The mode axis is session state, not persona
+state: it re-derives from `agents.default.mode`, not from the stored persona.
+The `sessions.mode` column
 is vestigial: nothing writes it and no behavior keys off it (the column
 survives in older stores only); an empty persona reads as `build`.
 
@@ -71,11 +90,13 @@ survives in older stores only); an empty persona reads as `build`.
 | REPL `/agent [name]` | Report status (bare) or switch this session | Current session, next run |
 | TUI `:agent` palette | Pick a persona | Current session, next run |
 | ACP `session/set_agent` | Switch the addressed session | Current session, next run |
-| ACP `session/set_mode`, `session/set_config_option("mode")` | Spec mode ids map onto the personas of the same name | Current session, next run |
+| ACP `session/set_mode`, `session/set_config_option("mode")` | Set the mode axis: `plan` = read-only, `build` = full access; the persona is untouched | Current session, next run |
+| ACP `session/set_config_option("approval")` | Set the approval axis: `allow` / `ask` / `deny` | Current session, next run |
 
 A switch is effective at the next loop build: the persona body rebinds into
-the prompt, the budget re-resolves, and the tool narrowing and read-only
-gate re-derive. An in-flight turn finishes on the persona it started with.
+the prompt and the budget re-resolves; a mode switch re-derives the tool
+gate and the regime directive. An in-flight turn finishes on the axes it
+started with.
 
 `AgentChangedEvent` announces non-`build` personas at session start and
 every switch, including a switch back to `build`; the in-band notice names

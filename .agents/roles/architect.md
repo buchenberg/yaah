@@ -1,7 +1,6 @@
 ---
 name: architect
 mode: primary
-read_only: true
 specialty: software architecture
 description: Scans code for antipatterns and design drift, reports SOLID violations. Read-only.
 tools:

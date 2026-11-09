@@ -76,6 +76,15 @@ func Validate(cfg *Config) error {
 			cfg.Agent.Default.MCPApproval))
 	}
 
+	// Session mode axis: the default mutability of new sessions.
+	switch cfg.Agent.Default.Mode {
+	case "", "full", "read-only":
+	default:
+		errs = append(errs, fmt.Sprintf(
+			"agents.default.mode %q is invalid (must be full or read-only)",
+			cfg.Agent.Default.Mode))
+	}
+
 	// Compaction threshold must be in [0, 1]. Zero means "use default"
 	// and is accepted; only negative values or values > 1 are rejected.
 	if t := cfg.Agent.Default.CompactionThreshold; t < 0 || t > 1 {

@@ -757,8 +757,8 @@ type RequestPermissionResult struct {
 // === session/set_mode and session/cancel ===
 
 // SetModeParams are the params of session/set_mode. The id is the spec's
-// mode vocabulary (build/plan); it maps onto the persona of the same
-// name.
+// mode vocabulary (build/plan); it sets the session's mode axis
+// (read-only vs full), independent of the persona.
 type SetModeParams struct {
 	SessionID string `json:"sessionId"`
 	ModeID    string `json:"modeId"`
@@ -778,9 +778,11 @@ const (
 )
 
 func availableSessionModes() []SessionMode {
+	// Display names follow the axis vocabulary (D1: "Read-only"/"Full");
+	// the wire ids stay build/plan for ACP spec conformance.
 	return []SessionMode{
-		{ID: SessionModeBuild, Name: "Build", Description: "Normal coding mode with the full tool set."},
-		{ID: SessionModePlan, Name: "Plan", Description: "Inspect and propose a plan; mutating tools are withheld."},
+		{ID: SessionModeBuild, Name: "Full", Description: "Full access: the session may mutate the workspace."},
+		{ID: SessionModePlan, Name: "Read-only", Description: "Read-only mode: mutating tools are withheld."},
 	}
 }
 
@@ -912,4 +914,17 @@ const (
 	ConfigOptionModelID = "model"
 	// ConfigOptionModeID is the id of the Plan/Build selector.
 	ConfigOptionModeID = "mode"
+
+	// ConfigOptionCategoryAgent and ConfigOptionAgentID are yaah's
+	// extension for the agent axis (decouple-persona-mode-approval):
+	// which persona the session runs as, selectable mid-session. Not a
+	// spec category; clients that do not know it render a plain select.
+	ConfigOptionCategoryAgent = "agent"
+	ConfigOptionAgentID       = "agent"
+
+	// ConfigOptionCategoryApproval and ConfigOptionApprovalID are yaah's
+	// extension for the approval axis: the posture ("allow"/"ask"/"deny")
+	// dangerous tool calls meet. Not a spec category.
+	ConfigOptionCategoryApproval = "approval"
+	ConfigOptionApprovalID       = "approval"
 )

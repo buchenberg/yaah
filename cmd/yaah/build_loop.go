@@ -34,7 +34,7 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 	otelEnabled := s.cfg.Observability.Otel.Enabled
 	loop := b.Build(agent.LoopBuildOptions{
 		View:         v,
-		ApprovalMode: resolveApproval(s.cfg, s.opts),
+		ApprovalMode: s.ApprovalMode(),
 		OtelEnabled:  &otelEnabled,
 		OtelVerbose:  s.cfg.Observability.Otel.Verbose,
 	})
@@ -130,13 +130,14 @@ func (s *agentSession) loopBuilder(
 	fallbackModel string,
 	fallbackProviderName string,
 ) *agent.LoopBuilder {
-	// Sample the persona once (yaah-21uk.12): the advertised tools, the
-	// gate, and the prompt's regime sentence must describe the same persona
-	// even if /agent or a deprecated session/set_mode alias lands
-	// concurrently with this build. The persona is the only axis — there is
-	// no separate mode sample since part 2.
+	// Sample the persona and the mode axes once (decouple plan Phase 1):
+	// the advertised tools, the gate, the approval posture, and the
+	// prompt's regime sentence must describe the same axes even if /agent,
+	// session/set_mode or the approval option lands concurrently with this
+	// build.
 	s.mu.RLock()
 	persona := s.persona
+	readOnly := s.readOnly
 	s.mu.RUnlock()
 	// The usage hooks are installed on the builder so EVERY loop this
 	// session builds — interactive (runPrompt), serve (runHeadless),
@@ -252,7 +253,7 @@ func (s *agentSession) loopBuilder(
 		ConsolidateFn:              s.consolidateFn(),
 		Provider:                   prov,
 		Registry:                   s.toolReg,
-		ToolsLevel:                 sampledToolsLevel(persona),
+		ToolsLevel:                 sampledToolsLevel(persona, readOnly),
 		PersonaTools:               normalizeToolNames(persona.Tools),
 		Model:                      modelName,
 		SystemPrompt:               s.modeDirective(persona),
