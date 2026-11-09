@@ -71,10 +71,16 @@ func (s *agentSession) Mode() string {
 // of a plan directive is no longer the only cue that the full regime is
 // active.
 func (s *agentSession) modeDirective(persona subagent.Persona) string {
+	// Sample the prompt inputs under the session lock: SetPersona swaps
+	// mainPrompt/identityEnd/persona atomically, and the directive must
+	// never pair a stale prompt with the new persona (or vice versa).
+	s.mu.RLock()
+	main, end := s.mainPrompt, s.identityEnd
+	s.mu.RUnlock()
 	// Level from the same derivation the loop's gate uses, so the directive
 	// cannot describe a regime this session does not enforce.
 	level := personaLevel(persona)
-	return prompts.InjectAfterIdentityAt(s.mainPrompt, s.identityEnd, []string{
+	return prompts.InjectAfterIdentityAt(main, end, []string{
 		personaLabel(persona.Name) + " persona is active: " + regimeSentence(level),
 		"Only the user switches agents: /agent <name> in the TUI and REPL, the web palette, or ACP session/set_agent or session/set_mode. You may ask for a switch with the question tool or in your reply.",
 		"An agent-change notice appears in-band in the conversation when the persona switches.",

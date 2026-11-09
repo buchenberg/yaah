@@ -35,7 +35,7 @@ Running `yaah` with no arguments starts a readline REPL:
 | `/roles`, `/reload-roles` | Reload role files |
 | `/login`, `/logout` | Manage provider OAuth login |
 | `/agents` | List agent personas |
-| `/agent [name]` | Switch this session's persona (bare `/agent` reports the current and next persona) |
+| `/agent [name]` | Switch this session's persona (bare `/agent` reports the current persona) |
 
 History persists at `~/.yaah/history` (or `$YAAH_HOME/history` when `YAAH_HOME` is set).
 

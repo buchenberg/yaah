@@ -154,6 +154,10 @@ type sseWireEvent struct {
 	// Agents is the persona picker payload: every primary-capable
 	// persona with its description (the palette's agent group).
 	Agents []wireAgent `json:"agents,omitempty"`
+	// Current marks the persona the session runs as in the ctrl.agents
+	// frame, so the palette can mark it instead of guessing from the
+	// derived mode word (wrong for registry personas).
+	Current string `json:"current,omitempty"`
 }
 
 func marshalWire(we sseWireEvent) []byte {

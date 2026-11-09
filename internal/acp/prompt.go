@@ -103,7 +103,9 @@ func (s *Server) handleSetMode(
 // registry's reason wording (typo vs delegate-only). The result reports
 // the session's effective persona and whether it is read-only.
 func (s *Server) handleSetAgent(
+	ctx context.Context,
 	msg Message,
+	sendUpdate updateSender,
 	respOK func(id json.RawMessage, result any),
 	respErr func(id json.RawMessage, code int, message string),
 ) {
@@ -140,6 +142,13 @@ func (s *Server) handleSetAgent(
 		respErr(msg.ID, codeInvalidParams, err.Error())
 		return
 	}
+	// A client that changed the persona must hear the config selector
+	// moved, exactly as session/set_mode pushes it — the mode word and
+	// the persona are the same axis now.
+	sendUpdate(st.id, ConfigOptionUpdate{
+		SessionUpdate: UpdateConfigOption,
+		ConfigOptions: buildSessionConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName(), st.sess.Mode()),
+	})
 	respOK(msg.ID, SetAgentResult{Persona: st.sess.PersonaName(), ReadOnly: persona.ReadOnly})
 }
 

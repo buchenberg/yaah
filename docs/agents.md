@@ -3,8 +3,9 @@
 A persona is an identity the session's orchestrator runs as. The persona is
 the only session axis: it decides the system-prompt body, the tool gate, and
 the loop budget. Sub-agent roles and personas share the same role-file
-format (see [sub-agents.md](./sub-agents.md#custom-roles)), but a persona is
-not a dispatch target — `delegate` never reaches it.
+format (see [sub-agents.md](./sub-agents.md#custom-roles)), but a primary-only
+persona is not a dispatch target — `delegate` never reaches it (`mode: all`
+personas remain dispatchable).
 
 ## Built-in personas
 

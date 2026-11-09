@@ -15,6 +15,12 @@ import (
 func personaSeamRegistry(t *testing.T) *tools.Registry {
 	t.Helper()
 	reg := tools.NewRegistryWithBelt(tools.NewBelt([]string{"read", "grep", "bash", "write"}))
+	// NewRegistry installs only the platform shell (powershell on
+	// Windows), so the belt may admit "bash" without a registration;
+	// NewLeafTool is the documented cross-platform way to add it.
+	if reg.Get("bash") == nil {
+		reg.Register(tools.NewLeafTool("bash"))
+	}
 	return reg
 }
 

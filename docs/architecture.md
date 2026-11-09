@@ -341,7 +341,7 @@ The `RoleRegistry` is the central store for role definitions. It holds built-in 
 
 **Core types:**
 
-- `RoleDef` — the persistent format for a role, parsed from YAML frontmatter: `Tools []string`, `MaxIterations`, `MaxTurns`, `Timeout` (seconds), `JSONMode`, `Mode` (`primary`/`subagent`/`all`, default `subagent`), and `Body` (the markdown guidance text). Its `ToProfile()` method converts to the runtime `RoleProfile` struct. `mode: primary`/`all` roles are orchestrator personas — selectable via `agents.default.agent` and the `/agent` surfaces — and are filtered from every dispatch-facing surface (the delegate schema, `list_subagents`); see [agents.md](./agents.md).
+- `RoleDef` — the persistent format for a role, parsed from YAML frontmatter: `Tools []string`, `MaxIterations`, `MaxTurns`, `Timeout` (seconds), `JSONMode`, `Mode` (`primary`/`subagent`/`all`, default `subagent`), and `Body` (the markdown guidance text). Its `ToProfile()` method converts to the runtime `RoleProfile` struct. `mode: primary`/`all` roles are orchestrator personas — selectable via `agents.default.agent` and the `/agent` surfaces; primary-only roles are filtered from every dispatch-facing surface (the delegate schema, `list_subagents`), while `mode: all` stays delegatable; see [agents.md](./agents.md).
 - `RoleRegistry` — a `sync.RWMutex`-protected `map[SubAgentRole]RoleDef`. Thread-safe for concurrent reads during sub-agent dispatch.
 
 **Loading built-in roles:**

@@ -366,7 +366,7 @@ func (s *Server) handleSessionLoad(
 		s.replayConversation(st, sendUpdate)
 		respOK(msg.ID, SessionLoadResult{
 			ConfigOptions: s.loadConfigOptions(ctx, st),
-			Meta:          worldMetaOf(st.sess.WorldStatus()),
+			Meta:          sessionMetaOf(st),
 		})
 		s.refreshAvailableCommands(st, sendUpdate)
 		return

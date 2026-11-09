@@ -645,7 +645,7 @@ func (s *Server) dispatch(
 			s.handleSetMode(dispatchCtx, msg, sendUpdate, respOK, respErr)
 
 		case "session/set_agent":
-			s.handleSetAgent(msg, respOK, respErr)
+			s.handleSetAgent(dispatchCtx, msg, sendUpdate, respOK, respErr)
 
 		case "session/set_config_option":
 			s.handleSetConfigOption(dispatchCtx, msg, sendUpdate, respOK, respErr)

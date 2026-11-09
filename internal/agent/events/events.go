@@ -150,9 +150,8 @@ type AgentChangedEvent struct {
 	// workspace (the synthetic plan persona).
 	ReadOnly bool
 	// Detail is the optional clause appended after the persona in the
-	// notice — the regime sentence the next run enforces, plus the
-	// deprecation note on the SetMode alias path. Empty on the session-start
-	// announcement, which keeps its short wording.
+	// notice — the regime sentence the next run enforces. Empty on the
+	// session-start announcement, which keeps its short wording.
 	Detail string
 }
 

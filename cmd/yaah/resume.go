@@ -27,10 +27,9 @@ type restoredUsage struct {
 // the transcript, the conversation id its rows are keyed by, the next message
 // index, a possibly-replaced system prompt. One struct rather than a
 // widening return list — the fields travel together and every caller wants
-// all of them. The legacy mode column is not read here: the persona restore
-// path (resolveSessionPersonaFor → storedPersonaName) migrates a legacy
-// plan-mode row onto the plan persona, and the persona column is the only
-// persisted axis since part 2.
+// all of them. The mode column is not read anywhere: the persona column is
+// the only persisted axis (a pre-persona row resumes as the default build
+// persona).
 type restoredSession struct {
 	Messages     []types.Message
 	SessionID    string

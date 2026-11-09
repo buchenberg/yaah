@@ -43,9 +43,23 @@ import (
 // Persona.Timeout is carried but unconsumed here (yaah-21uk.15
 // revisits persona-level routing).
 func resolveOrchestratorBudget(cfg *config.Config, persona subagent.Persona) budget.Budget {
+	// Pre-fill the orchestrator's REAL defaults into the config slots so
+	// Resolve never falls back to its builtin dispatch baseline (25
+	// iterations) — its turns>=iterations clamp must reconcile against
+	// the loaded agents.default values (50; turns 0 = off), not the
+	// builtin. Without this, a persona max_turns in 25..49 truncated to
+	// 24 before the fallback remap below could run (review CRITICAL).
+	iters := cfg.ExplicitDefaultBudget.MaxIterations
+	if !cfg.ExplicitDefaultBudget.MaxIterationsSet && persona.MaxLoopCycles == 0 {
+		iters = cfg.Agent.Default.MaxLoopCycles
+	}
+	turns := cfg.ExplicitDefaultBudget.MaxTurns
+	if !cfg.ExplicitDefaultBudget.MaxTurnsSet && persona.MaxToolTurns == 0 {
+		turns = cfg.Agent.Default.MaxToolTurns
+	}
 	b := budget.Resolve(budget.Spec{
-		CfgMaxIterations:  cfg.ExplicitDefaultBudget.MaxIterations,
-		CfgMaxTurns:       cfg.ExplicitDefaultBudget.MaxTurns,
+		CfgMaxIterations:  iters,
+		CfgMaxTurns:       turns,
 		RoleMaxIterations: persona.MaxLoopCycles,
 		RoleMaxTurns:      persona.MaxToolTurns,
 	})

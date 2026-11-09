@@ -206,3 +206,34 @@ func TestLoopBuilderAppliesPersonaBudget(t *testing.T) {
 		})
 	}
 }
+
+// TestResolveOrchestratorBudget_ClampUsesRealDefault pins the review
+// CRITICAL: budget.Resolve's turns>=iterations clamp must reconcile
+// against the loaded agents.default baseline (50), never its builtin
+// dispatch fallback (25) — without the pre-fill, a persona max_turns in
+// 25..49 truncated to 24 before any remap could run.
+func TestResolveOrchestratorBudget_ClampUsesRealDefault(t *testing.T) {
+	tests := []struct {
+		name         string
+		explicit     config.ExplicitDefaultBudget
+		personaTurns int
+		wantTurns    int
+	}{
+		{"persona turns inside the builtin-fallback window survive", config.ExplicitDefaultBudget{}, 40, 40},
+		{"persona turns above the loaded default clamp to default-1", config.ExplicitDefaultBudget{}, 80, 49},
+		{"explicit config turns win over persona", config.ExplicitDefaultBudget{MaxTurns: 42, MaxTurnsSet: true}, 40, 42},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := budgetedConfig(50, 0, tt.explicit)
+			p := subagent.Persona{Name: "planner", Mode: "primary", MaxToolTurns: tt.personaTurns}
+			b := resolveOrchestratorBudget(cfg, p)
+			if b.Iterations != 50 {
+				t.Errorf("Iterations = %d; want the loaded default 50", b.Iterations)
+			}
+			if b.Turns != tt.wantTurns {
+				t.Errorf("Turns = %d; want %d", b.Turns, tt.wantTurns)
+			}
+		})
+	}
+}

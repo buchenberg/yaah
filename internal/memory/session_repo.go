@@ -425,8 +425,14 @@ func (d *DB) SessionPersona(id string) (string, error) {
 // updated_at is deliberately untouched: persona selection state, not
 // activity (same rule as SetSessionMode).
 func (d *DB) SetSessionPersona(id, persona string) error {
-	_, err := d.sql.Exec(`UPDATE sessions SET persona = ? WHERE id = ?`, persona, id)
-	return err
+	res, err := d.sql.Exec(`UPDATE sessions SET persona = ? WHERE id = ?`, persona, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("SetSessionPersona: no session %q", id)
+	}
+	return nil
 }
 
 // SetSessionSystemPrompt replaces the persisted system prompt: a persona

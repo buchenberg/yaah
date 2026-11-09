@@ -405,8 +405,9 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 	running := ws.running.Load()
 	v.write(marshalWire(sseWireEvent{Type: "ctrl.state", Running: &running}))
 
-	// The persona picker payload: one entry per primary-capable persona.
-	v.write(marshalWire(sseWireEvent{Type: "ctrl.agents", Agents: personaWireList()}))
+	// The persona picker payload: one entry per primary-capable persona,
+	// plus the one this session runs as (the palette's current marker).
+	v.write(marshalWire(sseWireEvent{Type: "ctrl.agents", Agents: personaWireList(), Current: ws.sess.PersonaName()}))
 
 	// If the shared catalog is already warm, deliver it immediately; otherwise
 	// the startup warm goroutine sends it when discovery settles.

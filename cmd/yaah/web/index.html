@@ -488,7 +488,7 @@ document.addEventListener('alpine:init', () => {
       status: 'connecting…', ctx: null,
       head: {}, todos: [], todosOpen: true, mcpOpen: false,
       palOpen: false, palQuery: '', palIdx: 0, palKeyLabel: 'Ctrl+K',
-        models: [], providerNames: {}, agents: [],
+        models: [], providerNames: {}, agents: [], sessionPersona: '',
       modal: {type:'',title:'',q:'',opts:[],multi:false,name:'',args:'',aid:null,err:''},
       _es: null,
       _tools: {},
@@ -674,7 +674,7 @@ document.addEventListener('alpine:init', () => {
           case 'ctrl.header':
             this.head = d.meta || {}; break
           case 'ctrl.agents':
-            this.agents = d.agents || []; break
+            this.agents = d.agents || []; this.sessionPersona = d.current || ''; break
           case 'ctrl.models':
             this.models = d.models || []
             this.providerNames = d.providers || {}; break
@@ -703,7 +703,7 @@ document.addEventListener('alpine:init', () => {
           cmds.push({id:'model:' + m, group:'models', icon:'', label:name, hint:this.providerNames[prov] || prov, current: m === cur, run: () => this.post({type:'model', provider:prov, model:name})})
         }
         for (const a of this.agents) {
-          cmds.push({id:'agent:' + a.name, group:'agents', icon:'◎', label:a.name, hint:a.description, current: this.head.sessionMode === a.name, run: () => this.post({type:'agent', agent:a.name})})
+          cmds.push({id:'agent:' + a.name, group:'agents', icon:'◎', label:a.name, hint:a.description, current: this.sessionPersona === a.name, run: () => this.post({type:'agent', agent:a.name})})
         }
         return cmds
       },

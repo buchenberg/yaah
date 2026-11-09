@@ -95,13 +95,14 @@ func roleDefFrom(fm rolefile.Frontmatter, body string) RoleDef {
 		def.MinToolTurns = def.MaxToolTurns
 	}
 
-	// Provider/model routing is config-only (yaah-21uk.8): a persona
-	// file may carry the keys (rolefile models them so a rewrite keeps
-	// them), but RoleDef has no field for them and nothing consumes
-	// them — the persona routes through agents.default like any other
-	// session. Warn and ignore rather than drop silently; revisiting
-	// persona-level routing is yaah-21uk.15.
-	if primaryCapableMode(def.Mode) && (fm.Provider != "" || fm.Model != "") {
+	// Provider/model routing is config-only (yaah-21uk.8): a role file
+	// may carry the keys (rolefile models them so a rewrite keeps them),
+	// but RoleDef has no field for them and nothing consumes them —
+	// dispatch roles route through agents.subagent.roles.<role> and
+	// personas through agents.default. Warn and ignore rather than drop
+	// silently, for every mode; revisiting persona-level routing is
+	// yaah-21uk.15.
+	if fm.Provider != "" || fm.Model != "" {
 		slog.Warn("role file: provider/model routing is config-only; keys ignored",
 			"role", def.DisplayName, "provider", fm.Provider, "model", fm.Model)
 	}
