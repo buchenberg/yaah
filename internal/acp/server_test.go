@@ -1037,6 +1037,12 @@ func TestServer_setAgentSwitchesAddressedSession(t *testing.T) {
 	if err := h.send("session/set_agent", 4, fmt.Sprintf(`{"sessionId":%q,"agent":"plan"}`, sid)); err != nil {
 		t.Fatal(err)
 	}
+	// A real switch pushes config_option_update (the mode selector is
+	// the persona axis) before the response — same ordering as set_mode.
+	option := h.recv(t)
+	if option.Method != "session/update" || !strings.Contains(string(option.Params), "config_option_update") {
+		t.Fatalf("expected config_option_update on a persona switch, got %+v", option)
+	}
 	msg := h.recv(t)
 	if msg.Error != nil {
 		t.Fatalf("set_agent error: %+v", msg.Error)

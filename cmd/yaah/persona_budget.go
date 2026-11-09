@@ -50,11 +50,11 @@ func resolveOrchestratorBudget(cfg *config.Config, persona subagent.Persona) bud
 	// builtin. Without this, a persona max_turns in 25..49 truncated to
 	// 24 before the fallback remap below could run (review CRITICAL).
 	iters := cfg.ExplicitDefaultBudget.MaxIterations
-	if !cfg.ExplicitDefaultBudget.MaxIterationsSet && persona.MaxLoopCycles == 0 {
+	if iters == 0 && persona.MaxLoopCycles == 0 {
 		iters = cfg.Agent.Default.MaxLoopCycles
 	}
 	turns := cfg.ExplicitDefaultBudget.MaxTurns
-	if !cfg.ExplicitDefaultBudget.MaxTurnsSet && persona.MaxToolTurns == 0 {
+	if turns == 0 && persona.MaxToolTurns == 0 {
 		turns = cfg.Agent.Default.MaxToolTurns
 	}
 	b := budget.Resolve(budget.Spec{
