@@ -72,6 +72,7 @@ type Frontmatter struct {
 	MinToolTurns  int    `yaml:"min_turns"` // budget floor; 0 = none
 	JSONMode      bool   `yaml:"json_mode"`
 	Timeout       int    `yaml:"timeout"` // seconds; 0 = no timeout
+	ReadOnly      bool   `yaml:"read_only,omitempty"`
 
 	// Provider and Model are accepted-but-ignored routing keys
 	// (yaah-21uk.8): role-file routing is config-only — dispatch roles

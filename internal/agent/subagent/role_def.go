@@ -51,6 +51,12 @@ type RoleDef struct {
 	// per-role timeout kills runs that would have finished (#319).
 	Timeout int
 
+	// ReadOnly marks personas whose session must not mutate the
+	// workspace (mode.go gates the tool belt on it). Parsed from the
+	// read_only frontmatter key; dispatch roles never set it.
+	ReadOnly bool
+	// Body is the role's markdown system-prompt body below the
+	// frontmatter fence.
 	Body string
 }
 
@@ -72,6 +78,7 @@ func roleDefFrom(fm rolefile.Frontmatter, body string) RoleDef {
 		MinToolTurns:  fm.MinToolTurns,
 		JSONMode:      fm.JSONMode,
 		Timeout:       fm.Timeout,
+		ReadOnly:      fm.ReadOnly,
 		Body:          body,
 	}
 
