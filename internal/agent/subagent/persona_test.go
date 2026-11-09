@@ -16,6 +16,8 @@ func personaRegistryFixtures() map[string][]byte {
 		"flex.md":  []byte("---\nname: Flex\nmode: all\ntools: [read]\ndescription: does either\n---\nall body"),
 		"base.md":  []byte("---\nname: Legacy\ntools: [read]\ndescription: old default\n---\nlegacy body"),
 		"build.md": []byte("---\nname: Build\nmode: primary\ntools: [write]\ndescription: shadow build\n---\nshadow body"),
+		"roo.md":   []byte("---\nname: Roo\nmode: primary\nread_only: true\ntools: [read]\ndescription: ro primary\n---\nro body"),
+		"ral.md":   []byte("---\nmode: all\nname: Ral\nread_only: true\ntools: [read]\ndescription: ro all\n---\nral body"),
 	}
 }
 
@@ -38,7 +40,7 @@ func TestPersonas(t *testing.T) {
 		for _, p := range ps {
 			names = append(names, p.Name)
 		}
-		want := []string{"build", "plan", "boss", "flex"}
+		want := []string{"build", "plan", "boss", "flex", "ral", "roo"}
 		if !slices.Equal(names, want) {
 			t.Errorf("Personas names = %v, want %v", names, want)
 		}
@@ -116,6 +118,8 @@ func TestResolvePersona(t *testing.T) {
 	}{
 		{"built-in build", "build", true, "primary", "", "Default coding agent. Full tool surface.", false},
 		{"built-in plan", "plan", true, "primary", "", "Explores and plans without editing; read-only enforcement.", true},
+		{"read-only primary file", "roo", true, "primary", "ro body", "ro primary", true},
+		{"read-only all-mode file", "ral", true, "all", "ral body", "ro all", true},
 		{"file role mode primary", "boss", true, "primary", "primary body", "runs the session", false},
 		{"file role mode all", "flex", true, "all", "all body", "does either", false},
 		{"file role mode subagent", "work", false, "", "", "", false},
