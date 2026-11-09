@@ -66,6 +66,12 @@ type sessionConfig struct {
 	providerName string
 	otelShutdown func(context.Context) error
 	otelActive   bool
+
+	// persona is the session's resolved orchestrator persona (yaah-21uk
+	// D4), set right after buildWorkspace rebuilds the role registry.
+	// buildMCPSkills binds Persona.Body into the orchestrator system
+	// prompt (yaah-21uk.6).
+	persona sessionPersona
 }
 
 // loadConfig loads and validates the configuration, resolves the provider and
@@ -262,14 +268,27 @@ type toolRegistryStage struct {
 	applyOutTool     *tools.ApplyOutTool
 	db               *memory.DB
 	embedderAttached bool
+
+	// personaName/personaTools carry the resolved session persona into
+	// the guidance-time unknown-name check (yaah-21uk.7). personaTools
+	// is the normalized tools list — empty means no narrowing — and the
+	// name keeps the warning truthful about where a bad name came from.
+	personaName  string
+	personaTools []string
 }
 
 // buildToolRegistry builds the session's tool registry and registers the tools
 // whose dependencies are available this early (the leaf tools through the belt,
-// the accept seam, the memory tools). It has no failure of its own: a store
-// that will not open only disables persistence.
-func buildToolRegistry(cfg *config.Config, opts SessionOptions, ws *workspaceStage) (*toolRegistryStage, error) {
-	st := &toolRegistryStage{}
+// the accept seam, the memory tools). The construction belt is config-only
+// since the mid-session persona switch (yaah-21uk.12): the persona's tools
+// list narrows the ADVERTISED set at loop build instead of the belt, so a
+// switch re-narrows without registry surgery. The persona still rides this
+// stage — its name and tools feed the unknown-name warning at guidance
+// time. The session store arrives pre-opened (yaah-21uk.9). It has no
+// failure of its own: an open failure was already reported warn-and-continue
+// by the wiring.
+func buildToolRegistry(cfg *config.Config, opts SessionOptions, ws *workspaceStage, persona subagent.Persona, db *memory.DB) (*toolRegistryStage, error) {
+	st := &toolRegistryStage{db: db}
 
 	// The tool registry (plan §3, Option A): local mode installs every
 	// built-in; isolated mode curates the set — the host-only leaf tools
@@ -283,7 +302,21 @@ func buildToolRegistry(cfg *config.Config, opts SessionOptions, ws *workspaceSta
 	// is enforced by the registry at registration — a tool it does not
 	// admit is never installed, so a late registration is refused like
 	// any other. An unset list admits every tool (the default).
-	belt := tools.NewBelt(cfg.Agent.Default.Tools)
+	//
+	// Persona narrowing (yaah-21uk.7) rode this belt; since the
+	// mid-session switch (yaah-21uk.12) it happens per loop build — the
+	// advertised set intersects the session persona's tools list, so a
+	// switch re-narrows without registry surgery. The belt is
+	// config-only: agents.default.tools shapes what registers, and the
+	// persona feeds the per-run seam instead. personaName/personaTools
+	// are still carried for the unknown-name warning below. Ordering
+	// with plan mode is unchanged: this shapes what is registered; the
+	// read-only tools level (effectiveToolsLevel) still strips write
+	// tools on top at loop build.
+	pTools := normalizeToolNames(persona.Tools)
+	st.personaName = persona.Name
+	st.personaTools = pTools
+	belt := tools.NewBelt(effectiveBeltNames(cfg.Agent.Default.Tools, nil))
 	st.belt = belt
 	if isolated {
 		st.reg = tools.NewIsolatedRegistryWithBelt(belt)
@@ -334,17 +367,6 @@ func buildToolRegistry(cfg *config.Config, opts SessionOptions, ws *workspaceSta
 			st.omittedTools = append(st.omittedTools, name)
 		}
 	}
-
-	// The substrate is attached by buildContainment, which runs after this
-	// stage: it needs the registry (to hand it the path validator and to
-	// register the accept seam), but the sandbox's startup must not happen
-	// before the registry and its gates are known good.
-	db, err := memory.OpenDefault()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: db open failed, persistence disabled: %v\n", err)
-		db = nil
-	}
-	st.db = db
 
 	// --- Embedding server ------------------------------------------------
 	// The embedder is attached here (skillTool reads it below), but the
@@ -421,6 +443,19 @@ func buildToolRegistry(cfg *config.Config, opts SessionOptions, ws *workspaceSta
 // out), and the host process manager behind the background_process tool.
 type mcpSkillsStage struct {
 	systemPrompt string
+	// identityEnd is the anchor BuildMarked returned for systemPrompt: the
+	// byte offset just past the identity block, where directive and mode
+	// injections anchor. It threads to the session so per-run injections
+	// never re-locate the identity by substring search, which a non-default
+	// identity would fail.
+	identityEnd int
+	// layers retains the construction-time persona-independent prompt
+	// layers (yaah-21uk.12): the session keeps them so a mid-session
+	// persona switch rebinds only the persona body and re-renders a
+	// byte-exact-except-the-persona prompt. promptMemory is the guidance
+	// the memory guidance block rendered from (resumes render none).
+	layers       prompts.Layers
+	promptMemory prompts.MemoryGuidance
 	mcpClients   []mcp.MCPClient
 	mcpInfos     []mcp.ServerInfo
 	mcpToolNames map[string]bool
@@ -431,8 +466,10 @@ type mcpSkillsStage struct {
 // buildMCPSkills assembles the system prompt, starts the MCP servers, and
 // registers the skill, plan, role, todo and background_process tools. Like
 // buildToolRegistry it has no failure of its own: every one of these pieces
-// degrades (a warning, a nil store) rather than failing the session.
-func buildMCPSkills(cfg *config.Config, opts SessionOptions, ws *workspaceStage, tr *toolRegistryStage, skipMCP bool) (*mcpSkillsStage, error) {
+// degrades (a warning, a nil store) rather than failing the session. The
+// system prompt carries the session's resolved persona (lc.persona, bound
+// by buildSystemPromptMarked).
+func buildMCPSkills(cfg *config.Config, opts SessionOptions, lc *sessionConfig, ws *workspaceStage, tr *toolRegistryStage, skipMCP bool) (*mcpSkillsStage, error) {
 	st := &mcpSkillsStage{}
 
 	// --- Prompt assembly -------------------------------------------------
@@ -446,7 +483,9 @@ func buildMCPSkills(cfg *config.Config, opts SessionOptions, ws *workspaceStage,
 		Writers: tr.reg.Get("memory_add") != nil && tr.reg.Get("memory_update") != nil &&
 			tr.reg.Get("memory_delete") != nil && tr.reg.Get("memory_promote") != nil,
 	}
-	st.systemPrompt = buildSystemPrompt(cfg, ws.cwd, tr.db, opts.ResumeSessionID, mem)
+	st.layers = orchestratorPromptLayers(cfg, ws.cwd, tr.db)
+	st.promptMemory = mem
+	st.systemPrompt, st.identityEnd = buildMarkedPrompt(st.layers, opts.ResumeSessionID, mem, lc.persona.Persona.Body)
 
 	// --- MCP servers ------------------------------------------------------
 	// Isolated mode omits MCP tools by policy: they execute on the host
@@ -553,10 +592,13 @@ type loopInfraStage struct {
 	messages     []types.Message
 	sessionID    string
 	msgIdx       int
-	mode         string
 	usage        restoredUsage
 	systemPrompt string
 	mainPrompt   string
+	// identityEnd anchors after-identity injections (see mcpSkillsStage);
+	// it stays valid across the tool-guidance appends, which only extend
+	// the prompt's tail.
+	identityEnd int
 
 	tracker        *tools.ConflictTracker
 	backgroundJobs *jobs.BackgroundJobs
@@ -664,25 +706,37 @@ func restoreTranscript(st *loopInfraStage, cfg *config.Config, opts SessionOptio
 		return err
 	}
 	st.messages, st.sessionID, st.msgIdx, st.systemPrompt = restored.Messages, restored.SessionID, restored.MsgIdx, restored.SystemPrompt
-	st.mode = restored.Mode
 	st.usage = restored.Usage
 	if opts.ResumeSessionID == "" {
 		st.sessionID = fmt.Sprintf("sess-%d", time.Now().UnixNano())
 		if tr.db != nil {
+			// The resolved persona rides the row (yaah-21uk.9): resume
+			// reads the name back and re-resolves it against the registry
+			// of that day, so budget and belt keep the session's own
+			// selection after the config default moves on. The prompt
+			// needs no such restore — its persona layer is already in
+			// system_prompt's bytes.
 			tr.db.CreateSession(memory.Session{
 				ID:           st.sessionID,
 				StartedAt:    time.Now().Unix(),
 				CWD:          canonicalStoredCwd(ws.cwd),
 				Model:        lc.modelName,
 				SystemPrompt: st.systemPrompt,
+				Persona:      lc.persona.Persona.Name,
 			})
 		}
 	}
 
+	// The identity anchor travels with the prompt: a resumed row's stored
+	// prompt was produced by this same assembly, so the offset still points
+	// at its identity block, and InjectAfterIdentityAt re-checks the
+	// embedded identity before trusting the offset on a foreign prompt.
+	st.identityEnd = mcps.identityEnd
+
 	// Derive the top-level agent prompt (with directives) from the clean
 	// system prompt. systemPrompt stays clean so child sub-agent prompts
 	// never inherit top-level directives.
-	st.mainPrompt = buildMainPrompt(cfg, opts, st.systemPrompt)
+	st.mainPrompt = buildMainPrompt(cfg, opts, st.systemPrompt, st.identityEnd)
 	return nil
 }
 
@@ -1301,10 +1355,18 @@ func assemble(lc *sessionConfig, opts SessionOptions, ws *workspaceStage, tr *to
 	// configured to have but does not. It feeds both the prompt (the model
 	// is told which are missing) and the session record (D4).
 	beltRemoved := tr.belt.Refused()
+	bare := loop.mainPrompt
 	mainPrompt := appendToolGuidance(opts, ws, tr, mcps, loop, beltRemoved)
+	// Retain everything appendToolGuidance appended so a mid-session
+	// persona switch can rebind the prompt body without losing the
+	// tool-guidance blocks (delegate/retained/belt/isolated/one-shot).
+	guidance := ""
+	if len(mainPrompt) > len(bare) {
+		guidance = mainPrompt[len(bare):]
+	}
 	recordSessionWorkspace(lc, tr, mcps, loop, beltRemoved)
 	launchEmbeddingBackfill(tr)
-	sess := newSessionFromStages(lc, opts, ws, tr, mcps, loop, mainPrompt)
+	sess := newSessionFromStages(lc, opts, ws, tr, mcps, loop, mainPrompt, guidance)
 	wireSessionHooks(lc, opts, ws, loop, sess)
 	return sess, nil
 }

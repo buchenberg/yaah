@@ -6,7 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/instructions"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/prompts"
 )
@@ -157,7 +159,7 @@ func TestBuildSystemPrompt_MemoryGuidelinesGatedOnTools(t *testing.T) {
 	dir := t.TempDir()
 
 	full := prompts.MemoryGuidance{Recall: true, Writers: true}
-	withTools := buildSystemPrompt(cfg, dir, nil, "", full)
+	withTools := buildSystemPrompt(cfg, dir, nil, "", full, "")
 	if !strings.Contains(withTools, "## Memory Guidelines") {
 		t.Error("a session with memory tools must carry the Memory Guidelines block")
 	}
@@ -171,7 +173,7 @@ func TestBuildSystemPrompt_MemoryGuidelinesGatedOnTools(t *testing.T) {
 	}
 
 	none := prompts.MemoryGuidance{}
-	withoutTools := buildSystemPrompt(cfg, dir, nil, "", none)
+	withoutTools := buildSystemPrompt(cfg, dir, nil, "", none, "")
 	for _, banned := range []string{"## Memory Guidelines", "memory_add", "memory_search", "memory_promote"} {
 		if strings.Contains(withoutTools, banned) {
 			t.Errorf("a session without memory tools must not advertise %q", banned)
@@ -180,7 +182,7 @@ func TestBuildSystemPrompt_MemoryGuidelinesGatedOnTools(t *testing.T) {
 
 	// A resumed session never gets the guidelines even with the tools
 	// registered — the pre-existing rule, unchanged by the gate.
-	resumed := buildSystemPrompt(cfg, dir, nil, "sess-123", full)
+	resumed := buildSystemPrompt(cfg, dir, nil, "sess-123", full, "")
 	if strings.Contains(resumed, "## Memory Guidelines") {
 		t.Error("a resumed session must not re-append the Memory Guidelines block")
 	}
@@ -200,7 +202,7 @@ func TestBuildSystemPrompt_MemoryGuidelinesRecallOnly(t *testing.T) {
 		},
 	}
 
-	got := buildSystemPrompt(cfg, t.TempDir(), nil, "", prompts.MemoryGuidance{Recall: true})
+	got := buildSystemPrompt(cfg, t.TempDir(), nil, "", prompts.MemoryGuidance{Recall: true}, "")
 
 	if !strings.Contains(got, "## Memory Guidelines") {
 		t.Fatal("a recall-only session still needs the guidelines heading")
@@ -270,5 +272,145 @@ func TestStoreHasRecall(t *testing.T) {
 	}
 	if !storeHasRecall(sess) {
 		t.Error("a store holding a past transcript has something to recall")
+	}
+}
+
+// The anchor threads through buildMainPrompt so a non-default identity (an
+// upcoming custom persona) keeps the directives block immediately after the
+// identity rather than falling to the end-of-prompt append.
+func TestBuildMainPrompt_CustomIdentityAnchor(t *testing.T) {
+	custom := "BESPOKE ORCHESTRATOR PERSONA"
+	systemPrompt := custom + "\n\n## Environment\nOS: test"
+	opts := SessionOptions{DirectiveOverrides: []string{"always run tests"}}
+
+	got := buildMainPrompt(&config.Config{}, opts, systemPrompt, len(custom))
+	want := custom + "\n\n" + prompts.FormatDirectives([]string{"always run tests"}) + "\n\n## Environment\nOS: test"
+	if got != want {
+		t.Fatalf("buildMainPrompt misplaced the directives block:\n got %q\nwant %q", got, want)
+	}
+}
+
+// Byte-compatibility gate at the composition root (yaah-21uk, extended for
+// yaah-21uk.6): the anchor-threaded derivation must produce byte-for-byte
+// what the legacy substring-search derivation produces for the default
+// embedded identity — the anchor travels beside the prompt bytes, never
+// inside them — and binding the session persona must change nothing for the
+// default build persona, whose body is empty: the seam-threaded prompt is
+// compared against the pre-persona layer assembly rebuilt right here.
+func TestBuildMainPrompt_DefaultIdentityByteCompat(t *testing.T) {
+	t.Setenv("YAAH_HOME", t.TempDir())
+
+	cfg := &config.Config{
+		Providers: map[string]config.Provider{"zai": {}},
+		Agent: config.AgentConfig{
+			Default: config.Defaults{Provider: "zai", Model: "GLM-5.3", Directives: []string{"always run tests"}},
+		},
+	}
+	dir := t.TempDir()
+	mem := prompts.MemoryGuidance{Recall: true, Writers: true}
+
+	// The persona a default session binds, resolved the way wiring does
+	// (after buildWorkspace rebuilds the registry). Its body is empty, so
+	// the persona layer must be omitted entirely.
+	p, ok := subagent.ResolvePersona(subagent.BuildPersonaName)
+	if !ok {
+		t.Fatal("the built-in build persona must resolve")
+	}
+	if p.Body != "" {
+		t.Fatalf("the build persona carries a body %q; this gate pins byte-identity for an empty body and must be revisited", p.Body)
+	}
+
+	// The pre-yaah-21uk.6 assembly, rebuilt exactly as
+	// buildSystemPromptMarked built it before the persona layer existed.
+	// The memory-guidance append is unchanged, so the expected bytes add it
+	// the same way.
+	legacy := prompts.Layers{
+		Identity:               prompts.IdentityPrompt,
+		Environment:            prompts.DetectEnvironment(dir),
+		SubAgentDispatch:       subAgentDispatchLine(cfg),
+		UserContext:            prompts.LoadUserContext(config.HomeDir()),
+		Project:                instructions.FormatForSystem(instructions.Load(dir, instructions.WorktreeRoot(dir))),
+		MaxSubAgentConcurrency: cfg.Agent.SubAgent.MaxConcurrency,
+		Memory:                 memoryLayer(nil),
+	}
+	wantBase, wantEnd := prompts.BuildMarked(legacy)
+	want := wantBase + memoryGuidanceBlock(mem, "")
+
+	sp, end := buildSystemPromptMarked(cfg, dir, nil, "", mem, p.Body)
+	if sp != want || end != wantEnd {
+		t.Fatalf("the persona seam changed the default prompt bytes:\n got  %q (anchor %d)\n want %q (anchor %d)", sp, end, want, wantEnd)
+	}
+	if sp != buildSystemPrompt(cfg, dir, nil, "", mem, p.Body) {
+		t.Fatal("buildSystemPromptMarked diverged from buildSystemPrompt; the anchor must travel beside the bytes")
+	}
+	got := buildMainPrompt(cfg, SessionOptions{}, sp, end)
+	wantMain := prompts.InjectAfterIdentity(want, resolveDirectives(cfg, SessionOptions{}))
+	if got != wantMain {
+		t.Fatal("anchor-threaded main prompt diverged from the legacy substring-search derivation")
+	}
+}
+
+// A persona with a body renders as its own layer between the identity and
+// the environment, the anchor stays just past the identity, and the
+// directives buildMainPrompt injects at the anchor land before the persona
+// body (yaah-21uk.6). Ordering assertions, not byte pins: the exact bytes
+// are pinned at the prompts level
+// (TestInjectAfterIdentityAt_PersonaSitsAfterInjections) and through the
+// legacy-vs-anchor byte-compat gate above.
+func TestBuildSystemPromptMarked_NonDefaultPersonaLayer(t *testing.T) {
+	t.Setenv("YAAH_HOME", t.TempDir())
+
+	cfg := &config.Config{
+		Providers: map[string]config.Provider{"zai": {}},
+		Agent: config.AgentConfig{
+			Default: config.Defaults{Provider: "zai", Model: "GLM-5.3"},
+		},
+	}
+	dir := t.TempDir()
+	const body = "ORCHESTRATOR PERSONA BODY: plan before acting."
+
+	sp, end := buildSystemPromptMarked(cfg, dir, nil, "", prompts.MemoryGuidance{}, body)
+
+	identity := strings.TrimSpace(prompts.IdentityPrompt)
+	if sp[:end] != identity {
+		t.Fatalf("prompt[:anchor] = %q; want the identity — the anchor must stay just past the identity block", sp[:end])
+	}
+	idxPersona := strings.Index(sp, body)
+	idxEnv := strings.Index(sp, "## Environment")
+	if idxPersona <= end || idxEnv < 0 || idxPersona > idxEnv {
+		t.Fatalf("persona must render between the identity and the environment: anchor=%d persona=%d environment=%d", end, idxPersona, idxEnv)
+	}
+	if between := sp[end:idxPersona]; strings.Contains(between, "## Environment") || strings.Contains(between, "Sub-agent dispatch:") {
+		t.Errorf("nothing may sit between the identity and its persona layer: %q", between)
+	}
+
+	// The directives injected at the anchor — what buildMainPrompt does at
+	// construction and the mode directive repeats per run — must land
+	// before the persona body.
+	opts := SessionOptions{DirectiveOverrides: []string{"always run tests"}}
+	got := buildMainPrompt(cfg, opts, sp, end)
+	block := prompts.FormatDirectives([]string{"always run tests"})
+	idxDirs := strings.Index(got, block)
+	idxPersonaIn := strings.Index(got, body)
+	if idxDirs <= end || idxDirs > idxPersonaIn {
+		t.Fatalf("directives must land between the identity and the persona: anchor=%d directives=%d persona=%d", end, idxDirs, idxPersonaIn)
+	}
+}
+
+// The persona body flows only into the orchestrator prompt
+// (buildSystemPromptMarked): buildSubAgentBasePrompt takes no persona and
+// must never carry the orchestrator's persona guidance (yaah-21uk.6).
+func TestBuildSubAgentBasePrompt_NeverCarriesOrchestratorPersona(t *testing.T) {
+	t.Setenv("YAAH_HOME", t.TempDir())
+	cwd := t.TempDir()
+
+	const body = "ORCHESTRATOR PERSONA BODY: special orchestrator guidance."
+	sp, _ := buildSystemPromptMarked(&config.Config{}, cwd, nil, "", prompts.MemoryGuidance{}, body)
+	if !strings.Contains(sp, body) {
+		t.Fatalf("orchestrator prompt must carry the persona body:\n%s", sp)
+	}
+
+	if got := buildSubAgentBasePrompt(cwd, nil); strings.Contains(got, body) {
+		t.Errorf("sub-agent base must not carry the orchestrator persona body:\n%s", got)
 	}
 }

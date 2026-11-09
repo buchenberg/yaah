@@ -16,6 +16,12 @@ import (
 	"github.com/buchenberg/yaah/internal/worldinfo"
 )
 
+// wireAgent is one persona in the palette payload.
+type wireAgent struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
 type wireOption struct {
 	Label       string `json:"label"`
 	Description string `json:"description,omitempty"`
@@ -144,6 +150,14 @@ type sseWireEvent struct {
 
 	Models    []string          `json:"models,omitempty"`
 	Providers map[string]string `json:"providers,omitempty"`
+
+	// Agents is the persona picker payload: every primary-capable
+	// persona with its description (the palette's agent group).
+	Agents []wireAgent `json:"agents,omitempty"`
+	// Current marks the persona the session runs as in the ctrl.agents
+	// frame, so the palette can mark it instead of guessing from the
+	// derived mode word (wrong for registry personas).
+	Current string `json:"current,omitempty"`
 }
 
 func marshalWire(we sseWireEvent) []byte {
@@ -312,11 +326,13 @@ func (v *sseView) HandleEvent(evt agent.Event) {
 		// Intentionally ignored: the web UI has no session-title display
 		// yet; the /api/sessions endpoint serves titles from the store.
 		return
-	case *agent.ModeChangedEvent:
-		// One-line in-band marker in the status line, alongside the
-		// compaction notices. The header's mode badge is updated
-		// separately by SetSessionMode.
-		we = sseWireEvent{Type: "ctrl.status", Text: e.Notice}
+	case *agent.AgentChangedEvent:
+		// One-line persona marker in the status line, alongside the
+		// compaction notices — session start and mid-session switches
+		// (including the deprecated mode aliases). Only non-build personas
+		// announce at start (yaah-21uk.10); the header's mode badge is
+		// updated separately by SetSessionMode.
+		we = sseWireEvent{Type: "ctrl.status", Text: e.Notice()}
 	case *agent.WakeEvent:
 		// A watch fired between turns. The status line carries the digest's
 		// first line; the model receives the full evidence in the injected

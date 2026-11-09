@@ -59,13 +59,30 @@ type Frontmatter struct {
 	// sub-agent's text directly (isolated-report or shared lane), "proposal"
 	// seals an isolated worktree delta for the orchestrator to settle. Empty
 	// means proposal — the historical behavior.
-	Output        string `yaml:"output,omitempty"`
+	Output string `yaml:"output,omitempty"`
+	// Mode selects the agent capability (yaah-21uk D1): "primary" is
+	// orchestrator-eligible, "subagent" is delegate-only, "all" is both.
+	// Empty means subagent — files without the key keep today's behavior.
+	// Schema only: the registry normalizes on load; nothing here filters
+	// dispatch behavior.
+	Mode          string `yaml:"mode,omitempty"`
 	MaxLoopCycles int    `yaml:"max_iterations"`
 	MinLoopCycles int    `yaml:"min_iterations"` // budget floor; 0 = none
 	MaxToolTurns  int    `yaml:"max_turns"`
 	MinToolTurns  int    `yaml:"min_turns"` // budget floor; 0 = none
 	JSONMode      bool   `yaml:"json_mode"`
 	Timeout       int    `yaml:"timeout"` // seconds; 0 = no timeout
+
+	// Provider and Model are accepted-but-ignored routing keys
+	// (yaah-21uk.8): role-file routing is config-only — dispatch roles
+	// route through agents.subagent.roles.<role>.provider/model — so
+	// the registry warns and drops them on the way to RoleDef. Modeled
+	// here with omitempty (files without the keys marshal exactly as
+	// before) rather than left to extras, so the warning seam can see
+	// them and a rewrite keeps them at their source position.
+	// Revisiting persona-level routing is yaah-21uk.15.
+	Provider string `yaml:"provider,omitempty"`
+	Model    string `yaml:"model,omitempty"`
 
 	// extra holds frontmatter keys this struct does not model, in source
 	// order. They are preserved through Parse→Marshal so editing a role does

@@ -72,6 +72,18 @@ func (b *Belt) Know(names ...string) {
 	}
 }
 
+// Knows reports whether the belt's accounting has recorded the name:
+// a tool that registered under it, or one a gate explicitly marked
+// known. Paired with Allows it separates a name the belt dropped but
+// that exists (refused at registration, therefore known) from a name
+// that never matched any tool — a typo, neither allowed nor known.
+func (b *Belt) Knows(name string) bool {
+	if b == nil {
+		return false
+	}
+	return b.known[name]
+}
+
 // Refuse records a tool the belt turned away. The registry calls it when
 // a registration is refused; the session prompt and record read the list
 // back so the model is told what is missing and the transcript can say

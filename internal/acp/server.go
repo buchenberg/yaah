@@ -75,11 +75,17 @@ type Session interface {
 	// SetModel switches the provider and model subsequent turns use.
 	// An in-flight turn finishes on the model it started with.
 	SetModel(provider, model string)
-	// Mode reports the ACP session mode ("build" or "plan").
+	// Mode reports the ACP mode vocabulary value ("build" or "plan")
+	// the session's persona derives to.
 	Mode() string
-	// SetMode switches the ACP session mode. An in-flight turn finishes on
-	// the mode it started with; the next turn uses the new mode.
-	SetMode(mode string) error
+	// PersonaName reports the persona the session runs as. session/new
+	// and session/load report it in _meta so a client can show which
+	// persona the session actually is.
+	PersonaName() string
+	// SetPersona switches the persona of the ADDRESSED session; the
+	// change is effective at the next loop build. An invalid name is
+	// refused with an error naming the miss reason.
+	SetPersona(name string) error
 	// ProviderName and ModelName report the current selection, which the
 	// ACP server renders as the model picker's currentValue.
 	ProviderName() string
@@ -637,6 +643,9 @@ func (s *Server) dispatch(
 
 		case "session/set_mode":
 			s.handleSetMode(dispatchCtx, msg, sendUpdate, respOK, respErr)
+
+		case "session/set_agent":
+			s.handleSetAgent(dispatchCtx, msg, sendUpdate, respOK, respErr)
 
 		case "session/set_config_option":
 			s.handleSetConfigOption(dispatchCtx, msg, sendUpdate, respOK, respErr)

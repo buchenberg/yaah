@@ -353,14 +353,15 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 			Title:         e.Title,
 			UpdatedAt:     time.Unix(e.UpdatedAt, 0).UTC().Format(time.RFC3339),
 		})
-	case *agent.ModeChangedEvent:
-		// A mid-session switch is a one-line in-band marker so the client's
-		// transcript records the regime the next turn runs under. Plain
-		// text, not a capability-gated card: the switch is already
-		// acknowledged by session/set_mode and pushed as a config option.
+	case *agent.AgentChangedEvent:
+		// Persona marker, same plain-text shape as the other notices —
+		// session start and mid-session switches (including the deprecated
+		// mode aliases): the client's transcript records which persona the
+		// session runs as and which regime it enforces. Only non-build
+		// personas announce at start (yaah-21uk.10).
 		send(sessionID, ChunkUpdate{
 			SessionUpdate: UpdateAgentMessageChunk,
-			Content:       textContent("[" + e.Notice + "]"),
+			Content:       textContent("[" + e.Notice() + "]"),
 		})
 	case *agent.WakeEvent:
 		// A watch fired between turns. ACP has no client-side prompt for

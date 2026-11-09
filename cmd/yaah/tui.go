@@ -133,13 +133,15 @@ func runTUI() error {
 		app.SetProvider(providerName)
 		app.SetModel(modelName)
 	}
-	app.OnModeSelect = func(mode string) {
-		if err := sess.SetMode(mode); err != nil {
-			app.SetEphemeral(err.Error())
-			return
-		}
-		app.SetMode(mode)
-		app.SetEphemeral("session mode: " + mode)
+	// Persona palette (yaah-21uk.12): pick validates and SWITCHES the
+	// current session — the persona body, budget and tool gate land on
+	// the next run. The ephemeral line is the confirmation and the
+	// info-pane mode badge re-derives from the persona.
+	app.SetAgentPicker(personaNames(), personaDescriptions())
+	app.OnAgentSelect = func(name string) {
+		reply, _ := sess.switchPersona(name)
+		app.SetMode(sess.Mode())
+		app.SetEphemeral(reply)
 	}
 
 	var cancelAgent context.CancelFunc

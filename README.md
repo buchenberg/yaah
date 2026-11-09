@@ -34,8 +34,10 @@ running tests, and retrying. yaah splits that work:
   sub-agents never commit.
 
 Four roles are built in: `analyst`, `developer`, `tester`, and `reviewer`. Add
-your own in `.agents/roles/*.md` or `~/.agents/roles/*.md`; see
-[sub-agents.md](docs/sub-agents.md).
+your own in `.agents/roles/*.md` or `~/.agents/roles/*.md`; a role file with
+`mode: primary` or `mode: all` becomes a selectable orchestrator persona
+(built-ins: `build`, the default, and read-only `plan`). See
+[sub-agents.md](docs/sub-agents.md) and [agents.md](docs/agents.md).
 
 ## A dispatch in one picture
 

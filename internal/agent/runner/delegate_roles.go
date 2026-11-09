@@ -1,20 +1,21 @@
 package runner
 
 import (
+	"os"
 	"path/filepath"
 
 	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // RoleDescriptionsFor maps each role name to a one-line description (or
 // specialty fallback) drawn from the role registry. Used to populate the
 // role parameter description of the delegate schema so the orchestrator
-// can choose a role without calling list_subagents.
+// can choose a role without calling list_subagents. Primary-only roles
+// are excluded (yaah-21uk.4): the delegate surface never mentions them.
 func RoleDescriptionsFor(roleNames []string) map[string]string {
 	descs := make(map[string]string, len(roleNames))
-	for _, name := range roleNames {
+	for _, name := range subagent.DelegatableRoles(roleNames) {
 		p := subagent.RoleProfileFor(subagent.SubAgentRole(name))
 		if p.Description != "" {
 			descs[name] = p.Description
@@ -45,9 +46,9 @@ func BuiltinRoleFiles() map[string][]byte {
 
 // RoleSearchPaths returns directories to scan for user-defined role
 // definitions. Mirrors the skill search hierarchy: project-level
-// (walked up from cwd) then user-level (~/.agents/roles/).
+// (walked up from cwd) then user-level (~/.agents/roles/ in the real
+// home dir — the cross-tool convention, not ~/.yaah).
 func RoleSearchPaths(cwd string) []string {
-	home := config.HomeDir()
 	var dirs []string
 	for dir := cwd; ; dir = filepath.Dir(dir) {
 		dirs = append(dirs, filepath.Join(dir, ".agents", "roles"))
@@ -56,6 +57,7 @@ func RoleSearchPaths(cwd string) []string {
 			break
 		}
 	}
-	dirs = append(dirs, filepath.Join(home, ".agents", "roles"))
+	userHome, _ := os.UserHomeDir()
+	dirs = append(dirs, filepath.Join(userHome, ".agents", "roles"))
 	return dirs
 }

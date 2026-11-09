@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/control"
 )
 
@@ -38,11 +39,13 @@ func (s *Server) handleCancel(msg Message) {
 	st.run.cancel()
 }
 
-// handleSetMode switches the Plan/Build session mode. The id must be one of
-// the modes advertised on session/new; unknown ids fail closed instead of
-// being silently accepted. The canonical notification is
-// config_option_update; the change applies to the next prompt (an in-flight
-// turn keeps the mode it started with).
+// handleSetMode switches the session persona through the ACP mode
+// vocabulary: the spec's plan/build ids map onto the personas of the
+// same name. The id must be one of the modes advertised on session/new;
+// unknown ids fail closed instead of being silently accepted. The
+// canonical notification is config_option_update; the change applies to
+// the next prompt (an in-flight turn keeps the persona it started
+// with).
 func (s *Server) handleSetMode(
 	ctx context.Context,
 	msg Message,
@@ -77,15 +80,76 @@ func (s *Server) handleSetMode(
 		respOK(msg.ID, nil)
 		return
 	}
-	if err := st.sess.SetMode(p.ModeID); err != nil {
+	name := subagent.BuildPersonaName
+	if p.ModeID == SessionModePlan {
+		name = subagent.PlanPersonaName
+	}
+	if err := st.sess.SetPersona(name); err != nil {
 		respErr(msg.ID, codeInvalidParams, err.Error())
 		return
 	}
 	sendUpdate(st.id, ConfigOptionUpdate{
 		SessionUpdate: UpdateConfigOption,
-		ConfigOptions: buildSessionConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName(), p.ModeID),
+		ConfigOptions: buildSessionConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName(), st.sess.Mode()),
 	})
 	respOK(msg.ID, nil)
+}
+
+// handleSetAgent switches the persona of the ADDRESSED session
+// (yaah-21uk.12): SetPersona rebinds the persona body, budget, tool
+// narrowing and read-only gate at the next loop build, and the switch
+// announces in-band like every other pick surface. The name must
+// resolve primary-capable — a miss is invalid params with the persona
+// registry's reason wording (typo vs delegate-only). The result reports
+// the session's effective persona and whether it is read-only.
+func (s *Server) handleSetAgent(
+	ctx context.Context,
+	msg Message,
+	sendUpdate updateSender,
+	respOK func(id json.RawMessage, result any),
+	respErr func(id json.RawMessage, code int, message string),
+) {
+	var p SetAgentParams
+	if len(msg.Params) > 0 {
+		if err := json.Unmarshal(msg.Params, &p); err != nil {
+			respErr(msg.ID, codeInvalidParams, "invalid params: "+err.Error())
+			return
+		}
+	}
+	if p.SessionID == "" {
+		respErr(msg.ID, codeInvalidParams, "sessionId is required")
+		return
+	}
+	name := strings.TrimSpace(p.Agent)
+	if name == "" {
+		respErr(msg.ID, codeInvalidParams, "agent is required")
+		return
+	}
+	s.mu.Lock()
+	st, ok := s.sessions[p.SessionID]
+	s.mu.Unlock()
+	if !ok {
+		respErr(msg.ID, codeInvalidParams, "unknown session id")
+		return
+	}
+	persona, resolvable := subagent.ResolvePersona(name)
+	if !resolvable {
+		respErr(msg.ID, codeInvalidParams,
+			fmt.Sprintf("%q is not a primary-capable agent (%s)", name, subagent.PersonaMissReason(name)))
+		return
+	}
+	if err := st.sess.SetPersona(name); err != nil {
+		respErr(msg.ID, codeInvalidParams, err.Error())
+		return
+	}
+	// A client that changed the persona must hear the config selector
+	// moved, exactly as session/set_mode pushes it — the mode word and
+	// the persona are the same axis now.
+	sendUpdate(st.id, ConfigOptionUpdate{
+		SessionUpdate: UpdateConfigOption,
+		ConfigOptions: buildSessionConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName(), st.sess.Mode()),
+	})
+	respOK(msg.ID, SetAgentResult{Persona: st.sess.PersonaName(), ReadOnly: persona.ReadOnly})
 }
 
 // modelCatalog returns the models discovery reports for the picker, or
@@ -140,13 +204,20 @@ func (s *Server) handleSetConfigOption(
 			return
 		}
 		if st.sess.Mode() != p.Value {
-			if err := st.sess.SetMode(p.Value); err != nil {
+			// The mode selector is backed by personas: the value maps onto
+			// the persona of the same name (the same seam session/set_mode
+			// drives).
+			name := subagent.BuildPersonaName
+			if p.Value == SessionModePlan {
+				name = subagent.PlanPersonaName
+			}
+			if err := st.sess.SetPersona(name); err != nil {
 				respErr(msg.ID, codeInvalidParams, err.Error())
 				return
 			}
 			sendUpdate(st.id, ConfigOptionUpdate{
 				SessionUpdate: UpdateConfigOption,
-				ConfigOptions: buildSessionConfigOptions(catalog, st.sess.ProviderName(), st.sess.ModelName(), p.Value),
+				ConfigOptions: buildSessionConfigOptions(catalog, st.sess.ProviderName(), st.sess.ModelName(), st.sess.Mode()),
 			})
 		}
 		respOK(msg.ID, SetConfigOptionResult{

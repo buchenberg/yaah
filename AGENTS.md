@@ -87,7 +87,7 @@ yaah/
 ├── docs/                        # user and developer docs; see docs/architecture.md
 │                                # and docs/configuration.md for the entry points
 ├── bench/                       # benchmark harnesses
-├── .agents/                     # project skills and roles
+├── .agents/                     # project skills and roles; role files carry mode:
 ├── .github/workflows/ci.yml     # CI: gofmt, vet, staticcheck, test, native build (ubuntu/macos/windows)
 ├── README.md
 ├── CONTRIBUTING.md

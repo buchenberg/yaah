@@ -59,6 +59,11 @@ type RoleEntry struct {
 	Description string
 	Contract    RoleContract
 	Tools       []string
+	// Mode is the resolved capability (yaah-21uk.13): "primary",
+	// "subagent" or "all". The registry normalizes missing and unknown
+	// file values to "subagent"; consumers treat an empty Mode (zero
+	// value) as the default.
+	Mode string
 }
 
 // RoleContract mirrors the YAML contract definition from role files.

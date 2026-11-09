@@ -22,7 +22,9 @@ Four roles are built in and work in any project with no setup:
 There is no default role and no full-tools fallback: every dispatch names a
 role. Unknown role names are rejected when the registry-backed role list is
 available. A role with an empty tool set is valid (for example a joke-teller
-or a no-tool judge).
+or a no-tool judge). Role files carrying `mode: primary` or `mode: all` are
+orchestrator personas instead of dispatch targets (`all` remains both);
+see [agents.md](./agents.md).
 
 Sub-agents inherit the orchestrator's provider and model unless
 `agents.subagent.provider` / `agents.subagent.model` or a per-role override
@@ -47,6 +49,7 @@ is the role name; `name:` is the display persona.
 name: Auditor
 specialty: security
 description: Scans for vulnerabilities, secrets, and unsafe patterns
+mode: subagent
 contract:
   heading: "## Audit"
   fields:
@@ -72,6 +75,12 @@ You are a SECURITY AUDITOR. Find vulnerabilities, hardcoded secrets, and
 unsafe patterns. Report findings with file paths, line numbers, and severity.
 Do NOT modify files.
 ```
+
+`mode:` (optional, default `subagent`) selects the capability: `subagent`
+is delegate-only, `primary` makes the file an orchestrator persona that is
+excluded from `delegate`, and `all` is both. Persona behavior (prompt body,
+tool narrowing, budget, switching) is covered in
+[agents.md](./agents.md).
 
 Per-turn checkpointing is configured in `config.yaml`, not in the role-file
 frontmatter: set `agents.subagent.roles.<role>.turn_checkpoints: true`.

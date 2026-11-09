@@ -26,6 +26,7 @@ func TestConfigAgentConfigParity(t *testing.T) {
 	// Fields in config.Defaults that are handled outside AgentConfig
 	// (provider resolution, approval resolution, prompt assembly, etc.).
 	allowedMissingInAgent := map[string]bool{
+		"Agent":                 true, // → orchestrator persona resolution in wiring (yaah-21uk D4), not an agent-loop knob
 		"CompactionModel":       true, // → compact provider resolution
 		"Approval":              true, // → WithApprovalMode
 		"MCPApproval":           true, // → WithMCPApproval (LoopBuilder)

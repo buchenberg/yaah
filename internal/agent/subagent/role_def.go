@@ -34,7 +34,12 @@ type RoleDef struct {
 	Tools       []string
 	// Output is the dispatch output contract ("report" or "proposal");
 	// empty means proposal (derived routing keys off this, see lane.go).
-	Output        string
+	Output string
+	// Mode is the agent capability (yaah-21uk D1): "primary" is
+	// orchestrator-eligible, "subagent" delegate-only, "all" both.
+	// Normalized on load — see roleDefFrom; delegate-surface filtering
+	// keys off it (delegatable.go).
+	Mode          string
 	MaxLoopCycles int
 	MinLoopCycles int // per-call overrides may not go below; 0 = none
 	MaxToolTurns  int
@@ -60,6 +65,7 @@ func roleDefFrom(fm rolefile.Frontmatter, body string) RoleDef {
 		Contract:      fm.Contract,
 		Tools:         fm.Tools,
 		Output:        normalizeRoleOutput(fm.Output, fm.Name),
+		Mode:          normalizeRoleMode(fm.Mode, fm.Name),
 		MaxLoopCycles: fm.MaxLoopCycles,
 		MinLoopCycles: fm.MinLoopCycles,
 		MaxToolTurns:  fm.MaxToolTurns,
@@ -89,7 +95,38 @@ func roleDefFrom(fm rolefile.Frontmatter, body string) RoleDef {
 		def.MinToolTurns = def.MaxToolTurns
 	}
 
+	// Provider/model routing is config-only (yaah-21uk.8): a persona
+	// file may carry the keys (rolefile models them so a rewrite keeps
+	// them), but RoleDef has no field for them and nothing consumes them
+	// — the persona routes through agents.default like any other session.
+	// Warn and ignore rather than drop silently; the warning is scoped to
+	// personas (dispatch-role routing via agents.subagent.roles.<role>
+	// predates the epic and stays silent, as its tests pin). Revisiting
+	// persona-level routing is yaah-21uk.15.
+	if primaryCapableMode(def.Mode) && (fm.Provider != "" || fm.Model != "") {
+		slog.Warn("role file: provider/model routing is config-only; keys ignored",
+			"role", def.DisplayName, "provider", fm.Provider, "model", fm.Model)
+	}
+
 	return def
+}
+
+// normalizeRoleMode validates the role file's mode field (yaah-21uk D1).
+// "primary", "subagent" and "all" pass through. A missing key silently
+// resolves to "subagent" — the historical behavior of every role file
+// that predates the field. An unknown value warns and falls back rather
+// than failing the role: a broken project role must not brick startup
+// (mirrors the output normalizer and the budget clamps).
+func normalizeRoleMode(v, roleName string) string {
+	switch v {
+	case "":
+		return "subagent"
+	case "primary", "subagent", "all":
+		return v
+	default:
+		slog.Warn("role file: unknown mode value; falling back to subagent", "role", roleName, "value", v)
+		return "subagent"
+	}
 }
 
 // ToProfile converts a parsed role definition into the runtime
@@ -102,6 +139,7 @@ func (d RoleDef) ToProfile() RoleProfile {
 		Contract:      d.Contract,
 		Tools:         d.Tools,
 		Output:        d.Output,
+		Mode:          d.Mode,
 		MaxLoopCycles: d.MaxLoopCycles,
 		MinLoopCycles: d.MinLoopCycles,
 		MaxToolTurns:  d.MaxToolTurns,

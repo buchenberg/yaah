@@ -43,7 +43,7 @@ sub-agents, and prompts all resolve against it.
 | `initialize` | supported | advertises `agentCapabilities.loadSession: true` plus `sessionCapabilities` for `resume`, `list`, `close`, `delete`, and a static catalog of agent-typed `authMethods` (see [Authentication and credentials](#authentication-and-credentials)) |
 | `authenticate` | supported | validates the named auth method and answers `{}`; no credential check, no network call |
 | `logout` | supported | removes all stored OAuth provider tokens; advertised only when wired (`agentCapabilities.auth.logout`) |
-| `session/new` | supported | requires the client's absolute cwd; every call creates a distinct session; advertises `configOptions` (mode always, model when a catalog is wired) |
+| `session/new` | supported | requires the client's absolute cwd; every call creates a distinct session; advertises `configOptions` (a `build`/`plan` mode selector backed by personas, plus model when a catalog is wired) |
 | `session/load` | supported | resume + replay; re-advertises `configOptions` like `session/new`; see below |
 | `session/resume` | supported | re-attach to a persisted session without replaying history |
 | `session/list` | supported | persisted sessions as `SessionInfo` pages (cwd filter, opaque cursor) |
@@ -51,8 +51,9 @@ sub-agents, and prompts all resolve against it.
 | `session/delete` | supported | removes the conversation from the store; unknown/deleted ids succeed silently |
 | `session/prompt` | supported | streams updates, then answers with a `stopReason` |
 | `session/cancel` | supported | notification; cancels the in-flight turn |
-| `session/set_mode` | supported alias | switches between `build` (full tools) and `plan` (inspection tool set + planning directive); unknown ids are invalid params and the change is pushed as `config_option_update` |
-| `session/set_config_option` | supported | the mode picker (`configId: "mode"` with `category: "mode"`) and model picker (`configId: "model"`); validates the value, applies it to subsequent turns, emits `config_option_update` for mode changes, and echoes the recomputed `configOptions` set |
+| `session/set_mode` | supported | maps the spec `build`/`plan` mode ids onto the personas of the same name (see [agents.md](./agents.md)); unknown ids are invalid params and the change is pushed as `config_option_update` |
+| `session/set_agent` | supported | switches the ADDRESSED session's persona: validates against the persona registry (a miss is invalid params) and answers the session's effective persona plus its read-only posture; effective at the next loop build |
+| `session/set_config_option` | supported | the mode picker (`configId: "mode"` with `category: "mode"`, backed by personas) and model picker (`configId: "model"`); validates the value, applies it to subsequent turns, emits `config_option_update` for persona changes, and echoes the recomputed `configOptions` set |
 | `session/update` | supported | variants below |
 | `session/request_permission` | supported | tool approvals delegated to the client; all four option kinds (`allow_once`/`allow_always`/`reject_once`/`reject_always`) are offered, and an always-decision is remembered for the rest of the session |
 
@@ -137,19 +138,22 @@ ids, and prompts on different sessions may run concurrently. A missing or
 relative cwd is rejected with invalid params (`-32602`); a second prompt on
 a session whose turn is still in flight is rejected busy (`-32002`),
 as is a `session/load` for a live id while its prompt runs — both retry
-after the turn ends. New sessions start in **build** mode and advertise the
-mode selector as `configOptions` (`id: "mode"`, `category: "mode"`, values
-`build`/`plan`). This server is greenfield and does not emit the legacy
-`modes` field; clients must support config options. `session/set_mode` remains
-an accepted alias and pushes `config_option_update`. Plan mode withholds the
-mutating tool set, leaving the inspection set (see
-[features.md](./features.md#plan-mode) for the full list), and injects a
-planning directive; an in-flight turn keeps the mode it started with. A `git`
-call that turns out to be mutating (`commit`, `push`, `branch -D`) is denied
-rather than offered for approval — the mode promises the capability is absent,
-not that the user may grant it. Mode is not persisted, so a fresh process defaults
-to build on `load`/`resume`; a live load/re-resume keeps the attachment's
-current mode.
+after the turn ends. The session persona is the only axis (see
+[agents.md](./agents.md)): a fresh session resolves `agents.default.agent`
+and defaults to the `build` persona. The `build`/`plan` selector is still
+advertised as `configOptions` (`id: "mode"`, `category: "mode"`, values
+`build`/`plan`) — a persona selector in mode clothing; this server is
+greenfield and does not emit the legacy `modes` field, so clients must
+support config options. `session/set_mode` maps the mode ids onto the
+personas of the same name and pushes
+`config_option_update`. The `plan` persona withholds the mutating tool set,
+leaving the inspection set (see [features.md](./features.md#plan-mode) for
+the full list), and injects a planning directive; an in-flight turn keeps
+the persona it started with. A `git` call that turns out to be mutating
+(`commit`, `push`, `branch -D`) is denied rather than offered for approval —
+the persona promises the capability is absent, not that the user may grant
+it. The persona is persisted (`sessions.persona`), so `load`/`resume`
+restores it; the `build`/`plan` mode word clients see is derived from it.
 
 ### session/load and where the state lives
 
@@ -185,8 +189,9 @@ Load flow (`internal/acp/server.go` `handleSessionLoad`):
    input (`[STEER] ` steering/loop-detection nudges, `SUPERVISOR: `
    checkpoint-recovery guidance, `CONFLICT: ` sub-agent conflict reports,
    `[BACKGROUND <role>]` background-job result deliveries).
-4. The request then answers with the session result: `configOptions` (mode
-   always, model when a catalog is wired) and `_meta` when the session has a
+4. The request then answers with the session result: `configOptions` (a
+   `build`/`plan` mode selector backed by personas, model when a catalog is
+   wired) and `_meta` when the session has a
    derived world posture.
 
 Reloading the **already-established id** replays the live conversation

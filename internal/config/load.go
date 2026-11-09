@@ -117,6 +117,16 @@ const (
 type Defaults struct {
 	Provider string `yaml:"provider"`
 	Model    string `yaml:"model"`
+	// Agent names the persona the session's orchestrator runs as
+	// (yaah-21uk D4): a role file with mode "primary" or "all", or a
+	// built-in persona ("build", "plan"). Empty means the default
+	// "build" persona. Deliberately not fail-fast validated here — the
+	// value space is the dynamic role registry, which the config layer
+	// cannot see — so a configured-but-missing or delegate-only name
+	// warns and falls back to "build" at session wiring time (OpenCode
+	// semantics), mirroring how a broken role file warns rather than
+	// bricks startup.
+	Agent string `yaml:"agent"`
 	// CompactionModel summarizes old context when compaction runs. An
 	// unset value means compaction runs on the main model, which is both
 	// slower and worse at summarizing; a warning fires at resolution.
@@ -466,6 +476,18 @@ type Config struct {
 	Observability ObservabilityConfig        `yaml:"observability"`
 	Embedding     EmbeddingConfig            `yaml:"embedding"`
 	Workspace     WorkspaceConfig            `yaml:"workspace"`
+
+	// ExplicitDefaultBudget mirrors the agents.default budget keys the
+	// config file set explicitly (yaah-21uk.8). Not a file key: the
+	// decode above merges the file into the shipped defaults, which
+	// erases exactly this distinction, so Load re-captures the raw
+	// values from the bytes. Persona budget resolution (cmd/yaah
+	// resolveOrchestratorBudget) needs it — an explicit agents.default
+	// value must win over a persona file's, while an unset key lets
+	// the persona file fill the gap. The zero value (nothing explicit)
+	// is also what a hand-built Config carries, so test sessions
+	// resolve today's limits unchanged.
+	ExplicitDefaultBudget ExplicitDefaultBudget `yaml:"-"`
 }
 
 // Embedding backends supported by EmbeddingConfig.Backend.
@@ -629,6 +651,13 @@ func Load() (*Config, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("cannot parse config %s: %w", path, err)
 	}
+
+	// The agents.default budget keys were just flattened: the decode
+	// above merged them into the shipped defaults, so an explicit
+	// max_iterations: 50 is now indistinguishable from the default 50.
+	// Re-capture the raw values (yaah-21uk.8) before anything consumes
+	// the config.
+	cfg.ExplicitDefaultBudget = captureExplicitDefaultBudget(data)
 
 	// The `tui:` stanza was removed with the bubbletea TUI (2026-08-21);
 	// warn once so upgraded configs know the key is dead.

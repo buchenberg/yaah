@@ -567,3 +567,42 @@ func TestIdleWakeTurnsEnabled(t *testing.T) {
 		t.Error("idle_wake_turns: true must enable idle wake turns")
 	}
 }
+
+func TestLoad_agentPersonaKey(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("YAAH_HOME", tmp)
+
+	// The absent key is the zero value: session wiring treats "" as the
+	// default build persona.
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() (defaults) error: %v", err)
+	}
+	if cfg.Agent.Default.Agent != "" {
+		t.Errorf("agents.default.agent unset = %q, want empty", cfg.Agent.Default.Agent)
+	}
+
+	configContent := `
+agents:
+  default:
+    agent: plan
+`
+	if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(configContent), 0o644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.Agent.Default.Agent != "plan" {
+		t.Errorf("agents.default.agent = %q, want %q", cfg.Agent.Default.Agent, "plan")
+	}
+
+	// Any value passes Validate — resolution (and its warn-and-fallback)
+	// happens at session wiring, where the role registry lives; the
+	// config layer cannot fail-fast on a dynamic namespace.
+	cfg.Agent.Default.Agent = "not-even-a-role"
+	if err := Validate(cfg); err != nil {
+		t.Errorf("Validate refused agents.default.agent %q: %v", cfg.Agent.Default.Agent, err)
+	}
+}

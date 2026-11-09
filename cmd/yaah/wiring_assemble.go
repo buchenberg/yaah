@@ -80,8 +80,12 @@ func appendToolGuidance(opts SessionOptions, ws *workspaceStage, tr *toolRegistr
 	if opts.OneShot {
 		mainPrompt += "\n\n" + prompts.OneShotGuidance()
 	}
-	for _, name := range tr.belt.Unknown() {
-		fmt.Fprintf(os.Stderr, "warning: config `agents.default.tools` names unknown tool %q; ignored\n", name)
+	// Unknown allowlist names warn here, at prompt-assembly time, when
+	// the belt's know/refuse accounting is final. unknownToolWarnings
+	// keeps the configured belt's wording and adds persona names the
+	// intersection dropped (yaah-21uk.7).
+	for _, line := range unknownToolWarnings(tr) {
+		fmt.Fprintln(os.Stderr, line)
 	}
 	return mainPrompt
 }
@@ -140,7 +144,7 @@ func launchEmbeddingBackfill(tr *toolRegistryStage) {
 // wake engine is attached but not rehydrated here: durable watches are resumed
 // by Start, after the driver has installed its view and its idle-wake policy.
 // Rehydrating during construction would race both.
-func newSessionFromStages(lc *sessionConfig, opts SessionOptions, ws *workspaceStage, tr *toolRegistryStage, mcps *mcpSkillsStage, loop *loopInfraStage, mainPrompt string) *agentSession {
+func newSessionFromStages(lc *sessionConfig, opts SessionOptions, ws *workspaceStage, tr *toolRegistryStage, mcps *mcpSkillsStage, loop *loopInfraStage, mainPrompt, promptGuidance string) *agentSession {
 	// Wrap the provider with OTel instrumentation if enabled.
 	provider := wrapProviderWithOtel(lc.provider, lc.otelActive, lc.cfg.Observability.Otel.Verbose)
 
@@ -153,8 +157,13 @@ func newSessionFromStages(lc *sessionConfig, opts SessionOptions, ws *workspaceS
 		provider:       provider,
 		providerName:   lc.providerName,
 		modelName:      lc.modelName,
+		persona:        lc.persona.Persona,
+		promptLayers:   mcps.layers,
+		promptMemory:   mcps.promptMemory,
 		systemPrompt:   loop.systemPrompt,
 		mainPrompt:     mainPrompt,
+		promptGuidance: promptGuidance,
+		identityEnd:    loop.identityEnd,
 		toolReg:        tr.reg,
 		db:             tr.db,
 		mcpClients:     mcps.mcpClients,
@@ -164,7 +173,6 @@ func newSessionFromStages(lc *sessionConfig, opts SessionOptions, ws *workspaceS
 		sessionID:      loop.sessionID,
 		messages:       loop.messages,
 		msgIdx:         loop.msgIdx,
-		mode:           loop.mode,
 		otelShutdown:   lc.otelShutdown,
 		tracker:        loop.tracker,
 		backgroundJobs: loop.backgroundJobs,

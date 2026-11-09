@@ -43,6 +43,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/events"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/control"
@@ -50,6 +51,7 @@ import (
 	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/memory"
 	processpkg "github.com/buchenberg/yaah/internal/process"
+	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 	"github.com/buchenberg/yaah/internal/wake"
@@ -90,7 +92,12 @@ type Session interface {
 	ProviderName() string
 	ModelName() string
 	Mode() string
-	SetMode(mode string) error
+	// PersonaName reports the persona the session runs as; the web
+	// switch notice names it.
+	PersonaName() string
+	// SetPersona switches the persona the session runs as; effective at
+	// the next loop build. An invalid name is refused with an error.
+	SetPersona(name string) error
 	MCPInfos() []mcp.ServerInfo
 	// WorldStatus reports the session's workspace and dispatch-world
 	// posture for display. The zero value means it was never derived;
@@ -113,16 +120,48 @@ type agentSession struct {
 	provider     agent.Provider
 	providerName string
 	modelName    string
-	systemPrompt string
+	// persona is the session's resolved orchestrator persona (yaah-21uk
+	// D4). Its Body binds into the system prompt (yaah-21uk.6) and its
+	// budget fields bound every loop the session builds (yaah-21uk.8,
+	// resolveOrchestratorBudget). The zero persona — hand-built test
+	// sessions — resolves today's limits unchanged. Mutable since the
+	// mid-session switch (yaah-21uk.12, the reversal recorded on
+	// yaah-21uk.2): SetPersona re-resolves it under the session lock;
+	// role reloads still only refresh the registry for new sessions.
+	// Guarded by mu, like the mode.
+	persona subagent.Persona
+	// promptLayers retains the construction-time persona-independent
+	// prompt layers (yaah-21uk.12): a persona switch rebinds only the
+	// persona body and re-renders from them, so the memory snapshot and
+	// the environment stay byte-frozen across switches. Zero Identity
+	// means the session never captured them (hand-built test sessions)
+	// and a switch cannot rebuild the prompt. Immutable after wiring.
+	promptLayers prompts.Layers
+	// promptMemory is the MemoryGuidance the construction-time memory
+	// guidance block rendered from; a prompt rebuild reuses it so the
+	// block stays byte-identical. Immutable after wiring.
+	promptMemory prompts.MemoryGuidance
+	// promptGuidance is the tool-guidance suffix appendToolGuidance added
+	// to mainPrompt at construction; a mid-session persona switch re-applies
+	// it over the rebuilt base so no guidance block is lost.
+	promptGuidance string
+	systemPrompt   string
 	// mainPrompt is systemPrompt plus the default-agent directives
 	// injected after the identity block. Only the top-level loop sees
 	// it; sub-agents receive systemPrompt as their base so default
 	// directives never leak into child prompts.
 	mainPrompt string
-	toolReg    *tools.Registry
-	db         *memory.DB
-	mcpClients []mcp.MCPClient
-	mcpInfos   []mcp.ServerInfo
+	// identityEnd is the identity anchor BuildMarked computed for
+	// systemPrompt: the byte offset just past the identity block, where
+	// the per-run mode directive injects. Zero means the session was
+	// built without an anchor (tests); injection then falls back to
+	// locating the embedded identity, or appending at the end when there
+	// is none.
+	identityEnd int
+	toolReg     *tools.Registry
+	db          *memory.DB
+	mcpClients  []mcp.MCPClient
+	mcpInfos    []mcp.ServerInfo
 	// deepGate is the light/deep sleep policy, created once per session so
 	// its every-Nth cadence spans prompt runs instead of resetting each turn.
 	deepGate     *deepSleepGate
@@ -145,13 +184,6 @@ type agentSession struct {
 	// outcome (tool-stripped final answer or hard iteration limit) so
 	// the ACP server can report max_turn_requests instead of end_turn.
 	turnBudgetExhausted bool
-	// mode is the ACP session mode ("build" or "plan"). Empty means build.
-	// It is persisted to the session row on every switch (SetMode) and
-	// restored on resume (restoreSession), so a session left in plan mode
-	// comes back in plan mode rather than silently widening to build. The
-	// restore sets this field directly: it is a recovery, not a switch, so
-	// no ModeChangedEvent is announced for it.
-	mode string
 	// titlePublished tracks the persisted session title (empty until the
 	// first user message derives one). Cached across prompt runs so the
 	// store's one-shot title adoption is known without re-reading; built
@@ -642,64 +674,6 @@ func (s *agentSession) TurnBudgetExhausted() bool {
 	return s.turnBudgetExhausted
 }
 
-// ACP session modes. Build is the normal coding mode; plan exposes only the
-// inspection/planning tool surface and a planning directive. planModeSpec in
-// mode.go is the single source of truth for both.
-const (
-	acpModeBuild = "build"
-	acpModePlan  = "plan"
-)
-
-func (s *agentSession) Mode() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.mode == "" {
-		return acpModeBuild
-	}
-	return s.mode
-}
-
-func (s *agentSession) SetMode(mode string) error {
-	if !validMode(mode) {
-		return fmt.Errorf("unknown session mode %q (available: %s, %s)", mode, acpModeBuild, acpModePlan)
-	}
-	s.mu.Lock()
-	// A switch to the mode the session is already in is not a switch: it must
-	// not announce, persist, or report one. The comparison is on the mode the
-	// session REPORTS (Mode() normalizes the empty storage form to build), so
-	// switching a session that never switched to build is a no-op too.
-	if sameMode(mode, s.mode) {
-		s.mu.Unlock()
-		return nil
-	}
-	s.mode = mode
-	db, sessionID := s.db, s.sessionID
-	s.mu.Unlock()
-	// Persist the switch so the selection survives the process: resume reads
-	// the column back (restoreSession), so a session narrowed to plan mode is
-	// not silently widened to build by the next attachment. Written here, on
-	// the switch, because a crash, a harness timeout or a kill never reaches
-	// close — and a mode is selection state, not turn data.
-	//
-	// Best-effort, like the session's other bookkeeping (usage flush, title,
-	// workspace metadata): the switch has already taken effect in this
-	// process and the notice below announces it, so a store failure must not
-	// be reported as a refused switch — the warning names the real
-	// consequence instead (the next resume falls back to build).
-	if db != nil && sessionID != "" {
-		if err := db.SetSessionMode(sessionID, mode); err != nil {
-			slog.Warn("session: persisting mode failed", "mode", mode, "err", err)
-		}
-	}
-	// Announce the switch in-band, after the lock is released: the notice
-	// states the regime the next run's tool gate enforces, so a mode change
-	// is observable from inside the conversation rather than only from the
-	// next prompt's directive. dispatchEvent buffers it for views that
-	// cannot take writes between runs (REPL, ACP).
-	s.dispatchEvent(&agent.ModeChangedEvent{Mode: mode, Notice: s.modeChangeNotice(mode)})
-	return nil
-}
-
 // RunPrompt runs one prompt under a context the session owns: derived
 // from the caller's, so the frontends' own cancels (TUI abort, serve's
 // signal context) compose, but with a session-held cancel that
@@ -746,6 +720,10 @@ func (s *agentSession) runPromptLocked(ctx context.Context, prompt string) (stri
 // driver calls it once.
 func (s *agentSession) Start() {
 	s.startOnce.Do(func() {
+		// Announce a non-default persona once, at the point every driver
+		// has installed its view (yaah-21uk.10). Before the wake check, so
+		// sessions built without wake plumbing still announce.
+		s.announcePersona()
 		if s.closed.Load() || s.wakeMgr == nil {
 			return
 		}

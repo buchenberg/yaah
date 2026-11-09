@@ -43,7 +43,12 @@ type RoleProfile struct {
 	Tools       []string
 	// Output is the dispatch output contract: "report" or "proposal".
 	// Empty means proposal (lane routing, see lane.go).
-	Output        string
+	Output string
+	// Mode is the agent capability (yaah-21uk D1): "primary" is
+	// orchestrator-eligible, "subagent" delegate-only, "all" both.
+	// Always populated — roleDefFrom normalizes missing or unknown
+	// values to "subagent".
+	Mode          string
 	MaxLoopCycles int
 	MinLoopCycles int // per-call overrides may not go below; 0 = none
 	MaxToolTurns  int

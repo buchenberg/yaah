@@ -36,8 +36,7 @@ const (
 	CmdSession
 	CmdMCP
 	CmdModel
-	CmdPlan
-	CmdBuild
+	CmdAgent
 )
 
 // Parse maps a colon command string (without the leading ":") to a Cmd.
@@ -73,8 +72,7 @@ var commandNames = []struct {
 	{"session", CmdSession},
 	{"mcp", CmdMCP},
 	{"model", CmdModel},
-	{"plan", CmdPlan},
-	{"build", CmdBuild},
+	{"agent", CmdAgent},
 }
 
 // splitName splits input at the first run of whitespace, so every separator
@@ -89,7 +87,7 @@ func splitName(input string) (name, arg string) {
 // takesArg reports whether cmd consumes the rest of the line.
 func takesArg(cmd Cmd) bool {
 	switch cmd {
-	case CmdSteer, CmdFollowUp, CmdSearch, CmdModel:
+	case CmdSteer, CmdFollowUp, CmdSearch, CmdModel, CmdAgent:
 		return true
 	default:
 		return false
@@ -148,6 +146,8 @@ func Usage(cmd Cmd) string {
 		return ":search <query>"
 	case CmdModel:
 		return ":model [name]"
+	case CmdAgent:
+		return ":agent [name]"
 	default:
 		return ""
 	}
@@ -170,8 +170,7 @@ func DefaultEntries() []Entry {
 		{"steer", "Inject steering text (requires arg)", CmdSteer},
 		{"followup", "Queue text as a follow-up message (requires arg)", CmdFollowUp},
 		{"model", "Switch model", CmdModel},
-		{"plan", "Switch to plan mode (inspection tools)", CmdPlan},
-		{"build", "Switch to build mode (full tools)", CmdBuild},
+		{"agent", "Pick the persona (switches this session)", CmdAgent},
 		{"search", "Search messages (requires arg)", CmdSearch},
 		{"verbose", "Toggle verbose mode", CmdVerbose},
 		{"banner", "Toggle banner", CmdBanner},

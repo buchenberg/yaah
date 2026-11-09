@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 )
 
 func (t *DelegateTool) Schema() json.RawMessage {
@@ -34,6 +36,9 @@ func (t *DelegateTool) Schema() json.RawMessage {
 // roleNames returns the known role names for validation and schema
 // generation: the cached startup snapshot layered with the live resolver
 // (if any) so role create/delete via the role tool takes immediate effect.
+// Primary-only roles are filtered out (yaah-21uk.4): the result feeds
+// both the schema enum and execution-time role validation, and the
+// orchestrator can dispatch neither itself nor another primary persona.
 func (t *DelegateTool) roleNames() []string {
 	// Build the set of known roles: start with the cached snapshot,
 	// then layer on the live resolver so role create/delete takes
@@ -52,15 +57,19 @@ func (t *DelegateTool) roleNames() []string {
 		names = append(names, n)
 	}
 	slices.Sort(names)
-	return names
+	return subagent.DelegatableRoles(names)
 }
 
 // BuildDelegateSchema returns a JSON Schema for the delegate tool whose role
 // enum is populated from the given list of role names, so user-defined
-// roles discovered at runtime are visible to the model.
+// roles discovered at runtime are visible to the model. Primary-only
+// roles are excluded from the enum and from the rendered description
+// list (yaah-21uk.4) — the orchestrator cannot dispatch them.
 func BuildDelegateSchema(roleNames []string, roleDescriptions map[string]string) json.RawMessage {
-	roles := make([]string, len(roleNames))
-	copy(roles, roleNames)
+	// Filter here too, not just roleNames: BuildDelegateSchema is
+	// exported, so a primary-only name passed directly must not leak
+	// into the enum or the rendered description list.
+	roles := subagent.DelegatableRoles(roleNames)
 
 	roleDesc := "Sub-agent role selecting its tool set and limits."
 	if len(roleDescriptions) > 0 {

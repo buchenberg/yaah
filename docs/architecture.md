@@ -341,7 +341,7 @@ The `RoleRegistry` is the central store for role definitions. It holds built-in 
 
 **Core types:**
 
-- `RoleDef` — the persistent format for a role, parsed from YAML frontmatter: `Tools []string`, `MaxIterations`, `MaxTurns`, `Timeout` (seconds), `JSONMode`, and `Body` (the markdown guidance text). Its `ToProfile()` method converts to the runtime `RoleProfile` struct.
+- `RoleDef` — the persistent format for a role, parsed from YAML frontmatter: `Tools []string`, `MaxIterations`, `MaxTurns`, `Timeout` (seconds), `JSONMode`, `Mode` (`primary`/`subagent`/`all`, default `subagent`), and `Body` (the markdown guidance text). Its `ToProfile()` method converts to the runtime `RoleProfile` struct. `mode: primary`/`all` roles are orchestrator personas — selectable via `agents.default.agent` and the `/agent` surfaces; primary-only roles are filtered from every dispatch-facing surface (the delegate schema, `list_subagents`), while `mode: all` stays delegatable; see [agents.md](./agents.md).
 - `RoleRegistry` — a `sync.RWMutex`-protected `map[SubAgentRole]RoleDef`. Thread-safe for concurrent reads during sub-agent dispatch.
 
 **Loading built-in roles:**
@@ -372,7 +372,7 @@ Built-in roles are embedded via `//go:embed roles/*.md` in `internal/prompts/pro
 
 File: `internal/tools/delegate_schema.go`
 
-`BuildDelegateSchema(roleNames []string, roleDescriptions map[string]string) json.RawMessage` constructs the `delegate` tool's JSON Schema at startup from the active role list and descriptions, using `encoding/json` marshalling to avoid injection. When `RoleNames` is empty, `DelegateTool.Schema()` falls back to a static schema whose `role` field is an unconstrained string.
+`BuildDelegateSchema(roleNames []string, roleDescriptions map[string]string) json.RawMessage` constructs the `delegate` tool's JSON Schema at startup from the active role list and descriptions, using `encoding/json` marshalling to avoid injection. The role list excludes `mode: primary` roles (orchestrator-only personas); `mode: all` roles stay delegatable. When `RoleNames` is empty, `DelegateTool.Schema()` falls back to a static schema whose `role` field is an unconstrained string.
 
 Wiring chain: `runner.RoleDescriptionsFor(reg.Names())` and `RoleNames` → `runner.NewDelegateTool(DelegateToolOpts{...})` → `DelegateTool.Schema()`. The tool also carries a live `RoleResolver` so roles created during a session are visible without a restart.
 
@@ -1242,7 +1242,7 @@ Concrete event types (all pointer receivers for clean nil checks in type switche
 | `SubAgentStartEvent` | Sub-agent dispatch begins (role, model, prompt) |
 | `SubAgentEndEvent` | Sub-agent dispatch completes (role, duration, error) |
 | `EscalationEvent` | Sub-agent raises a structured escalation (severity, summary, detail, suggestion) |
-| `ModeChangedEvent` | Session mode switches (new mode + the in-band notice stating the regime it enforces) |
+| `AgentChangedEvent` | Session persona start/switch announcement (persona name, read-only flag, in-band notice naming the persona and the regime it enforces) |
 | `DoneEvent` | Agent loop finishes (response, error, context stats) |
 | `CompactionStartedEvent` | Context compaction begins (before/target tokens, reason) |
 | `CompactionDoneEvent` | Context compaction finishes (before/after tokens, savings %, method, elapsed) |

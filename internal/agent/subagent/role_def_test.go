@@ -1,6 +1,8 @@
 package subagent
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -246,5 +248,79 @@ Test guidance.`),
 	SetDefaultRoleRegistry(nil)
 	if p := RoleProfileFor(SubAgentRole("tester")); len(p.Tools) != 0 {
 		t.Errorf("no registry: expected zero-value profile, got %v", p.Tools)
+	}
+}
+
+// captureSlogWarnings redirects the default logger for the duration of
+// the test and returns a function yielding everything logged at warn or
+// above (same helper as internal/agent's tests).
+func captureSlogWarnings(t *testing.T) func() string {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return func() string { return buf.String() }
+}
+
+// TestRoleDefModeNormalization pins yaah-21uk D1 schema semantics: the
+// three vocabulary values pass through to the profile, a missing key
+// silently defaults to subagent (the historical behavior of every role
+// file that predates the field), and an unknown value warns and falls
+// back rather than failing the role — a broken project role must not
+// brick startup.
+func TestRoleDefModeNormalization(t *testing.T) {
+	tests := []struct {
+		name    string
+		front   string // frontmatter lines after the name; mode absent when empty
+		want    string
+		wantLog string // empty: no warning may fire
+	}{
+		{"missing", "tools: [read]\n", "subagent", ""},
+		{"primary", "mode: primary\ntools: [read]\n", "primary", ""},
+		{"subagent", "mode: subagent\ntools: [read]\n", "subagent", ""},
+		{"all", "mode: all\ntools: [read]\n", "all", ""},
+		{"unknown", "mode: orchestrator\ntools: [read]\n", "subagent", "unknown mode value; falling back to subagent"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logs := captureSlogWarnings(t)
+			def, err := parseRoleFile([]byte("---\nname: Checker\n" + tt.front + "---\nbody"))
+			if err != nil {
+				t.Fatalf("parseRoleFile: %v", err)
+			}
+			if def.Mode != tt.want {
+				t.Errorf("RoleDef.Mode = %q, want %q", def.Mode, tt.want)
+			}
+			if p := def.ToProfile(); p.Mode != tt.want {
+				t.Errorf("RoleProfile.Mode = %q, want %q", p.Mode, tt.want)
+			}
+			got := logs()
+			if tt.wantLog != "" {
+				if !strings.Contains(got, tt.wantLog) {
+					t.Errorf("expected warning containing %q, log:\n%s", tt.wantLog, got)
+				}
+				if !strings.Contains(got, "role=Checker") || !strings.Contains(got, "value=orchestrator") {
+					t.Errorf("warning lost the role/value attributes, log:\n%s", got)
+				}
+			} else if got != "" {
+				t.Errorf("unexpected warnings:\n%s", got)
+			}
+		})
+	}
+}
+
+// TestRoleRegistryModeProfile exercises the full load path — file bytes
+// through LoadBytes and ProfileFor — so the capability reaches the
+// runtime profile, not just the parse layer.
+func TestRoleRegistryModeProfile(t *testing.T) {
+	reg := NewRoleRegistry()
+	if err := reg.LoadBytes(map[string][]byte{
+		"builder.md": []byte("---\nname: Builder\nmode: all\ntools: [read]\n---\nbody"),
+	}); err != nil {
+		t.Fatalf("LoadBytes: %v", err)
+	}
+	if p := reg.ProfileFor(SubAgentRole("builder")); p.Mode != "all" {
+		t.Errorf("ProfileFor mode = %q, want all", p.Mode)
 	}
 }

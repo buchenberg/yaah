@@ -1,81 +1,95 @@
-// Mode vocabulary: the plan/build modes, the tool gate each mode enforces,
-// and the system-prompt directive that tells the model which regime it is in.
-//
-// The tool gate and the directive wording are generated from the same spec
-// (planModeSpec) so a directive can never promise a regime the loop does not
-// actually enforce.
+// Persona vocabulary: the orchestrator persona is the only session axis
+// (yaah-21uk.12 retired the plan/build mode seam). The tool gate each
+// persona enforces and the system-prompt directive that tells the model which
+// regime it is in are generated from the same derivation, so a directive can
+// never promise a regime the loop does not actually enforce. The plan/build
+// words survive only in the ACP spec surface: session/set_mode and the
+// config-option selector map onto the personas of the same name.
 package yaah
 
 import (
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
-// PlanModeSpec is the single source of truth for plan mode: its mode name and
-// the tool level it enforces. toolsLevelForMode gates on it and modeDirective
-// describes it (via regimeSentence), so the two cannot drift.
-type PlanModeSpec struct {
-	Mode       string
-	ToolsLevel agent.ToolsLevel
-}
+const (
+	acpModeBuild = "build"
+	acpModePlan  = "plan"
+)
 
-// planModeSpec is the one place plan mode is defined. Changing the tool level
-// here changes both the surface the loop advertises and what the directive
-// says the model can do.
-var planModeSpec = PlanModeSpec{
-	Mode:       acpModePlan,
-	ToolsLevel: agent.ReadOnlyTools,
-}
-
-// validMode reports whether mode is one a session can hold. Build and plan are
-// the only two; the empty string is the zero value that MEANS build, not a mode
-// a caller may select, so it is refused rather than normalized here.
-func validMode(mode string) bool {
-	return mode == acpModeBuild || mode == planModeSpec.Mode
-}
-
-// toolsLevelForMode maps a session mode to the tool gate the loop enforces.
-// Only plan mode narrows the surface; every other mode — including the empty
-// default — gets the full toolset.
-func (s *agentSession) toolsLevelForMode(mode string) agent.ToolsLevel {
-	if mode == planModeSpec.Mode {
-		return planModeSpec.ToolsLevel
+// personaLevel is the tool gate a session running persona enforces on its
+// next loop build: a read-only persona gets the inspection set, everything
+// else the full toolset. The plan/build mode names have no say — the plan
+// persona IS the read-only persona, so the mode branch folded away with the
+// seam.
+func personaLevel(persona subagent.Persona) agent.ToolsLevel {
+	if persona.ReadOnly {
+		return agent.ReadOnlyTools
 	}
 	return agent.FullTools
 }
 
-// modeDirective returns the system prompt for mode: mainPrompt with one mode
-// directive injected after the identity block. Every mode carries a directive
-// so the model can tell which regime it is in, who switches it, and that a
-// switch is announced in-band — the absence of a plan directive is no longer
-// the only cue that build mode is active.
-func (s *agentSession) modeDirective(mode string) string {
+// sampledToolsLevel is the loop build's pure core over the already-sampled
+// persona — the build samples the persona once, so the advertised set, the
+// prompt's regime sentence, and the gate agree even if a switch lands
+// concurrently with the build.
+func sampledToolsLevel(persona subagent.Persona) agent.ToolsLevel {
+	return personaLevel(persona)
+}
+
+// effectiveToolsLevel is a test seam over personaLevel (the loop build
+// and modeDirective sample the persona once and call personaLevel
+// directly); it exists so tests can assert the session-state derivation
+// without hand-building a loop.
+func (s *agentSession) effectiveToolsLevel() agent.ToolsLevel {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return personaLevel(s.persona)
+}
+
+// Mode reports the ACP mode vocabulary value the session's persona maps to:
+// the plan persona is "plan", everything else "build" (including a hand-built
+// zero persona and read-only registry personas, whose narrowing shows up in
+// the tools and the directive, not the mode word). The session never STORES
+// a mode — the persona column is the truth — so this is a derivation, and
+// the session/set_mode and config-option surfaces keep reporting a mode
+// clients understand.
+func (s *agentSession) Mode() string {
+	if s.PersonaName() == subagent.PlanPersonaName {
+		return acpModePlan
+	}
+	return acpModeBuild
+}
+
+// modeDirective returns the system prompt for the session's persona:
+// mainPrompt with one persona directive injected after the identity block.
+// Every persona carries a directive so the model can tell which regime it is
+// in, who switches it, and that a switch is announced in-band — the absence
+// of a plan directive is no longer the only cue that the full regime is
+// active.
+func (s *agentSession) modeDirective(persona subagent.Persona) string {
+	// Sample the prompt inputs under the session lock: SetPersona swaps
+	// mainPrompt/identityEnd/persona atomically, and the directive must
+	// never pair a stale prompt with the new persona (or vice versa).
+	s.mu.RLock()
+	main, end := s.mainPrompt, s.identityEnd
+	s.mu.RUnlock()
 	// Level from the same derivation the loop's gate uses, so the directive
 	// cannot describe a regime this session does not enforce.
-	level := s.toolsLevelForMode(mode)
-	label := modeLabel(mode)
-	return prompts.InjectAfterIdentity(s.mainPrompt, []string{
-		label + " mode is active: " + regimeSentence(level),
-		"Only the user switches modes: /plan and /build in the TUI and REPL, the web palette, or ACP session/set_mode. You may ask for a switch with the question tool or in your reply.",
-		"A mode-change notice appears in-band in the conversation when the mode switches.",
+	level := personaLevel(persona)
+	return prompts.InjectAfterIdentityAt(main, end, []string{
+		personaLabel(persona.Name) + " persona is active: " + regimeSentence(level),
+		"Only the user switches agents: /agent <name> in the TUI and REPL, the web palette, or ACP session/set_agent or session/set_mode. You may ask for a switch with the question tool or in your reply.",
+		"An agent-change notice appears in-band in the conversation when the persona switches.",
 	})
 }
 
-// modeChangeNotice renders the one-line in-band notice announcing a switch to
-// mode. It names the new mode and the regime that mode enforces, and takes the
-// regime sentence from regimeSentence so the notice and the directive can never
-// describe different tool surfaces. The tool level comes from
-// toolsLevelForMode — the same derivation the loop's gate uses — rather than a
-// second copy of the plan-mode condition.
-func (s *agentSession) modeChangeNotice(mode string) string {
-	return "Mode changed to " + modeLabel(mode) + " — " + regimeSentence(s.toolsLevelForMode(mode))
-}
-
 // regimeSentence states what the tool gate actually enforces at level. It is
-// generated from the level, never written per mode, so the directive cannot
-// describe a regime the loop does not implement.
+// generated from the level, never written per persona, so the directive
+// cannot describe a regime the loop does not implement.
 func regimeSentence(level agent.ToolsLevel) string {
 	if level == agent.ReadOnlyTools {
 		return "mutating tools are withheld from your toolset; only the inspection set is available."
@@ -83,25 +97,10 @@ func regimeSentence(level agent.ToolsLevel) string {
 	return "the full toolset is available, but do not mutate the workspace or delegate mutating work without approval."
 }
 
-// modeLabel renders a mode name as the directive's opening word. The empty
-// mode is build mode.
-func modeLabel(mode string) string {
-	mode = modeOrBuild(mode)
-	return strings.ToUpper(mode[:1]) + mode[1:]
-}
-
-// modeOrBuild resolves a stored mode's zero value to the mode it means: the
-// empty string is build's storage form, not a third mode.
-func modeOrBuild(mode string) string {
-	if mode == "" {
-		return acpModeBuild
+// personaLabel renders a persona name as the directive's opening word.
+func personaLabel(name string) string {
+	if name == "" {
+		name = subagent.BuildPersonaName
 	}
-	return mode
-}
-
-// sameMode reports whether two mode values denote the same regime. A mode is a
-// selection, and the empty storage form and build are one selection, so
-// switching a session that never switched to build is not a change.
-func sameMode(a, b string) bool {
-	return modeOrBuild(a) == modeOrBuild(b)
+	return strings.ToUpper(name[:1]) + name[1:]
 }

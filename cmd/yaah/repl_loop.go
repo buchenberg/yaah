@@ -122,22 +122,17 @@ func startREPL() error {
 		case repl.CmdReloadRoles:
 			sess.reloadRoles()
 			continue
+		case repl.CmdAgents:
+			sess.showAgents()
+			continue
+		case repl.CmdAgent:
+			sess.agentCommand(repl.SlashAgentArg(input))
+			continue
 		case repl.CmdLogin:
 			replLogin(sess)
 			continue
 		case repl.CmdLogout:
 			replLogout(sess)
-			continue
-		case repl.CmdPlan, repl.CmdBuild:
-			mode := "plan"
-			if repl.ParseSlashCommand(input) == repl.CmdBuild {
-				mode = "build"
-			}
-			if err := sess.SetMode(mode); err != nil {
-				fmt.Fprintf(os.Stderr, "%s\n", replYellow("error: "+err.Error()))
-				continue
-			}
-			fmt.Printf("%s\n", repl.Dim("session mode: "+mode))
 			continue
 		}
 
@@ -220,8 +215,8 @@ func printHelp() {
 	fmt.Printf("  %s  %s\n", repl.Bold("/compact"), repl.Dim("summarize old messages to free context"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/login"), repl.Dim("authenticate with an OAuth provider"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/logout"), repl.Dim("remove stored OAuth credentials"))
-	fmt.Printf("  %s  %s\n", repl.Bold("/plan"), repl.Dim("inspection/planning mode: inspection tools only, no edits"))
-	fmt.Printf("  %s  %s\n", repl.Bold("/build"), repl.Dim("full toolset mode"))
+	fmt.Printf("  %s  %s\n", repl.Bold("/agents"), repl.Dim("list agent personas"))
+	fmt.Printf("  %s  %s\n", repl.Bold("/agent [name]"), repl.Dim("switch this session's persona (bare reports the current persona)"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/?"), repl.Dim("show this help"))
 	fmt.Println()
 }

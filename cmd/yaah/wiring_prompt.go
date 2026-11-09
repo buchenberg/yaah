@@ -84,14 +84,46 @@ func storeHasRecall(db *memory.DB) bool {
 // are appended for fresh sessions (resumeSessionID == "") only, and only
 // for the tools mem says are actually registered — the caller derives it
 // from the registry, so the prompt can never advertise a tool that is not
-// in the request.
+// in the request. personaBody is the resolved orchestrator persona's
+// system-prompt body; the default build persona's empty body leaves the
+// prompt byte-identical.
 //
 // The returned systemPrompt is the main-session base prompt (clean of
 // top-level directives). The caller derives mainPrompt by injecting
 // directives. Sub-agents get their own lean base from
 // buildSubAgentBasePrompt instead of this one.
-func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSessionID string, mem prompts.MemoryGuidance) string {
-	layers := prompts.Layers{
+func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSessionID string, mem prompts.MemoryGuidance, personaBody string) string {
+	base, _ := buildSystemPromptMarked(cfg, cwd, db, resumeSessionID, mem, personaBody)
+	return base
+}
+
+// buildSystemPromptMarked is buildSystemPrompt plus the identity anchor
+// BuildMarked returns: the byte offset just past the identity block, the
+// point every after-identity injection anchors on. The prompt bytes are
+// identical to buildSystemPrompt's — the anchor travels beside them, never
+// inside them.
+//
+// personaBody is the resolved orchestrator persona's system-prompt body
+// (yaah-21uk.6, threaded from lc.persona): it renders as its own layer
+// immediately after the identity, before the environment — and after the
+// identity anchor, so directives injected at the anchor keep landing
+// between the identity and the persona. The default build persona carries
+// an empty body, which omits the layer entirely and leaves the prompt
+// byte-identical to the pre-persona assembly.
+func buildSystemPromptMarked(cfg *config.Config, cwd string, db *memory.DB, resumeSessionID string, mem prompts.MemoryGuidance, personaBody string) (string, int) {
+	return buildMarkedPrompt(orchestratorPromptLayers(cfg, cwd, db), resumeSessionID, mem, personaBody)
+}
+
+// orchestratorPromptLayers assembles the persona-independent prompt
+// layers the main-session system prompt renders from (yaah-21uk.12): the
+// identity, environment, dispatch line, user/project context, and the
+// memory snapshot. The wiring retains the struct on the session, so a
+// mid-session persona switch rebinds only the Persona field and
+// re-renders: the memory snapshot and the environment stay byte-frozen
+// across switches, which is the desired semantics — a switch moves the
+// identity the orchestrator runs as, not what it knows.
+func orchestratorPromptLayers(cfg *config.Config, cwd string, db *memory.DB) prompts.Layers {
+	return prompts.Layers{
 		Identity:               prompts.IdentityPrompt,
 		Environment:            prompts.DetectEnvironment(cwd),
 		SubAgentDispatch:       subAgentDispatchLine(cfg),
@@ -100,8 +132,16 @@ func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSess
 		MaxSubAgentConcurrency: cfg.Agent.SubAgent.MaxConcurrency,
 		Memory:                 memoryLayer(db),
 	}
+}
 
-	return prompts.Build(layers) + memoryGuidanceBlock(mem, resumeSessionID)
+// buildMarkedPrompt renders the layered prompt with personaBody bound
+// into the persona layer, plus the identity anchor BuildMarked returns.
+// The memory-guidance block (fresh sessions only) is appended outside
+// the layers, exactly as buildSystemPromptMarked has always done.
+func buildMarkedPrompt(layers prompts.Layers, resumeSessionID string, mem prompts.MemoryGuidance, personaBody string) (string, int) {
+	layers.Persona = personaBody
+	base, identityEnd := prompts.BuildMarked(layers)
+	return base + memoryGuidanceBlock(mem, resumeSessionID), identityEnd
 }
 
 // subAgentDispatchLine describes the resolved sub-agent dispatch defaults
@@ -156,13 +196,16 @@ func providerUsable(cfg *config.Config, name string) bool {
 // buildMainPrompt derives the top-level agent prompt from the system prompt
 // by injecting session directives after the identity block. The systemPrompt
 // stays clean so child sub-agent prompts never inherit top-level directives.
+// identityEnd is the anchor buildSystemPromptMarked returned for
+// systemPrompt; it keeps the block anchored when the identity is not the
+// embedded default.
 //
 // The old tool quick-reference card is gone (yaah-w8x): it re-rendered every
 // registered tool's name, signature, and description that the request's
 // tools array already carries — ~3.4K tokens of pure duplication per call.
 // The schemas are the single source of tool truth on the wire.
-func buildMainPrompt(cfg *config.Config, opts SessionOptions, systemPrompt string) string {
-	return prompts.InjectAfterIdentity(systemPrompt, resolveDirectives(cfg, opts))
+func buildMainPrompt(cfg *config.Config, opts SessionOptions, systemPrompt string, identityEnd int) string {
+	return prompts.InjectAfterIdentityAt(systemPrompt, identityEnd, resolveDirectives(cfg, opts))
 }
 
 // buildSubAgentBasePrompt assembles the lean base prompt handed to every

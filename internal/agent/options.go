@@ -166,6 +166,12 @@ func WithToolsLevel(level ToolsLevel) Option {
 	return func(l *Loop) { l.Config.ToolsLevel = level }
 }
 
+// WithPersonaTools narrows the advertised toolset to the session
+// persona's tools list (yaah-21uk.12); an empty list narrows nothing.
+func WithPersonaTools(names []string) Option {
+	return func(l *Loop) { l.Config.PersonaTools = names }
+}
+
 // WithOtel enables OpenTelemetry tracing.
 func WithOtel(enabled, verbose bool) Option {
 	return func(l *Loop) {

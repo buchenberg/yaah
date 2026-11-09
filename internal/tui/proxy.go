@@ -104,13 +104,15 @@ func (t *App) HandleEvent(event agent.Event) {
 	case *agent.TitleSetEvent:
 		// Intentionally ignored: the TUI's in-app session display does
 		// not track titles yet; pickers read them from the store.
-	case *agent.ModeChangedEvent:
-		// In-band mode marker in the conversation, next to the compaction
-		// notes: the switch and the regime it enforces stay in the
-		// transcript rather than only in the info pane's mode line.
+	case *agent.AgentChangedEvent:
+		// In-band persona marker in the conversation, next to the compaction
+		// notes — session start and mid-session switches (including the
+		// deprecated mode aliases): which persona the session runs as stays
+		// in the transcript, not only in the info pane. Only non-build
+		// personas announce at start (yaah-21uk.10).
 		t.queueUpdateCritical(func() {
 			t.flushPendingTokens()
-			msg := fmt.Sprintf("[%s]%s[-]", t.Theme.Dim, e.Notice)
+			msg := fmt.Sprintf("[%s]%s[-]", t.Theme.Dim, e.Notice())
 			t.conversationLog = append(t.conversationLog, convItem{text: msg})
 			t.markDirty()
 		})

@@ -27,7 +27,7 @@ func allEvents() []events.Event {
 		&events.SubAgentEndEvent{},
 		&events.EscalationEvent{},
 		&events.TitleSetEvent{},
-		&events.ModeChangedEvent{},
+		&events.AgentChangedEvent{},
 		&events.WakeEvent{},
 		&events.DoneEvent{},
 		&events.CompactionStartedEvent{},
@@ -69,7 +69,8 @@ func TestAllEventsRegistryIsComplete(t *testing.T) {
 }
 
 // TestConsumersHandleEveryEvent asserts each View consumer's HandleEvent
-// type switch references every event type. Deliberate ignoring must be
+// type switch has a case clause for every event type (a mention in a
+// comment no longer satisfies the gate). Deliberate ignoring must be
 // an explicit `case *agent.XxxEvent:` with a comment — not silent fallthrough.
 func TestConsumersHandleEveryEvent(t *testing.T) {
 	consumers := []string{
@@ -82,7 +83,7 @@ func TestConsumersHandleEveryEvent(t *testing.T) {
 		src := readFile(t, rel)
 		for _, e := range allEvents() {
 			name := reflect.TypeOf(e).Elem().Name()
-			pat := regexp.MustCompile(`\*(agent\.)?` + name + `\b`)
+			pat := regexp.MustCompile(`case\s+\*(agent\.)?` + name + `\b`)
 			if !pat.MatchString(src) {
 				t.Errorf("%s HandleEvent does not reference %s (add a case, or an explicit 'intentionally ignored' case)",
 					filepath.Base(rel), name)

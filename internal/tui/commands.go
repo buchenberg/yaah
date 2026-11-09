@@ -90,20 +90,23 @@ func (t *App) HandleCommand(cmd command.Cmd, arg string) bool {
 	case command.CmdBanner:
 		t.toggleBanner()
 		return true
-	case command.CmdPlan, command.CmdBuild:
-		mode := "plan"
-		if cmd == command.CmdBuild {
-			mode = "build"
-		}
-		if t.OnModeSelect != nil {
-			t.OnModeSelect(mode)
-		}
-		return true
 	case command.CmdModel:
 		t.ShowModelPicker(t.availableModels, t.providerNames, func(model string) {
 			if t.OnModelSelect != nil {
 				t.OnModelSelect(model)
 			}
+		})
+		return true
+	case command.CmdAgent:
+		// The picker is the argument surface: a typed ":agent name" opens
+		// the same list (the CmdModel precedent). Picking hands the name
+		// to the driver, which sets the next-session override.
+		if t.OnAgentSelect == nil {
+			t.SetEphemeral("agent selection is unavailable in this session")
+			return false
+		}
+		t.ShowAgentPicker(t.agentNames, t.agentDescs, func(name string) {
+			t.OnAgentSelect(name)
 		})
 		return true
 	case command.CmdSearch:

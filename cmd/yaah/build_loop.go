@@ -52,7 +52,9 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 	// REPL mode handles this differently (inline prompt in repl_loop.go).
 	if v != nil && ctrl != nil {
 		loop.ContinueAfterMaxIter = func() bool {
-			maxIter := s.cfg.Agent.Default.MaxLoopCycles
+			// The effective cap — the persona-applied budget the loop
+			// was built with — not the raw config value (yaah-21uk.8).
+			maxIter := loop.Config.MaxLoopCycles
 			ch := make(chan bool, 1)
 			select {
 			case ctrl <- &control.Continue{MaxIter: maxIter, AnswerCh: ch}:
@@ -128,9 +130,14 @@ func (s *agentSession) loopBuilder(
 	fallbackModel string,
 	fallbackProviderName string,
 ) *agent.LoopBuilder {
-	// Sample the mode once: tools and prompt must describe the same mode even
-	// if session/set_mode lands concurrently with this build.
-	mode := s.Mode()
+	// Sample the persona once (yaah-21uk.12): the advertised tools, the
+	// gate, and the prompt's regime sentence must describe the same persona
+	// even if /agent or a deprecated session/set_mode alias lands
+	// concurrently with this build. The persona is the only axis — there is
+	// no separate mode sample since part 2.
+	s.mu.RLock()
+	persona := s.persona
+	s.mu.RUnlock()
 	// The usage hooks are installed on the builder so EVERY loop this
 	// session builds — interactive (runPrompt), serve (runHeadless),
 	// compact — flushes incrementally. usageBeforeRun anchors the
@@ -230,6 +237,14 @@ func (s *agentSession) loopBuilder(
 	}()
 	hooks := agent.NewHookEmitter(s.cfg.Hooks.Dir, s.sessionID)
 
+	// The orchestrator loop budget (yaah-21uk.8): the session persona's
+	// max_iterations/max_turns fill the gaps agents.default leaves,
+	// config-authoritative. Zero-budget personas — the built-ins —
+	// resolve to today's limits unchanged. Resolved from the persona
+	// sampled above, not a fresh read, so budget and tools describe the
+	// same persona.
+	loopBudget := resolveOrchestratorBudget(s.cfg, persona)
+
 	return &agent.LoopBuilder{
 		OnUsage:                    onUsage,
 		OnSubUsage:                 onSubUsage,
@@ -237,9 +252,10 @@ func (s *agentSession) loopBuilder(
 		ConsolidateFn:              s.consolidateFn(),
 		Provider:                   prov,
 		Registry:                   s.toolReg,
-		ToolsLevel:                 s.toolsLevelForMode(mode),
+		ToolsLevel:                 sampledToolsLevel(persona),
+		PersonaTools:               normalizeToolNames(persona.Tools),
 		Model:                      modelName,
-		SystemPrompt:               s.modeDirective(mode),
+		SystemPrompt:               s.modeDirective(persona),
 		Messages:                   msgs,
 		SessionID:                  s.sessionID,
 		TraceStore:                 agent.TraceSinkOf(s.traceStore),
@@ -263,8 +279,8 @@ func (s *agentSession) loopBuilder(
 		Cfg: agent.AgentConfig{
 			ProviderName:             s.ProviderName(),
 			FallbackProviderName:     fallbackProviderName,
-			MaxLoopCycles:            s.cfg.Agent.Default.MaxLoopCycles,
-			MaxToolTurns:             s.cfg.Agent.Default.MaxToolTurns,
+			MaxLoopCycles:            loopBudget.Iterations,
+			MaxToolTurns:             loopBudget.Turns,
 			MaxRetries:               s.cfg.Agent.Default.MaxRetries,
 			RetryBackoffSecs:         s.cfg.Agent.Default.RetryBackoffSecs,
 			ContextWindow:            providers.ResolveWindow(modelName, s.cfg.Agent.Default.ContextWindow),

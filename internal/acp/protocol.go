@@ -8,7 +8,7 @@
 // prompts.
 //
 // Supported surface: initialize, authenticate, session/new, session/load,
-// session/prompt, session/cancel, session/set_mode,
+// session/prompt, session/cancel, session/set_mode, session/set_agent,
 // session/set_config_option, session/update notifications with
 // the agent_message_chunk, agent_thought_chunk, user_message_chunk
 // (replay), tool_call, tool_call_update, plan, config_option_update, and
@@ -327,6 +327,11 @@ type SessionInfo struct {
 // messages).
 type SessionMeta struct {
 	MessageCount int `json:"messageCount,omitempty"`
+	// Persona is the persona the session runs as (yaah-21uk.10), fixed
+	// at its construction. Reported on session/new and session/load so
+	// a client can show which persona the session actually is; absent
+	// for sessions with no persona (hand-built test doubles).
+	Persona string `json:"persona,omitempty"`
 	// World is the session's workspace/dispatch-world posture on
 	// session/new and session/load. Absent when the session never derived
 	// one, so older flows and spec-only clients are unaffected. It never
@@ -373,10 +378,12 @@ type SessionResumeParams struct {
 	McpServers []McpServerRef `json:"mcpServers,omitempty"`
 }
 
-// SessionResumeResult re-advertises the session's config options without
-// replaying history.
+// SessionResumeResult re-advertises the session's config options and
+// reports the persona the restored session runs as (yaah-21uk.10)
+// without replaying history.
 type SessionResumeResult struct {
 	ConfigOptions []SessionConfigOption `json:"configOptions,omitempty"`
+	Persona       string                `json:"persona,omitempty"`
 }
 
 // SessionTargetParams are the params of session/close and session/delete:
@@ -749,7 +756,9 @@ type RequestPermissionResult struct {
 
 // === session/set_mode and session/cancel ===
 
-// SetModeParams are the params of session/set_mode.
+// SetModeParams are the params of session/set_mode. The id is the spec's
+// mode vocabulary (build/plan); it maps onto the persona of the same
+// name.
 type SetModeParams struct {
 	SessionID string `json:"sessionId"`
 	ModeID    string `json:"modeId"`
@@ -777,6 +786,26 @@ func availableSessionModes() []SessionMode {
 
 func validSessionMode(mode string) bool {
 	return mode == SessionModeBuild || mode == SessionModePlan
+}
+
+// === session/set_agent ===
+
+// SetAgentParams are the params of session/set_agent.
+type SetAgentParams struct {
+	SessionID string `json:"sessionId"`
+	// Agent is the persona name to switch the ADDRESSED session to. It
+	// must resolve primary-capable (the built-ins plus registry roles
+	// with mode primary/all); a miss is invalid params.
+	Agent string `json:"agent"`
+}
+
+// SetAgentResult reports the addressed session's effective persona and
+// whether that persona is read-only. The switch takes effect at the
+// next loop build; an in-flight turn keeps the persona it started
+// with.
+type SetAgentResult struct {
+	Persona  string `json:"persona"`
+	ReadOnly bool   `json:"readOnly"`
 }
 
 // CancelParams are the params of the session/cancel notification.
