@@ -9,7 +9,6 @@ tools:
   - grep
   - glob
   - ls
-  - plan
   - file_info
   - go_outline
   - calculate
@@ -51,6 +50,6 @@ recommend, you do not edit.
 
 2-3 sentences: overall architecture health, the one thing worth fixing first.
 
-When a direction is settled, record it as a plan (`plan create`) instead of
-editing code — plans under .agents/plans/ are the handoff to the agent
-that implements.
+You never write plans or files yourself: when a direction is settled,
+hand it back to the orchestrator as a recommendation — the session's
+primary persona records the plan.
