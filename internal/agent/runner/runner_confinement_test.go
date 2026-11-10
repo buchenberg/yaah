@@ -1,6 +1,8 @@
 package runner
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -559,5 +561,35 @@ func TestResolveSubAgentConfinement_RestrictiveGrantsNeedAJail(t *testing.T) {
 		if err == nil {
 			t.Errorf("containment=%q with restrictive grants must fail closed, not run unconfined", setting)
 		}
+	}
+}
+
+// TestBuildSubAgentRegistry_UnknownRoleToolWarns pins the deferred-from-W5
+// consideration: a role file that names a tool this harness does not have
+// is dropped at dispatch (never fails the dispatch), but the drop is
+// logged so a role belt cannot drift silently for months. The warning
+// lives here — at registration time, where the harness can see which
+// tools actually exist — because the file loaders cannot (a load-time
+// check would need the registry).
+func TestBuildSubAgentRegistry_UnknownRoleToolWarns(t *testing.T) {
+	pv := tools.NewPathValidator(t.TempDir(), false, nil)
+	profile := subagent.RoleProfile{Tools: []string{"read", "no_such_tool"}}
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	reg, _, err := buildSubAgentRegistry(
+		taskRunnerOpts{pathValidator: pv, subCfg: config.SubAgentConfig{Containment: "off"}},
+		profile, "", 0, t.TempDir())
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if reg == nil {
+		t.Fatal("registry is nil")
+	}
+	if !strings.Contains(buf.String(), "no_such_tool") {
+		t.Errorf("unknown role tool not warned:\n%s", buf.String())
 	}
 }

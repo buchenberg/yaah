@@ -92,9 +92,14 @@ func TestRoleTool_editPreservesContract(t *testing.T) {
 	}
 }
 
-// TestRoleTool_createWithoutContractOmitsBlock ensures roles created
-// without a contract do not grow an empty contract: block (omitempty).
-func TestRoleTool_createWithoutContractOmitsBlock(t *testing.T) {
+// TestRoleTool_createFillsDefaultContractAndBudgets pins the W7.1
+// default: a role created without contract or budget columns comes out
+// schema-complete — the worker-shaped contract and sane budgets copying
+// the shipped golang-developer.md shape — instead of the zeroed budgets
+// ("no cap") and missing contract a create once wrote. This supersedes
+// the earlier pin that asserted the contract block was omitted: the
+// blank-slate create was itself a bug the parity plan called out.
+func TestRoleTool_createFillsDefaultContractAndBudgets(t *testing.T) {
 	dir := t.TempDir()
 	tool := &RoleTool{Dirs: []string{dir}}
 
@@ -108,8 +113,67 @@ func TestRoleTool_createWithoutContractOmitsBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(data), "contract:") {
-		t.Errorf("created role without contract should not contain a contract block:\n%s", data)
+	fm, _, err := rolefile.Parse(string(data))
+	if err != nil {
+		t.Fatalf("created file does not parse: %v", err)
+	}
+	if fm.Contract.Heading != "## Changes" {
+		t.Errorf("default contract heading = %q; want \"## Changes\"", fm.Contract.Heading)
+	}
+	if len(fm.Contract.Fields) != len(defaultRoleContract.Fields) {
+		t.Fatalf("default contract fields = %d; want %d", len(fm.Contract.Fields), len(defaultRoleContract.Fields))
+	}
+	for i, want := range defaultRoleContract.Fields {
+		if fm.Contract.Fields[i] != want {
+			t.Errorf("field[%d] = %+v; want %+v", i, fm.Contract.Fields[i], want)
+		}
+	}
+	if fm.MaxLoopCycles != defaultRoleMaxIterations {
+		t.Errorf("max_iterations = %d; want %d", fm.MaxLoopCycles, defaultRoleMaxIterations)
+	}
+	if fm.MaxToolTurns != defaultRoleMaxTurns {
+		t.Errorf("max_turns = %d; want %d", fm.MaxToolTurns, defaultRoleMaxTurns)
+	}
+	if fm.Timeout != defaultRoleTimeout {
+		t.Errorf("timeout = %d; want %d", fm.Timeout, defaultRoleTimeout)
+	}
+	// Floors stay at the no-floor default — those are per-role tuning,
+	// not part of the shape.
+	if fm.MinLoopCycles != 0 || fm.MinToolTurns != 0 {
+		t.Errorf("min budgets = %d/%d; want 0/0", fm.MinLoopCycles, fm.MinToolTurns)
+	}
+}
+
+// TestRoleTool_createWithContractOverride checks the explicit contract
+// columns parse: typed and untyped field forms, and a fail-closed
+// rejection of an unknown kind — a direct tool call, like mode.
+func TestRoleTool_createWithContractOverride(t *testing.T) {
+	dir := t.TempDir()
+	tool := &RoleTool{Dirs: []string{dir}}
+
+	out, err := tool.Execute(context.Background(),
+		`{"action":"create","name":"audit","description":"audits","body":"Audit.","contract_heading":"## Audit","contract_fields":"severity:evidence, files_scanned, findings:interpretation"}`)
+	if err != nil {
+		t.Fatalf("create failed: %v (output: %s)", err, out)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "audit.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fm, _, err := rolefile.Parse(string(data))
+	if err != nil {
+		t.Fatalf("created file does not parse: %v", err)
+	}
+	if fm.Contract.Heading != "## Audit" || len(fm.Contract.Fields) != 3 {
+		t.Fatalf("contract = %+v; want 3 fields under ## Audit", fm.Contract)
+	}
+	if fm.Contract.Fields[0].Kind != "evidence" || fm.Contract.Fields[1].Kind != "" || fm.Contract.Fields[2].Kind != "interpretation" {
+		t.Errorf("field kinds = %+v; want evidence/interpretation/interpretation", fm.Contract.Fields)
+	}
+
+	if _, err := tool.Execute(context.Background(),
+		`{"action":"create","name":"bad","description":"x","body":"x","contract_heading":"## H","contract_fields":"a:conjecture"}`); err == nil {
+		t.Fatal("unknown contract field kind was accepted; want rejection")
 	}
 }
 

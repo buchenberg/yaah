@@ -48,6 +48,15 @@ session's own persona and axes stay fixed, and in-flight sub-agents keep
 their already-loaded profiles. Create, edit, and delete of `*.md` files in
 the search paths are all picked up within about a second of the write.
 
+Files the `role` tool writes are schema-complete (parity W7.1): a create
+carries a worker-shaped response contract and a working budget
+(`max_iterations: 100`, `max_turns: 50`, `timeout: 1200`, no min floors)
+copying the shipped golang-developer shape — so a tool-created role is
+dispatchable as-is instead of running with no caps and no contract. The
+contract columns (`contract_heading`, `contract_fields`) can override the
+contract at create time; budgets are per-role tuning and are set by editing
+the file directly, like any other field the tool does not expose.
+
 ## Persona file effects
 
 What a persona file changes for the session that runs it:
@@ -117,6 +126,7 @@ survives in older stores only); an empty persona reads as `build`.
 | ACP `session/set_agent` | Switch the addressed session | Current session, next run |
 | ACP `session/set_mode`, `session/set_config_option("mode")` | Set the mode axis: `plan` = read-only, `build` = full access; the persona is untouched | Current session, next run |
 | ACP `session/set_config_option("approval")` | Set the approval axis: `allow` / `ask` / `deny` | Current session, next run |
+| ACP `session/set_config_option("model")` | Model pick (parity W4): re-routes the session's provider/model; persists with the session row so a resume re-routes to it. A persona switch supersedes the pick with the persona file's routing; a new pick can be made after | Current session, next run |
 
 A switch is effective at the next loop build: the persona body rebinds into
 the prompt and the budget re-resolves; a mode switch re-derives the tool
