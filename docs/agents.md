@@ -48,7 +48,7 @@ What a persona file changes for the session that runs it:
 | `tools:` | Narrows the advertised tool belt. The list is intersected with `agents.default.tools`, so a persona can only shrink the surface, never grow it; an empty list means no narrowing, never zero tools. |
 | `max_iterations:` / `max_turns:` | Bound the orchestrator loop, config-authoritatively: an explicit `agents.default` value wins, the persona file fills the gap, and the shipped defaults apply last. |
 | `timeout:` | Carried but unconsumed — the orchestrator loop has no wall-clock knob yet. The `min_*` floors are dispatch-specific and do not apply. |
-| `provider:` / `model:` | **Accepted but ignored, with a warning.** Routing is config-only: a persona session uses `agents.default.provider`/`model` like any other session. |
+| `provider:` / `model:` | **Routing override (parity W1).** The session running this persona routes through the persona's provider/model instead of `agents.default.provider`/`model`; a `provider/model`-prefixed model splits when the prefix names a configured provider. An unknown or unusable provider warns and falls back to the config default. Any tier may declare it — a committed project role file can repoint API traffic, so audit repos before trusting their roles. Also carries `temperature:` / `top_p:` sampling overrides (zero = unset). |
 
 There is no `read_only` persona field: read-only-ness is the session's
 **mode axis**, not a persona property. Any persona can run read-only or

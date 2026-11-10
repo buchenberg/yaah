@@ -1,7 +1,6 @@
 package subagent
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -43,24 +42,27 @@ func TestPersonaBudgetFields(t *testing.T) {
 	})
 }
 
-// TestPersonaProviderModelWarnedAndIgnored pins yaah-21uk.8's routing
-// stance: a persona file (mode primary/all) carrying provider/model
-// loads fine but warns that routing is config-only; a persona without
-// the keys warns nothing; a delegate-only file with the keys is out of
-// the persona feature's scope and keeps its historical silence. The
-// modeled fields the role actually runs with are never disturbed.
-func TestPersonaProviderModelWarnedAndIgnored(t *testing.T) {
+// TestPersonaProviderModelHonored pins the parity W1 routing stance
+// (yaah-21uk.15 unparked): a persona file (mode primary/all) carrying
+// provider/model loads fine and CARRIES the routing — no warning, the
+// values map into the RoleDef/Persona for the session resolver to honor.
+// A persona without the keys warns nothing and carries empty routing; a
+// delegate-only file with the keys carries them too (dispatch roles
+// route via the same fields). The modeled budget fields are never
+// disturbed.
+func TestPersonaProviderModelHonored(t *testing.T) {
 	tests := []struct {
-		name     string
-		front    string // frontmatter lines after the name
-		wantMode string
-		wantLog  string // empty: no warning may fire
+		name         string
+		front        string // frontmatter lines after the name
+		wantMode     string
+		wantProvider string
+		wantModel    string
 	}{
-		{"persona with provider", "mode: primary\nprovider: zai\n", "primary", "config-only"},
-		{"persona with model", "mode: all\nmodel: glm-5\n", "all", "config-only"},
-		{"persona with both", "mode: primary\nprovider: zai\nmodel: glm-5\n", "primary", "config-only"},
-		{"persona without routing keys", "mode: primary\n", "primary", ""},
-		{"delegate-only file with provider", "mode: subagent\nprovider: zai\n", "subagent", ""},
+		{"persona with provider", "mode: primary\nprovider: zai\n", "primary", "zai", ""},
+		{"persona with model", "mode: all\nmodel: glm-5\n", "all", "", "glm-5"},
+		{"persona with both", "mode: primary\nprovider: zai\nmodel: glm-5\n", "primary", "zai", "glm-5"},
+		{"persona without routing keys", "mode: primary\n", "primary", "", ""},
+		{"delegate-only file with provider", "mode: subagent\nprovider: zai\n", "subagent", "zai", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -72,22 +74,17 @@ func TestPersonaProviderModelWarnedAndIgnored(t *testing.T) {
 			if def.Mode != tt.wantMode {
 				t.Errorf("RoleDef.Mode = %q, want %q", def.Mode, tt.wantMode)
 			}
+			if def.Provider != tt.wantProvider || def.Model != tt.wantModel {
+				t.Errorf("RoleDef routing = %q/%q, want %q/%q", def.Provider, def.Model, tt.wantProvider, tt.wantModel)
+			}
+			if p := def.ToProfile(); p.Provider != tt.wantProvider || p.Model != tt.wantModel {
+				t.Errorf("RoleProfile routing = %q/%q, want %q/%q", p.Provider, p.Model, tt.wantProvider, tt.wantModel)
+			}
 			if def.MaxLoopCycles != 0 || def.Timeout != 0 {
 				t.Errorf("routing keys disturbed the modeled budgets: %d/%d, want 0/0", def.MaxLoopCycles, def.Timeout)
 			}
-			got := logs()
-			if tt.wantLog != "" {
-				if !strings.Contains(got, tt.wantLog) {
-					t.Errorf("expected warning containing %q, log:\n%s", tt.wantLog, got)
-				}
-				if !strings.Contains(got, "role=Checker") {
-					t.Errorf("warning lost the role attribute, log:\n%s", got)
-				}
-				if !strings.Contains(got, "provider=zai") && !strings.Contains(got, "model=glm-5") {
-					t.Errorf("warning lost the routing attributes, log:\n%s", got)
-				}
-			} else if got != "" {
-				t.Errorf("unexpected warnings:\n%s", got)
+			if got := logs(); got != "" {
+				t.Errorf("routing keys must load silently now; warnings:\n%s", got)
 			}
 		})
 	}

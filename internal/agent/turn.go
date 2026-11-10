@@ -38,6 +38,11 @@ func (l *Loop) buildTurnRequest(ctx context.Context, iter int, messages []types.
 		Model:    l.Config.Model,
 		Messages: l.prepareRequestMessages(messages),
 		Tools:    l.buildToolsForLevel(),
+
+		// Sampling overrides from the persona (parity W1.4); zero
+		// omits the fields on the wire.
+		Temperature: l.Config.Temperature,
+		TopP:        l.Config.TopP,
 	}
 
 	if limit := l.toolTurnCap(); limit > 0 {

@@ -140,6 +140,8 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 		Background     bool   `json:"background"`
 		SeedFrom       string `json:"seed_from"`
 		SeedMode       string `json:"seed_mode"`
+		Provider       string `json:"provider"`
+		Model          string `json:"model"`
 	}
 	if err := json.Unmarshal(fixed, &params); err != nil {
 		return "", fmt.Errorf("delegate: invalid arguments: %w", err)
@@ -193,6 +195,8 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 		OutputLimit:    clampedOutput,
 		SeedFrom:       params.SeedFrom,
 		SeedMode:       params.SeedMode,
+		Provider:       params.Provider,
+		Model:          params.Model,
 	}
 
 	timeout := resolveTaskTimeout(clampedTimeout, t.ResolveTimeout, subParams)

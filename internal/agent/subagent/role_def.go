@@ -39,7 +39,17 @@ type RoleDef struct {
 	// orchestrator-eligible, "subagent" delegate-only, "all" both.
 	// Normalized on load — see roleDefFrom; delegate-surface filtering
 	// keys off it (delegatable.go).
-	Mode          string
+	Mode string
+	// Provider and Model are the role's routing (parity W1, yaah-21uk.15):
+	// where the role's session (persona) or dispatch (delegate) runs.
+	// Empty means inherit — personas fall back to agents.default,
+	// delegates to the resolution chain's next entry.
+	Provider string
+	Model    string
+	// Temperature and TopP are per-role sampling overrides passed
+	// through to the provider request (parity W1.4). Zero means unset.
+	Temperature   float64
+	TopP          float64
 	MaxLoopCycles int
 	MinLoopCycles int // per-call overrides may not go below; 0 = none
 	MaxToolTurns  int
@@ -74,6 +84,10 @@ func roleDefFrom(fm rolefile.Frontmatter, body string) RoleDef {
 		MinToolTurns:  fm.MinToolTurns,
 		JSONMode:      fm.JSONMode,
 		Timeout:       fm.Timeout,
+		Provider:      fm.Provider,
+		Model:         fm.Model,
+		Temperature:   fm.Temperature,
+		TopP:          fm.TopP,
 		Body:          body,
 	}
 
@@ -97,18 +111,11 @@ func roleDefFrom(fm rolefile.Frontmatter, body string) RoleDef {
 		def.MinToolTurns = def.MaxToolTurns
 	}
 
-	// Provider/model routing is config-only (yaah-21uk.8): a persona
-	// file may carry the keys (rolefile models them so a rewrite keeps
-	// them), but RoleDef has no field for them and nothing consumes them
-	// — the persona routes through agents.default like any other session.
-	// Warn and ignore rather than drop silently; the warning is scoped to
-	// personas (dispatch-role routing via agents.subagent.roles.<role>
-	// predates the epic and stays silent, as its tests pin). Revisiting
-	// persona-level routing is yaah-21uk.15.
-	if primaryCapableMode(def.Mode) && (fm.Provider != "" || fm.Model != "") {
-		slog.Warn("role file: provider/model routing is config-only; keys ignored",
-			"role", def.DisplayName, "provider", fm.Provider, "model", fm.Model)
-	}
+	// Routing now comes FROM the file (parity W1, yaah-21uk.15): the
+	// Provider/Model/Temperature/TopP keys map into the fields above for
+	// every role. Dispatch resolution layers them as
+	// call > config role entry (agents.subagent.roles, config-authoritative)
+	// > role file > parent session model > config default.
 
 	return def
 }
@@ -147,6 +154,10 @@ func (d RoleDef) ToProfile() RoleProfile {
 		Tools:         d.Tools,
 		Output:        d.Output,
 		Mode:          d.Mode,
+		Provider:      d.Provider,
+		Model:         d.Model,
+		Temperature:   d.Temperature,
+		TopP:          d.TopP,
 		MaxLoopCycles: d.MaxLoopCycles,
 		MinLoopCycles: d.MinLoopCycles,
 		MaxToolTurns:  d.MaxToolTurns,

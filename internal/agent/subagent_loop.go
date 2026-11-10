@@ -27,11 +27,16 @@ type SubAgentConfig struct {
 	BudgetTurnsSource      string
 	MaxRetries             int
 	RetryBackoffSecs       int
-	MaxToolConcurrency     int
-	EvidenceGuardNudge     int
-	EvidenceGuardHalt      int
-	PipelineDisabled       []string
-	JSONMode               bool
+	// Temperature and TopP are the dispatch's sampling overrides (parity
+	// W1.4 — the role file's or per-call): passed through to the request
+	// verbatim. Zero means unset.
+	Temperature        float64
+	TopP               float64
+	MaxToolConcurrency int
+	EvidenceGuardNudge int
+	EvidenceGuardHalt  int
+	PipelineDisabled   []string
+	JSONMode           bool
 	// SeedMessages, when non-empty, pre-populates the loop's conversation so a
 	// continuation resumes from the prior run's context. Run still appends its
 	// prompt as the next user message.
@@ -138,6 +143,8 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 		View:     NoopView{},
 		Config: LoopConfig{
 			Model:                  model,
+			Temperature:            cfg.Temperature,
+			TopP:                   cfg.TopP,
 			ProviderName:           cfg.ProviderName,
 			SystemPrompt:           systemPrompt,
 			MaxLoopCycles:          cfg.MaxLoopCycles,

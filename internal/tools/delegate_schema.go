@@ -27,7 +27,9 @@ func (t *DelegateTool) Schema() json.RawMessage {
 			"output_limit": {"type": "integer", "minimum": 1024, "description": "Optional byte cap on the sub-agent's final report."},
 			"background": {"type": "boolean", "description": "When true, dispatch the sub-agent asynchronously and return immediately. Results arrive in a follow-up message. Returns a job_id you can use with subagent_jobs to check status, cancel, or wait."},
 			"seed_from": {"type": "string", "description": "Optional retained proposal id whose sealed workspace seeds this dispatch (retained-result threading); the source proposal stays open. Proposal-lane only."},
-			"seed_mode": {"type": "string", "enum": ["workspace", "conversation"], "description": "seed_from only: workspace (default) seeds the sealed worktree state; conversation also seeds the captured messages and is same-role only."}
+			"seed_mode": {"type": "string", "enum": ["workspace", "conversation"], "description": "seed_from only: workspace (default) seeds the sealed worktree state; conversation also seeds the captured messages and is same-role only."},
+			"provider": {"type": "string", "description": "Optional provider override for this dispatch (must be a configured provider name). Prefer omitting — the role file or config decides. Omitted falls back to the role's resolution chain."},
+			"model": {"type": "string", "description": "Optional model override for this dispatch. Omitted falls back to the role's resolution chain (call > config role entry > role file > parent session model > config default)."}
 		},
 		"required": ["description", "prompt", "role"]
 	}`)
@@ -141,6 +143,14 @@ func BuildDelegateSchema(roleNames []string, roleDescriptions map[string]string)
 				"type":        "string",
 				"enum":        []string{"workspace", "conversation"},
 				"description": "seed_from only: workspace (default) seeds the sealed worktree state; conversation also seeds the captured messages and is same-role only.",
+			},
+			"provider": map[string]any{
+				"type":        "string",
+				"description": "Optional provider override for this dispatch (must be a configured provider name). Prefer omitting — the role file or config decides; use only when this dispatch must run elsewhere. Omitted falls back to the role's resolution chain.",
+			},
+			"model": map[string]any{
+				"type":        "string",
+				"description": "Optional model override for this dispatch. Omitted falls back to the role's resolution chain (call > config role entry > role file > parent session model > config default).",
 			},
 		},
 		"required": []string{"description", "prompt", "role"},

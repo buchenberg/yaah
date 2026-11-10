@@ -247,9 +247,13 @@ func (s *agentSession) loopBuilder(
 	loopBudget := resolveOrchestratorBudget(s.cfg, persona)
 
 	return &agent.LoopBuilder{
-		OnUsage:                    onUsage,
-		OnSubUsage:                 onSubUsage,
-		OnTitle:                    onTitle,
+		OnUsage:    onUsage,
+		OnSubUsage: onSubUsage,
+		OnTitle:    onTitle,
+		// Sampling overrides from the persona file (parity W1.4): zero
+		// on both means no WithSampling and the request stays as it was.
+		Temperature:                persona.Temperature,
+		TopP:                       persona.TopP,
 		ConsolidateFn:              s.consolidateFn(),
 		Provider:                   prov,
 		Registry:                   s.toolReg,

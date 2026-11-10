@@ -43,6 +43,7 @@ type wireRequest struct {
 	Tools           []types.ToolDef       `json:"tools,omitempty"`
 	ToolChoice      any                   `json:"tool_choice,omitempty"`
 	Temperature     float64               `json:"temperature,omitempty"`
+	TopP            float64               `json:"top_p,omitempty"`
 	MaxTokens       int                   `json:"max_tokens,omitempty"`
 	Stream          bool                  `json:"stream"`
 	StreamOptions   *types.StreamOptions  `json:"stream_options,omitempty"`
@@ -211,6 +212,7 @@ func lowerRequest(req types.ChatRequest, opts lowerOptions) wireRequest {
 		Tools:           req.Tools,
 		ToolChoice:      req.ToolChoice,
 		Temperature:     req.Temperature,
+		TopP:            req.TopP,
 		MaxTokens:       req.MaxTokens,
 		Stream:          req.Stream,
 		StreamOptions:   req.StreamOptions,

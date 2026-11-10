@@ -289,20 +289,64 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			subProviderName = opts.subCfg.Provider
 		}
 
+		// decided tracks whether an explicit source has picked the
+		// provider; the parent/global defaults only fill what nobody
+		// named (parity W1's chain: call > config role entry > role
+		// file > parent session model > config default).
+		providerDecided := false
+
+		// Per-call override first (parity W1.3): the call wins over
+		// every file and config source. An unknown provider name warns
+		// and falls through to the rest of the chain.
+		if params.Provider != "" {
+			if opts.resolveProviderByName != nil {
+				if p := opts.resolveProviderByName(opts.providerMap, params.Provider); p != nil {
+					subProvider = p
+					subProviderName = params.Provider
+					providerDecided = true
+					subModel = "" // a switched provider invalidates the inherited model name
+				} else {
+					slog.Warn("sub-agent dispatch: per-call provider unknown; falling down the routing chain",
+						"role", string(role), "provider", params.Provider)
+				}
+			}
+		}
+		if params.Model != "" {
+			subModel = params.Model
+		}
+
 		if rc, ok := opts.subCfg.Roles[string(role)]; ok {
-			if rc.Provider != "" {
+			if !providerDecided && rc.Provider != "" {
 				if opts.resolveProviderByName != nil {
 					subProvider = opts.resolveProviderByName(opts.providerMap, rc.Provider)
 					if subProvider != nil {
 						subProviderName = rc.Provider
+						providerDecided = true
 					}
 				}
-				if subProvider != nil {
+				if providerDecided {
 					subModel = ""
 				}
 			}
-			if rc.Model != "" {
+			if rc.Model != "" && params.Model == "" {
 				subModel = rc.Model
+			}
+		}
+
+		// Role-file routing (parity W1, yaah-21uk.15): the dispatch
+		// role's own file, below the config role entry
+		// (config-authoritative) and above the parent/global defaults.
+		if !providerDecided && profile.Provider != "" && opts.resolveProviderByName != nil {
+			if p := opts.resolveProviderByName(opts.providerMap, profile.Provider); p != nil {
+				subProvider = p
+				subProviderName = profile.Provider
+				providerDecided = true
+				subModel = "" // a switched provider invalidates the inherited model name
+			}
+		}
+		if profile.Model != "" && params.Model == "" {
+			if rc, ok := opts.subCfg.Roles[string(role)]; !ok || rc.Model == "" {
+				subModel = profile.Model
 			}
 		}
 		if subProvider == nil {
@@ -412,6 +456,8 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 
 		subLoop := agent.NewSubAgentLoop(subProvider, subReg, subModel, sysPrompt, agent.SubAgentConfig{
 			ProviderName:           subProviderName,
+			Temperature:            profile.Temperature,
+			TopP:                   profile.TopP,
 			MaxLoopCycles:          maxIter,
 			MaxToolTurns:           maxTurns,
 			BudgetIterationsSource: b.IterationsSource.String(),

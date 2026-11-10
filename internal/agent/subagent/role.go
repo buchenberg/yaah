@@ -48,7 +48,15 @@ type RoleProfile struct {
 	// orchestrator-eligible, "subagent" delegate-only, "all" both.
 	// Always populated — roleDefFrom normalizes a missing key to "all"
 	// (parity W3) and an unknown value, fail-closed, to "subagent".
-	Mode          string
+	Mode string
+	// Provider/Model/Temperature/TopP are the role's routing and
+	// sampling (parity W1): dispatch resolves provider/model as
+	// per-call > config role entry > these fields > parent session
+	// model > config default; sampling passes through to the request.
+	Provider      string
+	Model         string
+	Temperature   float64
+	TopP          float64
 	MaxLoopCycles int
 	MinLoopCycles int // per-call overrides may not go below; 0 = none
 	MaxToolTurns  int

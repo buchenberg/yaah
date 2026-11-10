@@ -182,6 +182,10 @@ func (s *agentSession) SetPersona(name string) error {
 	// it — earlier persona turns exist in the conversation only after a
 	// real switch.
 	s.switched = true
+	// Routing follows the persona (parity W1, yaah-21uk.15): the file's
+	// provider/model replace the session's pick; a persona without
+	// routing falls back to the config default.
+	s.applyPersonaRouting(persona)
 	db, sessionID := s.db, s.sessionID
 	s.mu.Unlock()
 	// Persist the switch so the selection and its prompt survive the
