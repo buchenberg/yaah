@@ -104,7 +104,13 @@ func TestResourceForDomains(t *testing.T) {
 		{"powershell", `{"command":"Get-ChildItem"}`, "Get-ChildItem"},
 		{"edit", `{"filePath":"docs/x.md","oldString":"a"}`, "docs/x.md"},
 		{"write", `{"filePath":"main.go","content":"x"}`, "main.go"},
-		{"read", `{"filePath":"main.go"}`, ""}, // read-only tool: name-only
+		{"patch", `{"filePath":"a.go","patch":"..."}`, "a.go"},
+		{"move", `{"path":"docs/a.md","to":"docs/b.md"}`, "docs/a.md"}, // source wins
+		{"rmdir", `{"path":".git/objects"}`, ".git/objects"},
+		{"bulk", `{"pattern":"*.tmp","path":"tmp"}`, "tmp"},
+		{"webfetch", `{"url":"https://evil.example/x"}`, "https://evil.example/x"},
+		{"read", `{"filePath":"main.go"}`, "main.go"}, // read-only tools resource-match too
+		{"grep", `{"pattern":"x"}`, ""},               // no target arg: name-only
 		{"bash", `not json`, ""},
 	}
 	for _, tc := range cases {

@@ -83,13 +83,14 @@ func (r Rules) Match(tool, resource string) (Effect, bool) {
 // workspace-relative globs using forward slashes; the value is normalized
 // the same way so Windows backslash paths match.
 //
-// `*` and `**` both cross directory separators and `?` matches any single
-// character, gitignore-style — so `"*.md": allow` followed by `"*": deny`
-// (the plan's example) allows any markdown file anywhere and denies the
-// rest, and a command glob like `git push*` prefixes the whole command.
-// Escaping is not supported; an invalid pattern (unbalanced bracket)
-// matches nothing: a rule that cannot be interpreted must not widen what
-// its author wrote.
+// Both `*` and `**` cross directory separators and `?` matches any single
+// character — broader than a shell glob or gitignore pattern, where `*`
+// stays within one path segment. That breadth is what makes the plan's
+// example behave as written: `"*.md": allow` followed by `"*": deny`
+// allows any markdown file anywhere and denies the rest, and a command
+// glob like `git push*` prefixes the whole command. Escaping is not
+// supported; an invalid pattern (unbalanced bracket) matches nothing: a
+// rule that cannot be interpreted must not widen what its author wrote.
 func globMatch(pattern, value string) bool {
 	re, err := globRegexp(strings.ReplaceAll(pattern, "\\", "/"))
 	if err != nil {
@@ -214,34 +215,39 @@ var shellTools = map[string]bool{
 	"powershell": true,
 }
 
-// fileTools take a file path as their permission resource. The list is the
-// mutating file tools' argname — every one carries its target in
-// "filePath" (read/grep/ls are read-only and need no resource rule).
-var fileTools = map[string]bool{
-	"write":  true,
-	"edit":   true,
-	"append": true,
-	"delete": true,
-}
+// resourceKeys are the argument names a non-shell tool's target can
+// arrive under, in probe order: the file-mutating tools carry
+// "filePath" (write/edit/append/delete/patch), the move-family tools
+// (move/copy/bulk/replace/mkdir/rmdir) carry "path" and a destination
+// "to", and webfetch carries "url". A rule matches against the first
+// non-empty value, so e.g. `move: { "docs/*": deny }` and
+// `webfetch: { "*evil*": deny }` do exactly what they read like.
+var resourceKeys = []string{"filePath", "path", "to", "url"}
 
 // ResourceFor extracts the string a permission rule matches against for
-// this call: the shell command for shell tools, the target path for
-// file-mutating tools, and "" (tool-name-only matching) for everything
-// else. Unparseable JSON yields "" — an unparseable call cannot be shown
-// to match a narrowing glob, so only name-only rules catch it.
+// this call: the shell command for shell tools, the first non-empty
+// target argument (filePath/path/to/url) for everything else, and ""
+// (tool-name-only matching) when none is present. Unparseable JSON
+// yields "" — an unparseable call cannot be shown to match a narrowing
+// glob, so only name-only rules catch it.
 func ResourceFor(tool, argsJSON string) string {
-	if !shellTools[tool] && !fileTools[tool] {
-		return ""
+	if shellTools[tool] {
+		var shell struct {
+			Command string `json:"command"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &shell); err != nil {
+			return ""
+		}
+		return shell.Command
 	}
-	var payload struct {
-		Command  string `json:"command"`
-		FilePath string `json:"filePath"`
-	}
+	var payload map[string]any
 	if err := json.Unmarshal([]byte(argsJSON), &payload); err != nil {
 		return ""
 	}
-	if shellTools[tool] {
-		return payload.Command
+	for _, key := range resourceKeys {
+		if v, ok := payload[key].(string); ok && v != "" {
+			return v
+		}
 	}
-	return payload.FilePath
+	return ""
 }

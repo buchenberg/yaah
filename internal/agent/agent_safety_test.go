@@ -124,6 +124,30 @@ func TestClassifyDanger_MCPToolsGatedByPolicy(t *testing.T) {
 			t.Errorf("mcp_approval=deny should gate MCP tools (registered=%v); got %v", registered, got)
 		}
 	}
+	// W5: the ruleset narrows an MCP decision but never widens it — a
+	// deny rule on an MCP tool fires even under an allow policy, and an
+	// allow rule cannot downgrade the default ask.
+	{
+		reg := tools.NewEmptyRegistry()
+		l := &Loop{Registry: reg, Config: LoopConfig{
+			MCPApproval:  "allow",
+			MCPToolNames: map[string]bool{"github_create_issue": true},
+			Permissions:  permissions.Rules{{Tool: "github_create_issue", Effect: permissions.Deny}},
+		}}
+		if got := l.classifyGate("github_create_issue", "{}"); got != pipeline.GateDeny {
+			t.Errorf("ruleset deny on allow-policy MCP tool = %v, want GateDeny", got)
+		}
+	}
+	{
+		reg := tools.NewEmptyRegistry()
+		l := &Loop{Registry: reg, Config: LoopConfig{
+			MCPToolNames: map[string]bool{"github_create_issue": true},
+			Permissions:  permissions.Rules{{Tool: "github_create_issue", Effect: permissions.Allow}},
+		}}
+		if got := l.classifyGate("github_create_issue", "{}"); got != pipeline.GateAsk {
+			t.Errorf("ruleset allow must not downgrade MCP ask = %v, want GateAsk", got)
+		}
+	}
 	// A name that is neither registered nor MCP-known stays ungated even
 	// under deny — the policy applies to identified MCP tools only.
 	if got := newLoop("deny", false).classifyGate("unknown_tool", "{}"); got != pipeline.GatePass {

@@ -70,9 +70,14 @@ type RoleDef struct {
 
 	// Permissions is the role's permission ruleset (parity W5): the
 	// parsed `permissions:` frontmatter, appended after the global
-	// config rules at resolution so the role wins on overlap. Passing
-	// the rules through verbatim (they are validated at parse time) —
-	// no normalization here, same as Tools.
+	// config rules at resolution so the role wins on overlap. Consumed
+	// ONLY on the session-persona path today (registryPersona → the
+	// session loop); a role DISPATCHED as a sub-agent does not apply
+	// its ruleset yet — sub-agent enforcement is W5.7's delegate
+	// inheritance and lands separately, so a rule here is not (yet) a
+	// guarantee about delegated runs of this role. Passing the rules
+	// through verbatim (they are validated at parse time) — no
+	// normalization here, same as Tools.
 	Permissions []permissions.Rule
 
 	// Body is the role's markdown system-prompt body below the

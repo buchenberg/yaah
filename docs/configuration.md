@@ -289,6 +289,7 @@ rather than retrying a request that cannot succeed.
 | `context_window` | 1048576 | Caps the model's resolved window. `0` = use the model's known window, not "disabled" |
 | `approval` | `ask` | `allow`, `ask`, or `deny` |
 | `mcp_approval` | `ask` | `allow`, `ask`, or `deny` for MCP-served tools |
+| `permissions` | — | Permission ruleset applied to every agent: ordered per-tool `allow`/`deny`/`ask` rules over a glob, evaluated last-match-wins. See [Permission rulesets](#permission-rulesets) |
 | `mode` | `full` | The session mode axis default: `full` allows mutation, `read-only` withholds the mutating tools (the inspection set only). Independent of the persona — any agent can run in either mode — and switchable mid-session over ACP |
 | `workspace_ask` | `false` | With `--workspace`: prompt before denying out-of-bounds access |
 | `workspace_deny_patterns` | nil (built-in secret defaults) | Globs denied even inside the workspace. `nil` applies `.env`, `*.pem`, `*.key`, SSH keys; `[]` disables the built-ins |
@@ -430,6 +431,54 @@ pipeline is
 | `tool_concurrency` | on | Cap concurrent tool goroutines |
 | `prompt_caching` | off | Anthropic cache-control breakpoints — include via `agents.default.prompt_caching: true`; naming it in `enabled` also works |
 | `supervisor_guard` | sub-agents only | Blocking destructive-shell guard; present in the sub-agent pipeline when tracing/supervision is active |
+
+### Permission rulesets
+
+**`agents.default.permissions`** (and the same key in a role file's
+frontmatter) — ordered per-tool rules refining what the tool belt and the
+mode axis already allow:
+
+```yaml
+agents:
+  default:
+    permissions:
+      edit: { "*": deny, "*.md": allow }
+      bash: { "git push*": ask, "git status*": allow }
+      webfetch: deny
+```
+
+Each key is a tool name; its value is either a bare effect (every call of
+that tool) or a map of glob → effect. Rules keep their source order and the
+**last matching rule wins**, so put specific rules after catch-alls. Globs
+match the resource the call acts on: the **command string** for `bash`/
+`powershell`, the **target path or URL** for everything else (`filePath`,
+`path`, `to`, or `url` — whichever the tool carries), tool-name-only when
+the call has no target. `*` and `**` cross directory separators; regex
+metacharacters are literal.
+
+Resolution order, each stage able to narrow but none to widen the one
+before it: the **mode axis** (in `read-only` mode a mutating tool stays
+withheld no matter what any rule says) → the **tool belt** → the ruleset →
+the **per-call danger classification** → the `approval` posture. The global
+rules apply to every agent; when the session's persona also declares
+`permissions:`, its rules are appended after the global ones, so the persona
+wins wherever both name the same tool and resource.
+
+Things the rules deliberately do **not** do:
+
+- `allow` does **not** pre-approve a dangerous call. It only overrides an
+  earlier rule of the same ruleset; a dangerous call still goes through the
+  `approval` posture, and in `read-only` mode it stays withheld.
+- `bash` deny rules are prefix globs on the **raw command string** —
+  advisory, not a security boundary. `"git push*": deny` does not catch
+  `git -C . push` or a quoted/variable-obfuscated command; use the mode
+  axis or the tool belt when you need a hard boundary.
+- `ask` routes through the approval prompt of the running surface (REPL,
+  TUI, web, ACP). If the `approval` middleware is disabled, an `ask` rule
+  degrades to allow; `deny` rules are enforced regardless.
+
+An unknown effect (`allo` instead of `allow`) fails the config load or the
+role file's parse — a typo never silently widens or narrows.
 
 ## Workspace reference
 
