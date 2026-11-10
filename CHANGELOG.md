@@ -1,6 +1,12 @@
 # Changelog
 
-## [0.155.1](https://github.com/buchenberg/yaah/compare/v0.155.0...v0.155.1) (2026-11-10)
+## [0.156.0](https://github.com/buchenberg/yaah/compare/v0.155.0...v0.156.0) (2026-11-10)
+
+
+### Features
+
+* **roles:** file-authority routing — persona files carry provider/model (parity W1) ([0ad8e6e](https://github.com/buchenberg/yaah/commit/0ad8e6ee8d9c1c53940624d6561b383ecc7a2edf))
+* **roles:** file-authority routing — persona files carry provider/model (parity W1) ([d681682](https://github.com/buchenberg/yaah/commit/d681682236d0d43ea2c1fc24234fc4a52d11d269))
 
 
 ### Bug Fixes
@@ -9,6 +15,7 @@
 * **personas:** directive supersedes earlier personas in the conversation (0.155.0 switch report) ([2d6dc61](https://github.com/buchenberg/yaah/commit/2d6dc611e4ce477a9278d7076cf218601827ffc8))
 * **personas:** directive supersedes earlier personas in the conversation (0.155.0 switch report) ([fa07803](https://github.com/buchenberg/yaah/commit/fa0780307b44264312ed5c93f3e2bd2540f5639d))
 * **personas:** gate the supersession clause on a real switch; neutral wording ([43fb8dc](https://github.com/buchenberg/yaah/commit/43fb8dcdc0c40dd2adef9d631dcefffc92dce503))
+* **roles:** address W1 routing review findings ([96fa6f8](https://github.com/buchenberg/yaah/commit/96fa6f8da8650afc50d48d067762a4eb0c3d5701))
 
 ## [0.155.0](https://github.com/buchenberg/yaah/compare/v0.154.0...v0.155.0) (2026-11-10)
 
