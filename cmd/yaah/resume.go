@@ -1,9 +1,14 @@
 package yaah
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 
+	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -121,4 +126,75 @@ func restoreMessage(m memory.Message) types.Message {
 		json.Unmarshal([]byte(m.ToolCalls), &msg.ToolCalls)
 	}
 	return msg
+}
+
+// storedSessionModel reads a resumed session's persisted model pick
+// (parity W4) and validates it against today's config before handing it
+// back: the column carries the "provider/model" wire form, and the pick
+// is only reapplied when it splits into a provider this config still
+// defines and a non-empty model. Everything else warns and reports
+// not-ok so the resume keeps the routing chain:
+//   - "" (or a read failure): nothing was stored pre-W4 — no pick to
+//     reapply, no noise beyond a store failure;
+//   - a bare model name without a "/" prefix: a legacy row from before
+//     the column carried the wire form — it names no provider, so the
+//     pick cannot be reapplied safely (a model served by a provider
+//     whose pick we cannot reconstruct would silently cross to the
+//     wrong endpoint);
+//   - a provider the current config dropped: same fallback, the
+//     persona-file routing and config default decide as they always did.
+//
+// Known edge, documented and accepted: a legacy bare name that itself
+// contains "/" (HF-style ids are common on local OpenAI-compatible
+// servers) whose prefix names a configured provider applies as a pick
+// instead of warning — the column carries no marker separating pre-W4
+// rows from wire-form picks, and the misread re-applies exactly the
+// provider/model pair the session last ran under (the same fail-open
+// the pre-W4 row already shipped). A non-matching prefix — the common
+// case — takes the warning path.
+func storedSessionModel(db *memory.DB, sessionID string, cfg *config.Config) (provider, model string, ok bool) {
+	if db == nil || sessionID == "" {
+		return "", "", false
+	}
+	stored, err := db.SessionModel(sessionID)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			slog.Warn("resume: reading the stored model pick failed; falling back to the routing chain",
+				"session", sessionID, "err", err)
+		}
+		return "", "", false
+	}
+	stored = strings.TrimSpace(stored)
+	if stored == "" {
+		return "", "", false
+	}
+	parts := strings.SplitN(stored, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		slog.Warn("resume: sessions.model holds a pre-W4 value without a provider; ignoring",
+			"session", sessionID, "stored", stored)
+		return "", "", false
+	}
+	if _, defined := cfg.Providers[parts[0]]; !defined {
+		slog.Warn("resume: stored model pick's provider is no longer configured; falling back to the routing chain",
+			"session", sessionID, "provider", parts[0])
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
+// wireModelValue renders a resolved provider/model pair in the
+// "provider/model" wire form the sessions.model column stores (parity W4).
+// An unset model renders "" — storedSessionModel reads an empty column as
+// no pick — and an unset provider with a model keeps the bare name,
+// matching the pre-W4 column contents rather than inventing a "/model"
+// value nothing parses.
+func wireModelValue(provider, model string) string {
+	switch {
+	case model == "":
+		return ""
+	case provider == "":
+		return model
+	default:
+		return provider + "/" + model
+	}
 }

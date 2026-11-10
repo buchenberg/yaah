@@ -213,6 +213,22 @@ func (s *agentSession) SetPersona(name string) error {
 				slog.Warn("session: persisting the rebuilt system prompt failed", "persona", persona.Name, "err", err)
 			}
 		}
+		// The routing the switch just landed persists too (parity W4): the
+		// stored pick must never outlive the switch that superseded it — a
+		// resume applies persona routing AND the stored pick, so a stale
+		// pre-switch pick would silently override the fresh route.
+		// Nothing routable (no model resolved anywhere) stays out of the
+		// way: SetSessionModel rejects a pick missing either half (that is
+		// the full extent of its validation — provider usability is the
+		// caller's posture, checked in applyPersonaRouting and
+		// applyStoredModelPick), and the resume chain deciding is exactly
+		// what an unpickable session means.
+		providerName, modelName := s.Model()
+		if providerName != "" && modelName != "" {
+			if err := db.SetSessionModel(sessionID, providerName, modelName); err != nil {
+				slog.Warn("session: persisting the switched routing failed", "provider", providerName, "model", modelName, "err", err)
+			}
+		}
 	}
 	// Announce the switch in-band, after the lock is released. The notice
 	// carries the regime sentence the next run's directive enforces, so the

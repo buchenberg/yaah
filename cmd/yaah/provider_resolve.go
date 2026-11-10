@@ -11,6 +11,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/providers"
 )
 
@@ -488,4 +489,53 @@ func resolveDirectives(cfg *config.Config, opts SessionOptions) []string {
 	out = append(out, opts.DirectiveOverrides...)
 	out = append(out, cfg.Agent.Default.Directives...)
 	return out
+}
+
+// applyStoredModelPick applies a resumed session's persisted model pick
+// (parity W4) over the re-derived persona route. The posture mirrors
+// personaRouteFor so both resolution paths fail the same way:
+//   - a pick naming the route's own provider pins the model on the route's
+//     live instance;
+//   - a pick naming another provider swaps the provider, model, and live
+//     instance in, warning about prompt caching only when the pick moves
+//     the session somewhere neither the route nor the config default
+//     advertised (the route already warned for itself);
+//   - a pick whose provider the config dropped or cannot construct warns
+//     and keeps the route's names AND instance — never a nil main provider
+//     under switched names, which would turn a warn-and-fallback into a
+//     delayed panic at first turn;
+//   - no pick (pre-W4 row, empty column) is a no-op.
+func applyStoredModelPick(lc *sessionConfig, route personaRoute, db *memory.DB, sessionID string) {
+	pickProvider, pickModel, found := storedSessionModel(db, sessionID, lc.cfg)
+	if !found {
+		return
+	}
+	switch pickProvider {
+	case route.providerName:
+		// The re-derived route already holds this provider's live
+		// instance (or the session's inherited one); pin the model.
+		lc.modelName = pickModel
+	default:
+		p, defined := lc.cfg.Providers[pickProvider]
+		var prov agent.Provider
+		if defined {
+			if pv, usable := makeProvider(pickProvider, p); usable {
+				prov = pv
+			}
+		}
+		if prov == nil {
+			// Deliberately the route (not the config default the way an
+			// unusable PERSONA provider falls back): the persona route is
+			// this resume's own re-derived baseline — its unusable entries
+			// already fell back one level in personaRouteFor, so the pick's
+			// fallback lands on the route, not two levels down.
+			slog.Warn("resume: stored model pick's provider is not usable; keeping the persona routing",
+				"session", sessionID, "provider", pickProvider)
+			return
+		}
+		lc.provider, lc.providerName, lc.modelName = prov, pickProvider, pickModel
+		if pickProvider != resolveProviderName(lc.cfg) {
+			warnPromptCachingNotOptedIn(lc.cfg, pickProvider, lc.provider)
+		}
+	}
 }

@@ -234,6 +234,19 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		}
 	}
 	lc.providerName, lc.modelName = route.providerName, route.modelName
+	// Session model pick (parity W4): the creation-time resolution and
+	// the picks a mid-session model or persona switch wrote all ride the
+	// row; on a resume the stored pick overrides the re-derived routing
+	// in full — provider, model, and the live provider instance. The
+	// posture mirrors personaRouteFor: an unusable pick provider (defined
+	// in config but missing a key/URL, or dropped entirely) warns and
+	// keeps the ROUTE's instance and names — never a nil main provider
+	// with switched names — and a pre-W4 bare name is no pick at all.
+	// Either way resume resolves a route exactly as today's config and
+	// persona files imply.
+	if opts.ResumeSessionID != "" {
+		applyStoredModelPick(lc, route, store, opts.ResumeSessionID)
+	}
 	if toolsStage, err = buildToolRegistry(lc.cfg, opts, ws, lc.persona.Persona, store); err != nil {
 		return nil, err
 	}

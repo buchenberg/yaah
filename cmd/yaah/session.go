@@ -1146,19 +1146,46 @@ func (s *agentSession) promptWorkspaceAccess(path, reason string) bool {
 	return false
 }
 
+// SetModel switches the session's provider/model (parity W4). A provider
+// the config does not define or cannot construct (missing key/URL) leaves
+// the session entirely untouched with a warning: pairing the new names
+// with the old instance would send the new model's requests to the old
+// endpoint — the exact wrong-endpoint cross the resume reader refuses —
+// so the guard is refuse-and-warn. Callers normally pass
+// catalog-advertised pairs, which the model discovery only reports for
+// constructible providers; the guard is the wrong-input backstop. The
+// instance builds outside the lock: makeProvider constructs an HTTP
+// client (pure, no I/O) but must not sit on the session mutex.
 func (s *agentSession) SetModel(providerName, modelName string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	prov := s.provider
-	if p, ok := s.cfg.Providers[providerName]; ok {
-		if pv, ok2 := makeProvider(providerName, p); ok2 {
+	p, defined := s.cfg.Providers[providerName]
+	var prov agent.Provider
+	if defined {
+		if pv, usable := makeProvider(providerName, p); usable {
 			prov = pv
 		}
 	}
+	if !defined || prov == nil {
+		slog.Warn("session: model pick's provider is unusable; the session keeps its current routing",
+			"provider", providerName, "model", modelName)
+		return
+	}
+	s.mu.Lock()
 	s.provider = prov
 	s.providerName = providerName
 	s.modelName = modelName
 	s.auxResolved = false
+	db, sessionID := s.db, s.sessionID
+	s.mu.Unlock()
+	// Persist the pick (parity W4) so a resume re-routes the session the
+	// same way. Best-effort on the switch, mirroring SetPersona's: the
+	// switch has already taken effect in this process and a store failure
+	// must not be reported as a refused switch — the next resume falls
+	// back to the routing chain instead.
+	if db != nil && sessionID != "" {
+		if err := db.SetSessionModel(sessionID, providerName, modelName); err != nil {
+			slog.Warn("session: persisting model pick failed", "provider", providerName, "model", modelName, "err", err)
+		}
+	}
 }
 
 // auxProviders returns the session-cached compact and fallback

@@ -1,10 +1,13 @@
 package yaah
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -212,5 +215,281 @@ func TestSetCtrlCh_PublishesRestoredUsage(t *testing.T) {
 		}
 	default:
 		t.Fatal("SetCtrlCh did not publish usage to the control channel")
+	}
+}
+
+// TestStoredSessionModel pins the resume-side model-pick restore (parity
+// W4): the "provider/model" wire form reapplies only when it names a
+// provider this config still defines; a legacy bare model name, an empty
+// column, and a vanished provider all fall back to the routing chain with
+// a warning instead of crossing to a wrong endpoint.
+func TestStoredSessionModel(t *testing.T) {
+	cfg := &config.Config{Providers: map[string]config.Provider{"zai": {}}}
+
+	t.Run("wire form reapplies", func(t *testing.T) {
+		db := newResumeFixture(t, "sess-m1")
+		if err := db.SetSessionModel("sess-m1", "zai", "GLM-5.3"); err != nil {
+			t.Fatalf("SetSessionModel: %v", err)
+		}
+		provider, model, ok := storedSessionModel(db, "sess-m1", cfg)
+		if !ok || provider != "zai" || model != "GLM-5.3" {
+			t.Fatalf("got %q/%q ok=%v; want zai/GLM-5.3 ok=true", provider, model, ok)
+		}
+	})
+
+	t.Run("legacy bare model name is ignored", func(t *testing.T) {
+		db := newResumeFixtureFor(t, "sess-m2", "GLM-5.3")
+		// Pre-W4 rows carry the bare model name from the CreateSession
+		// before W4 switched the column to the wire form.
+		if _, _, ok := storedSessionModel(db, "sess-m2", cfg); ok {
+			t.Fatal("a bare model name must not reapplies as a pick")
+		}
+	})
+
+	t.Run("empty column is no pick", func(t *testing.T) {
+		db := newResumeFixture(t, "sess-m3")
+		if _, _, ok := storedSessionModel(db, "sess-m3", cfg); ok {
+			t.Fatal("an empty stored model reads as no pick")
+		}
+	})
+
+	t.Run("vanished provider falls back", func(t *testing.T) {
+		db := newResumeFixture(t, "sess-m4")
+		if err := db.SetSessionModel("sess-m4", "gone", "m"); err != nil {
+			t.Fatalf("SetSessionModel: %v", err)
+		}
+		if _, _, ok := storedSessionModel(db, "sess-m4", cfg); ok {
+			t.Fatal("a provider the config no longer defines must not reapplies")
+		}
+	})
+
+	t.Run("no store or no session is no pick", func(t *testing.T) {
+		if _, _, ok := storedSessionModel(nil, "sess-x", cfg); ok {
+			t.Fatal("nil store must be no pick")
+		}
+		db := newResumeFixture(t, "sess-have")
+		if _, _, ok := storedSessionModel(db, "sess-absent", cfg); ok {
+			t.Fatal("an unknown session id must be no pick")
+		}
+	})
+}
+
+// TestWireModelValue pins the column's wire-rendering rule: unset model is
+// "", an unset provider keeps the bare model name (pre-W4 shape), both set
+// split.
+func TestWireModelValue(t *testing.T) {
+	for _, tc := range []struct{ provider, model, want string }{
+		{"zai", "GLM-5.3", "zai/GLM-5.3"},
+		{"", "GLM-5.3", "GLM-5.3"},
+		{"zai", "", ""},
+		{"", "", ""},
+	} {
+		if got := wireModelValue(tc.provider, tc.model); got != tc.want {
+			t.Errorf("wireModelValue(%q, %q) = %q, want %q", tc.provider, tc.model, got, tc.want)
+		}
+	}
+}
+
+// newResumeFixtureFor is newResumeFixture with a Session.Model value, so a
+// test can seed the legacy bare-name shape the pre-W4 CreateSession wrote.
+func newResumeFixtureFor(t *testing.T, id, model string) *memory.DB {
+	t.Helper()
+	db, err := memory.Open(filepath.Join(t.TempDir(), "resume.db"))
+	if err != nil {
+		t.Fatalf("memory.Open() error: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	now := time.Now().Unix()
+	if err := db.CreateSession(memory.Session{ID: id, StartedAt: now, Model: model}); err != nil {
+		t.Fatalf("CreateSession() error: %v", err)
+	}
+	if err := db.AddMessage(memory.Message{
+		ID: "msg-1", SessionID: id, Idx: 0, Role: "user", Content: "plan this work", Timestamp: now,
+	}); err != nil {
+		t.Fatalf("AddMessage() error: %v", err)
+	}
+	return db
+}
+
+// TestSetModelPersistsPick pins the switch-side half of parity W4: a
+// mid-session model switch writes the row the resume restores, so a
+// crash or a kill after the switch still comes back routed where the
+// session was switched to.
+func TestSetModelPersistsPick(t *testing.T) {
+	const id = "sess-persist"
+	db := newResumeFixture(t, id)
+
+	// A USABLE provider: the refused-unusable case is
+	// TestSetModel_UnusableProviderKeepsEverything.
+	cfg := &config.Config{Providers: map[string]config.Provider{"zai": {BaseURL: "http://zai.test", APIKey: "k-zai"}}}
+	s := &agentSession{cfg: cfg, db: db, sessionID: id}
+
+	s.SetModel("zai", "GLM-5.3")
+
+	got, err := db.SessionModel(id)
+	if err != nil || got != "zai/GLM-5.3" {
+		t.Fatalf("stored pick = %q, %v; want zai/GLM-5.3", got, err)
+	}
+	provider, model := s.Model()
+	if provider != "zai" || model != "GLM-5.3" {
+		t.Fatalf("in-memory pick = %q/%q; want zai/GLM-5.3", provider, model)
+	}
+}
+
+// TestSetPersonaReplacesPersistedPick pins the review blocker on PR #851:
+// a persona switch supersedes the in-process pick (applyPersonaRouting)
+// AND the persisted one — a resume re-derives persona routing AND applies
+// the stored pick, so a stale pre-switch pick in the row would silently
+// override the fresh route.
+func TestSetPersonaReplacesPersistedPick(t *testing.T) {
+	const id = "sess-route"
+	db := newResumeFixture(t, id)
+
+	// Two usable providers, so both the pick and the persona route are
+	// constructible at SetModel/SetPersona time.
+	cfg := &config.Config{Providers: map[string]config.Provider{
+		"zai":   {BaseURL: "http://zai.test", APIKey: "k-zai"},
+		"zanth": {BaseURL: "http://zanth.test", APIKey: "k-zanth"},
+	}}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "routed.md"),
+		[]byte("---\nname: Routed\ndescription: routes itself\ntools: []\nprovider: zanth\nmodel: claude-x\n---\nROUTED BODY\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg := subagent.NewRoleRegistry()
+	if err := reg.LoadDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	subagent.SetDefaultRoleRegistry(reg)
+	t.Cleanup(func() { subagent.SetDefaultRoleRegistry(nil) })
+
+	s := &agentSession{cfg: cfg, db: db, sessionID: id}
+	s.SetModel("zai", "GLM-5.3")
+	if got, _ := db.SessionModel(id); got != "zai/GLM-5.3" {
+		t.Fatalf("precondition: stored pick = %q", got)
+	}
+
+	if err := s.SetPersona("routed"); err != nil {
+		t.Fatalf("SetPersona(routed): %v", err)
+	}
+
+	// The row must now carry the ROUTE (what the session last ran with),
+	// not the pre-switch pick.
+	if got, _ := db.SessionModel(id); got != "zanth/claude-x" {
+		t.Fatalf("stored pick after persona switch = %q; want zanth/claude-x (the stale zai pick must not survive the switch)", got)
+	}
+	if provider, model := s.Model(); provider != "zanth" || model != "claude-x" {
+		t.Fatalf("in-process routing = %q/%q; want zanth/claude-x", provider, model)
+	}
+}
+
+// TestApplyStoredModelPick pins the resume pick's provider posture (review
+// finding 2): an unusable pick provider — defined in config but missing
+// key/URL, or dropped — keeps the persona route's names AND instance, the
+// same warn-and-keep personaRouteFor applies, instead of leaving a nil
+// main provider under switched names.
+func TestApplyStoredModelPick(t *testing.T) {
+	zai := config.Provider{BaseURL: "http://zai.test", APIKey: "k-zai"}
+	keyless := config.Provider{} // no key, no URL: makeProvider must refuse it
+	cfgWith := func(extra map[string]config.Provider) *config.Config {
+		providers := map[string]config.Provider{"zai": zai}
+		for k, v := range extra {
+			providers[k] = v
+		}
+		return &config.Config{Providers: providers}
+	}
+	pickFixture := func(t *testing.T, id, stored string) *memory.DB {
+		return newResumeFixtureFor(t, id, stored)
+	}
+
+	t.Run("same provider pins the model on the route's instance", func(t *testing.T) {
+		cfg := cfgWith(nil)
+		routeProv, _ := makeProvider("zai", zai)
+		lc := &sessionConfig{cfg: cfg, provider: routeProv, providerName: "zai", modelName: "GLM-5"}
+		db := pickFixture(t, "sess-p1", "zai/other")
+		applyStoredModelPick(lc, personaRoute{providerName: "zai", modelName: "GLM-5"}, db, "sess-p1")
+		if lc.modelName != "other" {
+			t.Errorf("model = %q, want the pick", lc.modelName)
+		}
+		if lc.providerName != "zai" {
+			t.Errorf("provider name moved: %q", lc.providerName)
+		}
+		if lc.provider != routeProv {
+			t.Error("the route's provider instance must stay")
+		}
+	})
+
+	t.Run("usable provider swap takes the instance", func(t *testing.T) {
+		zanth := config.Provider{BaseURL: "http://zanth.test", APIKey: "k-zanth"}
+		cfg := cfgWith(map[string]config.Provider{"zanth": zanth})
+		routeProv, _ := makeProvider("zai", zai)
+		lc := &sessionConfig{cfg: cfg, provider: routeProv, providerName: "zai", modelName: "GLM-5"}
+		db := pickFixture(t, "sess-p2", "zanth/claude-x")
+		applyStoredModelPick(lc, personaRoute{providerName: "zai", modelName: "GLM-5"}, db, "sess-p2")
+		if lc.providerName != "zanth" || lc.modelName != "claude-x" {
+			t.Fatalf("names = %q/%q; want zanth/claude-x", lc.providerName, lc.modelName)
+		}
+		// Instance identity across two makeProvider calls is not assumed
+		// and not guaranteed; the invariant is behavioral: the pick built
+		// a LIVE instance and it is not the route's stale one.
+		if lc.provider == nil || lc.provider == routeProv {
+			t.Error("the pick's live provider instance must replace the route's")
+		}
+	})
+
+	t.Run("unusable provider keeps the route", func(t *testing.T) {
+		// A provider entry that cannot construct (no key, no OAuth) is the
+		// review finding's delayed-panic shape: the route must survive.
+		cfg := cfgWith(map[string]config.Provider{"keyless": keyless})
+		routeProv, _ := makeProvider("zai", zai)
+		lc := &sessionConfig{cfg: cfg, provider: routeProv, providerName: "zai", modelName: "GLM-5"}
+		db := pickFixture(t, "sess-p3", "keyless/mystery")
+		applyStoredModelPick(lc, personaRoute{providerName: "zai", modelName: "GLM-5"}, db, "sess-p3")
+		if lc.providerName != "zai" || lc.modelName != "GLM-5" {
+			t.Fatalf("names = %q/%q; the route must survive an unusable pick provider", lc.providerName, lc.modelName)
+		}
+		if lc.provider != routeProv {
+			t.Error("the route's provider instance must survive — never a nil main provider under switched names")
+		}
+	})
+
+	t.Run("dropped provider keeps the route", func(t *testing.T) {
+		cfg := cfgWith(nil)
+		routeProv, _ := makeProvider("zai", zai)
+		lc := &sessionConfig{cfg: cfg, provider: routeProv, providerName: "zai", modelName: "GLM-5"}
+		db := pickFixture(t, "sess-p4", "gone/m")
+		applyStoredModelPick(lc, personaRoute{providerName: "zai", modelName: "GLM-5"}, db, "sess-p4")
+		if lc.providerName != "zai" || lc.modelName != "GLM-5" {
+			t.Fatalf("names = %q/%q; a dropped pick provider must keep the route", lc.providerName, lc.modelName)
+		}
+	})
+}
+
+// TestSetModel_UnusableProviderKeepsEverything pins the refuse-and-warn
+// posture: a pick whose provider cannot construct (no key, no URL) leaves
+// the in-memory names AND instance untouched and writes nothing — new
+// names over the old endpoint would be the wrong-endpoint cross the
+// resume reader refuses.
+func TestSetModel_UnusableProviderKeepsEverything(t *testing.T) {
+	const id = "sess-refuse"
+	db := newResumeFixtureFor(t, id, "zai/kept") // a pre-existing pick in the row
+
+	cfg := &config.Config{Providers: map[string]config.Provider{
+		"zai":     {BaseURL: "http://zai.test", APIKey: "k-zai"},
+		"keyless": config.Provider{},
+	}}
+	routeProv, _ := makeProvider("zai", cfg.Providers["zai"])
+	s := &agentSession{cfg: cfg, db: db, sessionID: id, provider: routeProv, providerName: "zai", modelName: "GLM-5"}
+
+	s.SetModel("keyless", "mystery")
+
+	if provider, model := s.Model(); provider != "zai" || model != "GLM-5" {
+		t.Fatalf("names = %q/%q; the switch must be refused", provider, model)
+	}
+	if s.provider != routeProv {
+		t.Error("the session's provider instance must stay")
+	}
+	if got, _ := db.SessionModel(id); got != "zai/kept" {
+		t.Fatalf("stored pick = %q; a refused switch must not write", got)
 	}
 }
