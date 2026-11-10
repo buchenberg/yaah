@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.155.0](https://github.com/buchenberg/yaah/compare/v0.154.0...v0.155.0) (2026-11-10)
+
+
+### Features
+
+* **roles:** role-file mode key defaults to all (parity W3) ([19330a0](https://github.com/buchenberg/yaah/commit/19330a07f3685bf938690725813dda4f56c39ada))
+
 ## [0.154.0](https://github.com/buchenberg/yaah/compare/v0.153.0...v0.154.0) (2026-11-10)
 
 
