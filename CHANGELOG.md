@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.155.1](https://github.com/buchenberg/yaah/compare/v0.155.0...v0.155.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **memory:** survive the empty-vec0 window when searching session messages ([03e2e7f](https://github.com/buchenberg/yaah/commit/03e2e7f4f6e230caf764e961b6d8497a7e368be8))
+* **personas:** directive supersedes earlier personas in the conversation (0.155.0 switch report) ([2d6dc61](https://github.com/buchenberg/yaah/commit/2d6dc611e4ce477a9278d7076cf218601827ffc8))
+* **personas:** directive supersedes earlier personas in the conversation (0.155.0 switch report) ([fa07803](https://github.com/buchenberg/yaah/commit/fa0780307b44264312ed5c93f3e2bd2540f5639d))
+* **personas:** gate the supersession clause on a real switch; neutral wording ([43fb8dc](https://github.com/buchenberg/yaah/commit/43fb8dcdc0c40dd2adef9d631dcefffc92dce503))
+
 ## [0.155.0](https://github.com/buchenberg/yaah/compare/v0.154.0...v0.155.0) (2026-11-10)
 
 
