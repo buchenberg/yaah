@@ -114,16 +114,16 @@ func roleDefFrom(fm rolefile.Frontmatter, body string) RoleDef {
 }
 
 // normalizeRoleMode validates the role file's mode field (yaah-21uk D1;
-// default flipped to "all" by the opencode-family parity W3). "primary",
-// "subagent" and "all" pass through. A missing key resolves to "all" —
-// family symmetry with opencode/Kilo agent files, which are
+// missing-key default flipped to "all" by the opencode-family parity W3).
+// "primary", "subagent" and "all" pass through. A missing key resolves to
+// "all" — family symmetry with opencode/Kilo agent files, which are
 // orchestrator-capable unless marked otherwise; projects that want a
 // file delegate-only say `mode: subagent` explicitly. An unknown value
-// warns and falls back to "all" rather than failing the role: a broken
-// project role must not brick startup (mirrors the output normalizer and
-// the budget clamps). Note the asymmetry this creates: an unknown value
-// now ADMITS the role as an orchestrator persona — accepted, since the
-// warning surfaces it and the belt/power model still applies.
+// warns and fails CLOSED to "subagent": a typo'd delegate-only file must
+// not become orchestrator-eligible — its body would become a session
+// system prompt and its budget fields would bind the loop — so the
+// missing-key and invalid-value defaults deliberately point in opposite
+// directions (parity governs the absence, safety governs the mistake).
 func normalizeRoleMode(v, roleName string) string {
 	switch v {
 	case "":
@@ -131,8 +131,8 @@ func normalizeRoleMode(v, roleName string) string {
 	case "primary", "subagent", "all":
 		return v
 	default:
-		slog.Warn("role file: unknown mode value; falling back to all", "role", roleName, "value", v)
-		return "all"
+		slog.Warn("role file: unknown mode value; falling back to subagent", "role", roleName, "value", v)
+		return "subagent"
 	}
 }
 

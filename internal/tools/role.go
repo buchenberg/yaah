@@ -225,8 +225,9 @@ func (t *RoleTool) editRole(p roleParams) (string, error) {
 		existing.Specialty = p.Specialty
 	}
 	// Mirror description/specialty: empty means unchanged, non-empty
-	// replaces. There is no unset — passing "subagent" restores the default
-	// capability but keeps the key; removing the key is a file edit.
+	// replaces. There is no unset — passing "subagent" restores the
+	// delegate-only capability but keeps the key; removing the key is a
+	// file edit that restores the file-format default ("all").
 	if p.Mode != "" {
 		existing.Mode = p.Mode
 	}
@@ -327,8 +328,11 @@ func validateRoleMode(mode string) error {
 }
 
 // roleModeAnnotation renders the capability tag shown after a role name in
-// list output. Only non-default capabilities are annotated; the default
-// (all, or an unset mode) keeps today's rendering byte-identical.
+// list output. Only non-default capabilities are annotated: "all" — the
+// file-format default — and an unset mode render plain; "primary" and
+// "subagent" (explicit or the fail-closed fallback) are annotated, so
+// files that named subagent explicitly gain a tag they did not have
+// before the default flipped.
 func roleModeAnnotation(mode string) string {
 	if mode == "" || mode == defaultRoleMode {
 		return ""

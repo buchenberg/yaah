@@ -41,9 +41,9 @@ History persists at `~/.yaah/history` (or `$YAAH_HOME/history` when `YAAH_HOME` 
 
 ## Plan mode
 
-A session has two axes that decide what it may do: the **agent** (which
-persona runs) and the **mode** (whether it may mutate the workspace).
-Read-only mode — the mode axis, not a persona — narrows the toolset to the **inspection set**,
+A session has three axes — the **agent** (which persona runs), the
+**mode** (whether it may mutate the workspace), and **approval** (the
+posture dangerous calls meet). Read-only mode — the mode axis, not a persona — narrows the toolset to the **inspection set**,
 the tools that look at a workspace instead of changing
 it. The mode defaults from `agents.default.mode` (`full`) and is switchable
 mid-session: ACP `session/set_mode` and the `mode` config option set it;

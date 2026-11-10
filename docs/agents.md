@@ -33,7 +33,7 @@ otherwise, so a project that wants a file delegate-only says
 | `primary` | yes | no | Never appears in the delegate schema or `list_subagents` |
 | `all` | yes | yes | Selectable and dispatchable |
 | `subagent` | no | yes | Explicit only |
-| missing | yes | yes | Defaults to `all` (opencode-family parity W3); an unknown value warns and falls back to `all` |
+| missing | yes | yes | Defaults to `all` (opencode-family parity W3); an unknown value fails closed — it warns and falls back to `subagent` |
 
 The persona's name is the file stem. Built-in roles always win on name
 conflict with user files; the `build`/`plan` built-ins win over everything.

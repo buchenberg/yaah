@@ -60,9 +60,10 @@ type RoleEntry struct {
 	Contract    RoleContract
 	Tools       []string
 	// Mode is the resolved capability (yaah-21uk.13): "primary",
-	// "subagent" or "all". The registry normalizes missing and unknown
-	// file values to "all" (parity W3); consumers treat an empty Mode
-	// (zero value) as the default.
+	// "subagent" or "all". The registry normalizes a missing key to
+	// "all" (parity W3) and an unknown value, fail-closed, to
+	// "subagent"; consumers treat an empty Mode (zero value) as the
+	// default.
 	Mode string
 }
 

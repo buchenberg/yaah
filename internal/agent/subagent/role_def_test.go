@@ -265,10 +265,10 @@ func captureSlogWarnings(t *testing.T) func() string {
 
 // TestRoleDefModeNormalization pins the mode schema semantics: the
 // three vocabulary values pass through to the profile, a missing key
-// silently defaults to all (the opencode-family parity W3 flip — files
+// silently defaults to all (opencode-family parity W3 — files
 // are orchestrator-capable unless marked otherwise), and an unknown
-// value warns and falls back rather than failing the role — a broken
-// project role must not brick startup.
+// value fails CLOSED: it warns and falls back to subagent, because a
+// typo'd delegate-only file must not become orchestrator-eligible.
 func TestRoleDefModeNormalization(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -280,7 +280,7 @@ func TestRoleDefModeNormalization(t *testing.T) {
 		{"primary", "mode: primary\ntools: [read]\n", "primary", ""},
 		{"subagent", "mode: subagent\ntools: [read]\n", "subagent", ""},
 		{"all", "mode: all\ntools: [read]\n", "all", ""},
-		{"unknown", "mode: orchestrator\ntools: [read]\n", "all", "unknown mode value; falling back to all"},
+		{"unknown", "mode: orchestrator\ntools: [read]\n", "subagent", "unknown mode value; falling back to subagent"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
