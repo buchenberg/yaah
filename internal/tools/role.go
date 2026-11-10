@@ -38,7 +38,7 @@ func (t *RoleTool) Schema() json.RawMessage {
 			"body": {"type": "string", "description": "Role system prompt body in markdown (required for create, optional for edit)"},
 			"tools": {"type": "string", "description": "JSON array or comma-separated tool names (optional)"},
 			"specialty": {"type": "string", "description": "Short specialty label (optional)"},
-			"mode": {"type": "string", "enum": ["primary", "subagent", "all"], "description": "Capability mode: primary = orchestrator-eligible, subagent = delegate-only (default), all = both. create: omitted means subagent and the key is omitted from the file. edit: omitted means unchanged; there is no unset via this tool — an explicit \"subagent\" restores the default capability but keeps the key; removing the key is a direct file edit, not a tool operation."}
+			"mode": {"type": "string", "enum": ["primary", "subagent", "all"], "description": "Capability mode: primary = orchestrator-eligible, subagent = delegate-only, all = both; omitted means all (the file-format default) and the key is omitted from the file. edit: omitted means unchanged; there is no unset via this tool — an explicit \"subagent\" restores the delegate-only capability but keeps the key; removing the key restores the all default and is a direct file edit, not a tool operation."}
 		},
 		"required": ["action"]
 	}`)
@@ -311,7 +311,7 @@ func validateRoleName(name string) error {
 // defaultRoleMode is the capability every role file without a mode key
 // resolves to. It mirrors subagent.normalizeRoleMode's default; the tools
 // package cannot import agent/subagent, so the value is restated here.
-const defaultRoleMode = "subagent"
+const defaultRoleMode = "all"
 
 // validateRoleMode enforces the tool-call vocabulary for the mode field
 // (yaah-21uk.13). Unlike the registry's file-load path — which warns and
@@ -328,7 +328,7 @@ func validateRoleMode(mode string) error {
 
 // roleModeAnnotation renders the capability tag shown after a role name in
 // list output. Only non-default capabilities are annotated; the default
-// (subagent, or an unset mode) keeps today's rendering byte-identical.
+// (all, or an unset mode) keeps today's rendering byte-identical.
 func roleModeAnnotation(mode string) string {
 	if mode == "" || mode == defaultRoleMode {
 		return ""

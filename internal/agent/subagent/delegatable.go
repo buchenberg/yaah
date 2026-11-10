@@ -6,8 +6,8 @@ package subagent
 // descriptions (yaah-21uk.4). Only primary-only roles are excluded: a
 // role with mode "primary" is an orchestrator persona, and the
 // orchestrator must never be offered a dispatch of itself or another
-// primary persona. "subagent" (explicit or the missing-key default)
-// and "all" remain delegatable.
+// primary persona. "subagent" (explicit; the missing-key default is
+// "all" since parity W3) and "all" remain delegatable.
 //
 // Unknown roles and sessions with no populated registry are delegatable
 // here: RoleProfileFor resolves them to the zero-value profile, and

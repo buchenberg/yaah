@@ -62,7 +62,8 @@ type Frontmatter struct {
 	Output string `yaml:"output,omitempty"`
 	// Mode selects the agent capability (yaah-21uk D1): "primary" is
 	// orchestrator-eligible, "subagent" is delegate-only, "all" is both.
-	// Empty means subagent — files without the key keep today's behavior.
+	// Empty means "all" — files are orchestrator-capable unless marked
+	// otherwise (parity W3); the registry normalizes on load.
 	// Schema only: the registry normalizes on load; nothing here filters
 	// dispatch behavior.
 	Mode          string `yaml:"mode,omitempty"`

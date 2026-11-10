@@ -21,15 +21,19 @@ is never merged, only displaced.
 ## Role files as personas
 
 Any role file in `.agents/roles/*.md` (project) or `~/.agents/roles/*.md`
-(user) whose frontmatter carries `mode: primary` or `mode: all` is
-primary-capable and joins the persona list. `mode: subagent` — explicit or
-the missing-key default — keeps the file delegate-only.
+(user) whose frontmatter carries `mode: primary` or `mode: all` — or omits
+the key — is primary-capable and joins the persona list. `mode: subagent`
+(explicit) keeps the file delegate-only. The missing-key default is `all`
+(opencode-family parity): files are orchestrator-capable unless marked
+otherwise, so a project that wants a file delegate-only says
+`mode: subagent` explicitly.
 
 | `mode` | Orchestrator persona | Delegatable | Notes |
 |---|---|---|---|
 | `primary` | yes | no | Never appears in the delegate schema or `list_subagents` |
 | `all` | yes | yes | Selectable and dispatchable |
-| `subagent` / missing | no | yes | Historical behavior; a missing key is silent, an unknown value warns and falls back to `subagent` |
+| `subagent` | no | yes | Explicit only |
+| missing | yes | yes | Defaults to `all` (opencode-family parity W3); an unknown value warns and falls back to `all` |
 
 The persona's name is the file stem. Built-in roles always win on name
 conflict with user files; the `build`/`plan` built-ins win over everything.

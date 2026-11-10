@@ -61,8 +61,8 @@ type RoleEntry struct {
 	Tools       []string
 	// Mode is the resolved capability (yaah-21uk.13): "primary",
 	// "subagent" or "all". The registry normalizes missing and unknown
-	// file values to "subagent"; consumers treat an empty Mode (zero
-	// value) as the default.
+	// file values to "all" (parity W3); consumers treat an empty Mode
+	// (zero value) as the default.
 	Mode string
 }
 

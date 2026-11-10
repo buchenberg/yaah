@@ -93,7 +93,7 @@ func TestRoleTool_createWithoutModeOmitsKey(t *testing.T) {
 		t.Fatalf("created file does not parse: %v", err)
 	}
 	if fm.Mode != "" {
-		t.Errorf("mode = %q; want empty (subagent default)", fm.Mode)
+		t.Errorf("mode = %q; want empty (all default at parse time, parity W3)", fm.Mode)
 	}
 }
 
@@ -216,10 +216,12 @@ func TestRoleTool_listAnnotatesNonDefaultModes(t *testing.T) {
 		mode  string
 		want  string
 	}{
-		{"subagent renders unannotated", "subagent", "- **worker**: does work"},
+		// The default flipped to "all" (parity W3): all — and an unset
+		// mode — render unannotated; primary and subagent are annotated.
+		{"all renders unannotated", "all", "- **worker**: does work"},
 		{"empty renders unannotated", "", "- **worker**: does work"},
 		{"primary is annotated", "primary", "- **worker** [primary]: does work"},
-		{"all is annotated", "all", "- **worker** [all]: does work"},
+		{"subagent is annotated", "subagent", "- **worker** [subagent]: does work"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
