@@ -218,8 +218,11 @@ func (s *agentSession) SetPersona(name string) error {
 		// resume applies persona routing AND the stored pick, so a stale
 		// pre-switch pick would silently override the fresh route.
 		// Nothing routable (no model resolved anywhere) stays out of the
-		// way: SetSessionModel rejects a half-pick, and the resume chain
-		// deciding is exactly what an unpickable session means.
+		// way: SetSessionModel rejects a pick missing either half (that is
+		// the full extent of its validation — provider usability is the
+		// caller's posture, checked in applyPersonaRouting and
+		// applyStoredModelPick), and the resume chain deciding is exactly
+		// what an unpickable session means.
 		providerName, modelName := s.Model()
 		if providerName != "" && modelName != "" {
 			if err := db.SetSessionModel(sessionID, providerName, modelName); err != nil {

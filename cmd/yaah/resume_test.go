@@ -319,7 +319,9 @@ func TestSetModelPersistsPick(t *testing.T) {
 	const id = "sess-persist"
 	db := newResumeFixture(t, id)
 
-	cfg := &config.Config{Providers: map[string]config.Provider{"zai": {}}}
+	// A USABLE provider: the refused-unusable case is
+	// TestSetModel_UnusableProviderKeepsEverything.
+	cfg := &config.Config{Providers: map[string]config.Provider{"zai": {BaseURL: "http://zai.test", APIKey: "k-zai"}}}
 	s := &agentSession{cfg: cfg, db: db, sessionID: id}
 
 	s.SetModel("zai", "GLM-5.3")
@@ -461,4 +463,33 @@ func TestApplyStoredModelPick(t *testing.T) {
 			t.Fatalf("names = %q/%q; a dropped pick provider must keep the route", lc.providerName, lc.modelName)
 		}
 	})
+}
+
+// TestSetModel_UnusableProviderKeepsEverything pins the refuse-and-warn
+// posture: a pick whose provider cannot construct (no key, no URL) leaves
+// the in-memory names AND instance untouched and writes nothing — new
+// names over the old endpoint would be the wrong-endpoint cross the
+// resume reader refuses.
+func TestSetModel_UnusableProviderKeepsEverything(t *testing.T) {
+	const id = "sess-refuse"
+	db := newResumeFixtureFor(t, id, "zai/kept") // a pre-existing pick in the row
+
+	cfg := &config.Config{Providers: map[string]config.Provider{
+		"zai":     {BaseURL: "http://zai.test", APIKey: "k-zai"},
+		"keyless": config.Provider{},
+	}}
+	routeProv, _ := makeProvider("zai", cfg.Providers["zai"])
+	s := &agentSession{cfg: cfg, db: db, sessionID: id, provider: routeProv, providerName: "zai", modelName: "GLM-5"}
+
+	s.SetModel("keyless", "mystery")
+
+	if provider, model := s.Model(); provider != "zai" || model != "GLM-5" {
+		t.Fatalf("names = %q/%q; the switch must be refused", provider, model)
+	}
+	if s.provider != routeProv {
+		t.Error("the session's provider instance must stay")
+	}
+	if got, _ := db.SessionModel(id); got != "zai/kept" {
+		t.Fatalf("stored pick = %q; a refused switch must not write", got)
+	}
 }

@@ -524,6 +524,11 @@ func applyStoredModelPick(lc *sessionConfig, route personaRoute, db *memory.DB, 
 			}
 		}
 		if prov == nil {
+			// Deliberately the route (not the config default the way an
+			// unusable PERSONA provider falls back): the persona route is
+			// this resume's own re-derived baseline — its unusable entries
+			// already fell back one level in personaRouteFor, so the pick's
+			// fallback lands on the route, not two levels down.
 			slog.Warn("resume: stored model pick's provider is not usable; keeping the persona routing",
 				"session", sessionID, "provider", pickProvider)
 			return
