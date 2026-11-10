@@ -120,3 +120,59 @@ func TestDB_SearchMessagesVector_EmbedFailureDegradesToNil(t *testing.T) {
 		t.Errorf("expected error in log, got: %q", out)
 	}
 }
+
+// TestSearchMessagesVector_EmptyVecIndexFallsBackToScan pins the window fix
+// for the CI flake in TestMemorySessionSearchTool_SemanticContextAndHybridUnion:
+// a search that lands after the embed goroutine wrote the BLOB but before (or
+// without) its vec0 mirror must still find the row. An empty index with a nil
+// error used to return zero results, so the caller labeled a working store as
+// "semantic search returned no candidates". The BLOB column is the source of
+// truth; the scan is correct by construction.
+func TestSearchMessagesVector_EmptyVecIndexFallsBackToScan(t *testing.T) {
+	db := openTestDB(t)
+	db.SetEmbedder(stubEmbedder{})
+	addMessageAndWait(t, db, Message{SessionID: "ses-test", Idx: 0, Role: "user", Content: "postgres connection pooling", Timestamp: 1, ID: "m1"})
+
+	if !db.messagesVecPresent() {
+		t.Fatal("precondition: the messages vec0 index must exist after a mirrored embed")
+	}
+	if _, err := db.sql.Exec(`DELETE FROM messages_vec`); err != nil {
+		t.Fatalf("clear vec0 rows: %v", err)
+	}
+
+	results, err := db.SearchMessagesVector(t.Context(), "postgres pooling", 10)
+	if err != nil {
+		t.Fatalf("SearchMessagesVector: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("empty vec0 index must degrade to the scan, not report no candidates")
+	}
+	if results[0].ID != "m1" {
+		t.Errorf("scan returned %q, want m1", results[0].ID)
+	}
+}
+
+// TestSearchMessagesVector_ScanSkipsStaleWidthRows pins the scan-side width
+// guard: rows embedded by a previous model are not cosine-scored against the
+// current query vector (meaningless, and a 0 score used to leak them into the
+// page); they are skipped and surfaced via the rate-limited dim-mismatch
+// warning instead.
+func TestSearchMessagesVector_ScanSkipsStaleWidthRows(t *testing.T) {
+	db := openTestDB(t)
+	db.SetEmbedder(dimEmbedder{dims: 2, base: 0.5})
+	addMessageAndWait(t, db, Message{SessionID: "ses-test", Idx: 0, Role: "user", Content: "postgres pooling", Timestamp: 1, ID: "m1"})
+
+	db.SetEmbedder(dimEmbedder{dims: 4, base: 0.3})
+
+	logs := captureWarnLogs(t)
+	results, err := db.SearchMessagesVector(t.Context(), "postgres pooling", 10)
+	if err != nil {
+		t.Fatalf("SearchMessagesVector: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("stale-width rows must not be scored against a wider query, got %d", len(results))
+	}
+	if !strings.Contains(logs.String(), "stored embedding dimensions differ") {
+		t.Errorf("expected the dim-mismatch warning, got: %q", logs.String())
+	}
+}

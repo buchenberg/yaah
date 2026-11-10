@@ -149,7 +149,11 @@ func TestModeDirective_BothAxes(t *testing.T) {
 
 // Every directive names who switches agents, through which surfaces,
 // and that the switch is announced in-band — and never tells the model it can
-// switch itself.
+// switch itself. The supersession clause is gated on `switched`: a fresh
+// session's first build has no earlier persona to supersede (asserting
+// false history there would be its own defect), so this test pins its
+// ABSENCE on hand-built sessions; the presence path is pinned wherever a
+// real SetPersona switch happens (double-switch guard).
 func TestModeDirective_NamesLeavingMechanismAndNotice(t *testing.T) {
 	plan, _ := subagent.ResolvePersona(subagent.PlanPersonaName)
 	build, _ := subagent.ResolvePersona(subagent.BuildPersonaName)
@@ -163,8 +167,27 @@ func TestModeDirective_NamesLeavingMechanismAndNotice(t *testing.T) {
 					t.Errorf("modeDirective(%q) missing %q:\n%s", persona.Name, want, got)
 				}
 			}
+			if strings.Contains(got, "supersedes") {
+				t.Errorf("unswitched session's modeDirective asserts a superseded earlier persona:\n%s", got)
+			}
 		})
 	}
+
+	t.Run("switched session gains the supersession clause", func(t *testing.T) {
+		s := &agentSession{mainPrompt: "BASE PROMPT BODY", persona: plan, switched: true}
+		got := s.modeDirective(plan)
+		for _, want := range []string{
+			"supersedes any persona named earlier in this conversation",
+			"ignore that persona's character, voice and style",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("switched modeDirective missing %q:\n%s", want, got)
+			}
+		}
+		if strings.Contains(got, "style and complaints") {
+			t.Errorf("supersession wording is report-shaped (complaints), want persona-neutral:\n%s", got)
+		}
+	})
 }
 
 // Golden byte-stability: with no axis change, the per-run
