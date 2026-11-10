@@ -43,6 +43,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/events"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
+	"github.com/buchenberg/yaah/internal/agent/runner"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/config"
@@ -272,6 +273,12 @@ type agentSession struct {
 	supervisor *supervision.Service
 	reaper     *supervision.Reaper // stale dispatch-scope sweeper (yaah-95ri.4)
 
+	// roleWatcher polls the role search paths and reloads the default
+	// registry on raw file edits (W6). Closed with the reaper in teardown,
+	// before the background-jobs drain. Nil only on the (warned)
+	// watcher-construction failure path.
+	roleWatcher *runner.RoleWatcher
+
 	// egressBroker is the session's sub-agent egress broker (Plan 7 Phase 3),
 	// non-nil only when agents.subagent.network is "broker". close() stops it
 	// after background sub-agents are drained — Stop waits for accepted
@@ -457,6 +464,16 @@ func (s *agentSession) close() {
 	// the supervisor guard leaked the goroutine on engine-less sessions.
 	if s.reaper != nil {
 		s.reaper.Close()
+	}
+	// Role hot-reload watcher (W6): stop the scan loop and join it,
+	// before the background-jobs drain. The ordering is deliberate and
+	// harmless where it overlaps: the registry swap is atomic, dispatch
+	// resolves the role profile at dispatch time (so a reload landing
+	// while jobs drain cannot change what an in-flight dispatch sees),
+	// and closing first guarantees that no swap happens once teardown has
+	// started mutating the session's other resources.
+	if s.roleWatcher != nil {
+		s.roleWatcher.Close()
 	}
 	// The root's registry entry goes before its channel closes: the
 	// registry sends under its lock, so an unregister that returns

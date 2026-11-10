@@ -191,6 +191,7 @@ func newSessionFromStages(lc *sessionConfig, opts SessionOptions, ws *workspaceS
 		traceBus:       loop.traceBus,
 		supervisor:     loop.supervisorSvc,
 		reaper:         loop.reaper,
+		roleWatcher:    loop.roleWatcher,
 		egressBroker:   loop.egressBroker,
 		followupCh:     loop.followupCh,
 		closeCh:        make(chan struct{}),
