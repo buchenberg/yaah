@@ -45,6 +45,7 @@ What a persona file changes for the session that runs it:
 | Field | Effect |
 |---|---|
 | body | Layers into the orchestrator system prompt immediately after the identity. Sub-agent prompts never carry it. |
+| `system: replace` | **Identity replacement (parity W2).** The body replaces the embedded identity in the session's system prompt: environment, project instructions, memory, skills, and session directives still layer after it. `build`/`plan` never use it. Anything but the exact value `replace` warns and falls back to layering, and the key has no effect on delegate-only (`mode: subagent`) roles — sub-agent dispatch prompts always use the built-in sub-agent identity plus role guidance. It binds only primary personas; a committed project role file can claim the session's identity slot — a stronger capability than routing — so audit repos before trusting their roles. |
 | `tools:` | Narrows the advertised tool belt. The list is intersected with `agents.default.tools`, so a persona can only shrink the surface, never grow it; an empty list means no narrowing, never zero tools. |
 | `max_iterations:` / `max_turns:` | Bound the orchestrator loop, config-authoritatively: an explicit `agents.default` value wins, the persona file fills the gap, and the shipped defaults apply last. |
 | `timeout:` | Carried but unconsumed — the orchestrator loop has no wall-clock knob yet. The `min_*` floors are dispatch-specific and do not apply. |

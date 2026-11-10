@@ -159,7 +159,7 @@ func TestBuildSystemPrompt_MemoryGuidelinesGatedOnTools(t *testing.T) {
 	dir := t.TempDir()
 
 	full := prompts.MemoryGuidance{Recall: true, Writers: true}
-	withTools := buildSystemPrompt(cfg, dir, nil, "", full, "")
+	withTools := buildSystemPrompt(cfg, dir, nil, "", full, subagent.Persona{})
 	if !strings.Contains(withTools, "## Memory Guidelines") {
 		t.Error("a session with memory tools must carry the Memory Guidelines block")
 	}
@@ -173,7 +173,7 @@ func TestBuildSystemPrompt_MemoryGuidelinesGatedOnTools(t *testing.T) {
 	}
 
 	none := prompts.MemoryGuidance{}
-	withoutTools := buildSystemPrompt(cfg, dir, nil, "", none, "")
+	withoutTools := buildSystemPrompt(cfg, dir, nil, "", none, subagent.Persona{})
 	for _, banned := range []string{"## Memory Guidelines", "memory_add", "memory_search", "memory_promote"} {
 		if strings.Contains(withoutTools, banned) {
 			t.Errorf("a session without memory tools must not advertise %q", banned)
@@ -182,7 +182,7 @@ func TestBuildSystemPrompt_MemoryGuidelinesGatedOnTools(t *testing.T) {
 
 	// A resumed session never gets the guidelines even with the tools
 	// registered — the pre-existing rule, unchanged by the gate.
-	resumed := buildSystemPrompt(cfg, dir, nil, "sess-123", full, "")
+	resumed := buildSystemPrompt(cfg, dir, nil, "sess-123", full, subagent.Persona{})
 	if strings.Contains(resumed, "## Memory Guidelines") {
 		t.Error("a resumed session must not re-append the Memory Guidelines block")
 	}
@@ -202,7 +202,7 @@ func TestBuildSystemPrompt_MemoryGuidelinesRecallOnly(t *testing.T) {
 		},
 	}
 
-	got := buildSystemPrompt(cfg, t.TempDir(), nil, "", prompts.MemoryGuidance{Recall: true}, "")
+	got := buildSystemPrompt(cfg, t.TempDir(), nil, "", prompts.MemoryGuidance{Recall: true}, subagent.Persona{})
 
 	if !strings.Contains(got, "## Memory Guidelines") {
 		t.Fatal("a recall-only session still needs the guidelines heading")
@@ -336,11 +336,11 @@ func TestBuildMainPrompt_DefaultIdentityByteCompat(t *testing.T) {
 	wantBase, wantEnd := prompts.BuildMarked(legacy)
 	want := wantBase + memoryGuidanceBlock(mem, "")
 
-	sp, end := buildSystemPromptMarked(cfg, dir, nil, "", mem, p.Body)
+	sp, end := buildSystemPromptMarked(cfg, dir, nil, "", mem, p)
 	if sp != want || end != wantEnd {
 		t.Fatalf("the persona seam changed the default prompt bytes:\n got  %q (anchor %d)\n want %q (anchor %d)", sp, end, want, wantEnd)
 	}
-	if sp != buildSystemPrompt(cfg, dir, nil, "", mem, p.Body) {
+	if sp != buildSystemPrompt(cfg, dir, nil, "", mem, p) {
 		t.Fatal("buildSystemPromptMarked diverged from buildSystemPrompt; the anchor must travel beside the bytes")
 	}
 	got := buildMainPrompt(cfg, SessionOptions{}, sp, end)
@@ -369,7 +369,7 @@ func TestBuildSystemPromptMarked_NonDefaultPersonaLayer(t *testing.T) {
 	dir := t.TempDir()
 	const body = "ORCHESTRATOR PERSONA BODY: plan before acting."
 
-	sp, end := buildSystemPromptMarked(cfg, dir, nil, "", prompts.MemoryGuidance{}, body)
+	sp, end := buildSystemPromptMarked(cfg, dir, nil, "", prompts.MemoryGuidance{}, subagent.Persona{Body: body})
 
 	identity := strings.TrimSpace(prompts.IdentityPrompt)
 	if sp[:end] != identity {
@@ -405,12 +405,72 @@ func TestBuildSubAgentBasePrompt_NeverCarriesOrchestratorPersona(t *testing.T) {
 	cwd := t.TempDir()
 
 	const body = "ORCHESTRATOR PERSONA BODY: special orchestrator guidance."
-	sp, _ := buildSystemPromptMarked(&config.Config{}, cwd, nil, "", prompts.MemoryGuidance{}, body)
+	sp, _ := buildSystemPromptMarked(&config.Config{}, cwd, nil, "", prompts.MemoryGuidance{}, subagent.Persona{Body: body})
 	if !strings.Contains(sp, body) {
 		t.Fatalf("orchestrator prompt must carry the persona body:\n%s", sp)
 	}
 
 	if got := buildSubAgentBasePrompt(cwd, nil); strings.Contains(got, body) {
 		t.Errorf("sub-agent base must not carry the orchestrator persona body:\n%s", got)
+	}
+}
+
+// TestBuildMarkedPrompt_ReplacePersonaBindsIdentity pins the `system:
+// replace` binding (parity W2): the persona body replaces the embedded
+// identity as the prompt's leading layer, the anchor follows the replaced
+// identity, the embedded identity text is gone, and directives injected at
+// the anchor land after the replaced identity — never at the prompt end.
+func TestBuildMarkedPrompt_ReplacePersonaBindsIdentity(t *testing.T) {
+	t.Setenv("YAAH_HOME", t.TempDir())
+
+	cfg := &config.Config{}
+	const body = "REPLACED IDENTITY: the session runs as this text alone."
+	layers := prompts.Layers{
+		Identity:    prompts.IdentityPrompt,
+		Environment: prompts.DetectEnvironment(t.TempDir()),
+	}
+	persona := subagent.Persona{Name: "replacer", Body: body, SystemReplace: true}
+
+	sp, end := buildMarkedPrompt(layers, "", prompts.MemoryGuidance{}, persona)
+
+	if !strings.HasPrefix(sp, body) {
+		t.Fatalf("a replace persona's body must lead the prompt:\n%q", sp[:min(len(sp), 120)])
+	}
+	if sp[:end] != body {
+		t.Fatalf("the anchor must sit just past the replaced identity: end=%d body=%d", end, len(body))
+	}
+	if strings.Contains(sp, strings.TrimSpace(prompts.IdentityPrompt)) {
+		t.Error("the replaced prompt must not carry the embedded identity text")
+	}
+	if !strings.Contains(sp, "## Environment") {
+		t.Error("environment must still layer after the replaced identity")
+	}
+
+	// Directives injected at the anchor — what the main prompt derives —
+	// land at the replaced identity's end (header), with the list item
+	// after the block preamble and before the next layer.
+	got := buildMainPrompt(cfg, SessionOptions{DirectiveOverrides: []string{"always run tests"}}, sp, end)
+	header := prompts.FormatDirectives([]string{"always run tests"})
+	idxHead := strings.Index(got, header)
+	if idxHead < 0 || idxHead != end+2 {
+		t.Fatalf("directives must land directly at the replaced identity's end: header=%d end=%d", idxHead, end)
+	}
+	idxEnv := strings.Index(got, "## Environment")
+	if idxEnv < 0 || idxEnv < idxHead {
+		t.Fatalf("directives must sit before the next layer: header=%d environment=%d", idxHead, idxEnv)
+	}
+}
+
+// TestBuildMarkedPrompt_ReplaceEmptyBodyKeepsEmbeddedIdentity pins the
+// guard: a replace persona with an empty body has nothing to swap in, so
+// the embedded identity stays and the prompt is byte-identical to a plain
+// layer-mode build with the same (empty) body.
+func TestBuildMarkedPrompt_ReplaceEmptyBodyKeepsEmbeddedIdentity(t *testing.T) {
+	layers := prompts.Layers{Identity: prompts.IdentityPrompt, Environment: "env layer"}
+
+	replace, _ := buildMarkedPrompt(layers, "", prompts.MemoryGuidance{}, subagent.Persona{SystemReplace: true, Body: "   "})
+	layered, _ := buildMarkedPrompt(layers, "", prompts.MemoryGuidance{}, subagent.Persona{})
+	if replace != layered {
+		t.Fatalf("an empty replace body must keep the embedded identity:\n got  %q\n want %q", replace, layered)
 	}
 }

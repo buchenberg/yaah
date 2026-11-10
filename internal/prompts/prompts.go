@@ -585,7 +585,7 @@ type MemoryGuidance struct {
 // Layers holds the composable pieces of the system prompt assembled
 // from multiple sources.
 type Layers struct {
-	Identity               string // embedded identity (always present)
+	Identity               string // the session identity: the embedded prompt, or the persona body under `system: replace`
 	Persona                string // orchestrator persona guidance layered after the identity (not for sub-agent prompts)
 	Environment            string // runtime OS/arch/shell context
 	SubAgentDispatch       string // resolved sub-agent provider/model + limits

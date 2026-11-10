@@ -40,6 +40,11 @@ type RoleDef struct {
 	// Normalized on load — see roleDefFrom; delegate-surface filtering
 	// keys off it (delegatable.go).
 	Mode string
+	// SystemReplace mirrors the role file's `system: replace` (parity
+	// W2): the body replaces the embedded identity in the session's
+	// system prompt instead of layering after it. Normalized on load —
+	// see roleDefFrom.
+	SystemReplace bool
 	// Provider and Model are the role's routing (parity W1, yaah-21uk.15):
 	// where the role's session (persona) or dispatch (delegate) runs.
 	// Empty means inherit — personas fall back to agents.default,
@@ -79,6 +84,7 @@ func roleDefFrom(fm rolefile.Frontmatter, body string) RoleDef {
 		Tools:         fm.Tools,
 		Output:        normalizeRoleOutput(fm.Output, fm.Name),
 		Mode:          normalizeRoleMode(fm.Mode, fm.Name),
+		SystemReplace: normalizeRoleSystem(fm.System, fm.Name),
 		MaxLoopCycles: fm.MaxLoopCycles,
 		MinLoopCycles: fm.MinLoopCycles,
 		MaxToolTurns:  fm.MaxToolTurns,
@@ -95,6 +101,13 @@ func roleDefFrom(fm rolefile.Frontmatter, body string) RoleDef {
 	// Clamp invalid budget floors instead of failing: a broken project
 	// role must not brick startup (plan §4.6). Config-level floors are
 	// hard-validated at load; role files only warn.
+	// The same honesty covers `system: replace` on a delegate-only role:
+	// nothing consumes RoleProfile.SystemReplace (dispatch prompts are the
+	// sub-agent identity + layered role guidance), so the key would be
+	// silently dead there — warn so the file's author knows.
+	if def.SystemReplace && def.Mode == "subagent" {
+		slog.Warn("role file: system: replace has no effect on delegate-only roles (it binds only session personas)", "role", def.DisplayName)
+	}
 	if def.MinLoopCycles < 0 {
 		slog.Warn("role file: negative min_iterations clamped to 0", "role", def.DisplayName, "value", def.MinLoopCycles)
 		def.MinLoopCycles = 0
@@ -144,6 +157,27 @@ func normalizeRoleMode(v, roleName string) string {
 	}
 }
 
+// normalizeRoleSystem validates the role file's `system:` field (parity
+// W2). Missing keeps the default layered behavior — the body renders as
+// persona guidance after the embedded identity. "replace" swaps the body
+// in FOR the embedded identity; environment, project instructions,
+// memory, skills, and session directives still layer after. An unknown
+// value warns and falls back to the layer: layering is where W1-era
+// files already ran, and a typo'd replace must not silently promote the
+// body to the session's identity — the one direction that cannot be
+// undone by the belt or mode axes.
+func normalizeRoleSystem(v, roleName string) bool {
+	switch v {
+	case "":
+		return false
+	case "replace":
+		return true
+	default:
+		slog.Warn("role file: unknown system value; falling back to layer", "role", roleName, "value", v)
+		return false
+	}
+}
+
 // ToProfile converts a parsed role definition into the runtime
 // RoleProfile used by the agent loop and sub-agent wiring.
 func (d RoleDef) ToProfile() RoleProfile {
@@ -155,6 +189,7 @@ func (d RoleDef) ToProfile() RoleProfile {
 		Tools:         d.Tools,
 		Output:        d.Output,
 		Mode:          d.Mode,
+		SystemReplace: d.SystemReplace,
 		Provider:      d.Provider,
 		Model:         d.Model,
 		Temperature:   d.Temperature,

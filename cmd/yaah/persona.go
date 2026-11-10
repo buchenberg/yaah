@@ -11,6 +11,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // sessionPersona is the small holder a session build carries the
@@ -174,10 +175,17 @@ func (s *agentSession) SetPersona(name string) error {
 		s.mu.Unlock()
 		return nil
 	}
-	system, main, promptChanged := s.rebuildPromptsLocked(persona.Body)
+	system, main, end, promptChanged := s.rebuildPromptsLocked(persona)
 	s.persona = persona
 	s.systemPrompt = system
 	s.mainPrompt = main
+	if promptChanged {
+		// The replaced identity rebinds the anchor with the persona: a
+		// replace-mode persona changes the identity block's bytes, so the
+		// construction-time anchor no longer points past it. Non-replace
+		// rebuilds return the same anchor as construction.
+		s.identityEnd = end
+	}
 	// The switch happened: gate the directive's supersession clause on
 	// it — earlier persona turns exist in the conversation only after a
 	// real switch.
@@ -222,9 +230,12 @@ func (s *agentSession) SetPersona(name string) error {
 	return nil
 }
 
-// rebuildPromptsLocked re-renders the system and main prompts with
-// personaBody bound into the persona layer, from the layers captured at
-// construction. Caller holds s.mu.
+// rebuildPromptsLocked re-renders the system and main prompts with the
+// given persona bound in (under `system: replace`, the persona body
+// rebinds as the identity layer — see buildMarkedPrompt), from the
+// layers captured at construction. Returns the rebuilt prompts, the
+// identity anchor for the rebuilt bytes, and whether the caller should
+// adopt them. Caller holds s.mu.
 //
 // The rebuild is only adopted when the layers still derive the session's
 // CURRENT systemPrompt — the fresh-construction state, where they differ
@@ -234,33 +245,103 @@ func (s *agentSession) SetPersona(name string) error {
 // rebuilding from them would rewrite environment, project instructions
 // and memory alongside the persona. The recorded prompt stands in that
 // case, and the switch lands everywhere else (budget, tools, gate).
-// promptChanged reports whether the caller should persist new prompt
-// bytes; a session that never captured layers (hand-built tests) cannot
-// rebuild at all.
-func (s *agentSession) rebuildPromptsLocked(personaBody string) (system, main string, promptChanged bool) {
+// promptChanged reports whether the caller should adopt the new bytes
+// and anchor; a session that never captured layers (hand-built tests)
+// cannot rebuild at all.
+func (s *agentSession) rebuildPromptsLocked(p subagent.Persona) (system, main string, end int, promptChanged bool) {
 	if s.promptLayers.Identity == "" {
-		return s.systemPrompt, s.mainPrompt, false
+		return s.systemPrompt, s.mainPrompt, s.identityEnd, false
 	}
 	// Verify the retained layers still derive the session's CURRENT
-	// prompt — rebuild with the CURRENT persona body must reproduce
-	// s.systemPrompt byte-for-byte. On a resume the persisted prompt
-	// won at construction (restoreSession), so the layers describe a
-	// different prompt than the session runs; rebuilding from them would
-	// rewrite environment, project instructions and memory alongside the
-	// persona. The recorded prompt stands in that case, and the switch
-	// lands everywhere else (budget, tools, gate).
-	if cur, _ := buildMarkedPrompt(s.promptLayers, s.opts.ResumeSessionID, s.promptMemory, s.persona.Body); cur != s.systemPrompt {
-		return s.systemPrompt, s.mainPrompt, false
+	// prompt — rebuild with the CURRENT persona must reproduce
+	// s.systemPrompt byte-for-byte, under replace semantics too: the
+	// current persona's own replace flag binds its body, so a replace
+	// session reproduces its replaced identity. On a resume the
+	// persisted prompt won at construction (restoreSession), so the
+	// layers describe a different prompt than the session runs;
+	// rebuilding from them would rewrite environment, project
+	// instructions and memory alongside the persona. The recorded
+	// prompt stands in that case, and the switch lands everywhere else
+	// (budget, tools, gate).
+	if cur, _ := buildMarkedPrompt(s.promptLayers, s.opts.ResumeSessionID, s.promptMemory, s.persona); cur != s.systemPrompt {
+		// A resumed session cannot re-derive its prompt from the retained
+		// layers (its memory snapshot/env/machine describe today, not the
+		// session's own bytes). But a switch to a replace persona must not
+		// silently no-op on its headline effect: splice the identity slice
+		// in place when it can be located in the stored prompt.
+		return s.spliceIdentityLocked(p)
 	}
-	// The identity anchor is discarded deliberately: the persona layer
-	// renders after the anchor, so the construction-time identityEnd
-	// stays valid for the rebuilt prompt.
-	system, _ = buildMarkedPrompt(s.promptLayers, s.opts.ResumeSessionID, s.promptMemory, personaBody)
+	// The anchor travels with the rebuild: under replace the persona
+	// body IS the identity, so the construction-time identityEnd does
+	// not necessarily point past the rebuilt identity. buildMarkedPrompt
+	// returns the exact anchor for the rebuilt bytes — the caller adopts
+	// it so directive injection stays after the identity whatever the
+	// switch did to it (a non-replace rebuild returns the same anchor as
+	// construction).
+	system, end = buildMarkedPrompt(s.promptLayers, s.opts.ResumeSessionID, s.promptMemory, p)
 	// Re-apply the construction-time tool-guidance suffix: the fresh
 	// base is bare buildMainPrompt output, but the session's live prompt
 	// carries the guidance blocks appendToolGuidance added — without
 	// this, a switch would silently drop the delegate/retained/belt/
 	// isolated/one-shot guidance from every subsequent loop.
-	main = buildMainPrompt(s.cfg, s.opts, system, s.identityEnd) + s.promptGuidance
-	return system, main, true
+	main = buildMainPrompt(s.cfg, s.opts, system, end) + s.promptGuidance
+	return system, main, end, true
+}
+
+// spliceIdentityLocked rewrites the stored prompt's identity slice without
+// touching the rest of the stored bytes — the resume-safe counterpart of
+// the from-layers rebuild. The old identity is located in the session's own
+// prompt (embedded substring, or the stored replace body's prefix when the
+// previous persona replaced it); a previous LAYER persona's body — which
+// rendered as the first layer after the anchor — is removed, keeping the
+// separator before the rest. The new persona then contributes the identity
+// slot (its body under `system: replace`, the embedded identity otherwise)
+// and — when it layers — a body layer after the anchor. Everything after
+// (environment, memory, directives, guidance suffix) stays byte-for-byte
+// the session's own: a switch moves the identity, not what it knows.
+//
+// Un-locatable state stays put and reports no change: a stored replace body
+// the current role file no longer matches (or an empty new identity) cannot
+// be spliced without guessing at an offset, and a wrong guess corrupts the
+// identity mid-block. The caller then lands budget, tools, gate, and
+// routing as usual while the identity remains the stored one.
+// Caller holds s.mu.
+func (s *agentSession) spliceIdentityLocked(p subagent.Persona) (system, main string, end int, promptChanged bool) {
+	sep := "\n\n"
+	newIdentity, newBodyLayer := "", ""
+	if p.SystemReplace {
+		newIdentity = strings.TrimSpace(p.Body)
+	} else {
+		newIdentity = strings.TrimSpace(prompts.IdentityPrompt)
+		newBodyLayer = strings.TrimSpace(p.Body)
+	}
+	if newIdentity == "" {
+		return s.systemPrompt, s.mainPrompt, s.identityEnd, false
+	}
+	// BuildMarked renders the identity as parts[0], so the identity leads
+	// the prompt by construction; anything else is not spliceable.
+	oldStart := 0
+	if !s.persona.SystemReplace {
+		oldStart = strings.Index(s.systemPrompt, strings.TrimSpace(prompts.IdentityPrompt))
+	}
+	old := identityAnchorFor(s.systemPrompt, s.persona)
+	if old < 0 || oldStart != 0 {
+		return s.systemPrompt, s.mainPrompt, s.identityEnd, false
+	}
+	tail := s.systemPrompt[old:]
+	if !s.persona.SystemReplace {
+		// Layer mode renders the persona body as its own layer directly
+		// after the anchor; the splice must not leave that body behind.
+		if body := strings.TrimSpace(s.persona.Body); body != "" {
+			tail = strings.TrimPrefix(tail, sep+body)
+		}
+	}
+	if newBodyLayer != "" {
+		system = newIdentity + sep + newBodyLayer + tail
+	} else {
+		system = newIdentity + tail
+	}
+	end = len(newIdentity)
+	main = buildMainPrompt(s.cfg, s.opts, system, end) + s.promptGuidance
+	return system, main, end, true
 }

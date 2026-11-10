@@ -49,6 +49,10 @@ type RoleProfile struct {
 	// Always populated — roleDefFrom normalizes a missing key to "all"
 	// (parity W3) and an unknown value, fail-closed, to "subagent".
 	Mode string
+	// SystemReplace mirrors the role file's `system: replace` (parity
+	// W2): a session running this role as its persona binds the body as
+	// the identity layer. Normalized on load — see roleDefFrom.
+	SystemReplace bool
 	// Provider/Model/Temperature/TopP are the role's routing and
 	// sampling (parity W1): dispatch resolves provider/model as
 	// per-call > config role entry > these fields > parent session
