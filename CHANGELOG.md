@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.161.0](https://github.com/buchenberg/yaah/compare/v0.160.0...v0.161.0) (2026-11-10)
+
+
+### Features
+
+* **roles:** W6 polling watcher hot-reloads the role registry on raw file edits ([4715ede](https://github.com/buchenberg/yaah/commit/4715ede5eb80a57ebabf931b7e4ce312902a1e57))
+* **roles:** W6 polling watcher hot-reloads the role registry on raw file edits ([3c63bef](https://github.com/buchenberg/yaah/commit/3c63bef1e1c087a514230dcea2784b30ba27290b))
+
+
+### Bug Fixes
+
+* **roles:** rebuild role reloads from the dir union; honest watcher lifecycle ([74b91ac](https://github.com/buchenberg/yaah/commit/74b91ac4d41fd82f5b0849f25bfea54b99d0da07))
+
 ## [0.160.0](https://github.com/buchenberg/yaah/compare/v0.159.0...v0.160.0) (2026-11-10)
 
 
