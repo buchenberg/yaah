@@ -274,10 +274,9 @@ type agentSession struct {
 	reaper     *supervision.Reaper // stale dispatch-scope sweeper (yaah-95ri.4)
 
 	// roleWatcher polls the role search paths and reloads the default
-	// registry on raw file edits (W6). Closed AFTER the background-jobs
-	// drain in teardown: an in-flight dispatch should finish against the
-	// registry it loaded rather than have the swap land mid-run. Nil only
-	// on the (warned) watcher-construction failure path.
+	// registry on raw file edits (W6). Closed with the reaper in teardown,
+	// before the background-jobs drain. Nil only on the (warned)
+	// watcher-construction failure path.
 	roleWatcher *runner.RoleWatcher
 
 	// egressBroker is the session's sub-agent egress broker (Plan 7 Phase 3),
@@ -466,9 +465,13 @@ func (s *agentSession) close() {
 	if s.reaper != nil {
 		s.reaper.Close()
 	}
-	// Role hot-reload watcher (W6): stop the scan loop and join it. A
-	// reload landing on a stopped session would swap the registry for no
-	// reader; closing here keeps teardown single-owner like the reaper.
+	// Role hot-reload watcher (W6): stop the scan loop and join it,
+	// before the background-jobs drain. The ordering is deliberate and
+	// harmless where it overlaps: the registry swap is atomic, dispatch
+	// resolves the role profile at dispatch time (so a reload landing
+	// while jobs drain cannot change what an in-flight dispatch sees),
+	// and closing first guarantees that no swap happens once teardown has
+	// started mutating the session's other resources.
 	if s.roleWatcher != nil {
 		s.roleWatcher.Close()
 	}

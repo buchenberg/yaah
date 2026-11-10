@@ -3,6 +3,7 @@ package runner
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -138,4 +139,77 @@ func TestRoleWatcher_CloseStopsReloads(t *testing.T) {
 	}
 	// Second Close must be a no-op, not a double close panic.
 	w.Close()
+}
+
+func TestRoleWatcher_CloseBeforeStart(t *testing.T) {
+	dir := t.TempDir()
+	r := &countingResolver{}
+	w, err := NewRoleWatcher([]string{dir}, nil, r)
+	if err != nil {
+		t.Fatalf("NewRoleWatcher: %v", err)
+	}
+
+	// Close without Start must return promptly, not join a loop that
+	// will never close the done channel.
+	w.Close()
+
+	// A Start after Close must stay inert — the watcher is closed for
+	// good, not armed for a future loop.
+	if err := os.WriteFile(filepath.Join(dir, "early.md"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	w.Start()
+	time.Sleep(60 * time.Millisecond)
+	if n := r.count(); n != 0 {
+		t.Fatalf("reload after Close-then-Start: got %d, want 0", n)
+	}
+	w.Close() // idempotent even in this ordering
+}
+
+func TestRoleWatcher_DoubleStartSingleLoop(t *testing.T) {
+	dir := t.TempDir()
+	r := &countingResolver{}
+	w, err := NewRoleWatcher([]string{dir}, nil, r)
+	if err != nil {
+		t.Fatalf("NewRoleWatcher: %v", err)
+	}
+	w.Interval = 20 * time.Millisecond
+	// Two Starts must leave one loop: a second would double-tick and,
+	// worse, both exit paths would close the shared done channel.
+	w.Start()
+	w.Start()
+	defer w.Close()
+
+	r.waitFor(t, 0) // the single initial reload
+	time.Sleep(60 * time.Millisecond)
+	if n := r.count(); n != 1 {
+		t.Fatalf("double Start produced %d reloads; want 1 (one loop)", n)
+	}
+}
+
+func TestRoleWatcher_UnreadableFileOmittedNotStoredEmpty(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("broken-symlink read failure is a POSIX-shaped guarantee")
+	}
+	dir := t.TempDir()
+
+	// A .md entry the directory lists but that cannot be read: the open
+	// fails, so the snapshot must omit the file (never store "") — an
+	// omitted file behaves like a deleted one, and a later readable write
+	// at the same path is a fresh change.
+	if err := os.Symlink(filepath.Join(dir, "no-such-target.md"), filepath.Join(dir, "broken.md")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	sig := (&RoleWatcher{Dirs: []string{dir}}).snapshot()
+	if _, exists := sig[filepath.Join(dir, "broken.md")]; exists {
+		t.Fatal("unreadable .md stored in snapshot; want omitted (never an empty signature)")
+	}
+
+	// The cancellation scenario: a deletion (gone.md) and a failed create
+	// (broken.md) in one scan must still read as a change — true only
+	// because the failed create is omitted rather than stored "".
+	prev := map[string]string{filepath.Join(dir, "gone.md"): "hash"}
+	if !changed(prev, sig) {
+		t.Fatal("failed-create cancelled a deletion in one scan")
+	}
 }

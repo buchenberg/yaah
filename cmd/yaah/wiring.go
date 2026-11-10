@@ -104,6 +104,41 @@ func rebuildDefaultRoleRegistry(cwd string) {
 	subagent.SetDefaultRoleRegistry(reg)
 }
 
+// roleDirsUnion returns a copy of the accumulated union of every role
+// search directory contributed so far, in contribution order.
+func roleDirsUnion() []string {
+	rolefileDirsMu.Lock()
+	defer rolefileDirsMu.Unlock()
+	dirs := make([]string, len(rolefileDirs))
+	copy(dirs, rolefileDirs)
+	return dirs
+}
+
+// unionRoleResolver rebuilds the process-wide role registry from built-ins
+// plus the accumulated union of role directories instead of the dirs its
+// caller passes. The registry is deliberately a cross-session union
+// (rebuildDefaultRoleRegistry above): a reload from one session's
+// search paths alone would evict every other session's contributions —
+// a plain swap the accumulator comment calls out as the exact hazard.
+// Raw user edits and role-tool mutations must therefore converge on the
+// union too, so the role tool and the hot-reload watcher (both wired with
+// this resolver) and the /reload-roles command (same helper directly)
+// cannot shrink or ping-pong the registry; the second parameter is
+// accepted for the tools.RoleResolver shape and documented unused.
+type unionRoleResolver struct {
+	runner.SubAgentRoleResolver
+}
+
+// ReloadRoles rebuilds from built-ins plus the accumulated union, ignoring
+// the passed searchDirs (see the type comment for why that is correct here
+// and wrong anywhere else).
+func (unionRoleResolver) ReloadRoles(builtinFiles map[string][]byte, _ []string) error {
+	return subagent.ReloadDefaultRoles(subagent.ReloadDefaultRolesOptions{
+		BuiltinFiles: builtinFiles,
+		SearchDirs:   roleDirsUnion(),
+	})
+}
+
 // canonicalStoredCwd normalizes a session's working directory before it
 // is persisted: the same canonicalization (absolute, symlink-resolved)
 // the engine-level session registry and its filters apply, so stored

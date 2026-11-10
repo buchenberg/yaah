@@ -48,9 +48,17 @@ type RoleWatcher struct {
 	// something short.
 	Interval time.Duration
 
-	stop     chan struct{}
-	stopOnce sync.Once
-	done     chan struct{}
+	stop chan struct{}
+	done chan struct{}
+
+	// started and closed serialize the lifecycle and make both callers'
+	// documented contracts real: a double Start must not launch a second
+	// poll loop (the loops would both run and both close the shared done
+	// channel — "close of closed channel"), and a Close before Start must
+	// return immediately and also keep any later Start inert.
+	mu      sync.Mutex
+	started bool
+	closed  bool
 }
 
 // NewRoleWatcher validates the minimum wiring and returns a stopped
@@ -69,62 +77,106 @@ func NewRoleWatcher(dirs []string, builtinFiles map[string][]byte, resolver tool
 	}, nil
 }
 
-// Start launches the scan loop. It returns immediately; Close shuts the
-// loop down. Start twice is a no-op the second time — the loop does the
-// initial reload itself, so a watcher started on an unmodified tree still
-// leaves the registry exactly as it is.
+// Start launches the scan loop. It returns immediately. Start is a no-op
+// when already started, or when Close ran first — a closed watcher never
+// runs. The loop does the initial reload itself, so a watcher started on
+// an unmodified tree still leaves the registry exactly as it is.
 func (w *RoleWatcher) Start() {
+	w.mu.Lock()
+	if w.started || w.closed {
+		w.mu.Unlock()
+		return
+	}
+	w.started = true
+	w.mu.Unlock()
+	go w.loop()
+}
+
+// loop is the scan cycle; exactly one instance runs per watcher, launched
+// by the Start that won the started race.
+func (w *RoleWatcher) loop() {
+	defer close(w.done)
+	// first is the initial-scan marker: the first comparison always
+	// runs against an empty snapshot, so the loop reloads once at
+	// startup. That initial reload is harmless (the wiring already
+	// loaded the same files) and keeps the changed/unchanged logic a
+	// single path.
+	first := true
+	var prev map[string]string
 	interval := w.Interval
 	if interval <= 0 {
 		interval = time.Second
 	}
-	go func() {
-		defer close(w.done)
-		// first is the initial-scan marker: the first comparison always
-		// runs against an empty snapshot, so the loop reloads once at
-		// startup. That initial reload is harmless (the wiring already
-		// loaded the same files) and keeps the changed/unchanged logic a
-		// single path.
-		first := true
-		var prev map[string]string
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-w.stop:
-				return
-			case <-ticker.C:
-			}
-			cur := w.snapshot()
-			if first || changed(prev, cur) {
-				first = false
-				// Store before reloading: a concurrent edit mid-reload
-				// then shows up as a newer change on the next scan
-				// instead of being swallowed by this one.
-				prev = cur
-				if err := w.Resolver.ReloadRoles(w.BuiltinFiles, w.Dirs); err != nil {
-					fmt.Fprintf(os.Stderr, "warning: role watcher reload failed: %v\n", err)
-				}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-w.stop:
+			return
+		case <-ticker.C:
+		}
+		cur := w.snapshot()
+		if first || changed(prev, cur) {
+			first = false
+			// Store before reloading: a concurrent edit mid-reload
+			// then shows up as a newer change on the next scan
+			// instead of being swallowed by this one.
+			prev = cur
+			if err := w.Resolver.ReloadRoles(w.BuiltinFiles, w.Dirs); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: role watcher reload failed: %v\n", err)
 			}
 		}
-	}()
+	}
 }
 
 // Close stops the scan loop and waits for it to exit. Close is safe to
 // call multiple times and from a teardown path that cannot know whether
-// Start ever ran.
+// Start ever ran: before Start it marks the watcher closed and returns
+// immediately (a later Start then stays inert); after Start it closes the
+// stop channel and joins the loop. A no-op on an already-closed watcher.
 func (w *RoleWatcher) Close() {
-	w.stopOnce.Do(func() { close(w.stop) })
-	<-w.done
+	w.mu.Lock()
+	if w.closed {
+		// Already joined or never started: done is closed by the first
+		// Close's wait, and a never-started loop has nothing to join.
+		w.mu.Unlock()
+		if w.started {
+			<-w.done
+		}
+		return
+	}
+	w.closed = true
+	wasStarted := w.started
+	if wasStarted {
+		close(w.stop)
+	}
+	w.mu.Unlock()
+	if wasStarted {
+		<-w.done
+	}
 }
 
 // snapshot hashes every .md file under the watched directories keyed by
 // path. Files are read fully and hashed, so the signature is content, not
-// metadata: the loop cannot miss an edit because timestamps collided, and
-// a deleted file drops out of the map, which is itself a change.
+// metadata: the loop cannot miss an edit because timestamps collided. An
+// unreadable file (vanished between directory read and open, permissions
+// tightened mid-scan) contributes no entry at all — the snapshot treats it
+// exactly like a deleted file, and a directory that turned unreadable
+// drops every file it used to contribute, so those transitions are
+// detected changes rather than silent freezes of the stored snapshot. This
+// is also why no "" marker may be stored: an absent key and an unreadable
+// file must compare equal or a failed create silently cancels a real
+// deletion in the same scan.
 func (w *RoleWatcher) snapshot() map[string]string {
 	sig := make(map[string]string)
+	seenDir := make(map[string]bool, len(w.Dirs))
 	for _, dir := range w.Dirs {
+		if seenDir[dir] {
+			// RoleSearchPaths can yield the same directory twice (home
+			// as an ancestor and as ~); scan it once.
+			continue
+		}
+		seenDir[dir] = true
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue // missing or unreadable directory: nothing to watch
@@ -134,21 +186,16 @@ func (w *RoleWatcher) snapshot() map[string]string {
 			if e.IsDir() || !strings.HasSuffix(name, ".md") {
 				continue
 			}
-			path := filepath.Join(dir, name)
-			if sig[path] != "" {
-				// Duplicate dir entries share one path key.
-				continue
+			if h := fileHash(filepath.Join(dir, name)); h != "" {
+				sig[filepath.Join(dir, name)] = h
 			}
-			sig[path] = fileHash(path)
 		}
 	}
 	return sig
 }
 
 // fileHash reads the file and returns its hex SHA-256, or "" when the
-// read fails (a file vanishing between ReadDir and read): "" keyed at the
-// path differs from any content signature, so the next scan still sees
-// the vanish as a change.
+// read fails (caller omits the entry — see snapshot).
 func fileHash(path string) string {
 	f, err := os.Open(path)
 	if err != nil {

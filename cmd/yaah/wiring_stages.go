@@ -550,9 +550,14 @@ func buildMCPSkills(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 	// session.
 	if ws.sessionSandbox == nil {
 		tr.reg.Register(&tools.RoleTool{
-			Dirs:         roleDirs,
+			Dirs: roleDirs,
+			// Reload through the union: the process-wide registry carries
+			// every session's contributions (multi-session ACP); a reload
+			// from this session's paths alone would evict the rest. The
+			// union resolver ignores the tool's Dirs for reloads only —
+			// writes still land in Dirs[0], which the union already holds.
 			BuiltinFiles: runner.BuiltinRoleFiles(),
-			Resolver:     runner.SubAgentRoleResolver{},
+			Resolver:     unionRoleResolver{},
 		})
 	} else {
 		tr.omittedTools = append(tr.omittedTools, "role")
@@ -681,20 +686,24 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 	wireLaneRouting(st)
 	wireBackgroundJobs(st, tr)
 	registerSubAgentTools(st, cfg, tr)
-	startRoleWatcher(st, ws)
+	startRoleWatcher(st)
 
 	return st, nil
 }
 
 // startRoleWatcher starts the polling watcher that reloads the default
 // role registry when role files change outside the role tool (W6). It
-// reuses the search paths and the same resolver the role tool's reload
-// path uses, so tool mutations and raw file edits converge on one
-// registry swap. A construction failure only disables hot reload — the
-// registry keeps serving the definitions loaded at startup — and reports
-// the reason on stderr, matching the store-open posture above.
-func startRoleWatcher(st *loopInfraStage, ws *workspaceStage) {
-	w, err := runner.NewRoleWatcher(runner.RoleSearchPaths(ws.cwd), runner.BuiltinRoleFiles(), runner.SubAgentRoleResolver{})
+// watches and reloads the accumulated union of role directories — the set
+// the process-wide registry was actually built from, which spans every
+// session's cwd in a multi-session process, not just this one's — so no
+// reload can evict a sibling session's contributions and no contributed
+// directory goes unwatched: each session build starts a watcher scoped to
+// the union of everything contributed so far, including its own paths. A
+// construction failure only disables hot reload — the registry keeps
+// serving the definitions loaded at startup — and reports the reason on
+// stderr, matching the store-open posture above.
+func startRoleWatcher(st *loopInfraStage) {
+	w, err := runner.NewRoleWatcher(roleDirsUnion(), runner.BuiltinRoleFiles(), unionRoleResolver{})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: role hot reload disabled: %v\n", err)
 		return

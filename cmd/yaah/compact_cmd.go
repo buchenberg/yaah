@@ -164,7 +164,6 @@ func (s *agentSession) compactContext() {
 func (s *agentSession) reloadRoles() {
 	s.mu.RLock()
 	ch := s.ctrlCh
-	cwd := s.cwd
 	s.mu.RUnlock()
 
 	msg := func(text string) {
@@ -180,7 +179,11 @@ func (s *agentSession) reloadRoles() {
 
 	opts := subagent.ReloadDefaultRolesOptions{
 		BuiltinFiles: runner.BuiltinRoleFiles(),
-		SearchDirs:   runner.RoleSearchPaths(cwd),
+		// The process-wide registry is the union of every session's
+		// contributions (see rebuildDefaultRoleRegistry): reloading from
+		// this session's paths alone would evict the rest, so /reload-roles
+		// rebuilds from the same union the other reload paths use.
+		SearchDirs: roleDirsUnion(),
 	}
 	if err := subagent.ReloadDefaultRoles(opts); err != nil {
 		msg(fmt.Sprintf("role reload failed: %v", err))
