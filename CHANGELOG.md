@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.157.0](https://github.com/buchenberg/yaah/compare/v0.156.0...v0.157.0) (2026-11-10)
+
+
+### Features
+
+* **personas:** W2 prompt-replace — `system: replace` swaps the persona body in as the identity ([d643312](https://github.com/buchenberg/yaah/commit/d643312d099339358f1a3fd7565a09010910e97f))
+
+
+### Bug Fixes
+
+* **personas:** address PR [#849](https://github.com/buchenberg/yaah/issues/849) review — resume anchor, resume-switch splice, delegate-only warning, docs ([ca3a43e](https://github.com/buchenberg/yaah/commit/ca3a43e36702bd36453478a5a9195c755845ce82))
+
 ## [0.156.0](https://github.com/buchenberg/yaah/compare/v0.155.0...v0.156.0) (2026-11-10)
 
 
