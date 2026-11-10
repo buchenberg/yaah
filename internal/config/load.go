@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/buchenberg/yaah/internal/permissions"
 	"gopkg.in/yaml.v3"
 )
 
@@ -170,6 +171,17 @@ type Defaults struct {
 	// name them (yaah-w8x). The session is told which tools are absent so
 	// it does not call them.
 	Tools []string `yaml:"tools"`
+
+	// Permissions is the global permission ruleset (parity W5): ordered
+	// per-tool allow/deny/ask rules over a resource glob, evaluated
+	// last-match-wins. It applies to every agent; a session persona's
+	// own rules are appended after it, so the persona wins on overlap.
+	// Parsed by the permissions package — an unknown effect fails the
+	// config load (config-level floors are hard-validated, unlike role
+	// files which only warn). The rules refine within the tool belt and
+	// can never widen it; the mode axis (read-only) stays an
+	// unbypassable floor above them.
+	Permissions permissions.Rules `yaml:"permissions"`
 
 	// Compaction controls context summarisation behaviour.
 	CompactionThreshold    float64 `yaml:"compaction_threshold"`     // fraction of ContextWindow; 0 = 0.5

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
+	"github.com/buchenberg/yaah/internal/permissions"
 	"github.com/buchenberg/yaah/internal/tools"
 )
 
@@ -123,6 +124,30 @@ func TestClassifyDanger_MCPToolsGatedByPolicy(t *testing.T) {
 			t.Errorf("mcp_approval=deny should gate MCP tools (registered=%v); got %v", registered, got)
 		}
 	}
+	// W5: the ruleset narrows an MCP decision but never widens it — a
+	// deny rule on an MCP tool fires even under an allow policy, and an
+	// allow rule cannot downgrade the default ask.
+	{
+		reg := tools.NewEmptyRegistry()
+		l := &Loop{Registry: reg, Config: LoopConfig{
+			MCPApproval:  "allow",
+			MCPToolNames: map[string]bool{"github_create_issue": true},
+			Permissions:  permissions.Rules{{Tool: "github_create_issue", Effect: permissions.Deny}},
+		}}
+		if got := l.classifyGate("github_create_issue", "{}"); got != pipeline.GateDeny {
+			t.Errorf("ruleset deny on allow-policy MCP tool = %v, want GateDeny", got)
+		}
+	}
+	{
+		reg := tools.NewEmptyRegistry()
+		l := &Loop{Registry: reg, Config: LoopConfig{
+			MCPToolNames: map[string]bool{"github_create_issue": true},
+			Permissions:  permissions.Rules{{Tool: "github_create_issue", Effect: permissions.Allow}},
+		}}
+		if got := l.classifyGate("github_create_issue", "{}"); got != pipeline.GateAsk {
+			t.Errorf("ruleset allow must not downgrade MCP ask = %v, want GateAsk", got)
+		}
+	}
 	// A name that is neither registered nor MCP-known stays ungated even
 	// under deny — the policy applies to identified MCP tools only.
 	if got := newLoop("deny", false).classifyGate("unknown_tool", "{}"); got != pipeline.GatePass {
@@ -193,3 +218,80 @@ func (f *fakeRemoteTool) Name() string                                          
 func (f *fakeRemoteTool) Description() string                                      { return "fake remote tool" }
 func (f *fakeRemoteTool) Schema() json.RawMessage                                  { return json.RawMessage(`{}`) }
 func (f *fakeRemoteTool) Execute(ctx context.Context, args string) (string, error) { return "", nil }
+
+// TestClassifyGate_PermissionRuleset pins the W5 resolver order: the
+// ruleset is consulted after the mode-axis floor and before the danger
+// classification, deny strips, ask routes to the approval pipeline, and
+// allow only falls through — it never bypasses the dangerous-call
+// GateGlobal posture, and in read-only mode it never re-enables a
+// withheld tool. Matching domains (plan W5.2): bash command strings,
+// file-tool paths, everything else tool-name-only.
+func TestClassifyGate_PermissionRuleset(t *testing.T) {
+	newLoop := func(level ToolsLevel, rules permissions.Rules) *Loop {
+		reg := tools.NewEmptyRegistry()
+		reg.Register(&tools.GitTool{})
+		return &Loop{Registry: reg, Config: LoopConfig{ToolsLevel: level, Permissions: rules}}
+	}
+	rules := permissions.Rules{
+		{Tool: "bash", Resource: "git push*", Effect: permissions.Ask},
+		{Tool: "bash", Resource: "git status*", Effect: permissions.Allow},
+		{Tool: "webfetch", Effect: permissions.Deny},
+	}
+
+	// ask routes through the approval pipeline even though the call is
+	// dangerous and the global posture would have been GateGlobal.
+	if got := newLoop(FullTools, rules).classifyGate("bash", `{"command":"git push origin main"}`); got != pipeline.GateAsk {
+		t.Errorf("ruleset ask on dangerous call = %v, want GateAsk", got)
+	}
+	// deny strips a non-dangerous tool outright.
+	if got := newLoop(FullTools, rules).classifyGate("webfetch", "{}"); got != pipeline.GateDeny {
+		t.Errorf("ruleset deny = %v, want GateDeny", got)
+	}
+	// allow falls through to the danger classification: read is not
+	// dangerous, so it passes.
+	safeAllow := permissions.Rules{{Tool: "read", Effect: permissions.Allow}}
+	if got := newLoop(FullTools, safeAllow).classifyGate("read", `{"filePath":"x.md"}`); got != pipeline.GatePass {
+		t.Errorf("ruleset allow on safe call = %v, want GatePass", got)
+	}
+	// allow does NOT bypass the dangerous-call posture: an allow rule on a
+	// mutating command still lands on GateGlobal (the approval mode
+	// decides), never GatePass.
+	allowRm := permissions.Rules{{Tool: "bash", Resource: "rm*", Effect: permissions.Allow}}
+	if got := newLoop(FullTools, allowRm).classifyGate("bash", `{"command":"rm -rf /"}`); got != pipeline.GateGlobal {
+		t.Errorf("ruleset allow on dangerous call = %v, want GateGlobal", got)
+	}
+	// The mode-axis floor beats every rule: in read-only mode a dangerous
+	// call is withheld even when a rule allows or asks it.
+	for _, rs := range []permissions.Rules{rules, allowRm} {
+		if got := newLoop(ReadOnlyTools, rs).classifyGate("bash", `{"command":"git push origin main"}`); got != pipeline.GateWithheld {
+			t.Errorf("read-only floor beaten by ruleset = %v, want GateWithheld", got)
+		}
+	}
+	// No matching rule: behavior is exactly the pre-W5 gates.
+	if got := newLoop(FullTools, rules).classifyGate("git", `{"action":"commit","message":"x"}`); got != pipeline.GateGlobal {
+		t.Errorf("unmatched rule on dangerous call = %v, want GateGlobal", got)
+	}
+	if got := newLoop(FullTools, nil).classifyGate("bash", `{"command":"git push"}`); got != pipeline.GateGlobal {
+		t.Errorf("no ruleset on dangerous call = %v, want GateGlobal", got)
+	}
+}
+
+// TestAdmitTool_PermissionDeny pins the always-on enforcement: a ruleset
+// deny refuses at dispatch even though the approval middleware (the only
+// ask path) is optional and may be disabled. Ask is deliberately not
+// enforced here — dispatch cannot prompt.
+func TestAdmitTool_PermissionDeny(t *testing.T) {
+	l := &Loop{Config: LoopConfig{Permissions: permissions.Rules{
+		{Tool: "bash", Resource: "rm -rf*", Effect: permissions.Deny},
+		{Tool: "bash", Resource: "git push*", Effect: permissions.Ask},
+	}}}
+	if ok, err := l.admitTool("bash", `{"command":"rm -rf /"}`); ok || err == nil {
+		t.Errorf("ruleset deny must refuse at dispatch, got (%v, %v)", ok, err)
+	}
+	if ok, err := l.admitTool("bash", `{"command":"git push origin"}`); !ok || err != nil {
+		t.Errorf("ruleset ask is the middleware's call, not dispatch's: got (%v, %v)", ok, err)
+	}
+	if ok, err := l.admitTool("bash", `{"command":"ls"}`); !ok || err != nil {
+		t.Errorf("unmatched rule must pass: got (%v, %v)", ok, err)
+	}
+}

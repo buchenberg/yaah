@@ -7,6 +7,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/permissions"
 	"github.com/buchenberg/yaah/internal/tools"
 )
 
@@ -338,4 +339,33 @@ func TestPersonaNarrowing_PerRunLoopSeam(t *testing.T) {
 			t.Error("read-only mode's inspection set admits bash")
 		}
 	})
+}
+
+// TestMergePermissions pins the composition order (parity W5.4): global
+// config rules first, persona rules appended after, so under
+// last-match-wins the persona's rule wins wherever both name the same
+// tool-and-resource — and neither side alone is disturbed.
+func TestMergePermissions(t *testing.T) {
+	global := permissions.Rules{{Tool: "edit", Resource: "*", Effect: permissions.Deny}}
+	persona := permissions.Rules{{Tool: "edit", Resource: "*.md", Effect: permissions.Allow}}
+
+	merged := mergePermissions(global, persona)
+	if len(merged) != 2 {
+		t.Fatalf("merged %d rules, want 2", len(merged))
+	}
+	// The persona's later rule wins on the overlap.
+	if effect, ok := merged.Match("edit", "notes.md"); !ok || effect != permissions.Allow {
+		t.Errorf("persona rule must win on overlap: got (%v, %v)", effect, ok)
+	}
+	if effect, ok := merged.Match("edit", "main.go"); !ok || effect != permissions.Deny {
+		t.Errorf("global rule still governs non-overlap: got (%v, %v)", effect, ok)
+	}
+
+	// One-sided rule sets pass through without copying.
+	if got := mergePermissions(nil, persona); len(got) != 1 || got[0] != persona[0] {
+		t.Errorf("persona-only merge = %+v", got)
+	}
+	if got := mergePermissions(global, nil); len(got) != 1 || got[0] != global[0] {
+		t.Errorf("global-only merge = %+v", got)
+	}
 }

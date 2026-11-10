@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/buchenberg/yaah/internal/permissions"
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/rolefile"
 )
@@ -76,6 +77,13 @@ type Persona struct {
 	// provider's default; an explicit 0 is a real setting.
 	Temperature *float64
 	TopP        *float64
+
+	// Permissions carries the role file's `permissions:` ruleset (parity
+	// W5) into the session loop: at wiring it is appended after the
+	// global config rules, so the persona's rules win on overlap
+	// (last-match-wins, opencode semantics). Empty means no persona
+	// rules — the shipped built-ins leave it empty.
+	Permissions []permissions.Rule
 }
 
 // The built-in personas are defined by role files shipped in the
@@ -243,5 +251,6 @@ func registryPersona(reg *RoleRegistry, role SubAgentRole) (Persona, bool) {
 		Model:         def.Model,
 		Temperature:   def.Temperature,
 		TopP:          def.TopP,
+		Permissions:   def.Permissions,
 	}, true
 }

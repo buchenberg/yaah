@@ -11,6 +11,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/llm"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/jobs"
+	"github.com/buchenberg/yaah/internal/permissions"
 	"github.com/buchenberg/yaah/internal/pubsub"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
@@ -241,6 +242,14 @@ type LoopConfig struct {
 	// MCPToolNames lists tool names registered from MCP servers so
 	// classifyDanger can apply MCPApproval to them.
 	MCPToolNames map[string]bool
+	// Permissions is the merged permission ruleset (parity W5): the
+	// global config rules first, the session persona's rules appended
+	// after, so the persona wins on overlap (last-match-wins). Consulted
+	// by classifyGate after the mode-axis floor and before the approval
+	// posture; admitTool additionally enforces deny at dispatch so a
+	// disabled approval pipeline cannot silently bypass it. Nil or empty
+	// means no rules — behavior is exactly the pre-W5 gates.
+	Permissions permissions.Rules
 	// ToolSpillDir is the directory where oversized tool results are
 	// spilled to disk. Injected by the composition root (the yaah config
 	// dir); empty disables spilling and the truncation hint carries no
