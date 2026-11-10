@@ -149,11 +149,15 @@ func TestModeDirective_BothAxes(t *testing.T) {
 
 // Every directive names who switches agents, through which surfaces,
 // and that the switch is announced in-band — and never tells the model it can
-// switch itself.
+// switch itself. It also pins the supersession clause (0.155.0 bug
+// report): a mid-session persona switch keeps the conversation, so the
+// directive must tell the model to drop the old character — otherwise a
+// personality persona (grump) survives the switch in model behavior
+// even though the prompt/directive/state all flipped correctly.
 func TestModeDirective_NamesLeavingMechanismAndNotice(t *testing.T) {
 	plan, _ := subagent.ResolvePersona(subagent.PlanPersonaName)
 	build, _ := subagent.ResolvePersona(subagent.BuildPersonaName)
-	shared := []string{"/agent", "web palette", "session/set_agent", "question", "in-band", "agent-change notice"}
+	shared := []string{"/agent", "web palette", "session/set_agent", "question", "in-band", "agent-change notice", "supersedes any persona named earlier"}
 	for _, persona := range []subagent.Persona{plan, build} {
 		t.Run(persona.Name, func(t *testing.T) {
 			s := &agentSession{mainPrompt: "BASE PROMPT BODY", persona: persona}

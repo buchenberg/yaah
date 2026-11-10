@@ -119,6 +119,7 @@ func (s *agentSession) modeDirective(persona subagent.Persona) string {
 	level := sessionToolsLevel(readOnly)
 	return prompts.InjectAfterIdentityAt(main, end, []string{
 		personaLabel(persona.Name) + " persona is active: " + regimeSentence(level),
+		"This persona supersedes any persona named earlier in this conversation: earlier turns ran under a previous agent, so ignore that character, style and complaints — behave as the persona named above from your next word on.",
 		"Only the user switches agents: /agent <name> in the TUI and REPL, the web palette, or ACP session/set_agent. You may ask for a switch with the question tool or in your reply.",
 		"An agent-change notice appears in-band in the conversation when the persona switches.",
 	})
