@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.162.0](https://github.com/buchenberg/yaah/compare/v0.161.0...v0.162.0) (2026-11-10)
+
+
+### Features
+
+* **roles:** W7 — schema-complete create defaults, unknown-tool pin, additive docs ([a36f39b](https://github.com/buchenberg/yaah/commit/a36f39bf8efc1d17a371a13ea8503cc7400a1eda))
+* **roles:** W7 — schema-complete create defaults, unknown-tool pin, additive docs ([f16a058](https://github.com/buchenberg/yaah/commit/f16a058b4ef8de255571a8a59969a6a70657e80a))
+
+
+### Bug Fixes
+
+* **roles:** contract defaults polish from review ([dfb0f85](https://github.com/buchenberg/yaah/commit/dfb0f857f8ce79c8a30851ba7b531d2c6f370ce2))
+
 ## [0.161.0](https://github.com/buchenberg/yaah/compare/v0.160.0...v0.161.0) (2026-11-10)
 
 
