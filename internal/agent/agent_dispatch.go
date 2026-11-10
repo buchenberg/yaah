@@ -12,6 +12,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent/events"
 	"github.com/buchenberg/yaah/internal/observability"
+	"github.com/buchenberg/yaah/internal/permissions"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -107,6 +108,17 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 	allowed, refusal := l.admitTool(d.call.Function.Name, d.call.Function.Arguments)
 
 	runCtx := ctx
+	// Delegate inheritance (parity W5.7): foreground and background
+	// dispatches carry the loop's inherited ceiling — its ruleset filtered
+	// to deny rules on mutating file tools — so the sub-agent's gates
+	// enforce what the parent denied regardless of which role runs. The
+	// Ceiling is computed per dispatch from this loop's live config, so a
+	// persona switch that rewrote the ruleset is honored by the next
+	// dispatch without rebuilding the delegate tool. Background jobs
+	// inherit too: a deferred dispatch must not become the loophole.
+	if d.isDelegate {
+		runCtx = permissions.WithInherited(runCtx, l.inheritedCeiling())
+	}
 	var toolSpan trace.Span
 	if l.Config.OtelEnabled {
 		if allowed && d.isDelegate && !d.isBackground {

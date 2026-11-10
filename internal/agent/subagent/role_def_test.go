@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/permissions"
 	"github.com/buchenberg/yaah/internal/rolefile"
 )
 
@@ -355,5 +356,26 @@ func TestRoleDefFromCarriesSystemReplace(t *testing.T) {
 	}
 	if !primaryCapableMode(def.Mode) {
 		t.Fatal("the role stays primary-capable")
+	}
+}
+
+// TestRoleDefToProfilePermissions pins that the role's permission ruleset
+// (parity W5) reaches the dispatch-facing profile: a role file's
+// `permissions:` flows roleDefFrom → RoleDef → ToProfile, so the runner
+// can apply the role's own rules to its sub-agent loop.
+func TestRoleDefToProfilePermissions(t *testing.T) {
+	def := RoleDef{
+		Permissions: []permissions.Rule{
+			{Tool: "write", Resource: "secrets/*", Effect: permissions.Deny},
+		},
+	}
+	p := def.ToProfile()
+	if len(p.Permissions) != 1 || p.Permissions[0].Tool != "write" {
+		t.Errorf("profile lost the ruleset: %+v", p.Permissions)
+	}
+	// The zero profile carries none — dispatches without rules behave as before.
+	var zero RoleDef
+	if got := zero.ToProfile().Permissions; got != nil {
+		t.Errorf("zero profile carried %+v", got)
 	}
 }

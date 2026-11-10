@@ -22,6 +22,7 @@
 package permissions
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -250,4 +251,66 @@ func ResourceFor(tool, argsJSON string) string {
 		}
 	}
 	return ""
+}
+
+// MutatingFileTools lists the tools whose calls mutate the file tree:
+// the write/edit family, the move/copy family, and the bulk/patch/replace
+// forms. It is the set the delegate-inheritance ceiling (parity W5.7)
+// propagates: a deny rule on one of these binds every sub-agent dispatch.
+// Shell tools are deliberately absent — inheriting broad shell denies
+// breaks sub-agents in confusing ways (the Kilo #11523 lesson): a
+// sub-agent that cannot run git cannot do its job, and the failure shows
+// up as a baffling tool error one level removed from the rule that caused
+// it. Shell restriction stays the parent's job (the mode axis and the
+// supervision guard already act there).
+var MutatingFileTools = map[string]bool{
+	"write":      true,
+	"edit":       true,
+	"append":     true,
+	"delete":     true,
+	"patch":      true,
+	"move":       true,
+	"move_tree":  true,
+	"copy":       true,
+	"copy_tree":  true,
+	"mkdir":      true,
+	"rmdir":      true,
+	"bulk_files": true,
+	"replace":    true,
+	"apply_out":  true,
+}
+
+// InheritedCeiling filters a ruleset down to what sub-agent dispatches
+// inherit (parity W5.7): deny rules on mutating file tools, nothing else.
+// ask rules cannot propagate (a sub-agent has no one to ask), allow rules
+// must not (a ceiling only narrows), and everything outside the mutating
+// set stays the parent's own gate.
+func InheritedCeiling(rules Rules) Rules {
+	var out Rules
+	for _, rule := range rules {
+		if rule.Effect == Deny && MutatingFileTools[rule.Tool] {
+			out = append(out, rule)
+		}
+	}
+	return out
+}
+
+// inheritedKey is the context key the parent loop's dispatch uses to hand
+// its inherited ceiling to the sub-agent runner. It lives here — a leaf
+// package both sides already import — because the agent and runner
+// packages cannot import each other.
+type inheritedKey struct{}
+
+// WithInherited returns a context carrying the inherited ceiling for a
+// sub-agent dispatch. Nil or empty rules inherit nothing (the zero-value
+// read below) — behavior is exactly the pre-W5.7 dispatch.
+func WithInherited(ctx context.Context, rules Rules) context.Context {
+	return context.WithValue(ctx, inheritedKey{}, rules)
+}
+
+// Inherited extracts the ceiling a parent dispatch carried. Nil when the
+// context carries none.
+func Inherited(ctx context.Context) Rules {
+	rules, _ := ctx.Value(inheritedKey{}).(Rules)
+	return rules
 }

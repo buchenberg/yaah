@@ -5,6 +5,8 @@ import (
 	"os"
 	"sync/atomic"
 	"time"
+
+	"github.com/buchenberg/yaah/internal/permissions"
 )
 
 // RoleNotFoundError is returned when a sub-agent role name has no matching
@@ -67,6 +69,12 @@ type RoleProfile struct {
 	MinToolTurns  int // per-call overrides may not go below; 0 = none
 	JSONMode      bool
 	Timeout       time.Duration
+
+	// Permissions is the role file's `permissions:` ruleset (parity W5),
+	// consumed on the dispatch path: the role's own rules apply to its
+	// sub-agent loop, with the parent's inherited ceiling appended after
+	// so an inherited deny can never be widened by the role file.
+	Permissions []permissions.Rule
 }
 
 // defaultRoleReg is set at startup by the CLI layer after built-in and

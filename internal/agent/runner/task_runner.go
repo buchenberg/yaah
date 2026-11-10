@@ -23,6 +23,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/buchenberg/yaah/internal/permissions"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 	"go.opentelemetry.io/otel/attribute"
@@ -334,6 +335,15 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		role := subagent.SubAgentRole(params.Role)
 		profile := subagent.RoleProfileFor(role)
 
+		// Permission rulesets (parity W5.7): the role's own rules apply
+		// first, the parent's inherited ceiling appended AFTER so an
+		// inherited deny wins over any role-file rule for the same tool
+		// and resource — a ceiling narrows, never widens. The parent
+		// carries the ceiling on the dispatch context (it recomputes the
+		// filter from its live config per dispatch); a dispatch with no
+		// ceiling inherits nothing, exactly the pre-W5.7 behavior.
+		rolePermissions := withInheritedCeiling(profile.Permissions, permissions.Inherited(ctx))
+
 		// A tool-less profile is valid — some roles (e.g. grump) are
 		// designed to respond without calling any tools.
 
@@ -488,6 +498,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		}
 
 		subLoop := agent.NewSubAgentLoop(subProvider, subReg, subModel, sysPrompt, agent.SubAgentConfig{
+			Permissions:            rolePermissions,
 			ProviderName:           subProviderName,
 			Temperature:            profile.Temperature,
 			TopP:                   profile.TopP,
@@ -688,4 +699,22 @@ func dispatchOpts(opts taskRunnerOpts, ctx context.Context) taskRunnerOpts {
 		opts.pathValidator = nil
 	}
 	return opts
+}
+
+// withInheritedCeiling merges a role's own permission rules with the
+// parent's inherited ceiling (parity W5.7): role rules first, ceiling
+// appended after, so under last-match-wins the inherited deny wins on
+// any overlap — a ceiling narrows a dispatch, never widens it. Either
+// side may be empty; both empty returns nil.
+func withInheritedCeiling(role, inherited permissions.Rules) permissions.Rules {
+	if len(role) == 0 {
+		return inherited
+	}
+	if len(inherited) == 0 {
+		return role
+	}
+	out := make(permissions.Rules, 0, len(role)+len(inherited))
+	out = append(out, role...)
+	out = append(out, inherited...)
+	return out
 }
