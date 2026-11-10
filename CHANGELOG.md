@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.154.0](https://github.com/buchenberg/yaah/compare/v0.153.0...v0.154.0) (2026-11-10)
+
+
+### Features
+
+* **personas:** decouple persona, mode, and approval into session axes ([c24f8f0](https://github.com/buchenberg/yaah/commit/c24f8f0f0149f0e58c7162385d35819eceec3a5a))
+* **personas:** primary personas as role files + decouple persona/mode/approval (W0) ([622051f](https://github.com/buchenberg/yaah/commit/622051f7e745320444e01a0302b6b99ba2b84540))
+* **personas:** primary personas defined by embedded role files ([49af8a8](https://github.com/buchenberg/yaah/commit/49af8a8127cf824210a92cf1f3189ccb6f11ec0b))
+* **roles:** architect persona body — review method and report format ([18bfb47](https://github.com/buchenberg/yaah/commit/18bfb47089a07fe94dc4a77a4002d3fa5684c6ba))
+* **roles:** architect read-only — inspection-set tools, no mutation ([a40cd28](https://github.com/buchenberg/yaah/commit/a40cd287ae36e80821c0e61bd2b7f172be2f5bb6))
+* **roles:** architect records settled directions as plans ([60aaceb](https://github.com/buchenberg/yaah/commit/60aaceba364c43acd3e9f9034aaa81bdafb4998a))
+* **roles:** explicit mode keys and architect primary persona draft ([27fe8ae](https://github.com/buchenberg/yaah/commit/27fe8ae02169b344d13748c74d776b3c8ece3b83))
+
+
+### Bug Fixes
+
+* **personas:** review follow-ups — stale comments, architect copy, migration note, dead code ([e47d7b3](https://github.com/buchenberg/yaah/commit/e47d7b30959825cff7103f800bc1f94e6dac3854))
+* **roles:** drop plan from architect's sub-agent tool belt ([bdfb2ee](https://github.com/buchenberg/yaah/commit/bdfb2eebb7ff20e27a31909d2a651b408d157266))
+
+
+### Documentation
+
+* **plans:** add the opencode-family parity plan and its W0 decouple plan ([3952ea0](https://github.com/buchenberg/yaah/commit/3952ea00630f4dd616beb0fbd636c66518666ade))
+
+
+### Tests
+
+* **personas:** registry-loaded read_only coverage (PR [#841](https://github.com/buchenberg/yaah/issues/841) review) ([85276f4](https://github.com/buchenberg/yaah/commit/85276f4b8e72eee52ce37bef5860b6d81a253af3))
+
 ## [0.153.0](https://github.com/buchenberg/yaah/compare/v0.152.1...v0.153.0) (2026-11-09)
 
 
