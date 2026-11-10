@@ -246,11 +246,17 @@ func (d *DB) SearchMessagesVectorDiag(ctx context.Context, query string, limit i
 
 	if d.messagesVecPresent() {
 		results, err := d.searchMessagesVecIndex(ctx, qEmb, limit)
-		if err == nil {
+		// Empty-with-no-error is the live mirror window (the embed goroutine
+		// landed the BLOB but has not committed its vec0 row yet — the same
+		// shape ReembedStaleMessageEmbeddings heals after a crash) or a store
+		// with nothing comparable at the current width. The BLOB column is the
+		// source of truth, so both fall to the scan, which handles them
+		// correctly; only rows the scan actually finds are returned.
+		if err == nil && len(results) > 0 {
 			return results, nil
 		}
-		// A stale index (wrong width) degrades to the scan.
-		return d.searchMessagesVectorScan(ctx, qEmb, limit)
+		// A store error, or a stale index (wrong width) after a model swap,
+		// degrades to the scan via the same fall.
 	}
 	return d.searchMessagesVectorScan(ctx, qEmb, limit)
 }
@@ -284,14 +290,25 @@ func (d *DB) searchMessagesVectorScan(ctx context.Context, qEmb Embedding, limit
 		return nil, err
 	}
 
+	// A stored BLOB at a different width belongs to a previous embedding
+	// model; cosine against the current query vector is meaningless, so those
+	// rows are skipped and surfaced via the rate-limited dim-mismatch warning
+	// (yaah-shq, mirroring the atoms path's never-silent policy). Keyword
+	// matches still reach callers through the FTS union.
 	var results []MessageVectorResult
+	staleByDim := make(map[int]int)
 	for _, c := range candidates {
-		if len(c.blob) == 0 {
+		if len(c.blob) == 0 || len(c.blob)%4 != 0 {
+			continue
+		}
+		if len(c.blob) != 4*len(qEmb) {
+			staleByDim[len(c.blob)/4]++
 			continue
 		}
 		c.r.Score = CosineSimilarity(qEmb, DecodeEmbedding(c.blob))
 		results = append(results, c.r)
 	}
+	d.publishStaleWidths(staleByDim, len(qEmb))
 
 	// Sort descending.
 	for i := 0; i < len(results)-1; i++ {
