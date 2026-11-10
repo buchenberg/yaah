@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.159.0](https://github.com/buchenberg/yaah/compare/v0.158.0...v0.159.0) (2026-11-10)
+
+
+### Features
+
+* **permissions:** W5 permission rulesets — engine, role frontmatter, global config ([3536da1](https://github.com/buchenberg/yaah/commit/3536da1d805c89c4f927733d0fbd541d360e9cf4))
+* **permissions:** W5 permission rulesets — engine, role frontmatter, global config ([3e5fc0c](https://github.com/buchenberg/yaah/commit/3e5fc0c62680fa4f87ba882f8a768db660ef68d1))
+
+
+### Bug Fixes
+
+* **permissions:** address PR [#853](https://github.com/buchenberg/yaah/issues/853) review — resource domains, MCP narrowing, docs ([7423052](https://github.com/buchenberg/yaah/commit/7423052055278b28cbb8b4c07701442e67969539))
+
 ## [0.158.0](https://github.com/buchenberg/yaah/compare/v0.157.0...v0.158.0) (2026-11-10)
 
 
