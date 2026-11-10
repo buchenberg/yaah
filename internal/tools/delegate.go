@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/jobs"
+	"github.com/buchenberg/yaah/internal/permissions"
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
@@ -277,11 +278,14 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 			}
 		}
 		// Background jobs cancel from the session root, not the dispatching
-		// call, so ordinary context values do not flow through. Re-attach the
-		// conflict dispatch (with a fresh id for the job) before the runner
-		// starts.
+		// call, so ordinary context values do not flow through. Re-attach
+		// the conflict dispatch (with a fresh id for the job) and the
+		// inherited permission ceiling (parity W5.7) before the runner
+		// starts — a deferred dispatch must not become the loophole that
+		// escapes what the parent denied.
 		runCtx = jobs.WithBackgroundContextSeeder(runCtx, func(jobCtx context.Context) context.Context {
-			return WithConflictDispatch(jobCtx, label, conflictLane)
+			jobCtx = WithConflictDispatch(jobCtx, label, conflictLane)
+			return permissions.WithInherited(jobCtx, permissions.Inherited(runCtx))
 		})
 		jobID, err := t.BackgroundJobs.Launch(runCtx, runner, params.Role, params.Description, params.Prompt, subParams, timeout)
 		if err != nil {

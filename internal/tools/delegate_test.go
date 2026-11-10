@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/jobs"
+	"github.com/buchenberg/yaah/internal/permissions"
 )
 
 func TestExecute_RoleValidation(t *testing.T) {
@@ -198,6 +199,73 @@ func TestExecute_BackgroundCarriesConflictDispatch(t *testing.T) {
 		}
 		if !strings.Contains(s.lbl, "analyst") || !strings.Contains(s.lbl, "bg") {
 			t.Errorf("dispatch label = %q, want role/description", s.lbl)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("background runner did not start")
+	}
+}
+
+// TestExecute_BackgroundCarriesInheritedCeiling pins the W5.7 background
+// path end to end: the job context is built from the session root, so the
+// inherited ceiling the dispatch layered onto the call context would be
+// lost without the background seeder re-attaching it. This is the
+// end-to-end path (Execute -> BackgroundJobs.Launch -> seeder -> runner)
+// a dispatch-layer-only stub cannot cover — the exact hole the review
+// caught: a background delegate must not be the loophole that escapes
+// what the parent denied.
+func TestExecute_BackgroundCarriesInheritedCeiling(t *testing.T) {
+	mgr := jobs.NewBackgroundJobs()
+	defer mgr.Close()
+
+	inherited := permissions.Rules{
+		{Tool: "edit", Effect: permissions.Deny},
+		{Tool: "rmdir", Effect: permissions.Deny},
+	}
+	got := make(chan permissions.Rules, 1)
+	tt := &DelegateTool{
+		RoleNames:      []string{"analyst"},
+		BackgroundJobs: mgr,
+		Runner: func(ctx context.Context, _ string, _ SubAgentParams) (string, error) {
+			got <- permissions.Inherited(ctx)
+			return "ok", nil
+		},
+	}
+	ctx := permissions.WithInherited(context.Background(), inherited)
+	if _, err := tt.Execute(ctx, `{"description":"bg","prompt":"p","role":"analyst","background":true}`); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	select {
+	case gotRules := <-got:
+		if len(gotRules) != len(inherited) {
+			t.Fatalf("background runner inherited %+v, want %d rules", gotRules, len(inherited))
+		}
+		for i := range inherited {
+			if gotRules[i] != inherited[i] {
+				t.Errorf("rule %d = %+v, want %+v", i, gotRules[i], inherited[i])
+			}
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("background runner did not start")
+	}
+
+	// No ceiling on the dispatch context: the runner reads none — the
+	// pre-W5.7 shape stays byte-identical.
+	got2 := make(chan permissions.Rules, 1)
+	tt2 := &DelegateTool{
+		RoleNames:      []string{"analyst"},
+		BackgroundJobs: mgr,
+		Runner: func(ctx context.Context, _ string, _ SubAgentParams) (string, error) {
+			got2 <- permissions.Inherited(ctx)
+			return "ok", nil
+		},
+	}
+	if _, err := tt2.Execute(context.Background(), `{"description":"bg","prompt":"p","role":"analyst","background":true}`); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	select {
+	case gotRules := <-got2:
+		if gotRules != nil {
+			t.Fatalf("ruleset-less background inherited %+v, want nil", gotRules)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("background runner did not start")
