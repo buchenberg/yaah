@@ -98,6 +98,16 @@ func WithApprovalMode(mode string) Option {
 	return func(l *Loop) { l.Config.ApprovalMode = mode }
 }
 
+// WithSampling sets the session's sampling overrides (parity W1.4):
+// passed through to the provider request. nil leaves a field unset (the
+// provider's default); an explicit 0 is a real setting on the wire.
+func WithSampling(temperature, topP *float64) Option {
+	return func(l *Loop) {
+		l.Config.Temperature = temperature
+		l.Config.TopP = topP
+	}
+}
+
 // WithMCPApproval sets the approval policy for MCP-served tools and
 // the set of names they registered under.
 func WithMCPApproval(mode string, names map[string]bool) Option {

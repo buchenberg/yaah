@@ -58,6 +58,13 @@ type SubAgentParams struct {
 	// JSONMode enables structured JSON output for this sub-agent.
 	JSONMode bool
 
+	// Provider and Model are the per-call routing override (parity W1.3):
+	// the top of the dispatch resolution chain — call > config role entry
+	// > role file > parent session model > config default. Empty means
+	// the call did not override.
+	Provider string
+	Model    string
+
 	// OutputLimit caps the sub-agent's final synthesized result in bytes.
 	// 0 means use the role/config default.
 	OutputLimit int

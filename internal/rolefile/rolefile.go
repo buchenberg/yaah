@@ -74,16 +74,24 @@ type Frontmatter struct {
 	JSONMode      bool   `yaml:"json_mode"`
 	Timeout       int    `yaml:"timeout"` // seconds; 0 = no timeout
 
-	// Provider and Model are accepted-but-ignored routing keys
-	// (yaah-21uk.8): role-file routing is config-only — dispatch roles
-	// route through agents.subagent.roles.<role>.provider/model — so
-	// the registry warns and drops them on the way to RoleDef. Modeled
-	// here with omitempty (files without the keys marshal exactly as
-	// before) rather than left to extras, so the warning seam can see
-	// them and a rewrite keeps them at their source position.
-	// Revisiting persona-level routing is yaah-21uk.15.
+	// Provider and Model carry per-role routing (parity W1, un-parking
+	// yaah-21uk.15): the registry maps them into RoleDef for every role
+	// — a persona's session routes through the persona's provider/model
+	// when set, falling back to agents.default; a dispatch role routes
+	// call > config role entry > role file > parent session model >
+	// config default. Previously config-only (yaah-21uk.8) with a
+	// warning; the keys keep omitempty so files without them marshal
+	// exactly as before.
 	Provider string `yaml:"provider,omitempty"`
 	Model    string `yaml:"model,omitempty"`
+
+	// Temperature and TopP are per-role sampling overrides passed
+	// through to the provider request (parity W1.4). Pointers keep
+	// "unset" distinct from an explicit 0 — the most common determinism
+	// setting; nil omits the field, so files without the keys marshal
+	// exactly as before.
+	Temperature *float64 `yaml:"temperature,omitempty"`
+	TopP        *float64 `yaml:"top_p,omitempty"`
 
 	// extra holds frontmatter keys this struct does not model, in source
 	// order. They are preserved through Parse→Marshal so editing a role does

@@ -208,6 +208,112 @@ func dispatchSuffix() string {
 	return hex.EncodeToString(b[:])
 }
 
+// dispatchRoute is the provider/model a dispatch resolves to. providerName
+// labels the resolved provider in error envelopes and traces; it is the
+// configured name of whichever provider instance won the chain.
+type dispatchRoute struct {
+	provider     agent.Provider
+	providerName string
+	model        string
+}
+
+// resolveDispatchRoute applies the parity-W1 routing chain:
+//
+//	per-call provider/model > config role entry (agents.subagent.roles,
+//	config-authoritative) > role file > global sub-agent override >
+//	parent session model > config default
+//
+// Provider and model resolve field-wise: a source may name only one of
+// them, and the next source fills the other. Every source that names a
+// provider it cannot resolve warns and falls through rather than failing
+// the dispatch — a file must never be able to break a run by naming a
+// provider this machine does not have.
+//
+// A provider switch clears the inherited sub-agent model (it may not exist
+// on the new provider); the parent session's model remains the last-resort
+// default, because every dispatch needs some model and the chain names no
+// provider-local replacement.
+func resolveDispatchRoute(opts taskRunnerOpts, role subagent.SubAgentRole, params tools.SubAgentParams, profile subagent.RoleProfile) dispatchRoute {
+	route := dispatchRoute{
+		provider:     opts.subAgentProvider,
+		providerName: opts.providerName,
+		model:        opts.subAgentModel,
+	}
+	// Start with the provider that runs when no role override
+	// resolves: the global sub-agent provider, else the planner's.
+	if opts.subAgentProvider != nil && opts.subCfg.Provider != "" {
+		route.providerName = opts.subCfg.Provider
+	}
+	resolve := func(name string) agent.Provider {
+		if opts.resolveProviderByName == nil {
+			return nil
+		}
+		return opts.resolveProviderByName(opts.providerMap, name)
+	}
+	// The config role entry is config-authoritative: it sits above the
+	// role file, and an unresolvable entry falls through to it.
+	rc, hasRC := opts.subCfg.Roles[string(role)]
+
+	// providerDecided tracks whether an explicit source picked the
+	// provider; the parent/global defaults only fill what nobody named.
+	providerDecided := false
+
+	// Per-call override first (parity W1.3): the call wins over every
+	// file and config source.
+	if params.Provider != "" {
+		if p := resolve(params.Provider); p != nil {
+			route.provider = p
+			route.providerName = params.Provider
+			providerDecided = true
+			route.model = "" // a switched provider invalidates the inherited model
+		} else {
+			slog.Warn("sub-agent dispatch: per-call provider unknown; falling down the routing chain",
+				"role", string(role), "provider", params.Provider)
+		}
+	}
+	if params.Model != "" {
+		route.model = params.Model
+	}
+
+	if hasRC && !providerDecided && rc.Provider != "" {
+		if p := resolve(rc.Provider); p != nil {
+			route.provider = p
+			route.providerName = rc.Provider
+			providerDecided = true
+			route.model = ""
+		}
+	}
+	if hasRC && rc.Model != "" && params.Model == "" {
+		route.model = rc.Model
+	}
+
+	// Role-file routing (parity W1, yaah-21uk.15): the dispatch role's
+	// own file, below the config role entry and above the global
+	// sub-agent override.
+	if !providerDecided && profile.Provider != "" {
+		if p := resolve(profile.Provider); p != nil {
+			route.provider = p
+			route.providerName = profile.Provider
+			providerDecided = true
+			route.model = ""
+		} else {
+			slog.Warn("sub-agent dispatch: role file provider unknown; falling down the routing chain",
+				"role", string(role), "provider", profile.Provider)
+		}
+	}
+	if profile.Model != "" && params.Model == "" && (!hasRC || rc.Model == "") {
+		route.model = profile.Model
+	}
+	if route.provider == nil {
+		route.provider = opts.provider
+		route.providerName = opts.providerName
+	}
+	if route.model == "" {
+		route.model = opts.modelName
+	}
+	return route
+}
+
 // makeTaskRunner creates a sub-agent runner that honours roles, timeouts,
 // iteration caps, and nesting depth.
 //
@@ -279,39 +385,10 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			}
 		}
 
-		subProvider := opts.subAgentProvider
-		subModel := opts.subAgentModel
-
-		// Start with the provider that runs when no role override
-		// resolves: the global sub-agent provider, else the planner's.
-		subProviderName := opts.providerName
-		if opts.subAgentProvider != nil && opts.subCfg.Provider != "" {
-			subProviderName = opts.subCfg.Provider
-		}
-
-		if rc, ok := opts.subCfg.Roles[string(role)]; ok {
-			if rc.Provider != "" {
-				if opts.resolveProviderByName != nil {
-					subProvider = opts.resolveProviderByName(opts.providerMap, rc.Provider)
-					if subProvider != nil {
-						subProviderName = rc.Provider
-					}
-				}
-				if subProvider != nil {
-					subModel = ""
-				}
-			}
-			if rc.Model != "" {
-				subModel = rc.Model
-			}
-		}
-		if subProvider == nil {
-			subProvider = opts.provider
-			subProviderName = opts.providerName
-		}
-		if subModel == "" {
-			subModel = opts.modelName
-		}
+		route := resolveDispatchRoute(opts, role, params, profile)
+		subProvider := route.provider
+		subProviderName := route.providerName
+		subModel := route.model
 
 		// Announce the resolved model before the loop runs so the parent
 		// emits its sub-agent start event with the role/model pairing,
@@ -412,6 +489,8 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 
 		subLoop := agent.NewSubAgentLoop(subProvider, subReg, subModel, sysPrompt, agent.SubAgentConfig{
 			ProviderName:           subProviderName,
+			Temperature:            profile.Temperature,
+			TopP:                   profile.TopP,
 			MaxLoopCycles:          maxIter,
 			MaxToolTurns:           maxTurns,
 			BudgetIterationsSource: b.IterationsSource.String(),

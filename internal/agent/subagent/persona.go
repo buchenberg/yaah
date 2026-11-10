@@ -58,6 +58,17 @@ type Persona struct {
 	MaxLoopCycles int
 	MaxToolTurns  int
 	Timeout       int
+	// Provider and Model are the persona's routing (parity W1,
+	// yaah-21uk.15): the session running this persona routes through
+	// them when set, falling back to agents.default. Empty means
+	// inherit. The shipped built-ins leave them empty.
+	Provider string
+	Model    string
+	// Temperature and TopP are per-role sampling overrides passed
+	// through to the provider request (parity W1.4). nil leaves the
+	// provider's default; an explicit 0 is a real setting.
+	Temperature *float64
+	TopP        *float64
 }
 
 // The built-in personas are defined by role files shipped in the
@@ -220,5 +231,9 @@ func registryPersona(reg *RoleRegistry, role SubAgentRole) (Persona, bool) {
 		MaxLoopCycles: def.MaxLoopCycles,
 		MaxToolTurns:  def.MaxToolTurns,
 		Timeout:       def.Timeout,
+		Provider:      def.Provider,
+		Model:         def.Model,
+		Temperature:   def.Temperature,
+		TopP:          def.TopP,
 	}, true
 }

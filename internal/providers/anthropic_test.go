@@ -786,7 +786,7 @@ func TestChatRequestToAnthropic_TemperaturePassthrough(t *testing.T) {
 	req := types.ChatRequest{
 		Model:       "claude-3.5-sonnet",
 		MaxTokens:   1000,
-		Temperature: 0.7,
+		Temperature: func() *float64 { v := 0.7; return &v }(),
 		Messages: []types.Message{
 			{Role: "user", Content: "Hello"},
 		},
@@ -796,6 +796,29 @@ func TestChatRequestToAnthropic_TemperaturePassthrough(t *testing.T) {
 
 	if !result.Temperature.Valid() || result.Temperature.Or(0) != 0.7 {
 		t.Errorf("expected Temperature 0.7, got valid=%v value=%v", result.Temperature.Valid(), result.Temperature.Or(0))
+	}
+}
+
+// TestChatRequestToAnthropic_TopPPassthrough pins the top_p lowering
+// (parity W1.4) including an explicit 0, which a plain float64 plus
+// `!= 0` check would have silently dropped.
+func TestChatRequestToAnthropic_TopPPassthrough(t *testing.T) {
+	req := types.ChatRequest{
+		Model:     "claude-3.5-sonnet",
+		MaxTokens: 1000,
+		TopP:      func() *float64 { v := 0.0; return &v }(),
+		Messages: []types.Message{
+			{Role: "user", Content: "Hello"},
+		},
+	}
+
+	result := lowerAnthropicRequest(req, "auto")
+
+	if !result.TopP.Valid() || result.TopP.Or(1) != 0 {
+		t.Errorf("expected TopP 0, got valid=%v value=%v", result.TopP.Valid(), result.TopP.Or(1))
+	}
+	if result.Temperature.Valid() {
+		t.Errorf("Temperature must stay unset when the request does not set it")
 	}
 }
 

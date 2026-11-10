@@ -219,6 +219,21 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// agents.default.mode, not the persona — read-only-ness is session
 	// state, not a persona property.
 	lc.readOnly = resolveReadOnlyMode(lc.cfg)
+	// Persona routing (parity W1, yaah-21uk.15): the persona file's
+	// provider/model override agents.default when set — including the
+	// live provider instance, so resume re-derives routing from the
+	// stored persona as well.
+	route := personaRouteFor(lc.cfg, lc.persona.Persona)
+	if route.provider != nil {
+		lc.provider = route.provider
+		// The config default's provider already got this warning in
+		// loadConfig; a persona that routes elsewhere needs its own, or a
+		// caching-enabled session silently caches nothing on that provider.
+		if route.providerName != resolveProviderName(lc.cfg) {
+			warnPromptCachingNotOptedIn(lc.cfg, route.providerName, lc.provider)
+		}
+	}
+	lc.providerName, lc.modelName = route.providerName, route.modelName
 	if toolsStage, err = buildToolRegistry(lc.cfg, opts, ws, lc.persona.Persona, store); err != nil {
 		return nil, err
 	}

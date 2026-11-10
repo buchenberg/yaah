@@ -96,6 +96,43 @@ func TestLowerMessage_UserContentAlwaysPresent(t *testing.T) {
 	}
 }
 
+func TestLowerRequest_samplingPassthrough(t *testing.T) {
+	temp, topP := 0.0, 0.0
+	wire := lowerRequest(types.ChatRequest{
+		Model:       "m",
+		Messages:    []types.Message{{Role: "user", Content: "hi"}},
+		Temperature: &temp,
+		TopP:        &topP,
+	}, lowerOptions{})
+
+	// Explicit zeros must reach the wire (parity W1.4): omitempty on a
+	// pointer omits only nil, so deterministic sampling is expressible.
+	data, err := json.Marshal(wire)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	s := string(data)
+	for _, want := range []string{`"temperature":0`, `"top_p":0`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %q in wire body: %s", want, s)
+		}
+	}
+
+	// Unset stays off the wire entirely.
+	plain, err := json.Marshal(lowerRequest(types.ChatRequest{
+		Model:    "m",
+		Messages: []types.Message{{Role: "user", Content: "hi"}},
+	}, lowerOptions{}))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, unwanted := range []string{`"temperature"`, `"top_p"`} {
+		if strings.Contains(string(plain), unwanted) {
+			t.Errorf("unset sampling emitted %q: %s", unwanted, plain)
+		}
+	}
+}
+
 func TestLowerRequest_ThinkingMode(t *testing.T) {
 	req := types.ChatRequest{
 		Model: "deepseek-r1",

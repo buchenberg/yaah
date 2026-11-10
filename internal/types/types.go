@@ -60,11 +60,15 @@ type ToolDef struct {
 
 // ChatRequest is the request body sent to /chat/completions.
 type ChatRequest struct {
-	Model           string          `json:"model"`
-	Messages        []Message       `json:"messages"`
-	Tools           []ToolDef       `json:"tools,omitempty"`
-	ToolChoice      any             `json:"tool_choice,omitempty"`
-	Temperature     float64         `json:"temperature,omitempty"`
+	Model      string    `json:"model"`
+	Messages   []Message `json:"messages"`
+	Tools      []ToolDef `json:"tools,omitempty"`
+	ToolChoice any       `json:"tool_choice,omitempty"`
+	// Temperature and TopP are optional sampling controls; nil omits the
+	// field so the provider's default applies. Pointers keep an explicit
+	// 0 (deterministic sampling) distinct from unset.
+	Temperature     *float64        `json:"temperature,omitempty"`
+	TopP            *float64        `json:"top_p,omitempty"`
 	MaxTokens       int             `json:"max_tokens,omitempty"`
 	Stream          bool            `json:"stream"`
 	StreamOptions   *StreamOptions  `json:"stream_options,omitempty"`

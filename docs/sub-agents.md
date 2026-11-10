@@ -26,9 +26,25 @@ or a no-tool judge). Role files carrying `mode: primary` or `mode: all` are
 orchestrator personas instead of dispatch targets (`all` remains both);
 see [agents.md](./agents.md).
 
-Sub-agents inherit the orchestrator's provider and model unless
-`agents.subagent.provider` / `agents.subagent.model` or a per-role override
-is set. This is useful for running the team on a cheaper or faster model.
+Sub-agents inherit the orchestrator's provider and model unless a routing
+source says otherwise. The resolution chain is, highest first:
+
+1. per-call `provider` / `model` on the `delegate` call,
+2. `agents.subagent.roles.<role>.provider` / `.model` (config-authoritative),
+3. the role file's `provider:` / `model:` frontmatter,
+4. `agents.subagent.provider` / `.model` (the global sub-agent override),
+5. the parent session's model and provider.
+
+Provider and model resolve independently, so a source may name only one of
+them. A provider switch clears the inherited sub-agent model (it may not
+exist on the new provider), but the parent session's model remains the last
+resort. A provider name that does not resolve — unknown, or configured
+without a key or base URL — warns and falls through to the next source.
+
+`delegate` exposes `provider` / `model` to the model itself, so a dispatch
+can route elsewhere when the orchestrator asks for it. Prefer the role file
+or config for stable routing and treat those parameters as a per-dispatch
+escape hatch. `temperature` / `top_p` come from the role file only.
 
 Multiple `delegate` calls in one turn fan out in parallel, bounded by
 `agents.subagent.max_concurrency` (default 3).
@@ -81,6 +97,11 @@ is delegate-only, `primary` makes the file an orchestrator persona that is
 excluded from `delegate`, and `all` is both. Persona behavior (prompt body,
 tool narrowing, budget, switching) is covered in
 [agents.md](./agents.md).
+
+`provider:` / `model:` route that role's dispatches (chain above).
+`temperature:` / `top_p:` add sampling overrides for the role's requests;
+omit a key to use the provider's default — an explicit `0` is a real value,
+not "unset". Persona files carry the same keys for the session they run.
 
 Per-turn checkpointing is configured in `config.yaml`, not in the role-file
 frontmatter: set `agents.subagent.roles.<role>.turn_checkpoints: true`.

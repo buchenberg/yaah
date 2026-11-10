@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/providers"
 )
@@ -51,6 +52,91 @@ func resolveMCPApproval(cfg *config.Config) string {
 // (validation catches typos, this is the last line of defense).
 func resolveReadOnlyMode(cfg *config.Config) bool {
 	return cfg.Agent.Default.Mode == "read-only"
+}
+
+// personaRoute is the routing a persona session runs (parity W1,
+// yaah-21uk.15): the persona file's provider/model keys when set, the
+// config default otherwise. Provider is nil when the caller should keep
+// the provider instance it already holds (no persona routing, or the
+// declared provider was unusable — warned).
+type personaRoute struct {
+	provider     agent.Provider
+	providerName string
+	modelName    string
+}
+
+// personaRouteFor resolves the routing for the given persona against cfg.
+// A model routing without an explicit provider may still carry the
+// "provider/model" wire form; a prefix naming a configured provider
+// splits off and selects that provider.
+func personaRouteFor(cfg *config.Config, persona subagent.Persona) personaRoute {
+	providerName := resolveProviderName(cfg)
+	modelName := resolveModel(cfg)
+	var provider agent.Provider
+
+	if persona.Provider != "" {
+		if p, ok := cfg.Providers[persona.Provider]; ok {
+			if prov, usable := makeProvider(persona.Provider, p); usable {
+				provider = prov
+				providerName = persona.Provider
+			} else {
+				slog.Warn("persona routing: provider not usable (missing key?); falling back to the config default",
+					"role", persona.Name, "provider", persona.Provider)
+			}
+		} else {
+			slog.Warn("persona routing: unknown provider; falling back to the config default",
+				"role", persona.Name, "provider", persona.Provider)
+		}
+	}
+	if persona.Model != "" {
+		model := persona.Model
+		if persona.Provider == "" {
+			// "provider/model" without an explicit provider: split the
+			// prefix when it names a configured provider (the same
+			// convention agents.default.model uses). An unusable prefix —
+			// configured but missing a key/URL — falls back to the config
+			// default provider and keeps only the model part; naming the
+			// prefix as the session's provider while running the default
+			// one's client would send the model to the wrong endpoint.
+			if parts := strings.SplitN(model, "/", 2); len(parts) == 2 {
+				if p, ok := cfg.Providers[parts[0]]; ok {
+					if prov, usable := makeProvider(parts[0], p); usable {
+						provider = prov
+						providerName = parts[0]
+					} else {
+						slog.Warn("persona routing: model's provider prefix names an unusable provider; falling back to the config default",
+							"role", persona.Name, "provider", parts[0])
+					}
+					model = parts[1]
+				}
+			}
+		}
+		modelName = model
+	}
+	return personaRoute{provider: provider, providerName: providerName, modelName: modelName}
+}
+
+// applyPersonaRouting swaps the session's provider/model to the persona's
+// routing when it declares one. Caller holds s.mu. A persona without
+// routing falls back to the config default — the persona defines the
+// session's routing; a user model pick made before the switch is
+// superseded and can be re-picked after (the ACP picker re-advertises
+// post-switch state). An unusable declared provider keeps the config
+// default (already warned by personaRouteFor).
+func (s *agentSession) applyPersonaRouting(persona subagent.Persona) {
+	route := personaRouteFor(s.cfg, persona)
+	prov := s.provider
+	if route.provider != nil {
+		prov = route.provider
+	} else if p, ok := s.cfg.Providers[route.providerName]; ok {
+		if dpv, usable := makeProvider(route.providerName, p); usable {
+			prov = dpv
+		}
+	}
+	s.provider = prov
+	s.providerName = route.providerName
+	s.modelName = route.modelName
+	s.auxResolved = false
 }
 
 // resolveProviderName extracts the provider name from the config.
