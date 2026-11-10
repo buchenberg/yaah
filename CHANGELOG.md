@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.158.0](https://github.com/buchenberg/yaah/compare/v0.157.0...v0.158.0) (2026-11-10)
+
+
+### Features
+
+* **sessions:** W4 per-session model persistence — the pick rides the row ([185b624](https://github.com/buchenberg/yaah/commit/185b6246b138684449137e5023d98335bd364d39))
+
+
+### Bug Fixes
+
+* **sessions:** address PR [#851](https://github.com/buchenberg/yaah/issues/851) bot review — SetModel refuses an unusable provider ([d6a3eb9](https://github.com/buchenberg/yaah/commit/d6a3eb9483d8978861ff6911c5cbf5a405e70151))
+* **sessions:** address PR [#851](https://github.com/buchenberg/yaah/issues/851) review — persona switches rewrite the pick; pick path never nils the provider ([d88fe25](https://github.com/buchenberg/yaah/commit/d88fe25aa6b44ede54932d59b5e3301e7e2d6735))
+
 ## [0.157.0](https://github.com/buchenberg/yaah/compare/v0.156.0...v0.157.0) (2026-11-10)
 
 
