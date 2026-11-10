@@ -28,10 +28,10 @@ type SubAgentConfig struct {
 	MaxRetries             int
 	RetryBackoffSecs       int
 	// Temperature and TopP are the dispatch's sampling overrides (parity
-	// W1.4 — the role file's or per-call): passed through to the request
-	// verbatim. Zero means unset.
-	Temperature        float64
-	TopP               float64
+	// W1.4 — from the role file): passed through to the request
+	// verbatim. nil leaves the provider's default; an explicit 0 is sent.
+	Temperature        *float64
+	TopP               *float64
 	MaxToolConcurrency int
 	EvidenceGuardNudge int
 	EvidenceGuardHalt  int

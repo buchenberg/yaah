@@ -55,8 +55,8 @@ type RoleProfile struct {
 	// model > config default; sampling passes through to the request.
 	Provider      string
 	Model         string
-	Temperature   float64
-	TopP          float64
+	Temperature   *float64
+	TopP          *float64
 	MaxLoopCycles int
 	MinLoopCycles int // per-call overrides may not go below; 0 = none
 	MaxToolTurns  int

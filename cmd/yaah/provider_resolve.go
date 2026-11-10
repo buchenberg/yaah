@@ -93,14 +93,19 @@ func personaRouteFor(cfg *config.Config, persona subagent.Persona) personaRoute 
 		if persona.Provider == "" {
 			// "provider/model" without an explicit provider: split the
 			// prefix when it names a configured provider (the same
-			// convention agents.default.model uses).
+			// convention agents.default.model uses). An unusable prefix —
+			// configured but missing a key/URL — falls back to the config
+			// default provider and keeps only the model part; naming the
+			// prefix as the session's provider while running the default
+			// one's client would send the model to the wrong endpoint.
 			if parts := strings.SplitN(model, "/", 2); len(parts) == 2 {
 				if p, ok := cfg.Providers[parts[0]]; ok {
-					providerName = parts[0]
-					if provider == nil {
-						if prov, usable := makeProvider(parts[0], p); usable {
-							provider = prov
-						}
+					if prov, usable := makeProvider(parts[0], p); usable {
+						provider = prov
+						providerName = parts[0]
+					} else {
+						slog.Warn("persona routing: model's provider prefix names an unusable provider; falling back to the config default",
+							"role", persona.Name, "provider", parts[0])
 					}
 					model = parts[1]
 				}

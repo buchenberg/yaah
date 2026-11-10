@@ -534,11 +534,11 @@ func lowerAnthropicRequest(req types.ChatRequest, replay string) anthropic.Messa
 		Messages:  msgs,
 		Tools:     tools,
 	}
-	if req.Temperature != 0 {
-		params.Temperature = param.NewOpt(req.Temperature)
+	if req.Temperature != nil {
+		params.Temperature = param.NewOpt(*req.Temperature)
 	}
-	if req.TopP != 0 {
-		params.TopP = param.NewOpt(req.TopP)
+	if req.TopP != nil {
+		params.TopP = param.NewOpt(*req.TopP)
 	}
 	return params
 }

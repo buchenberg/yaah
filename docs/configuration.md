@@ -341,8 +341,8 @@ Sub-agents use their own curated pipeline and per-role directives.
 
 | Field | Default | Description |
 |---|---|---|
-| `provider` | inherits | Provider for sub-agents |
-| `model` | inherits | Model for sub-agents |
+| `provider` | inherits | Provider for sub-agents; the global override sits below the per-role config entry and the role file, and above the parent session |
+| `model` | inherits | Model for sub-agents; same position in the chain |
 | `max_concurrency` | 3 | Max simultaneous `delegate` calls; 0 = unlimited |
 | `default_timeout` | 0 (none) | Total wall-clock seconds per sub-agent dispatch, including provider thinking time; 0 = none |
 | `stuck_child_timeout` | 60 | Seconds without a heartbeat before a sub-agent is force-cancelled (0 = off) |
@@ -363,8 +363,8 @@ Sub-agents use their own curated pipeline and per-role directives.
 | `roles.<name>.min_iterations` | 0 (none) | Per-role iteration floor; beats per-call overrides and the role file's floor |
 | `roles.<name>.max_turns` | — | Per-role turn cap |
 | `roles.<name>.min_turns` | 0 (none) | Per-role turn floor; beats per-call overrides and the role file's floor |
-| `roles.<name>.provider` | — | Per-role provider override |
-| `roles.<name>.model` | — | Per-role model override |
+| `roles.<name>.provider` | — | Per-role provider override, config-authoritative: beats the role file and the global override, loses to a per-call `provider` on `delegate` |
+| `roles.<name>.model` | — | Per-role model override, same precedence as `provider` |
 | `roles.<name>.context_window` | — | Per-role context window (halved from parent if unset) |
 | `roles.<name>.output_limit` | — | Per-role report byte cap; 0 = inherit the sub-agent default |
 | `roles.<name>.json_mode` | — | Per-role structured-output toggle |

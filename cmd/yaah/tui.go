@@ -141,6 +141,10 @@ func runTUI() error {
 	app.OnAgentSelect = func(name string) {
 		reply, _ := sess.switchPersona(name)
 		app.SetMode(sess.Mode())
+		// A routing persona re-points the session's provider/model
+		// (parity W1): the header must show the model the next run uses.
+		app.SetProvider(sess.ProviderName())
+		app.SetModel(sess.ModelName())
 		app.SetEphemeral(reply)
 	}
 

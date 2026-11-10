@@ -47,9 +47,10 @@ type RoleDef struct {
 	Provider string
 	Model    string
 	// Temperature and TopP are per-role sampling overrides passed
-	// through to the provider request (parity W1.4). Zero means unset.
-	Temperature   float64
-	TopP          float64
+	// through to the provider request (parity W1.4). nil leaves the
+	// provider's default; an explicit 0 is a real setting.
+	Temperature   *float64
+	TopP          *float64
 	MaxLoopCycles int
 	MinLoopCycles int // per-call overrides may not go below; 0 = none
 	MaxToolTurns  int

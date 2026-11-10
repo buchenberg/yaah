@@ -9,11 +9,13 @@ import (
 
 // routeTestConfig is the minimal config for routing tests: one usable
 // provider ("zai", base-url backed so no API key is needed) as the
-// default, one unusable provider ("nokey"), one absent everywhere.
+// default, a second usable provider ("alt") for cross-provider cases, one
+// unusable provider ("nokey"), one absent everywhere.
 func routeTestConfig() *config.Config {
 	cfg := &config.Config{
 		Providers: map[string]config.Provider{
 			"zai":   {API: "anthropic", BaseURL: "https://example.invalid", APIKey: "k"},
+			"alt":   {API: "openai", BaseURL: "https://alt.invalid", APIKey: "k2"},
 			"nokey": {API: "anthropic", APIKey: ""}, // no base url, no key → unusable
 		},
 	}
@@ -37,11 +39,13 @@ func TestPersonaRouteFor(t *testing.T) {
 	}{
 		{"no routing keys", subagent.Persona{Name: "p"}, "zai", "zai-model", false},
 		{"provider only", subagent.Persona{Name: "p", Provider: "zai"}, "zai", "zai-model", true},
+		{"provider only, other provider", subagent.Persona{Name: "p", Provider: "alt"}, "alt", "zai-model", true},
 		{"provider and model", subagent.Persona{Name: "p", Provider: "zai", Model: "glm-5"}, "zai", "glm-5", true},
 		{"prefixed model, no provider", subagent.Persona{Name: "p", Model: "zai/glm-5"}, "zai", "glm-5", true},
 		{"unknown provider falls back", subagent.Persona{Name: "p", Provider: "ghost", Model: "m"}, "zai", "m", false},
 		{"unusable provider falls back", subagent.Persona{Name: "p", Provider: "nokey"}, "zai", "zai-model", false},
 		{"prefixed model with unknown prefix stays", subagent.Persona{Name: "p", Model: "openrouter/x/y"}, "zai", "openrouter/x/y", false},
+		{"prefixed model with unusable prefix", subagent.Persona{Name: "p", Model: "nokey/m"}, "zai", "m", false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -83,5 +87,39 @@ func TestApplyPersonaRouting(t *testing.T) {
 	s.mu.Unlock()
 	if got, want := s.modelName, "zai-model"; got != want {
 		t.Errorf("after plain persona, modelName = %q, want the config default %q", got, want)
+	}
+	if got := s.providerName; got != "zai" {
+		t.Errorf("after plain persona, providerName = %q, want the config default zai", got)
+	}
+}
+
+// TestApplyPersonaRoutingUnusablePrefix pins the mislabeling guard: a model
+// prefix naming a configured-but-unusable provider must not rename the
+// session's provider. The session keeps the config default's name and only
+// the model part survives — its client is the default provider's, built
+// from the default's config entry.
+func TestApplyPersonaRoutingUnusablePrefix(t *testing.T) {
+	cfg := routeTestConfig()
+	s := &agentSession{cfg: cfg}
+	prov, usable := makeProvider("zai", cfg.Providers["zai"])
+	if !usable {
+		t.Fatal("test config's default provider is unusable")
+	}
+	s.provider = prov
+	s.providerName = "zai"
+	s.modelName = "zai-model"
+
+	s.mu.Lock()
+	s.applyPersonaRouting(subagent.Persona{Name: "p", Model: "nokey/some-model"})
+	s.mu.Unlock()
+
+	if got, want := s.providerName, "zai"; got != want {
+		t.Errorf("providerName = %q, want the config default %q (an unusable prefix must not rename the session)", got, want)
+	}
+	if got, want := s.modelName, "some-model"; got != want {
+		t.Errorf("modelName = %q, want %q", got, want)
+	}
+	if s.provider == nil {
+		t.Error("provider is nil; an unusable prefix must keep a usable client")
 	}
 }

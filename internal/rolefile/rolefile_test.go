@@ -549,3 +549,56 @@ body
 		}
 	})
 }
+
+// TestParseSamplingFields pins that temperature/top_p parse into pointers
+// (parity W1.4): an explicit 0 is a real setting, distinct from an absent
+// key, and both survive a rewrite.
+func TestParseSamplingFields(t *testing.T) {
+	input := `---
+name: deterministic
+temperature: 0
+top_p: 0.9
+tools: [read]
+---
+body
+`
+	fm, body, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if fm.Temperature == nil || *fm.Temperature != 0 {
+		t.Fatalf("temperature = %v, want an explicit 0", fm.Temperature)
+	}
+	if fm.TopP == nil || *fm.TopP != 0.9 {
+		t.Fatalf("top_p = %v, want 0.9", fm.TopP)
+	}
+	out, err := Marshal(fm, body)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	fm2, _, err := Parse(out)
+	if err != nil {
+		t.Fatalf("re-parse after Marshal: %v\n--- output ---\n%s", err, out)
+	}
+	if fm2.Temperature == nil || *fm2.Temperature != 0 || fm2.TopP == nil || *fm2.TopP != 0.9 {
+		t.Errorf("sampling changed on round trip: %v/%v", fm2.Temperature, fm2.TopP)
+	}
+
+	t.Run("absent keys stay nil", func(t *testing.T) {
+		plain := "---\nname: quiet\ntools: [read]\n---\nbody\n"
+		fm, body, err := Parse(plain)
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		if fm.Temperature != nil || fm.TopP != nil {
+			t.Fatalf("absent keys parsed as set: %v/%v", fm.Temperature, fm.TopP)
+		}
+		out, err := Marshal(fm, body)
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		if strings.Contains(out, "temperature:") || strings.Contains(out, "top_p:") {
+			t.Errorf("rewrite gained empty sampling keys:\n%s", out)
+		}
+	})
+}

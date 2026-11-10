@@ -6,6 +6,8 @@ import (
 	"testing"
 )
 
+func f64(v float64) *float64 { return &v }
+
 func TestChatRequest_serializesToOpenAIFormat(t *testing.T) {
 	req := ChatRequest{
 		Model: "gpt-4o-mini",
@@ -23,7 +25,8 @@ func TestChatRequest_serializesToOpenAIFormat(t *testing.T) {
 				},
 			},
 		},
-		Temperature: 0.7,
+		Temperature: f64(0.7),
+		TopP:        f64(0),
 		Stream:      false,
 	}
 
@@ -40,6 +43,7 @@ func TestChatRequest_serializesToOpenAIFormat(t *testing.T) {
 		`"content":"You are helpful."`,
 		`"name":"read_file"`,
 		`"temperature":0.7`,
+		`"top_p":0`,
 		`"stream":false`,
 	} {
 		if !strings.Contains(s, want) {

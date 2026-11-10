@@ -195,10 +195,11 @@ type Loop struct {
 type LoopConfig struct {
 	Model string
 	// Temperature and TopP are the session's sampling overrides (parity
-	// W1.4): passed through to the provider request verbatim. Zero means
-	// unset — the request omits the field, exactly as before this knob.
-	Temperature float64
-	TopP        float64
+	// W1.4): passed through to the provider request verbatim. nil leaves
+	// the field off the wire (the provider's default); an explicit 0 is
+	// sent as 0.
+	Temperature *float64
+	TopP        *float64
 	// ProviderName is the configured provider label (e.g. "zai") for
 	// this loop. Used only for error attribution; empty means unknown.
 	ProviderName string

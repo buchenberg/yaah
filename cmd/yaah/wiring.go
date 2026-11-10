@@ -226,6 +226,12 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	route := personaRouteFor(lc.cfg, lc.persona.Persona)
 	if route.provider != nil {
 		lc.provider = route.provider
+		// The config default's provider already got this warning in
+		// loadConfig; a persona that routes elsewhere needs its own, or a
+		// caching-enabled session silently caches nothing on that provider.
+		if route.providerName != resolveProviderName(lc.cfg) {
+			warnPromptCachingNotOptedIn(lc.cfg, route.providerName, lc.provider)
+		}
 	}
 	lc.providerName, lc.modelName = route.providerName, route.modelName
 	if toolsStage, err = buildToolRegistry(lc.cfg, opts, ws, lc.persona.Persona, store); err != nil {

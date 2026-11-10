@@ -86,10 +86,12 @@ type Frontmatter struct {
 	Model    string `yaml:"model,omitempty"`
 
 	// Temperature and TopP are per-role sampling overrides passed
-	// through to the provider request (parity W1.4). Zero means unset —
-	// the request carries no field, exactly as today.
-	Temperature float64 `yaml:"temperature,omitempty"`
-	TopP        float64 `yaml:"top_p,omitempty"`
+	// through to the provider request (parity W1.4). Pointers keep
+	// "unset" distinct from an explicit 0 — the most common determinism
+	// setting; nil omits the field, so files without the keys marshal
+	// exactly as before.
+	Temperature *float64 `yaml:"temperature,omitempty"`
+	TopP        *float64 `yaml:"top_p,omitempty"`
 
 	// extra holds frontmatter keys this struct does not model, in source
 	// order. They are preserved through Parse→Marshal so editing a role does

@@ -42,8 +42,8 @@ type wireRequest struct {
 	Messages        []wireMessage         `json:"messages"`
 	Tools           []types.ToolDef       `json:"tools,omitempty"`
 	ToolChoice      any                   `json:"tool_choice,omitempty"`
-	Temperature     float64               `json:"temperature,omitempty"`
-	TopP            float64               `json:"top_p,omitempty"`
+	Temperature     *float64              `json:"temperature,omitempty"`
+	TopP            *float64              `json:"top_p,omitempty"`
 	MaxTokens       int                   `json:"max_tokens,omitempty"`
 	Stream          bool                  `json:"stream"`
 	StreamOptions   *types.StreamOptions  `json:"stream_options,omitempty"`

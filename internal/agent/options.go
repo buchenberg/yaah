@@ -99,9 +99,9 @@ func WithApprovalMode(mode string) Option {
 }
 
 // WithSampling sets the session's sampling overrides (parity W1.4):
-// passed through to the provider request. Zero values leave the fields
-// unset — the request omits them, exactly as before the knob existed.
-func WithSampling(temperature, topP float64) Option {
+// passed through to the provider request. nil leaves a field unset (the
+// provider's default); an explicit 0 is a real setting on the wire.
+func WithSampling(temperature, topP *float64) Option {
 	return func(l *Loop) {
 		l.Config.Temperature = temperature
 		l.Config.TopP = topP

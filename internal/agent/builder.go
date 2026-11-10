@@ -90,9 +90,9 @@ type LoopBuilder struct {
 	SubAgentStuckChildTimeouts map[string]time.Duration
 	// Temperature and TopP are the sampling overrides the persona file
 	// declares (parity W1.4); passed through to every request via
-	// WithSampling. Zero means unset.
-	Temperature float64
-	TopP        float64
+	// WithSampling. nil means the file did not set them.
+	Temperature *float64
+	TopP        *float64
 }
 
 // LoopBuildOptions holds caller-specific overrides applied on top of the
@@ -156,7 +156,7 @@ func (b *LoopBuilder) Build(opts LoopBuildOptions) *Loop {
 	if opts.ApprovalMode != "" {
 		optsList = append(optsList, WithApprovalMode(opts.ApprovalMode))
 	}
-	if b.Temperature != 0 || b.TopP != 0 {
+	if b.Temperature != nil || b.TopP != nil {
 		optsList = append(optsList, WithSampling(b.Temperature, b.TopP))
 	}
 	if b.MCPApproval != "" {

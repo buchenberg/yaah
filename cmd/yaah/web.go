@@ -593,6 +593,10 @@ func (ws *webServer) handleAction(w http.ResponseWriter, r *http.Request) {
 		ws.mu.Unlock()
 		if v != nil {
 			v.SetSessionMode(ws.sess.Mode())
+			// A routing persona re-points the session's provider/model
+			// (parity W1): the header must show the model the next run
+			// uses, not the model the previous persona left behind.
+			v.SetHeader(ws.sess.ProviderName(), ws.sess.ModelName())
 			v.write(marshalWire(sseWireEvent{Type: "ctrl.status",
 				Text: "session persona switched: " + ws.sess.PersonaName() + " — the new prompt, budgets and tools take effect on the next run"}))
 		}
