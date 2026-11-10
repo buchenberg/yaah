@@ -149,15 +149,15 @@ func TestModeDirective_BothAxes(t *testing.T) {
 
 // Every directive names who switches agents, through which surfaces,
 // and that the switch is announced in-band — and never tells the model it can
-// switch itself. It also pins the supersession clause (0.155.0 bug
-// report): a mid-session persona switch keeps the conversation, so the
-// directive must tell the model to drop the old character — otherwise a
-// personality persona (grump) survives the switch in model behavior
-// even though the prompt/directive/state all flipped correctly.
+// switch itself. The supersession clause is gated on `switched`: a fresh
+// session's first build has no earlier persona to supersede (asserting
+// false history there would be its own defect), so this test pins its
+// ABSENCE on hand-built sessions; the presence path is pinned wherever a
+// real SetPersona switch happens (double-switch guard).
 func TestModeDirective_NamesLeavingMechanismAndNotice(t *testing.T) {
 	plan, _ := subagent.ResolvePersona(subagent.PlanPersonaName)
 	build, _ := subagent.ResolvePersona(subagent.BuildPersonaName)
-	shared := []string{"/agent", "web palette", "session/set_agent", "question", "in-band", "agent-change notice", "supersedes any persona named earlier"}
+	shared := []string{"/agent", "web palette", "session/set_agent", "question", "in-band", "agent-change notice"}
 	for _, persona := range []subagent.Persona{plan, build} {
 		t.Run(persona.Name, func(t *testing.T) {
 			s := &agentSession{mainPrompt: "BASE PROMPT BODY", persona: persona}
@@ -167,8 +167,27 @@ func TestModeDirective_NamesLeavingMechanismAndNotice(t *testing.T) {
 					t.Errorf("modeDirective(%q) missing %q:\n%s", persona.Name, want, got)
 				}
 			}
+			if strings.Contains(got, "supersedes") {
+				t.Errorf("unswitched session's modeDirective asserts a superseded earlier persona:\n%s", got)
+			}
 		})
 	}
+
+	t.Run("switched session gains the supersession clause", func(t *testing.T) {
+		s := &agentSession{mainPrompt: "BASE PROMPT BODY", persona: plan, switched: true}
+		got := s.modeDirective(plan)
+		for _, want := range []string{
+			"supersedes any persona named earlier in this conversation",
+			"ignore that persona's character, voice and style",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("switched modeDirective missing %q:\n%s", want, got)
+			}
+		}
+		if strings.Contains(got, "style and complaints") {
+			t.Errorf("supersession wording is report-shaped (complaints), want persona-neutral:\n%s", got)
+		}
+	})
 }
 
 // Golden byte-stability: with no axis change, the per-run

@@ -178,6 +178,10 @@ func (s *agentSession) SetPersona(name string) error {
 	s.persona = persona
 	s.systemPrompt = system
 	s.mainPrompt = main
+	// The switch happened: gate the directive's supersession clause on
+	// it — earlier persona turns exist in the conversation only after a
+	// real switch.
+	s.switched = true
 	db, sessionID := s.db, s.sessionID
 	s.mu.Unlock()
 	// Persist the switch so the selection and its prompt survive the

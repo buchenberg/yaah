@@ -35,11 +35,13 @@ func sceneTestRegistry(t *testing.T) {
 	t.Cleanup(func() { subagent.SetDefaultRoleRegistry(nil) })
 }
 
-// TestAgentPickerDoubleSwitch reproduces the 0.155.0 report: switching
-// default agent -> grump works, but the SECOND switch (grump ->
-// goat-joke-teller) must not keep the grump persona — persona, prompt
-// and directive must all follow the second pick.
-func TestAgentPickerDoubleSwitch(t *testing.T) {
+// TestDoubleSwitchStateRebinding is the double-switch STATE guard: two
+// in-session persona switches in a row — the second one must rebind
+// persona, prompt body and directive, not keep the first switch's
+// persona. It is not the behavioral report reproduction (the 0.155.0
+// model-behavior drift the supersession clause answers); it pins that
+// session state follows every pick.
+func TestDoubleSwitchStateRebinding(t *testing.T) {
 	sceneTestRegistry(t)
 
 	build, _ := subagent.ResolvePersona(subagent.BuildPersonaName)

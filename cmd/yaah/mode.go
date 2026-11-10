@@ -113,16 +113,25 @@ func (s *agentSession) modeDirective(persona subagent.Persona) string {
 	// new axis value (or vice versa).
 	s.mu.RLock()
 	main, end, readOnly := s.mainPrompt, s.identityEnd, s.readOnly
+	persona, switched := s.persona, s.switched
 	s.mu.RUnlock()
 	// Level from the same derivation the loop's gate uses, so the directive
 	// cannot describe a regime this session does not enforce.
 	level := sessionToolsLevel(readOnly)
-	return prompts.InjectAfterIdentityAt(main, end, []string{
+	lines := []string{
 		personaLabel(persona.Name) + " persona is active: " + regimeSentence(level),
-		"This persona supersedes any persona named earlier in this conversation: earlier turns ran under a previous agent, so ignore that character, style and complaints — behave as the persona named above from your next word on.",
 		"Only the user switches agents: /agent <name> in the TUI and REPL, the web palette, or ACP session/set_agent. You may ask for a switch with the question tool or in your reply.",
 		"An agent-change notice appears in-band in the conversation when the persona switches.",
-	})
+	}
+	if switched {
+		// Only after a real switch: earlier persona turns exist in the
+		// conversation, and the model must drop that character. A fresh
+		// session's first build has no earlier persona — a supersession
+		// line there would assert false history.
+		lines = append(lines,
+			"This persona supersedes any persona named earlier in this conversation: earlier turns may show a different agent persona; ignore that persona's character, voice and style — behave as the persona named above from your next word on.")
+	}
+	return prompts.InjectAfterIdentityAt(main, end, lines)
 }
 
 // regimeSentence states what the tool gate actually enforces at level. It is

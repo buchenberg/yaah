@@ -150,6 +150,12 @@ type agentSession struct {
 	// gate, the regime directive, and the ACP mode word all derive from
 	// it. Guarded by mu, like the persona.
 	readOnly bool
+	// switched records that this session has changed persona since it
+	// started (SetPersona). It gates the directive's supersession line:
+	// a fresh session's first build has no earlier persona in the
+	// conversation, so telling the model one existed would be false
+	// history and pure token cost. Guarded by mu.
+	switched bool
 	// approvalMode is the session's APPROVAL axis: "allow", "ask" or
 	// "deny" — the posture dangerous calls meet. Resolved once at
 	// construction (the approval resolution chain) and carried here so
