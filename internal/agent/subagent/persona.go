@@ -140,8 +140,8 @@ func primaryCapableMode(mode string) bool {
 // A rolefile named "build" or "plan" is shadowed by the same-named
 // built-in — built-in precedence, mirroring RoleRegistry.LoadDir's
 // rule that user files cannot displace registry built-ins.
-// Delegate-only roles (mode "subagent", explicit or the missing-key
-// default) are not personas and never appear. The built-ins resolve
+// Delegate-only roles (mode "subagent", explicit) are not personas and
+// never appear. The built-ins resolve
 // even with no registry installed.
 func Personas() []Persona {
 	out := make([]Persona, 0, len(builtinPersonas))

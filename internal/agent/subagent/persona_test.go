@@ -43,7 +43,9 @@ func TestPersonas(t *testing.T) {
 		for _, p := range ps {
 			names = append(names, p.Name)
 		}
-		want := []string{"build", "plan", "boss", "flex", "ral", "roo"}
+		// base omits the mode key, which defaults to all (parity W3) —
+		// it is a persona now.
+		want := []string{"build", "plan", "base", "boss", "flex", "ral", "roo"}
 		if !slices.Equal(names, want) {
 			t.Errorf("Personas names = %v, want %v", names, want)
 		}
@@ -52,7 +54,7 @@ func TestPersonas(t *testing.T) {
 	t.Run("delegate-only files excluded", func(t *testing.T) {
 		for _, p := range Personas() {
 			switch p.Name {
-			case "work", "base":
+			case "work":
 				t.Errorf("delegate-only role %q leaked into Personas", p.Name)
 			}
 		}
@@ -127,7 +129,9 @@ func TestResolvePersona(t *testing.T) {
 		{"file role mode primary", "boss", true, "primary", "primary body", "runs the session"},
 		{"file role mode all", "flex", true, "all", "all body", "does either"},
 		{"file role mode subagent", "work", false, "", "", ""},
-		{"file role mode omitted", "base", false, "", "", ""},
+		// The missing-key default flipped to all (parity W3): an omitted
+		// mode is orchestrator-capable AND delegatable.
+		{"file role mode omitted", "base", true, "all", "legacy body", "old default"},
 		{"unknown name", "ghost", false, "", "", ""},
 	}
 	for _, tt := range tests {

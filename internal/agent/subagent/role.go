@@ -46,8 +46,8 @@ type RoleProfile struct {
 	Output string
 	// Mode is the agent capability (yaah-21uk D1): "primary" is
 	// orchestrator-eligible, "subagent" delegate-only, "all" both.
-	// Always populated — roleDefFrom normalizes missing or unknown
-	// values to "subagent".
+	// Always populated — roleDefFrom normalizes a missing key to "all"
+	// (parity W3) and an unknown value, fail-closed, to "subagent".
 	Mode          string
 	MaxLoopCycles int
 	MinLoopCycles int // per-call overrides may not go below; 0 = none
