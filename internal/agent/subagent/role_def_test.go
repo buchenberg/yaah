@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/buchenberg/yaah/internal/rolefile"
 )
 
 func TestParseRoleFile(t *testing.T) {
@@ -322,5 +324,36 @@ func TestRoleRegistryModeProfile(t *testing.T) {
 	}
 	if p := reg.ProfileFor(SubAgentRole("builder")); p.Mode != "all" {
 		t.Errorf("ProfileFor mode = %q, want all", p.Mode)
+	}
+}
+
+// TestNormalizeRoleSystem pins the `system:` key's vocabulary (parity W2):
+// missing or empty layers the body after the embedded identity; "replace"
+// swaps it in; an unknown value falls back to the layer with a warning —
+// a typo'd replace must not silently promote the body to the session's
+// identity, the one direction neither the belt nor the mode axis undoes.
+func TestNormalizeRoleSystem(t *testing.T) {
+	if normalizeRoleSystem("", "r") {
+		t.Error("empty system must layer (SystemReplace=false)")
+	}
+	if !normalizeRoleSystem("replace", "r") {
+		t.Error("system: replace must set SystemReplace=true")
+	}
+	if normalizeRoleSystem("layer", "r") || normalizeRoleSystem("REPLACE", "r") {
+		t.Error("an unknown or differently-cased value falls back to layering")
+	}
+}
+
+// TestRoleDefFromCarriesSystemReplace pins the frontmatter→RoleDef→Persona
+// path: a primary role with `system: replace` reaches Personas() with the
+// flag set, so the session wiring can bind the body as the identity layer.
+func TestRoleDefFromCarriesSystemReplace(t *testing.T) {
+	fm := rolefile.Frontmatter{Name: "replacer", Mode: "primary", System: "replace"}
+	def := roleDefFrom(fm, "REPLACED IDENTITY MARKER")
+	if def.SystemReplace != true {
+		t.Fatal("roleDefFrom must carry system: replace")
+	}
+	if !primaryCapableMode(def.Mode) {
+		t.Fatal("the role stays primary-capable")
 	}
 }

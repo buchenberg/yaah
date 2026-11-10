@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/instructions"
 	"github.com/buchenberg/yaah/internal/memory"
@@ -92,8 +93,8 @@ func storeHasRecall(db *memory.DB) bool {
 // top-level directives). The caller derives mainPrompt by injecting
 // directives. Sub-agents get their own lean base from
 // buildSubAgentBasePrompt instead of this one.
-func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSessionID string, mem prompts.MemoryGuidance, personaBody string) string {
-	base, _ := buildSystemPromptMarked(cfg, cwd, db, resumeSessionID, mem, personaBody)
+func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSessionID string, mem prompts.MemoryGuidance, persona subagent.Persona) string {
+	base, _ := buildSystemPromptMarked(cfg, cwd, db, resumeSessionID, mem, persona)
 	return base
 }
 
@@ -103,15 +104,15 @@ func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSess
 // identical to buildSystemPrompt's — the anchor travels beside them, never
 // inside them.
 //
-// personaBody is the resolved orchestrator persona's system-prompt body
-// (yaah-21uk.6, threaded from lc.persona): it renders as its own layer
-// immediately after the identity, before the environment — and after the
-// identity anchor, so directives injected at the anchor keep landing
-// between the identity and the persona. The default build persona carries
-// an empty body, which omits the layer entirely and leaves the prompt
-// byte-identical to the pre-persona assembly.
-func buildSystemPromptMarked(cfg *config.Config, cwd string, db *memory.DB, resumeSessionID string, mem prompts.MemoryGuidance, personaBody string) (string, int) {
-	return buildMarkedPrompt(orchestratorPromptLayers(cfg, cwd, db), resumeSessionID, mem, personaBody)
+// persona is the resolved orchestrator persona (yaah-21uk.6, threaded
+// from lc.persona): under the default layering its body renders as its
+// own layer immediately after the identity, before the environment —
+// and after the identity anchor, so directives injected at the anchor
+// keep landing between the identity and the persona. The default build
+// persona carries an empty body, which omits the layer entirely and
+// leaves the prompt byte-identical to the pre-persona assembly.
+func buildSystemPromptMarked(cfg *config.Config, cwd string, db *memory.DB, resumeSessionID string, mem prompts.MemoryGuidance, persona subagent.Persona) (string, int) {
+	return buildMarkedPrompt(orchestratorPromptLayers(cfg, cwd, db), resumeSessionID, mem, persona)
 }
 
 // orchestratorPromptLayers assembles the persona-independent prompt
@@ -136,10 +137,25 @@ func orchestratorPromptLayers(cfg *config.Config, cwd string, db *memory.DB) pro
 
 // buildMarkedPrompt renders the layered prompt with personaBody bound
 // into the persona layer, plus the identity anchor BuildMarked returns.
-// The memory-guidance block (fresh sessions only) is appended outside
-// the layers, exactly as buildSystemPromptMarked has always done.
-func buildMarkedPrompt(layers prompts.Layers, resumeSessionID string, mem prompts.MemoryGuidance, personaBody string) (string, int) {
-	layers.Persona = personaBody
+// Under `system: replace` (parity W2) the persona body IS the identity
+// layer instead: it replaces the embedded identity, every other layer —
+// environment, dispatch line, user/project context, memory, skills —
+// renders as before, and the anchor moves to the end of the replaced
+// identity so directive injection at the anchor lands after it. A
+// replace persona with an empty body keeps the embedded identity: there
+// is nothing to replace it with, and an empty system prompt would break
+// every downstream layer's framing. The memory-guidance block (fresh
+// sessions only) is appended outside the layers, exactly as
+// buildSystemPromptMarked has always done.
+func buildMarkedPrompt(layers prompts.Layers, resumeSessionID string, mem prompts.MemoryGuidance, persona subagent.Persona) (string, int) {
+	if persona.SystemReplace {
+		if body := strings.TrimSpace(persona.Body); body != "" {
+			layers.Identity = body
+			layers.Persona = ""
+		}
+	} else {
+		layers.Persona = persona.Body
+	}
 	base, identityEnd := prompts.BuildMarked(layers)
 	return base + memoryGuidanceBlock(mem, resumeSessionID), identityEnd
 }

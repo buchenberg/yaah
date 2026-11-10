@@ -491,7 +491,7 @@ func buildMCPSkills(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 	}
 	st.layers = orchestratorPromptLayers(cfg, ws.cwd, tr.db)
 	st.promptMemory = mem
-	st.systemPrompt, st.identityEnd = buildMarkedPrompt(st.layers, opts.ResumeSessionID, mem, lc.persona.Persona.Body)
+	st.systemPrompt, st.identityEnd = buildMarkedPrompt(st.layers, opts.ResumeSessionID, mem, lc.persona.Persona)
 
 	// --- MCP servers ------------------------------------------------------
 	// Isolated mode omits MCP tools by policy: they execute on the host

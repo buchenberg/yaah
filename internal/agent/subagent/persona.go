@@ -30,6 +30,13 @@ type Persona struct {
 	// embedded identity, and "plan"'s enforcement wording is
 	// generated from the tools level (yaah-21uk.12), not stored here.
 	Body string
+	// SystemReplace mirrors the role file's `system: replace` (parity
+	// W2): the body replaces the embedded identity in the session's
+	// system prompt instead of rendering as persona guidance after it
+	// — environment, project instructions, memory, skills, and session
+	// directives still layer after the replaced identity. The shipped
+	// built-ins never replace (they are frontmatter-only by design).
+	SystemReplace bool
 	// Description is the one-line summary shown to whoever picks a
 	// persona, worded like the built-in role files' descriptions.
 	Description string
@@ -226,6 +233,7 @@ func registryPersona(reg *RoleRegistry, role SubAgentRole) (Persona, bool) {
 		Name:          string(role),
 		Mode:          def.Mode,
 		Body:          def.Body,
+		SystemReplace: def.SystemReplace,
 		Description:   def.Description,
 		Tools:         def.Tools,
 		MaxLoopCycles: def.MaxLoopCycles,

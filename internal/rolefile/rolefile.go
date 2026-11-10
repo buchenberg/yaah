@@ -74,6 +74,15 @@ type Frontmatter struct {
 	JSONMode      bool   `yaml:"json_mode"`
 	Timeout       int    `yaml:"timeout"` // seconds; 0 = no timeout
 
+	// System selects how the body enters the session system prompt
+	// (parity W2): empty layers it after the embedded identity as
+	// persona guidance (the historical behavior); "replace" swaps the
+	// body in for the embedded identity — environment, project
+	// instructions, memory, skills, and session directives still layer
+	// after it. Schema only: the registry normalizes the value and
+	// warns on anything but "replace".
+	System string `yaml:"system,omitempty"`
+
 	// Provider and Model carry per-role routing (parity W1, un-parking
 	// yaah-21uk.15): the registry maps them into RoleDef for every role
 	// — a persona's session routes through the persona's provider/model
