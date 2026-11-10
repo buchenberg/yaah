@@ -143,6 +143,15 @@ func restoreMessage(m memory.Message) types.Message {
 //     wrong endpoint);
 //   - a provider the current config dropped: same fallback, the
 //     persona-file routing and config default decide as they always did.
+//
+// Known edge, documented and accepted: a legacy bare name that itself
+// contains "/" (HF-style ids are common on local OpenAI-compatible
+// servers) whose prefix names a configured provider applies as a pick
+// instead of warning — the column carries no marker separating pre-W4
+// rows from wire-form picks, and the misread re-applies exactly the
+// provider/model pair the session last ran under (the same fail-open
+// the pre-W4 row already shipped). A non-matching prefix — the common
+// case — takes the warning path.
 func storedSessionModel(db *memory.DB, sessionID string, cfg *config.Config) (provider, model string, ok bool) {
 	if db == nil || sessionID == "" {
 		return "", "", false
