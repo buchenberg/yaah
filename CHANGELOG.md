@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.160.0](https://github.com/buchenberg/yaah/compare/v0.159.0...v0.160.0) (2026-11-10)
+
+
+### Features
+
+* **permissions:** W5.7 delegate inheritance — deny ceilings propagate to sub-agents ([41d9e68](https://github.com/buchenberg/yaah/commit/41d9e68ab3a546fdee3a4bc5b4cfb2629c1c1e20))
+* **permissions:** W5.7 delegate inheritance — deny ceilings propagate to sub-agents ([f20fe28](https://github.com/buchenberg/yaah/commit/f20fe28455808386102b13ba6bdebc0c82eaa784))
+
+
+### Bug Fixes
+
+* **permissions:** seed the inherited ceiling into background dispatches ([38923e6](https://github.com/buchenberg/yaah/commit/38923e6ebe6cb08a61f6ecc1fc139e41f55d3168))
+
 ## [0.159.0](https://github.com/buchenberg/yaah/compare/v0.158.0...v0.159.0) (2026-11-10)
 
 
