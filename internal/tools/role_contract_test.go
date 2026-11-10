@@ -117,13 +117,14 @@ func TestRoleTool_createFillsDefaultContractAndBudgets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("created file does not parse: %v", err)
 	}
+	wantContract := defaultRoleContract()
 	if fm.Contract.Heading != "## Changes" {
 		t.Errorf("default contract heading = %q; want \"## Changes\"", fm.Contract.Heading)
 	}
-	if len(fm.Contract.Fields) != len(defaultRoleContract.Fields) {
-		t.Fatalf("default contract fields = %d; want %d", len(fm.Contract.Fields), len(defaultRoleContract.Fields))
+	if len(fm.Contract.Fields) != len(wantContract.Fields) {
+		t.Fatalf("default contract fields = %d; want %d", len(fm.Contract.Fields), len(wantContract.Fields))
 	}
-	for i, want := range defaultRoleContract.Fields {
+	for i, want := range wantContract.Fields {
 		if fm.Contract.Fields[i] != want {
 			t.Errorf("field[%d] = %+v; want %+v", i, fm.Contract.Fields[i], want)
 		}
@@ -167,8 +168,8 @@ func TestRoleTool_createWithContractOverride(t *testing.T) {
 	if fm.Contract.Heading != "## Audit" || len(fm.Contract.Fields) != 3 {
 		t.Fatalf("contract = %+v; want 3 fields under ## Audit", fm.Contract)
 	}
-	if fm.Contract.Fields[0].Kind != "evidence" || fm.Contract.Fields[1].Kind != "" || fm.Contract.Fields[2].Kind != "interpretation" {
-		t.Errorf("field kinds = %+v; want evidence/interpretation/interpretation", fm.Contract.Fields)
+	if fm.Contract.Fields[0].Kind != "evidence" || fm.Contract.Fields[1].Kind != "interpretation" || fm.Contract.Fields[2].Kind != "interpretation" {
+		t.Errorf("field kinds = %+v; want evidence/interpretation/interpretation (untyped resolved explicitly)", fm.Contract.Fields)
 	}
 
 	if _, err := tool.Execute(context.Background(),

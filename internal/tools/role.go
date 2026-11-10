@@ -38,8 +38,8 @@ func (t *RoleTool) Schema() json.RawMessage {
 			"body": {"type": "string", "description": "Role system prompt body in markdown (required for create, optional for edit)"},
 			"tools": {"type": "string", "description": "JSON array or comma-separated tool names (optional)"},
 			"specialty": {"type": "string", "description": "Short specialty label (optional)"},
-			"contract_heading": {"type": "string", "description": "create: heading for the response contract block (overrides the default). Omitted uses the default contract (see contract_fields). edit: not a tool field - edit the file directly."},
-			"contract_fields": {"type": "string", "description": "create: comma-separated contract field names, each optionally typed as name:evidence or name:interpretation (untyped = interpretation). Omitted uses the default worker-shaped contract: files/tests/summary findings under a Changes heading. edit: not a tool field - edit the file directly."},
+			"contract_heading": {"type": "string", "description": "create: heading for the response contract block (overrides the default). Omitted, along with contract_fields, uses the default worker-shaped contract. edit: not a tool field - edit the file directly."},
+			"contract_fields": {"type": "string", "description": "create: comma-separated contract field names, each optionally typed as name:evidence or name:interpretation (untyped = interpretation). Omitted, along with contract_heading, uses the default worker-shaped contract: files/tests/summary findings under a Changes heading. edit: not a tool field - edit the file directly."},
 			"mode": {"type": "string", "enum": ["primary", "subagent", "all"], "description": "Capability mode: primary = orchestrator-eligible, subagent = delegate-only, all = both; omitted means all (the file-format default) and the key is omitted from the file. edit: omitted means unchanged; there is no unset via this tool — an explicit \"subagent\" restores the delegate-only capability but keeps the key; removing the key restores the all default and is a direct file edit, not a tool operation."}
 		},
 		"required": ["action"]
@@ -202,7 +202,7 @@ func (t *RoleTool) createRole(p roleParams) (string, error) {
 	fm.MaxToolTurns = defaultRoleMaxTurns
 	fm.Timeout = defaultRoleTimeout
 	if p.ContractHeading == "" && p.ContractFields == "" {
-		fm.Contract = defaultRoleContract
+		fm.Contract = defaultRoleContract()
 	} else {
 		c, err := parseContract(p.ContractHeading, p.ContractFields)
 		if err != nil {
@@ -355,28 +355,34 @@ const (
 	defaultRoleTimeout       = 1200
 )
 
-// defaultRoleContract is the worker-shaped block written when create gets
-// no contract columns: the same heading and evidence/interpretation split
-// golang-developer.md ships, generalized off Go tool names.
-var defaultRoleContract = rolefile.ContractDef{
-	Heading: "## Changes",
-	Fields: []rolefile.ContractField{
-		{Name: "files_modified", Kind: "evidence"},
-		{Name: "files_created", Kind: "evidence"},
-		{Name: "files_deleted", Kind: "evidence"},
-		{Name: "summary", Kind: "interpretation"},
-		{Name: "findings", Kind: "interpretation"},
-	},
+// defaultRoleContract builds the worker-shaped block written when create
+// gets no contract columns: the same heading and evidence/interpretation
+// split golang-developer.md ships, generalized off Go tool names. A
+// function, not a package var — callers may theoretically mutate a shared
+// struct's slice, and every create deserves a fresh copy.
+func defaultRoleContract() rolefile.ContractDef {
+	return rolefile.ContractDef{
+		Heading: "## Changes",
+		Fields: []rolefile.ContractField{
+			{Name: "files_modified", Kind: "evidence"},
+			{Name: "files_created", Kind: "evidence"},
+			{Name: "files_deleted", Kind: "evidence"},
+			{Name: "summary", Kind: "interpretation"},
+			{Name: "findings", Kind: "interpretation"},
+		},
+	}
 }
 
 // parseContract builds a ContractDef from the create-time override: a
 // heading plus comma-separated field names, each optionally typed
-// "name:evidence" or "name:interpretation" (untyped = interpretation).
-// This is a direct tool call like validateRoleMode — an invalid kind is
-// rejected so no role file is written with a field kind the registry
-// would silently reclassify.
+// "name:evidence" or "name:interpretation". An untyped name resolves to the
+// explicit "interpretation" — matching both the default contract and the
+// shipped role files, so a created file never relies on the reader's
+// empty-means-interpretation fallback. This is a direct tool call like
+// validateRoleMode — an invalid kind is rejected so no role file is written
+// with a field kind the registry would silently reclassify.
 func parseContract(heading, fields string) (rolefile.ContractDef, error) {
-	c := rolefile.ContractDef{Heading: heading}
+	c := rolefile.ContractDef{Heading: strings.TrimSpace(heading)}
 	for _, tok := range strings.Split(fields, ",") {
 		tok = strings.TrimSpace(tok)
 		if tok == "" {
@@ -396,6 +402,8 @@ func parseContract(heading, fields string) (rolefile.ContractDef, error) {
 			default:
 				return c, fmt.Errorf("invalid contract field kind %q: must be \"evidence\" or \"interpretation\"", kind)
 			}
+		} else {
+			f.Kind = "interpretation"
 		}
 		c.Fields = append(c.Fields, f)
 	}
