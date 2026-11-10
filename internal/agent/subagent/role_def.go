@@ -101,6 +101,13 @@ func roleDefFrom(fm rolefile.Frontmatter, body string) RoleDef {
 	// Clamp invalid budget floors instead of failing: a broken project
 	// role must not brick startup (plan §4.6). Config-level floors are
 	// hard-validated at load; role files only warn.
+	// The same honesty covers `system: replace` on a delegate-only role:
+	// nothing consumes RoleProfile.SystemReplace (dispatch prompts are the
+	// sub-agent identity + layered role guidance), so the key would be
+	// silently dead there — warn so the file's author knows.
+	if def.SystemReplace && def.Mode == "subagent" {
+		slog.Warn("role file: system: replace has no effect on delegate-only roles (it binds only session personas)", "role", def.DisplayName)
+	}
 	if def.MinLoopCycles < 0 {
 		slog.Warn("role file: negative min_iterations clamped to 0", "role", def.DisplayName, "value", def.MinLoopCycles)
 		def.MinLoopCycles = 0

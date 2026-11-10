@@ -602,3 +602,55 @@ body
 		}
 	})
 }
+
+// TestRoundTripSystemField pins the `system:` key (parity W2) on the same
+// shape as the routing keys: it parses into the modeled System field,
+// survives parse→marshal at its source position, and stays omitted when
+// absent (omitempty) so rewrites of files without it never gain the key.
+func TestRoundTripSystemField(t *testing.T) {
+	input := `---
+name: shaper
+description: owns the identity
+system: replace
+tools: [read]
+---
+REPLACED IDENTITY BODY
+`
+	fm, body, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if fm.System != "replace" {
+		t.Fatalf("system = %q, want replace", fm.System)
+	}
+	out, err := Marshal(fm, body)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	fm2, body2, err := Parse(out)
+	if err != nil {
+		t.Fatalf("re-parse after Marshal: %v\n--- output ---\n%s", err, out)
+	}
+	if fm2.System != "replace" {
+		t.Errorf("system changed on round trip: %q vs %q", fm2.System, fm.System)
+	}
+	if !slices.Contains(fm2.order, "system") {
+		t.Errorf("key order lost system: %v", fm2.order)
+	}
+	if body2 != body {
+		t.Errorf("body changed on round trip: %q vs %q", body2, body)
+	}
+
+	plain := "---\nname: quiet\ntools: [read]\n---\nbody\n"
+	fm, body, err = Parse(plain)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	out, err = Marshal(fm, body)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(out, "system:") {
+		t.Errorf("files without system: must not gain the key on rewrite:\n%s", out)
+	}
+}

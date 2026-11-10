@@ -85,9 +85,10 @@ func storeHasRecall(db *memory.DB) bool {
 // are appended for fresh sessions (resumeSessionID == "") only, and only
 // for the tools mem says are actually registered — the caller derives it
 // from the registry, so the prompt can never advertise a tool that is not
-// in the request. personaBody is the resolved orchestrator persona's
-// system-prompt body; the default build persona's empty body leaves the
-// prompt byte-identical.
+// in the request. persona is the resolved orchestrator persona: layer-mode
+// bodies render after the embedded identity; a `system: replace` persona
+// binds its body as the identity layer instead (see buildMarkedPrompt).
+// The default build persona's empty body leaves the prompt byte-identical.
 //
 // The returned systemPrompt is the main-session base prompt (clean of
 // top-level directives). The caller derives mainPrompt by injecting
@@ -135,10 +136,11 @@ func orchestratorPromptLayers(cfg *config.Config, cwd string, db *memory.DB) pro
 	}
 }
 
-// buildMarkedPrompt renders the layered prompt with personaBody bound
-// into the persona layer, plus the identity anchor BuildMarked returns.
-// Under `system: replace` (parity W2) the persona body IS the identity
-// layer instead: it replaces the embedded identity, every other layer —
+// buildMarkedPrompt renders the layered prompt with the session persona
+// bound in, plus the identity anchor BuildMarked returns. The default
+// layering binds the body into the persona layer. Under `system: replace`
+// (parity W2) the persona body IS the identity layer instead: it replaces
+// the embedded identity, every other layer —
 // environment, dispatch line, user/project context, memory, skills —
 // renders as before, and the anchor moves to the end of the replaced
 // identity so directive injection at the anchor lands after it. A
@@ -222,6 +224,33 @@ func providerUsable(cfg *config.Config, name string) bool {
 // The schemas are the single source of tool truth on the wire.
 func buildMainPrompt(cfg *config.Config, opts SessionOptions, systemPrompt string, identityEnd int) string {
 	return prompts.InjectAfterIdentityAt(systemPrompt, identityEnd, resolveDirectives(cfg, opts))
+}
+
+// identityAnchorFor locates the identity block's end inside an already
+// assembled prompt without assuming the assembly of the day: the embedded
+// identity when the prompt carries it (substring-anchored), else — under
+// `system: replace` — the persona body when the prompt still leads with
+// today's body bytes. It exists for resume: the session's stored prompt can
+// represent a replaced identity whose role file has since changed, and
+// reusing an anchor derived from TODAY's fresh assembly would point inside
+// the stored identity. -1 is honest, not a failure: InjectAfterIdentityAt
+// falls back to appending at the prompt end, which is visible and
+// directionless rather than a directive injected mid-identity-block.
+func identityAnchorFor(prompt string, persona subagent.Persona) int {
+	if identity := strings.TrimSpace(prompts.IdentityPrompt); identity != "" {
+		if i := strings.Index(prompt, identity); i >= 0 {
+			return i + len(identity)
+		}
+	}
+	// Under `system: replace` the identity is the persona body: the check
+	// is gated on the flag so a plain prompt that merely starts with the
+	// same text is not mistaken for a replaced identity.
+	if persona.SystemReplace {
+		if body := strings.TrimSpace(persona.Body); body != "" && strings.HasPrefix(prompt, body) {
+			return len(body)
+		}
+	}
+	return -1
 }
 
 // buildSubAgentBasePrompt assembles the lean base prompt handed to every

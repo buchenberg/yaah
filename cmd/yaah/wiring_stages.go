@@ -733,11 +733,15 @@ func restoreTranscript(st *loopInfraStage, cfg *config.Config, opts SessionOptio
 		}
 	}
 
-	// The identity anchor travels with the prompt: a resumed row's stored
-	// prompt was produced by this same assembly, so the offset still points
-	// at its identity block, and InjectAfterIdentityAt re-checks the
-	// embedded identity before trusting the offset on a foreign prompt.
-	st.identityEnd = mcps.identityEnd
+	// The identity anchor is located in the session's OWN prompt, not
+	// reused from today's fresh assembly: a resumed row's stored prompt can
+	// represent a replaced identity whose role file has since changed (or an
+	// anchor the fresh assembly computed at a different offset), and
+	// InjectAfterIdentityAt trusts a supplied offset without being able to
+	// relocate a non-embedded identity. identityAnchorFor finds the
+	// embedded identity or the stored replace body; -1 degrades the
+	// directive injection to the prompt end rather than mid-identity.
+	st.identityEnd = identityAnchorFor(st.systemPrompt, lc.persona.Persona)
 
 	// Derive the top-level agent prompt (with directives) from the clean
 	// system prompt. systemPrompt stays clean so child sub-agent prompts

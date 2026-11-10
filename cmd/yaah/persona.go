@@ -11,6 +11,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // sessionPersona is the small holder a session build carries the
@@ -263,7 +264,12 @@ func (s *agentSession) rebuildPromptsLocked(p subagent.Persona) (system, main st
 	// prompt stands in that case, and the switch lands everywhere else
 	// (budget, tools, gate).
 	if cur, _ := buildMarkedPrompt(s.promptLayers, s.opts.ResumeSessionID, s.promptMemory, s.persona); cur != s.systemPrompt {
-		return s.systemPrompt, s.mainPrompt, s.identityEnd, false
+		// A resumed session cannot re-derive its prompt from the retained
+		// layers (its memory snapshot/env/machine describe today, not the
+		// session's own bytes). But a switch to a replace persona must not
+		// silently no-op on its headline effect: splice the identity slice
+		// in place when it can be located in the stored prompt.
+		return s.spliceIdentityLocked(p)
 	}
 	// The anchor travels with the rebuild: under replace the persona
 	// body IS the identity, so the construction-time identityEnd does
@@ -278,6 +284,64 @@ func (s *agentSession) rebuildPromptsLocked(p subagent.Persona) (system, main st
 	// carries the guidance blocks appendToolGuidance added — without
 	// this, a switch would silently drop the delegate/retained/belt/
 	// isolated/one-shot guidance from every subsequent loop.
+	main = buildMainPrompt(s.cfg, s.opts, system, end) + s.promptGuidance
+	return system, main, end, true
+}
+
+// spliceIdentityLocked rewrites the stored prompt's identity slice without
+// touching the rest of the stored bytes — the resume-safe counterpart of
+// the from-layers rebuild. The old identity is located in the session's own
+// prompt (embedded substring, or the stored replace body's prefix when the
+// previous persona replaced it); a previous LAYER persona's body — which
+// rendered as the first layer after the anchor — is removed, keeping the
+// separator before the rest. The new persona then contributes the identity
+// slot (its body under `system: replace`, the embedded identity otherwise)
+// and — when it layers — a body layer after the anchor. Everything after
+// (environment, memory, directives, guidance suffix) stays byte-for-byte
+// the session's own: a switch moves the identity, not what it knows.
+//
+// Un-locatable state stays put and reports no change: a stored replace body
+// the current role file no longer matches (or an empty new identity) cannot
+// be spliced without guessing at an offset, and a wrong guess corrupts the
+// identity mid-block. The caller then lands budget, tools, gate, and
+// routing as usual while the identity remains the stored one.
+// Caller holds s.mu.
+func (s *agentSession) spliceIdentityLocked(p subagent.Persona) (system, main string, end int, promptChanged bool) {
+	sep := "\n\n"
+	newIdentity, newBodyLayer := "", ""
+	if p.SystemReplace {
+		newIdentity = strings.TrimSpace(p.Body)
+	} else {
+		newIdentity = strings.TrimSpace(prompts.IdentityPrompt)
+		newBodyLayer = strings.TrimSpace(p.Body)
+	}
+	if newIdentity == "" {
+		return s.systemPrompt, s.mainPrompt, s.identityEnd, false
+	}
+	// BuildMarked renders the identity as parts[0], so the identity leads
+	// the prompt by construction; anything else is not spliceable.
+	oldStart := 0
+	if !s.persona.SystemReplace {
+		oldStart = strings.Index(s.systemPrompt, strings.TrimSpace(prompts.IdentityPrompt))
+	}
+	old := identityAnchorFor(s.systemPrompt, s.persona)
+	if old < 0 || oldStart != 0 {
+		return s.systemPrompt, s.mainPrompt, s.identityEnd, false
+	}
+	tail := s.systemPrompt[old:]
+	if !s.persona.SystemReplace {
+		// Layer mode renders the persona body as its own layer directly
+		// after the anchor; the splice must not leave that body behind.
+		if body := strings.TrimSpace(s.persona.Body); body != "" {
+			tail = strings.TrimPrefix(tail, sep+body)
+		}
+	}
+	if newBodyLayer != "" {
+		system = newIdentity + sep + newBodyLayer + tail
+	} else {
+		system = newIdentity + tail
+	}
+	end = len(newIdentity)
 	main = buildMainPrompt(s.cfg, s.opts, system, end) + s.promptGuidance
 	return system, main, end, true
 }

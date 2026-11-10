@@ -350,7 +350,7 @@ func TestNormalizeRoleSystem(t *testing.T) {
 func TestRoleDefFromCarriesSystemReplace(t *testing.T) {
 	fm := rolefile.Frontmatter{Name: "replacer", Mode: "primary", System: "replace"}
 	def := roleDefFrom(fm, "REPLACED IDENTITY MARKER")
-	if def.SystemReplace != true {
+	if !def.SystemReplace {
 		t.Fatal("roleDefFrom must carry system: replace")
 	}
 	if !primaryCapableMode(def.Mode) {
