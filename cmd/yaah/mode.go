@@ -34,14 +34,6 @@ func sessionToolsLevel(readOnly bool) agent.ToolsLevel {
 	return agent.FullTools
 }
 
-// sampledToolsLevel is the loop build's pure core over the already-sampled
-// session axes — the build samples the persona and the mode together, so
-// the advertised set, the prompt's regime sentence, and the gate agree even
-// if a switch lands concurrently with the build.
-func sampledToolsLevel(persona subagent.Persona, readOnly bool) agent.ToolsLevel {
-	return sessionToolsLevel(readOnly)
-}
-
 // effectiveToolsLevel is a test seam over sessionToolsLevel (the loop build
 // and modeDirective sample the axes once and call sessionToolsLevel
 // directly); it exists so tests can assert the session-state derivation

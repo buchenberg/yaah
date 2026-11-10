@@ -39,9 +39,9 @@ type Persona struct {
 	// becomes the session's belt, so a persona can only ever shrink
 	// the surface, never grow it. Empty means NO narrowing — the
 	// default full surface, or the configured belt if one is set —
-	// never zero tools. The shipped built-ins leave it empty: build
-	// is today's full-surface orchestrator, and plan's restriction is
-	// the read-only tools level (yaah-21uk.12), not a belt.
+	// never zero tools. The shipped built-ins leave it empty: neither
+	// narrows anything, and read-only enforcement is the session's
+	// mode axis, not a belt or a persona property.
 	Tools []string
 	// MaxLoopCycles / MaxToolTurns / Timeout carry the role file's
 	// budget fields (yaah-21uk.8) and bound the ORCHESTRATOR loop the
@@ -62,8 +62,10 @@ type Persona struct {
 
 // The built-in personas are defined by role files shipped in the
 // embedded prompts FS (roles/build.md, roles/plan.md) and parsed at
-// init; everything but their names lives in those files: description,
-// mode, read-only flag. The names stay as code constants because the
+// init; everything but their names lives in those files: description
+// and mode. Mutability is not among them — read-only-ness is the
+// session's mode axis, not a persona property. The names stay as code
+// constants because the
 // fallback chains in cmd/yaah resolve persona names against them.
 // Like the registry's builtins, these shadow same-named role files:
 // a user role named "build" or "plan" is shadowed, never merged.
@@ -72,7 +74,8 @@ const (
 	// orchestrator exactly as it ships, full tool surface.
 	BuildPersonaName = "build"
 
-	// PlanPersonaName is the read-only planning persona.
+	// PlanPersonaName is the planning persona; pair it with read-only
+	// mode for a non-mutating planning session.
 	PlanPersonaName = "plan"
 )
 

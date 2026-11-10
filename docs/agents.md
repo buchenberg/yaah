@@ -64,6 +64,14 @@ mid-session through ACP `session/set_mode`, `session/set_config_option`
 (ids `mode` and `approval`), and — in a future change — the interactive
 surfaces.
 
+**Upgrading from a persona-carried `read_only`:** earlier builds let a
+persona file carry `read_only: true`, so `agents.default.agent: plan` (or
+ACP `session/set_agent("plan")`) implied a read-only posture. That
+implication is gone: the persona no longer carries mutability, and a
+`read_only` key in a role file is ignored. If you relied on it, set
+`agents.default.mode: read-only` (or switch the mode per session) after
+upgrading — otherwise those sessions silently gain full mutation access.
+
 ## Selection
 
 How a session picks its persona, in precedence order:

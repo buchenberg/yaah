@@ -253,7 +253,7 @@ func (s *agentSession) loopBuilder(
 		ConsolidateFn:              s.consolidateFn(),
 		Provider:                   prov,
 		Registry:                   s.toolReg,
-		ToolsLevel:                 sampledToolsLevel(persona, readOnly),
+		ToolsLevel:                 sessionToolsLevel(readOnly),
 		PersonaTools:               normalizeToolNames(persona.Tools),
 		Model:                      modelName,
 		SystemPrompt:               s.modeDirective(persona),

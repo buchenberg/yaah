@@ -13,7 +13,7 @@ import (
 // session gets the inspection set, everything else the full toolset. The
 // persona has no say — read-only-ness is session state, not a persona
 // property (decouple-persona-mode-approval).
-func TestSampledToolsLevel_ModeMatrix(t *testing.T) {
+func TestSessionToolsLevel_ModeMatrix(t *testing.T) {
 	plan, _ := subagent.ResolvePersona(subagent.PlanPersonaName)
 	build, _ := subagent.ResolvePersona(subagent.BuildPersonaName)
 
@@ -31,8 +31,8 @@ func TestSampledToolsLevel_ModeMatrix(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := sampledToolsLevel(tc.persona, tc.readOnly); got != tc.want {
-				t.Fatalf("sampledToolsLevel(%q, %v) = %v; want %v", tc.persona.Name, tc.readOnly, got, tc.want)
+			if got := sessionToolsLevel(tc.readOnly); got != tc.want {
+				t.Fatalf("sessionToolsLevel(%v) = %v; want %v", tc.readOnly, got, tc.want)
 			}
 			s := &agentSession{persona: tc.persona, readOnly: tc.readOnly}
 			if got := s.effectiveToolsLevel(); got != tc.want {

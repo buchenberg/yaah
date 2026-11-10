@@ -160,16 +160,6 @@ func buildAgentConfigOptions(personas []subagent.Persona, current string) Sessio
 			Description: "current agent, no longer in the registry",
 		}}, options...)
 	}
-	if len(options) == 0 {
-		// No personas at all (no registry, hand-built session): a select
-		// with no options cannot be rendered, so advertise the current
-		// name alone — or "build" when there is not even that.
-		if current == "" {
-			current = subagent.BuildPersonaName
-		}
-		options = []SessionConfigSelectOption{{Value: current, Name: current}}
-		listed[current] = true
-	}
 	if current == "" {
 		current = subagent.BuildPersonaName
 	}

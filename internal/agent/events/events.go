@@ -146,8 +146,9 @@ type AgentChangedEvent struct {
 	// Persona is the resolved persona name ("plan", or a registry
 	// persona's file stem).
 	Persona string
-	// ReadOnly reports that the persona's session must not mutate the
-	// workspace (the synthetic plan persona).
+	// ReadOnly reports that the session is in read-only mode — the
+	// session's mode axis (decouple-persona-mode-approval), not a
+	// persona property. Independent of which persona the event announces.
 	ReadOnly bool
 	// Detail is the optional clause appended after the persona in the
 	// notice — the regime sentence the next run enforces. Empty on the

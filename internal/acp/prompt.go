@@ -92,12 +92,14 @@ func (s *Server) handleSetMode(
 }
 
 // handleSetAgent switches the persona of the ADDRESSED session
-// (yaah-21uk.12): SetPersona rebinds the persona body, budget, tool
-// narrowing and read-only gate at the next loop build, and the switch
-// announces in-band like every other pick surface. The name must
+// (yaah-21uk.12): SetPersona rebinds the persona body and re-resolves
+// the loop budget at the next loop build, and the switch announces
+// in-band like every other pick surface. The mode axis is untouched —
+// read-only-ness is session state, set through session/set_mode or the
+// mode config option. The name must
 // resolve primary-capable — a miss is invalid params with the persona
 // registry's reason wording (typo vs delegate-only). The result reports
-// the session's effective persona and whether it is read-only.
+// the session's effective persona and its current mode-axis posture.
 func (s *Server) handleSetAgent(
 	ctx context.Context,
 	msg Message,
