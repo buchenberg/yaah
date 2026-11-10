@@ -35,7 +35,11 @@ func initMCP(cfg *config.Config, toolReg *tools.Registry, skipMCP, register bool
 		return nil, nil, nil
 	}
 	mcpManifests := make(map[string]*mcp.Manifest)
-	for name, s := range cfg.MCPServers {
+	for name, raw := range cfg.MCPServers {
+		// Resolve ${VAR} references: headers carry bearer tokens, and args
+		// and env carry paths and tokens. Load preserves the raw form for
+		// config round-tripping, exactly as it does for providers.
+		s := raw.Resolve()
 		mcpManifests[name] = &mcp.Manifest{
 			Command:   s.Command,
 			Args:      s.Args,

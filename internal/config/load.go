@@ -484,6 +484,42 @@ type MCPServerConfig struct {
 	Headers   map[string]string `yaml:"headers,omitempty"`   // HTTP transport only
 }
 
+// Resolve returns a copy of the MCP server config with ${VAR} references
+// in its connection fields substituted from the environment, mirroring
+// Provider.Resolve: Load keeps the raw references so the config file
+// round-trips, and the consumer resolves at use time. Without this the
+// literal `${VAR}` reaches the wire — an `Authorization: Bearer
+// ${GITHUB_TOKEN}` header is rejected by the server and the server never
+// registers its tools.
+//
+// Map values are substituted; keys are not. An env var name or a header
+// name is structure, not data, and templating it would silently rename
+// what the child process or server receives.
+func (m MCPServerConfig) Resolve() MCPServerConfig {
+	out := m
+	out.Command = SubstituteEnv(m.Command)
+	out.URL = SubstituteEnv(m.URL)
+	if len(m.Args) > 0 {
+		out.Args = make([]string, len(m.Args))
+		for i, arg := range m.Args {
+			out.Args[i] = SubstituteEnv(arg)
+		}
+	}
+	if len(m.Env) > 0 {
+		out.Env = make(map[string]string, len(m.Env))
+		for k, v := range m.Env {
+			out.Env[k] = SubstituteEnv(v)
+		}
+	}
+	if len(m.Headers) > 0 {
+		out.Headers = make(map[string]string, len(m.Headers))
+		for k, v := range m.Headers {
+			out.Headers[k] = SubstituteEnv(v)
+		}
+	}
+	return out
+}
+
 // Config is the full yaah configuration loaded from ~/.yaah/config.yaml.
 type Config struct {
 	Providers     map[string]Provider        `yaml:"providers"`
