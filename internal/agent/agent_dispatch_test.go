@@ -12,6 +12,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/buchenberg/yaah/internal/permissions"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -505,4 +506,68 @@ func TestGateDispatch_UnslottedDispatchIsReported(t *testing.T) {
 			t.Errorf("sub-agent slots still held = %d, want 0", len(l.subAgentSem))
 		}
 	})
+}
+
+// ctxCapturingTool records the context its execution received, so a test
+// can assert what the dispatch layered onto it.
+type ctxCapturingTool struct {
+	got context.Context
+}
+
+func (c *ctxCapturingTool) Name() string            { return "delegate" }
+func (c *ctxCapturingTool) Description() string     { return "delegate stub" }
+func (c *ctxCapturingTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (c *ctxCapturingTool) Execute(ctx context.Context, _ string) (string, error) {
+	c.got = ctx
+	return "ran", nil
+}
+
+// TestDispatch_DelegateCarriesInheritedCeiling pins the W5.7 plumbing: a
+// delegate dispatch hands the sub-agent runner the loop's inherited
+// ceiling — its ruleset filtered to deny rules on mutating file tools —
+// on the execution context. Shell denies and ask rules stay behind (the
+// Kilo #11523 lesson and no one to ask), and a loop without ruleset
+// carries nothing, so pre-W5.7 dispatches are byte-identical.
+func TestDispatch_DelegateCarriesInheritedCeiling(t *testing.T) {
+	reg := tools.NewEmptyRegistry()
+	capture := &ctxCapturingTool{}
+	reg.Register(capture)
+
+	l := NewLoop(nil, reg, WithPermissionRulesets(permissions.Rules{
+		{Tool: "edit", Effect: permissions.Deny},                        // inherited
+		{Tool: "rmdir", Effect: permissions.Deny},                       // inherited
+		{Tool: "bash", Resource: "git push*", Effect: permissions.Deny}, // shell: stays
+		{Tool: "write", Effect: permissions.Ask},                        // ask: stays
+	}))
+	l.Hooks = &HookEmitter{}
+	d := l.newDispatch(0, types.ToolCall{ID: "c1", Type: "function", Function: types.ToolCallFn{
+		Name: "delegate", Arguments: `{"role":"builder","prompt":"p","background":true}`,
+	}})
+	results := make(chan toolExecResult, 1)
+	d.run(context.Background(), results)
+	<-results
+
+	got := permissions.Inherited(capture.got)
+	if len(got) != 2 {
+		t.Fatalf("dispatch carried %+v, want 2 rules (edit+rmdir denies)", got)
+	}
+	if got[0].Tool != "edit" || got[1].Tool != "rmdir" {
+		t.Errorf("carried wrong rules: %+v", got)
+	}
+
+	// No ruleset: nothing is carried — the pre-W5.7 shape.
+	capture2 := &ctxCapturingTool{}
+	reg2 := tools.NewEmptyRegistry()
+	reg2.Register(capture2)
+	plain := NewLoop(nil, reg2)
+	plain.Hooks = &HookEmitter{}
+	d2 := plain.newDispatch(0, types.ToolCall{ID: "c2", Type: "function", Function: types.ToolCallFn{
+		Name: "delegate", Arguments: `{"role":"builder","prompt":"p","background":true}`,
+	}})
+	results2 := make(chan toolExecResult, 1)
+	d2.run(context.Background(), results2)
+	<-results2
+	if got := permissions.Inherited(capture2.got); got != nil {
+		t.Errorf("ruleset-less dispatch carried %+v, want nil", got)
+	}
 }

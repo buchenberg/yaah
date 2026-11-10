@@ -6,6 +6,7 @@ import (
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
+	"github.com/buchenberg/yaah/internal/permissions"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -53,10 +54,20 @@ type SubAgentConfig struct {
 	PruneMinReclaim    int
 	PruneMinTurns      int
 	PermissionRules    []pipeline.PermissionRule
-	ContextWindow      int
-	OtelEnabled        bool
-	OtelVerbose        bool
-	WrapUpThreshold    int
+	// Permissions is the sub-agent's permission ruleset (parity W5.7):
+	// the role file's own rules with the parent's inherited ceiling
+	// APPENDED AFTER, so under last-match-wins an inherited deny wins
+	// over any role-file rule for the same tool and resource — a ceiling
+	// narrows, never widens. The sub-agent loop runs at ApprovalMode
+	// "allow" with no approval middleware, so admitTool's always-on deny
+	// is the enforcement point; ask rules have no one to ask and are not
+	// part of what the parent forwards. Nil/empty behaves exactly as
+	// before this field existed.
+	Permissions     permissions.Rules
+	ContextWindow   int
+	OtelEnabled     bool
+	OtelVerbose     bool
+	WrapUpThreshold int
 	// TurnCheckpointer, when non-nil and TurnCheckpointEnabled is set,
 	// records a single-use git checkpoint before each model turn; on a
 	// failed turn (hard tool-phase error, iteration exhaustion) the loop
@@ -159,6 +170,7 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 			JSONMode:               cfg.JSONMode,
 			ToolSpillDir:           cfg.ToolSpillDir,
 			PermissionRules:        cfg.PermissionRules,
+			Permissions:            cfg.Permissions,
 			ContextWindow:          cfg.ContextWindow,
 			OtelEnabled:            cfg.OtelEnabled,
 			OtelVerbose:            cfg.OtelVerbose,

@@ -69,15 +69,14 @@ type RoleDef struct {
 	Timeout int
 
 	// Permissions is the role's permission ruleset (parity W5): the
-	// parsed `permissions:` frontmatter, appended after the global
-	// config rules at resolution so the role wins on overlap. Consumed
-	// ONLY on the session-persona path today (registryPersona → the
-	// session loop); a role DISPATCHED as a sub-agent does not apply
-	// its ruleset yet — sub-agent enforcement is W5.7's delegate
-	// inheritance and lands separately, so a rule here is not (yet) a
-	// guarantee about delegated runs of this role. Passing the rules
-	// through verbatim (they are validated at parse time) — no
-	// normalization here, same as Tools.
+	// parsed `permissions:` frontmatter. Consumed on BOTH paths: the
+	// session-persona path (registryPersona → the session loop's
+	// ruleset, appended after the global config rules) and the dispatch
+	// path (ToProfile → the sub-agent's own rules, with the parent's
+	// inherited ceiling appended after so an inherited deny can never be
+	// widened by the role file). Passing the rules through verbatim
+	// (they are validated at parse time) — no normalization here, same
+	// as Tools.
 	Permissions []permissions.Rule
 
 	// Body is the role's markdown system-prompt body below the
@@ -214,6 +213,7 @@ func (d RoleDef) ToProfile() RoleProfile {
 		MinToolTurns:  d.MinToolTurns,
 		JSONMode:      d.JSONMode,
 		Timeout:       time.Duration(d.Timeout) * time.Second,
+		Permissions:   d.Permissions,
 	}
 	if p.Tools == nil {
 		p.Tools = []string{}

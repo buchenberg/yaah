@@ -480,6 +480,25 @@ Things the rules deliberately do **not** do:
 An unknown effect (`allo` instead of `allow`) fails the config load or the
 role file's parse — a typo never silently widens or narrows.
 
+**Sub-agents (delegate inheritance).** A `deny` rule on a file-mutating
+tool (`write`, `edit`, `append`, `delete`, `patch`, `move`/`move_tree`,
+`copy`/`copy_tree`, `mkdir`, `rmdir`, `bulk_files`, `replace`,
+`apply_out`) propagates as a ceiling to every `delegate` dispatch,
+foreground and background: the sub-agent's own loop refuses the call even
+though the dispatch runs without approval prompts. The dispatched role's
+own `permissions:` apply too, but the inherited ceiling is appended after
+them — a role file can narrow further, never widen what the parent denied.
+That composition cascades: a role file's own mutating denies become part
+of the ceiling any deeper dispatch from that role carries. Shell rules
+(`bash`, `powershell`) deliberately do **not** propagate: a broad shell
+deny inherited by a sub-agent that needs that command fails one level
+removed from the rule that caused it (the Kilo #11523 lesson); restrict
+shells on the parent, or scope the sub-agent's tool belt. `ask` rules do
+not propagate either — a sub-agent has no one to ask. Note for the
+move-family tools that carry both a source and a destination: a resource
+rule matches the **source** path, so `move: { "docs/*": deny }` blocks
+moves *out of* `docs/`, not into it.
+
 ## Workspace reference
 
 **`workspace`** — where the session's tools execute. Without the stanza

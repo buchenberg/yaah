@@ -250,3 +250,15 @@ func (l *Loop) approveTool(name, args string) bool {
 	}
 	return false
 }
+
+// inheritedCeiling is the ruleset slice a dispatch of this loop hands to
+// its sub-agents (parity W5.7): the effective ruleset filtered to deny
+// rules on mutating file tools. Computed per dispatch — not captured at
+// wiring — so a persona switch that rewrote the ruleset governs the next
+// dispatch. Sub-agent loops satisfy the same contract from their own
+// Config when they dispatch (multi-hop): their inherited ceiling is
+// already deny+mutating-only, so re-filtering a merged set is a no-op
+// that composes.
+func (l *Loop) inheritedCeiling() permissions.Rules {
+	return permissions.InheritedCeiling(l.Config.Permissions)
+}
