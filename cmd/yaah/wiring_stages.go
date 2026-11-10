@@ -723,10 +723,16 @@ func restoreTranscript(st *loopInfraStage, cfg *config.Config, opts SessionOptio
 			// needs no such restore — its persona layer is already in
 			// system_prompt's bytes.
 			tr.db.CreateSession(memory.Session{
-				ID:           st.sessionID,
-				StartedAt:    time.Now().Unix(),
-				CWD:          canonicalStoredCwd(ws.cwd),
-				Model:        lc.modelName,
+				ID:        st.sessionID,
+				StartedAt: time.Now().Unix(),
+				CWD:       canonicalStoredCwd(ws.cwd),
+				// The resolved pick in the "provider/model" wire form
+				// (parity W4): the pick rides the row so a resume
+				// re-routes the session even when a persona switch or a
+				// config change moved the default in between. An unset
+				// model stores "" — storedSessionModel reads it as no
+				// pick and the chain decides.
+				Model:        wireModelValue(lc.providerName, lc.modelName),
 				SystemPrompt: st.systemPrompt,
 				Persona:      lc.persona.Persona.Name,
 			})

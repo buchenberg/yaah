@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -212,5 +213,121 @@ func TestSetCtrlCh_PublishesRestoredUsage(t *testing.T) {
 		}
 	default:
 		t.Fatal("SetCtrlCh did not publish usage to the control channel")
+	}
+}
+
+// TestStoredSessionModel pins the resume-side model-pick restore (parity
+// W4): the "provider/model" wire form reapplies only when it names a
+// provider this config still defines; a legacy bare model name, an empty
+// column, and a vanished provider all fall back to the routing chain with
+// a warning instead of crossing to a wrong endpoint.
+func TestStoredSessionModel(t *testing.T) {
+	cfg := &config.Config{Providers: map[string]config.Provider{"zai": {}}}
+
+	t.Run("wire form reapplies", func(t *testing.T) {
+		db := newResumeFixture(t, "sess-m1")
+		if err := db.SetSessionModel("sess-m1", "zai", "GLM-5.3"); err != nil {
+			t.Fatalf("SetSessionModel: %v", err)
+		}
+		provider, model, ok := storedSessionModel(db, "sess-m1", cfg)
+		if !ok || provider != "zai" || model != "GLM-5.3" {
+			t.Fatalf("got %q/%q ok=%v; want zai/GLM-5.3 ok=true", provider, model, ok)
+		}
+	})
+
+	t.Run("legacy bare model name is ignored", func(t *testing.T) {
+		db := newResumeFixtureFor(t, "sess-m2", "GLM-5.3")
+		// Pre-W4 rows carry the bare model name from the CreateSession
+		// before W4 switched the column to the wire form.
+		if _, _, ok := storedSessionModel(db, "sess-m2", cfg); ok {
+			t.Fatal("a bare model name must not reapplies as a pick")
+		}
+	})
+
+	t.Run("empty column is no pick", func(t *testing.T) {
+		db := newResumeFixture(t, "sess-m3")
+		if _, _, ok := storedSessionModel(db, "sess-m3", cfg); ok {
+			t.Fatal("an empty stored model reads as no pick")
+		}
+	})
+
+	t.Run("vanished provider falls back", func(t *testing.T) {
+		db := newResumeFixture(t, "sess-m4")
+		if err := db.SetSessionModel("sess-m4", "gone", "m"); err != nil {
+			t.Fatalf("SetSessionModel: %v", err)
+		}
+		if _, _, ok := storedSessionModel(db, "sess-m4", cfg); ok {
+			t.Fatal("a provider the config no longer defines must not reapplies")
+		}
+	})
+
+	t.Run("no store or no session is no pick", func(t *testing.T) {
+		if _, _, ok := storedSessionModel(nil, "sess-x", cfg); ok {
+			t.Fatal("nil store must be no pick")
+		}
+		db := newResumeFixture(t, "sess-have")
+		if _, _, ok := storedSessionModel(db, "sess-absent", cfg); ok {
+			t.Fatal("an unknown session id must be no pick")
+		}
+	})
+}
+
+// TestWireModelValue pins the column's wire-rendering rule: unset model is
+// "", an unset provider keeps the bare model name (pre-W4 shape), both set
+// split.
+func TestWireModelValue(t *testing.T) {
+	for _, tc := range []struct{ provider, model, want string }{
+		{"zai", "GLM-5.3", "zai/GLM-5.3"},
+		{"", "GLM-5.3", "GLM-5.3"},
+		{"zai", "", ""},
+		{"", "", ""},
+	} {
+		if got := wireModelValue(tc.provider, tc.model); got != tc.want {
+			t.Errorf("wireModelValue(%q, %q) = %q, want %q", tc.provider, tc.model, got, tc.want)
+		}
+	}
+}
+
+// newResumeFixtureFor is newResumeFixture with a Session.Model value, so a
+// test can seed the legacy bare-name shape the pre-W4 CreateSession wrote.
+func newResumeFixtureFor(t *testing.T, id, model string) *memory.DB {
+	t.Helper()
+	db, err := memory.Open(filepath.Join(t.TempDir(), "resume.db"))
+	if err != nil {
+		t.Fatalf("memory.Open() error: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	now := time.Now().Unix()
+	if err := db.CreateSession(memory.Session{ID: id, StartedAt: now, Model: model}); err != nil {
+		t.Fatalf("CreateSession() error: %v", err)
+	}
+	if err := db.AddMessage(memory.Message{
+		ID: "msg-1", SessionID: id, Idx: 0, Role: "user", Content: "plan this work", Timestamp: now,
+	}); err != nil {
+		t.Fatalf("AddMessage() error: %v", err)
+	}
+	return db
+}
+
+// TestSetModelPersistsPick pins the switch-side half of parity W4: a
+// mid-session model switch writes the row the resume restores, so a
+// crash or a kill after the switch still comes back routed where the
+// session was switched to.
+func TestSetModelPersistsPick(t *testing.T) {
+	const id = "sess-persist"
+	db := newResumeFixture(t, id)
+
+	cfg := &config.Config{Providers: map[string]config.Provider{"zai": {}}}
+	s := &agentSession{cfg: cfg, db: db, sessionID: id}
+
+	s.SetModel("zai", "GLM-5.3")
+
+	got, err := db.SessionModel(id)
+	if err != nil || got != "zai/GLM-5.3" {
+		t.Fatalf("stored pick = %q, %v; want zai/GLM-5.3", got, err)
+	}
+	provider, model := s.Model()
+	if provider != "zai" || model != "GLM-5.3" {
+		t.Fatalf("in-memory pick = %q/%q; want zai/GLM-5.3", provider, model)
 	}
 }

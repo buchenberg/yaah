@@ -234,6 +234,34 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		}
 	}
 	lc.providerName, lc.modelName = route.providerName, route.modelName
+	// Session model pick (parity W4): the pick a mid-session model switch
+	// wrote rides the row, and the creation-time resolution wrote the wire
+	// form at row creation; on a resume it overrides the re-derived
+	// routing in full — provider, model, and the live provider instance.
+	// Persona routing still re-applies on a mid-session persona switch
+	// (applyPersonaRouting replaces the pick), so this only restores what
+	// the session last ran with; a provider the config dropped or a
+	// pre-W4 bare name warns and keeps the chain above.
+	if opts.ResumeSessionID != "" {
+		if pickProvider, pickModel, ok := storedSessionModel(store, opts.ResumeSessionID, lc.cfg); ok {
+			lc.providerName, lc.modelName = pickProvider, pickModel
+			if pickProvider != route.providerName {
+				lc.provider = nil
+				if p, defined := lc.cfg.Providers[pickProvider]; defined {
+					if prov, usable := makeProvider(pickProvider, p); usable {
+						lc.provider = prov
+					}
+				}
+				// The persona route already warned when IT differs from
+				// the config default; the pick only warns when it moves
+				// the session somewhere neither the route nor the
+				// default advertised.
+				if pickProvider != resolveProviderName(lc.cfg) {
+					warnPromptCachingNotOptedIn(lc.cfg, pickProvider, lc.provider)
+				}
+			}
+		}
+	}
 	if toolsStage, err = buildToolRegistry(lc.cfg, opts, ws, lc.persona.Persona, store); err != nil {
 		return nil, err
 	}

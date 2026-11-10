@@ -1148,7 +1148,6 @@ func (s *agentSession) promptWorkspaceAccess(path, reason string) bool {
 
 func (s *agentSession) SetModel(providerName, modelName string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	prov := s.provider
 	if p, ok := s.cfg.Providers[providerName]; ok {
 		if pv, ok2 := makeProvider(providerName, p); ok2 {
@@ -1159,6 +1158,18 @@ func (s *agentSession) SetModel(providerName, modelName string) {
 	s.providerName = providerName
 	s.modelName = modelName
 	s.auxResolved = false
+	db, sessionID := s.db, s.sessionID
+	s.mu.Unlock()
+	// Persist the pick (parity W4) so a resume re-routes the session the
+	// same way. Best-effort on the switch, mirroring SetPersona's: the
+	// switch has already taken effect in this process and a store failure
+	// must not be reported as a refused switch — the next resume falls
+	// back to the routing chain instead.
+	if db != nil && sessionID != "" {
+		if err := db.SetSessionModel(sessionID, providerName, modelName); err != nil {
+			slog.Warn("session: persisting model pick failed", "provider", providerName, "model", modelName, "err", err)
+		}
+	}
 }
 
 // auxProviders returns the session-cached compact and fallback

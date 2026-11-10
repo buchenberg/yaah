@@ -21,6 +21,10 @@ type SessionRepository interface {
 	// both the persona name and the prompt bytes the session ran with.
 	SetSessionPersona(id, persona string) error
 	SetSessionSystemPrompt(id, prompt string) error
+	// Model pick (parity W4): a mid-session model switch persists on the
+	// switch as the "provider/model" wire form, so a resume re-routes the
+	// session the same way.
+	SetSessionModel(id, provider, model string) error
 	// Session-lifecycle surface for pickers and multi-session hosts
 	// (ACP session/list, resume, delete; `yaah sessions`).
 	DeleteSession(id string) error

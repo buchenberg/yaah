@@ -415,6 +415,45 @@ func (d *DB) SessionPersona(id string) (string, error) {
 	return persona, nil
 }
 
+// SessionModel reads the session's persisted model pick (parity W4).
+// Written as the "provider/model" wire form by SetSessionModel; the empty
+// string is "nothing stored" — a row created before the first model switch
+// (or a legacy row holding a bare model name, which carries no provider and
+// reads as no pick at the resolution sites). An unknown id returns the
+// underlying sql.ErrNoRows so a caller can tell "no pick stored" from "no
+// such session".
+func (d *DB) SessionModel(id string) (string, error) {
+	var model string
+	if err := d.sql.QueryRow(
+		`SELECT COALESCE(model, '') FROM sessions WHERE id = ?`, id,
+	).Scan(&model); err != nil {
+		return "", err
+	}
+	return model, nil
+}
+
+// SetSessionModel records the session's model pick as the "provider/model"
+// wire form (parity W4): a mid-session switch rewrites the column a resume
+// restores, so the session comes back routed where it was switched to.
+// Written on the switch rather than at close, mirroring SetSessionPersona —
+// a crash, a harness timeout or a kill never reaches the close path.
+//
+// updated_at is deliberately untouched: model selection state, not activity
+// (same rule as SetSessionPersona).
+func (d *DB) SetSessionModel(id, provider, model string) error {
+	if provider == "" || model == "" {
+		return fmt.Errorf("SetSessionModel: provider and model are required (got %q/%q)", provider, model)
+	}
+	res, err := d.sql.Exec(`UPDATE sessions SET model = ? WHERE id = ?`, provider+"/"+model, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("SetSessionModel: no session %q", id)
+	}
+	return nil
+}
+
 // SetSessionPersona records the session's orchestrator persona name
 // (yaah-21uk.12): a mid-session switch rewrites the column a resume
 // re-resolves, so the session comes back as the persona it was switched
