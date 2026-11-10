@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
+	"github.com/buchenberg/yaah/internal/permissions"
 	"github.com/buchenberg/yaah/internal/tools"
 )
 
@@ -66,16 +67,28 @@ var alwaysDangerous = map[string]bool{
 
 // classifyGate returns the approval gate decision for a tool call.
 //
-// MCP-served tools are checked FIRST: they are registered in the
-// registry as *mcp.MCPTool wrappers that cannot implement
-// tools.DangerClassifier (they are remote), so the registry path below
-// would return GatePass for them and fail open. The mcp_approval policy
-// therefore applies regardless of registry presence and independently of
-// the global approval mode (review finding S3).
+// The resolver runs in the order the parity plan (W5.3) pins, each stage
+// able to narrow but none able to widen the one before it:
 //
-// Registered tools with a DangerClassifier defer to it; alwaysDangerous
-// names gate even when not registered on this platform. Both resolve
-// through dangerousGate, which is where the tool level is honoured.
+//  1. MCP-served tools FIRST: they are registered as *mcp.MCPTool wrappers
+//     that cannot implement tools.DangerClassifier (they are remote), so
+//     the registry path below would return GatePass for them and fail
+//     open. The mcp_approval policy applies regardless of registry
+//     presence and independently of the global approval mode (review
+//     finding S3).
+//  2. The mode-axis floor NEXT: in read-only mode a dangerous call is
+//     GateWithheld no matter what any ruleset says — an allow rule can
+//     never re-enable a withheld tool (plan non-goal).
+//  3. The permission ruleset (parity W5): the last matching rule's
+//     verdict wins. deny strips (GateDeny, not approvable), ask routes
+//     through the approval pipeline (GateAsk), and allow only falls
+//     through — it suppresses nothing and never bypasses the danger
+//     classification below, so "allow" cannot sneak a dangerous call
+//     past the global approval posture.
+//  4. The danger classification LAST: registered tools with a
+//     DangerClassifier defer to it; alwaysDangerous names gate even when
+//     not registered on this platform. Both resolve through
+//     dangerousGate, which is where the tool level is honoured.
 func (l *Loop) classifyGate(name, args string) pipeline.GateDecision {
 	if l.Config.MCPToolNames[name] {
 		switch l.Config.MCPApproval {
@@ -85,6 +98,21 @@ func (l *Loop) classifyGate(name, args string) pipeline.GateDecision {
 			return pipeline.GateDeny
 		default: // "ask" and unset
 			return pipeline.GateAsk
+		}
+	}
+	if l.dangerousCall(name, args) && l.Config.ToolsLevel == ReadOnlyTools {
+		// The mode-axis floor: withheld before any ruleset is consulted.
+		return pipeline.GateWithheld
+	}
+	if effect, ok := l.Config.Permissions.Match(name, permissions.ResourceFor(name, args)); ok {
+		switch effect {
+		case permissions.Deny:
+			return pipeline.GateDeny
+		case permissions.Ask:
+			return pipeline.GateAsk
+		case permissions.Allow:
+			// Fall through: allow suppresses the ruleset's own veto, not
+			// the danger classification below.
 		}
 	}
 	if l.dangerousCall(name, args) {
@@ -160,6 +188,15 @@ func (l *Loop) admitTool(name, args string) (bool, error) {
 	}
 	if l.planModeWithholds(name, args) {
 		return false, fmt.Errorf("%s", pipeline.WithheldReason(name))
+	}
+	// Ruleset deny is enforced here as well as in the approval middleware
+	// because that middleware is optional (middleware.disabled): a rule
+	// that says deny must hold even when nothing can ask. Ruleset ask is
+	// deliberately NOT enforced here — dispatch has no way to prompt, and
+	// an ask that silently denied would break the contract that asking is
+	// the user's choice; it requires the approval pipeline (on by default).
+	if effect, ok := l.Config.Permissions.Match(name, permissions.ResourceFor(name, args)); ok && effect == permissions.Deny {
+		return false, fmt.Errorf("tool %q is denied by a permission rule", name)
 	}
 	return true, nil
 }

@@ -6,6 +6,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/observability"
+	"github.com/buchenberg/yaah/internal/permissions"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -28,6 +29,10 @@ type LoopBuilder struct {
 	// PersonaTools narrows the advertised tool set to the session
 	// persona's tools list (yaah-21uk.12); empty means no narrowing.
 	PersonaTools []string
+	// Permissions is the merged permission ruleset (parity W5): global
+	// config rules first, persona rules appended after (persona wins on
+	// overlap). Empty means no rules.
+	Permissions permissions.Rules
 	// Model is the model name for the primary provider.
 	Model string
 	// SystemPrompt is the assembled system prompt.
@@ -144,6 +149,7 @@ func (b *LoopBuilder) Build(opts LoopBuildOptions) *Loop {
 		WithConflictTracker(b.ConflictTracker),
 		WithToolsLevel(b.ToolsLevel),
 		WithPersonaTools(b.PersonaTools),
+		WithPermissionRulesets(b.Permissions),
 		WithOtel(otelEnabled, opts.OtelVerbose),
 		WithSubAgentConcurrency(
 			b.SubAgentMaxConcurrency,

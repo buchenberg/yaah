@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/buchenberg/yaah/internal/permissions"
 	"gopkg.in/yaml.v3"
 )
 
@@ -93,6 +94,16 @@ type Frontmatter struct {
 	// exactly as before.
 	Provider string `yaml:"provider,omitempty"`
 	Model    string `yaml:"model,omitempty"`
+
+	// Permissions is the role's permission ruleset (parity W5): ordered
+	// per-tool allow/deny/ask rules over a resource glob, evaluated
+	// last-match-wins. The deny rules refine within the role's tool belt
+	// (they can never re-enable a tool the belt or the mode axis withholds);
+	// ask rules route through the session's approval pipeline. Parsed and
+	// validated by the permissions package; an unknown effect fails the
+	// file's parse. The key keeps omitempty so files without it marshal
+	// exactly as before.
+	Permissions permissions.Rules `yaml:"permissions,omitempty"`
 
 	// Temperature and TopP are per-role sampling overrides passed
 	// through to the provider request (parity W1.4). Pointers keep

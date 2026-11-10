@@ -606,3 +606,50 @@ agents:
 		t.Errorf("Validate refused agents.default.agent %q: %v", cfg.Agent.Default.Agent, err)
 	}
 }
+
+// TestLoad_permissionsRuleset pins the global `permissions:` key (parity
+// W5): ordered rules parse with source order intact, and an unknown
+// effect fails the load — config-level floors are hard-validated, unlike
+// role files which warn.
+func TestLoad_permissionsRuleset(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("YAAH_HOME", tmp)
+
+	configContent := `
+agents:
+  default:
+    permissions:
+      edit: { "*": deny, "*.md": allow }
+      bash: { "git push*": ask }
+      webfetch: deny
+`
+	if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(configContent), 0o644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	rules := cfg.Agent.Default.Permissions
+	if len(rules) != 4 {
+		t.Fatalf("parsed %d rules, want 4: %+v", len(rules), rules)
+	}
+	if rules[0].Tool != "edit" || rules[0].Resource != "*" || rules[0].Effect != "deny" {
+		t.Errorf("rule 0 = %+v, want the * deny in source order", rules[0])
+	}
+	if rules[3].Tool != "webfetch" || rules[3].Effect != "deny" {
+		t.Errorf("rule 3 = %+v, want the bare webfetch deny", rules[3])
+	}
+
+	t.Run("unknown effect fails the load", func(t *testing.T) {
+		bad := t.TempDir()
+		t.Setenv("YAAH_HOME", bad)
+		if err := os.WriteFile(filepath.Join(bad, "config.yaml"),
+			[]byte("agents:\n  default:\n    permissions:\n      edit: { \"*.md\": allo }\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+		if _, err := Load(); err == nil {
+			t.Error("unknown effect must fail the config load")
+		}
+	})
+}

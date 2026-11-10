@@ -6,6 +6,7 @@ import (
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/jobs"
+	"github.com/buchenberg/yaah/internal/permissions"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -180,6 +181,13 @@ func WithToolsLevel(level ToolsLevel) Option {
 // persona's tools list (yaah-21uk.12); an empty list narrows nothing.
 func WithPersonaTools(names []string) Option {
 	return func(l *Loop) { l.Config.PersonaTools = names }
+}
+
+// WithPermissionRulesets sets the merged permission ruleset (parity W5):
+// global config rules first, persona rules appended after so the persona
+// wins on overlap. Empty or nil leaves the gates exactly as before.
+func WithPermissionRulesets(rules permissions.Rules) Option {
+	return func(l *Loop) { l.Config.Permissions = rules }
 }
 
 // WithOtel enables OpenTelemetry tracing.

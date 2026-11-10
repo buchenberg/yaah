@@ -48,6 +48,7 @@ yaah/
 │   ├── plans/                  # PLAN.md discovery/parsing
 │   ├── process/                # background process manager
 │   ├── prompts/                # embedded identity, roles, tool docs
+│   ├── permissions/            # permission rulesets: parse, match, resource domains
 │   ├── providers/              # OpenAI-compatible + Anthropic clients
 │   ├── pubsub/                 # typed event broker
 │   ├── repl/                   # REPL history and slash commands

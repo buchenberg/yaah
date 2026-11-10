@@ -11,6 +11,8 @@ package yaah
 import (
 	"fmt"
 	"strings"
+
+	"github.com/buchenberg/yaah/internal/permissions"
 )
 
 // normalizeToolNames trims a tools list and drops blank entries,
@@ -90,5 +92,24 @@ func unknownToolWarnings(tr *toolRegistryStage) []string {
 		}
 		out = append(out, fmt.Sprintf("warning: persona %q names unknown tool %q; ignored", tr.personaName, name))
 	}
+	return out
+}
+
+// mergePermissions composes the global config ruleset with the session
+// persona's rules (parity W5.4, opencode semantics): global rules first,
+// persona rules appended after, and last-match-wins means the persona's
+// rule wins wherever both name the same tool-and-resource. Neither side
+// can widen the tool belt or re-enabled a withheld tool — the ruleset
+// only refines within what the mode axis and the belt already allow.
+func mergePermissions(global, persona permissions.Rules) permissions.Rules {
+	if len(global) == 0 {
+		return persona
+	}
+	if len(persona) == 0 {
+		return global
+	}
+	out := make(permissions.Rules, 0, len(global)+len(persona))
+	out = append(out, global...)
+	out = append(out, persona...)
 	return out
 }

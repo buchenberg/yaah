@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/permissions"
 	"github.com/buchenberg/yaah/internal/rolefile"
 )
 
@@ -67,6 +68,13 @@ type RoleDef struct {
 	// per-role timeout kills runs that would have finished (#319).
 	Timeout int
 
+	// Permissions is the role's permission ruleset (parity W5): the
+	// parsed `permissions:` frontmatter, appended after the global
+	// config rules at resolution so the role wins on overlap. Passing
+	// the rules through verbatim (they are validated at parse time) —
+	// no normalization here, same as Tools.
+	Permissions []permissions.Rule
+
 	// Body is the role's markdown system-prompt body below the
 	// frontmatter fence.
 	Body string
@@ -85,6 +93,7 @@ func roleDefFrom(fm rolefile.Frontmatter, body string) RoleDef {
 		Output:        normalizeRoleOutput(fm.Output, fm.Name),
 		Mode:          normalizeRoleMode(fm.Mode, fm.Name),
 		SystemReplace: normalizeRoleSystem(fm.System, fm.Name),
+		Permissions:   []permissions.Rule(fm.Permissions),
 		MaxLoopCycles: fm.MaxLoopCycles,
 		MinLoopCycles: fm.MinLoopCycles,
 		MaxToolTurns:  fm.MaxToolTurns,

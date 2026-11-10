@@ -654,3 +654,69 @@ REPLACED IDENTITY BODY
 		t.Errorf("files without system: must not gain the key on rewrite:\n%s", out)
 	}
 }
+
+// TestRoundTripPermissionsField pins the role's permission ruleset (parity
+// W5): ordered rules survive a rewrite in source order, the compact map
+// form round-trips, absent keys stay omitted, and an unknown effect fails
+// the parse instead of silently narrowing to deny or widening to allow.
+func TestRoundTripPermissionsField(t *testing.T) {
+	input := `---
+name: editor
+description: edits docs
+tools: [read, edit, bash]
+permissions:
+  edit: { "*": deny, "*.md": allow }
+  bash: { "git push*": ask, "git status*": allow }
+  webfetch: deny
+---
+body
+`
+	fm, body, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(fm.Permissions) != 5 {
+		t.Fatalf("parsed %d rules, want 5: %+v", len(fm.Permissions), fm.Permissions)
+	}
+	if fm.Permissions[0].Resource != "*" || fm.Permissions[0].Effect != "deny" {
+		t.Fatalf("first rule = %+v, want the * deny (source order)", fm.Permissions[0])
+	}
+	out, err := Marshal(fm, body)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	fm2, _, err := Parse(out)
+	if err != nil {
+		t.Fatalf("re-parse after Marshal:\n%s\n%v", out, err)
+	}
+	if len(fm2.Permissions) != len(fm.Permissions) {
+		t.Fatalf("round trip changed rule count: %d -> %d", len(fm.Permissions), len(fm2.Permissions))
+	}
+	for i := range fm.Permissions {
+		if fm.Permissions[i] != fm2.Permissions[i] {
+			t.Errorf("rule %d changed: %+v -> %+v", i, fm.Permissions[i], fm2.Permissions[i])
+		}
+	}
+
+	t.Run("absent key stays omitted", func(t *testing.T) {
+		plain := "---\nname: quiet\ntools: [read]\n---\nbody\n"
+		fm, _, err := Parse(plain)
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		out, err := Marshal(fm, "")
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		if strings.Contains(out, "permissions:") {
+			t.Errorf("rewrite gained an empty permissions key:\n%s", out)
+		}
+	})
+
+	t.Run("unknown effect fails the parse", func(t *testing.T) {
+		bad := "---\nname: bad\npermissions:\n  edit: { \"*.md\": allo }\n---\nbody\n"
+		if _, _, err := Parse(bad); err == nil {
+			t.Error("unknown effect must fail the parse, not default")
+		}
+	})
+}
