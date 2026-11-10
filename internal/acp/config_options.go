@@ -1,6 +1,10 @@
 package acp
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/buchenberg/yaah/internal/agent/subagent"
+)
 
 // ModelOption is one selectable model, as the injected model catalog
 // (the ModelCatalog passed to NewServer) reports it. The wire value is
@@ -103,8 +107,9 @@ func buildModelConfigOptions(catalog []ModelOption, provider, model string) []Se
 	}}
 }
 
-// buildModeConfigOptions renders the Plan/Build selector. This is the only
-// mode advertisement: yaah does not emit the legacy session-modes field.
+// buildModeConfigOptions renders the mode-axis selector (read-only vs
+// full; wire ids build/plan). This is the only mode advertisement: yaah
+// does not emit the legacy session-modes field.
 func buildModeConfigOptions(mode string) SessionConfigOption {
 	if !validSessionMode(mode) {
 		mode = SessionModeBuild
@@ -120,7 +125,7 @@ func buildModeConfigOptions(mode string) SessionConfigOption {
 	return SessionConfigOption{
 		ID:           ConfigOptionModeID,
 		Name:         "Session Mode",
-		Description:  "Plan with inspection tools, or build with the full tool set",
+		Description:  "Read-only with the inspection set, or full access",
 		Category:     ConfigOptionCategoryMode,
 		Type:         ConfigOptionTypeSelect,
 		CurrentValue: mode,
@@ -128,10 +133,88 @@ func buildModeConfigOptions(mode string) SessionConfigOption {
 	}
 }
 
-// buildSessionConfigOptions returns the full selector set in priority order:
-// mode first, then the model picker when a catalog is wired.
-func buildSessionConfigOptions(catalog []ModelOption, provider, model, mode string) []SessionConfigOption {
-	out := []SessionConfigOption{buildModeConfigOptions(mode)}
+// buildAgentConfigOptions renders the agent-axis selector: every
+// primary-capable persona the registry offers, with the session's
+// current persona as the current value. The current persona is always
+// one of the options: a session restored with a persona that has since
+// left the registry (file deleted, mode changed) is prepended, because
+// currentValue must name a value from the option's own list.
+func buildAgentConfigOptions(personas []subagent.Persona, current string) SessionConfigOption {
+	options := make([]SessionConfigSelectOption, 0, len(personas)+1)
+	listed := make(map[string]bool, len(personas)+1)
+	for _, p := range personas {
+		if p.Name == "" || listed[p.Name] {
+			continue
+		}
+		listed[p.Name] = true
+		options = append(options, SessionConfigSelectOption{
+			Value:       p.Name,
+			Name:        p.Name,
+			Description: p.Description,
+		})
+	}
+	if current != "" && !listed[current] {
+		options = append([]SessionConfigSelectOption{{
+			Value:       current,
+			Name:        current,
+			Description: "current agent, no longer in the registry",
+		}}, options...)
+	}
+	if current == "" {
+		current = subagent.BuildPersonaName
+	}
+	return SessionConfigOption{
+		ID:           ConfigOptionAgentID,
+		Name:         "Agent",
+		Description:  "Persona the session runs as",
+		Category:     ConfigOptionCategoryAgent,
+		Type:         ConfigOptionTypeSelect,
+		CurrentValue: current,
+		Options:      options,
+	}
+}
+
+// buildApprovalConfigOptions renders the approval-axis selector: the
+// posture dangerous tool calls meet. The value is one of the loop's
+// approval modes; an unknown current value falls back to "ask" so the
+// advertised set never names a value it does not offer.
+func buildApprovalConfigOptions(current string) SessionConfigOption {
+	switch current {
+	case "allow", "ask", "deny":
+	default:
+		current = "ask"
+	}
+	return SessionConfigOption{
+		ID:           ConfigOptionApprovalID,
+		Name:         "Approval",
+		Description:  "How dangerous tool calls are approved",
+		Category:     ConfigOptionCategoryApproval,
+		Type:         ConfigOptionTypeSelect,
+		CurrentValue: current,
+		Options: []SessionConfigSelectOption{
+			{Value: "allow", Name: "Allow", Description: "Run dangerous calls without asking."},
+			{Value: "ask", Name: "Ask", Description: "Ask before every dangerous call."},
+			{Value: "deny", Name: "Deny", Description: "Refuse dangerous calls."},
+		},
+	}
+}
+
+// buildSessionConfigOptions returns the full selector set in priority
+// order: the agent, mode and approval axes (the three session axes of
+// decouple-persona-mode-approval), then the model picker when a catalog
+// is wired. The axis values come from the session's current state, so
+// every advertisement — session/new, session/load, and the echoes a
+// set_config_option reply recomputes — agrees by construction.
+func buildSessionConfigOptions(catalog []ModelOption, provider, model, personaName string, readOnly bool, approval string) []SessionConfigOption {
+	mode := SessionModeBuild
+	if readOnly {
+		mode = SessionModePlan
+	}
+	out := []SessionConfigOption{
+		buildAgentConfigOptions(subagent.Personas(), personaName),
+		buildModeConfigOptions(mode),
+		buildApprovalConfigOptions(approval),
+	}
 	out = append(out, buildModelConfigOptions(catalog, provider, model)...)
 	return out
 }

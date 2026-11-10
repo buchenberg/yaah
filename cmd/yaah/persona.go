@@ -135,7 +135,7 @@ func (s *agentSession) PersonaName() string {
 // so the notice there rides the first run's drain.
 func (s *agentSession) announcePersona() {
 	s.mu.RLock()
-	name, readOnly := s.persona.Name, s.persona.ReadOnly
+	name, readOnly := s.persona.Name, s.readOnly
 	s.mu.RUnlock()
 	if name == "" || name == subagent.BuildPersonaName {
 		return
@@ -147,10 +147,10 @@ func (s *agentSession) announcePersona() {
 // (yaah-21uk.12, the decision reversal recorded on yaah-21uk.2 — it
 // supersedes the fixed-at-construction rule of yaah-21uk.11). The
 // switch is effective at the NEXT loop build: the persona body rebinds
-// into the system prompt (from the layers retained at construction),
-// the loop budget re-resolves, and the tool narrowing and read-only
-// gate re-derive from the new persona. The persona is the session's
-// only axis.
+// into the system prompt (from the layers retained at construction)
+// and the loop budget re-resolves. The mode axis is NOT touched: the
+// persona is the agent axis, and read-only-ness is session state set
+// independently (decouple plan Phase 1).
 //
 // Validation comes first (missing or delegate-only names keep the pick
 // surfaces' refusal wording), a switch to the persona the session
@@ -201,12 +201,15 @@ func (s *agentSession) SetPersona(name string) error {
 	// Announce the switch in-band, after the lock is released. The notice
 	// carries the regime sentence the next run's directive enforces, so the
 	// switch is observable from inside the conversation rather than only
-	// from the next prompt's directive. dispatchEvent buffers it for views
-	// that cannot take writes between runs (REPL, ACP).
+	// from the next prompt's directive. The mode axis is untouched by an
+	// agent switch: ReadOnly reports the session's current mode, not the
+	// persona's. dispatchEvent buffers it for views that cannot take
+	// writes between runs (REPL, ACP).
+	readOnly := s.IsReadOnly()
 	s.dispatchEvent(&agent.AgentChangedEvent{
 		Persona:  persona.Name,
-		ReadOnly: persona.ReadOnly,
-		Detail:   regimeSentence(personaLevel(persona)),
+		ReadOnly: readOnly,
+		Detail:   regimeSentence(sessionToolsLevel(readOnly)),
 	})
 	return nil
 }

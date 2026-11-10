@@ -205,7 +205,7 @@ func (s *Server) handleSessionNew(ctx context.Context, msg Message, sendUpdate u
 	}
 	respOK(msg.ID, SessionNewResult{
 		SessionID:     st.id,
-		ConfigOptions: buildSessionConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName(), st.sess.Mode()),
+		ConfigOptions: sessionConfigOptions(s.modelCatalog(ctx), st.sess),
 		Meta:          sessionMetaOf(st),
 	})
 	s.refreshAvailableCommands(st, sendUpdate)
@@ -390,10 +390,17 @@ func (s *Server) handleSessionLoad(
 }
 
 // loadConfigOptions renders the config options a session/load response
-// re-advertises: the always-present mode selector and, when a catalog is
-// wired, the model picker.
+// re-advertises: the three session axes (agent, mode, approval) and, when
+// a catalog is wired, the model picker.
 func (s *Server) loadConfigOptions(ctx context.Context, st *sessionState) []SessionConfigOption {
-	return buildSessionConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName(), st.sess.Mode())
+	return sessionConfigOptions(s.modelCatalog(ctx), st.sess)
+}
+
+// sessionConfigOptions is the single read point for the config selector
+// set: every axis value comes from the session's current state, so the
+// initial advertisement and every recomputed echo agree by construction.
+func sessionConfigOptions(catalog []ModelOption, sess Session) []SessionConfigOption {
+	return buildSessionConfigOptions(catalog, sess.ProviderName(), sess.ModelName(), sess.PersonaName(), sess.IsReadOnly(), sess.ApprovalMode())
 }
 
 // sessionMetaOf renders the `_meta` block for a session/new or

@@ -215,6 +215,10 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// the same persona and narrows the session's tool belt to its
 	// tools (yaah-21uk.7).
 	lc.persona = resolveSessionPersonaFor(store, opts, lc.cfg)
+	// The mode axis default (decouple plan Phase 1): read from
+	// agents.default.mode, not the persona — read-only-ness is session
+	// state, not a persona property.
+	lc.readOnly = resolveReadOnlyMode(lc.cfg)
 	if toolsStage, err = buildToolRegistry(lc.cfg, opts, ws, lc.persona.Persona, store); err != nil {
 		return nil, err
 	}

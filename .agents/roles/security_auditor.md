@@ -1,5 +1,6 @@
 ---
 name: Sam
+mode: subagent
 specialty: security
 description: Scans code for vulnerabilities, secrets, and unsafe patterns
 contract:

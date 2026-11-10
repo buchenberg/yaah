@@ -92,6 +92,18 @@ type Session interface {
 	ProviderName() string
 	ModelName() string
 	Mode() string
+	// IsReadOnly reports the session's mode axis: whether this session
+	// may mutate the workspace. Independent of the persona.
+	IsReadOnly() bool
+	// SetReadOnly switches the mode axis; effective at the next loop
+	// build.
+	SetReadOnly(readOnly bool)
+	// ApprovalMode reports the session's approval axis
+	// ("allow"/"ask"/"deny").
+	ApprovalMode() string
+	// SetApprovalMode switches the approval axis; an invalid value is
+	// refused with an error.
+	SetApprovalMode(mode string) error
 	// PersonaName reports the persona the session runs as; the web
 	// switch notice names it.
 	PersonaName() string
@@ -130,6 +142,21 @@ type agentSession struct {
 	// role reloads still only refresh the registry for new sessions.
 	// Guarded by mu, like the mode.
 	persona subagent.Persona
+	// readOnly is the session's MODE axis: whether this session may
+	// mutate the workspace (read-only vs full). It is independent of the
+	// persona — any persona can run in either mode — set from
+	// agents.default.mode at construction and switchable mid-session
+	// (ACP session/set_mode and the mode config option). The loop's tool
+	// gate, the regime directive, and the ACP mode word all derive from
+	// it. Guarded by mu, like the persona.
+	readOnly bool
+	// approvalMode is the session's APPROVAL axis: "allow", "ask" or
+	// "deny" — the posture dangerous calls meet. Resolved once at
+	// construction (the approval resolution chain) and carried here so
+	// every loop build reads the session's current value instead of
+	// re-resolving the snapshot inputs; the ACP approval config option
+	// writes it mid-session. Guarded by mu.
+	approvalMode string
 	// promptLayers retains the construction-time persona-independent
 	// prompt layers (yaah-21uk.12): a persona switch rebinds only the
 	// persona body and re-renders from them, so the memory snapshot and

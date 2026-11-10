@@ -51,6 +51,8 @@ type RoleDef struct {
 	// per-role timeout kills runs that would have finished (#319).
 	Timeout int
 
+	// Body is the role's markdown system-prompt body below the
+	// frontmatter fence.
 	Body string
 }
 

@@ -1,6 +1,7 @@
 ---
 name: Charley
 specialty: developer
+mode: subagent
 description: Implements features, fixes bugs, and makes code changes
 contract:
   heading: "## Changes"

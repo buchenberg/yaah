@@ -140,8 +140,14 @@ type Defaults struct {
 	MaxToolTurns     int    `yaml:"max_turns"`      // soft cap on tool-using turns; 0 = off
 	ContextWindow    int    `yaml:"context_window"` // max context window; resolved window from model is capped by this value
 	Approval         string `yaml:"approval"`
-	MCPApproval      string `yaml:"mcp_approval"`  // approval policy for MCP-served tools: ask (default), allow, deny
-	WorkspaceAsk     bool   `yaml:"workspace_ask"` // prompt before denying out-of-workspace access (with --workspace)
+	MCPApproval      string `yaml:"mcp_approval"` // approval policy for MCP-served tools: ask (default), allow, deny
+	// Mode is the session's default mode axis: whether sessions may mutate
+	// the workspace. "full" (the default, and the empty value) allows
+	// mutation; "read-only" withholds the mutating tools. Independent of
+	// the persona: any persona can run in either mode, and the mode can be
+	// switched mid-session (ACP session/set_mode, the mode config option).
+	Mode         string `yaml:"mode"`
+	WorkspaceAsk bool   `yaml:"workspace_ask"` // prompt before denying out-of-workspace access (with --workspace)
 	// WorkspaceDenyPatterns are globs denied even inside the workspace
 	// (with --workspace). When unset, a built-in secret-file default
 	// applies (.env, *.pem, private keys). Set explicitly to override,

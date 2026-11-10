@@ -1,6 +1,7 @@
 ---
 name: Tim
 specialty: reviewer
+mode: subagent
 description: Inspects code, counts files, measures complexity, reports findings
 contract:
   heading: "## Metrics"

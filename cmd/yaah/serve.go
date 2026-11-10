@@ -286,7 +286,7 @@ func (s *agentSession) runHeadlessLocked(ctx context.Context, prompt string) (st
 	// Headless serve mode always forces OTel on (in-memory tracing).
 	otelForced := true
 	loop := b.Build(agent.LoopBuildOptions{
-		ApprovalMode: resolveApproval(s.cfg, s.opts),
+		ApprovalMode: s.ApprovalMode(),
 		OtelEnabled:  &otelForced,
 		OtelVerbose:  s.cfg.Observability.Otel.Verbose,
 	})

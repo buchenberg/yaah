@@ -44,6 +44,15 @@ func resolveMCPApproval(cfg *config.Config) string {
 	}
 }
 
+// resolveReadOnlyMode returns the session mode axis's default: whether
+// new sessions may mutate the workspace. Config-driven
+// (agents.default.mode); empty and unknown values mean full — a session
+// must never lose the ability to write because of a typo'd config key
+// (validation catches typos, this is the last line of defense).
+func resolveReadOnlyMode(cfg *config.Config) bool {
+	return cfg.Agent.Default.Mode == "read-only"
+}
+
 // resolveProviderName extracts the provider name from the config.
 func resolveProviderName(cfg *config.Config) string {
 	// 1. Explicit default.provider setting

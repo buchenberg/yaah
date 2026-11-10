@@ -41,16 +41,13 @@ History persists at `~/.yaah/history` (or `$YAAH_HOME/history` when `YAAH_HOME` 
 
 ## Plan mode
 
-The session persona is the only axis: the orchestrator runs as a persona
-(`build` by default, `plan` for read-only planning), and the old plan/build
-mode surfaces are gone: switching is `/agent <name>` in the REPL, `:agent`
-in the TUI, the web palette's agent action, and ACP
-`session/set_agent`. ACP `session/set_mode` remains as a spec-level
-method mapping `plan`/`build` onto the personas of the same name. See
-[agents.md](./agents.md) for the persona model.
-
-The `plan` persona narrows the toolset to the **inspection set** — the
-tools that look at a workspace instead of changing it:
+A session has two axes that decide what it may do: the **agent** (which
+persona runs) and the **mode** (whether it may mutate the workspace).
+Read-only mode — the mode axis, not a persona — narrows the toolset to the **inspection set**,
+the tools that look at a workspace instead of changing
+it. The mode defaults from `agents.default.mode` (`full`) and is switchable
+mid-session: ACP `session/set_mode` and the `mode` config option set it;
+the persona is untouched. See [agents.md](./agents.md) for the axis model.
 
 `read`, `grep`, `glob`, `ls`, `file_info`, `go_outline`, `calculate`, `diff`,
 `question`, `git` (inspection actions only), `staticcheck`, `plan`.
@@ -62,7 +59,7 @@ pass, while `add`, `commit`, `push`, `pull` and every mutating `branch` option
 `--force`, `--force-with-lease`, `-u`, `--set-upstream-to`,
 `--unset-upstream`, `-t`, `--track`, `--no-track`, `--edit-description`,
 `--create-reflog`, `--no-create-reflog`, `--recurse-submodules` — are
-**denied** in the plan persona rather than offered for approval, as is any option the
+**denied** in read-only mode rather than offered for approval, as is any option the
 tool does not recognize. A positional argument (`paths`) is read as a ref
 pattern, not a branch name to create, only when the call also carries a
 listing selector: `--list`, `-a`/`--all`, `-r`/`--remotes`,
@@ -73,7 +70,7 @@ listing selector: `--list`, `-a`/`--all`, `-r`/`--remotes`,
 do not make a call a listing, because git accepts them when creating a branch
 too, so `git branch -q <name>`, `git branch -v <name>` and
 `git branch --sort=refname <name>` are denied while `git branch -q --list`,
-`git branch -v --list` and `git branch --sort=refname --list` pass. The persona's
+`git branch -v --list` and `git branch --sort=refname --list` pass. The mode's
 promise is that the capability is absent, not that the user may grant it, and
 the denial is enforced at dispatch, so `middleware.disabled: [approval]`
 cannot switch it off.
@@ -82,13 +79,12 @@ and `-toolexec` flags are denied — both make `go vet` execute a caller-named
 binary — and a `packages` value that opens with `-` is refused outright,
 because that field is forwarded where the analyzer expects options.
 
-The `plan` **tool** is not the `plan` **persona**. The tool drafts and updates `PLAN.md`
+The `plan` **tool** is not the read-only **mode**. The tool drafts and updates `PLAN.md`
 files under `.agents/plans/` (see [Plans and todos](#plans-and-todos)); the
-persona is the identity the session runs as, and its gate admits the tool so the
+mode is the session's mutability state, and its gate admits the tool so the
 plan artifact it exists to produce can be written.
 
-Every other persona, including the default, runs the full toolset; `build` is
-that default.
+Full mode — the default — runs the whole toolset.
 
 ## Web UI
 
@@ -234,8 +230,8 @@ Kilo works unchanged.
 The `plan` tool manages `PLAN.md` files under `.agents/plans/` with a
 `draft → approved → in_progress → completed → cancelled` workflow. The
 `todowrite` tool tracks in-flight work and feeds the TUI sidebar. The `plan`
-tool is unrelated to the plan persona — that is the read-only planning persona described in
-[Plan mode](#plan-mode).
+tool is unrelated to the `plan` persona and unrelated to read-only mode — that is the
+session mode described in [Plan mode](#plan-mode).
 
 ## Tool belt
 

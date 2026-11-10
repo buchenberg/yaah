@@ -1,6 +1,7 @@
 ---
 name: consolidator
 description: Consolidates durable facts and decisions from recent conversation into long-term memory.
+mode: subagent
 tools:
   - memory_add
   - memory_search

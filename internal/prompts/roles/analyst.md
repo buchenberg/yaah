@@ -1,6 +1,7 @@
 ---
 name: Jack
 specialty: analyst
+mode: subagent
 description: Finds and gathers information from web, docs, and code
 contract:
   heading: "## Summary"

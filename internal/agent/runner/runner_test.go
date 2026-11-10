@@ -355,6 +355,9 @@ func TestTaskRunnerTranscriptFromTooledRolePasses(t *testing.T) {
 // Every shipped role must declare a tool list: with the default role
 // gone, a role without tools is unspawnable (the runner guards against
 // it), so catch silent regressions in the embedded role files here.
+// The orchestrator personas (build, plan) are exempt — they are not
+// dispatched, and their tool surface is governed by the session's own
+// tool belt, not by a role-file tools list.
 func TestBuiltinRolesHaveTools(t *testing.T) {
 	reg := subagent.NewRoleRegistry()
 	files := BuiltinRoleFiles()
@@ -363,6 +366,9 @@ func TestBuiltinRolesHaveTools(t *testing.T) {
 	}
 	reg.LoadBytes(files)
 	for _, name := range reg.Names() {
+		if name == subagent.BuildPersonaName || name == subagent.PlanPersonaName {
+			continue
+		}
 		if p := reg.ProfileFor(subagent.SubAgentRole(name)); len(p.Tools) == 0 {
 			t.Errorf("embedded role %q has no tools — add a tools list to its role file", name)
 		}
