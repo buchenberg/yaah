@@ -166,6 +166,11 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		if loopStage != nil && loopStage.reaper != nil {
 			loopStage.reaper.Close()
 		}
+		// The role watcher's Close is idempotent and joined, so a
+		// handed-off session closing it again is safe.
+		if loopStage != nil && loopStage.roleWatcher != nil {
+			loopStage.roleWatcher.Close()
+		}
 		if loopStage != nil && loopStage.egressBroker != nil {
 			loopStage.egressBroker.Stop()
 		}

@@ -38,6 +38,16 @@ otherwise, so a project that wants a file delegate-only says
 The persona's name is the file stem. Built-in roles always win on name
 conflict with user files; the `build`/`plan` built-ins win over everything.
 
+### Hot reload
+
+Role files are watched while a session runs: the `role` tool reloads the
+registry after its own mutations, and a polling watcher reloads it when the
+files change any other way (a human editor, another tool). Changes apply to
+new work only — new delegations pick up the updated registry, while the
+session's own persona and axes stay fixed, and in-flight sub-agents keep
+their already-loaded profiles. Create, edit, and delete of `*.md` files in
+the search paths are all picked up within about a second of the write.
+
 ## Persona file effects
 
 What a persona file changes for the session that runs it:

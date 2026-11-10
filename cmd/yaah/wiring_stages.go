@@ -630,6 +630,11 @@ type loopInfraStage struct {
 
 	worldStatus worldinfo.Status
 	taskTool    *tools.DelegateTool
+
+	// roleWatcher keeps the default role registry in sync with raw role
+	// file edits the role tool did not make (W6): started with the
+	// session, stopped in the session close and in the startup guard.
+	roleWatcher *runner.RoleWatcher
 }
 
 // buildLoopInfra restores the transcript, builds the loop's shared
@@ -676,8 +681,26 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 	wireLaneRouting(st)
 	wireBackgroundJobs(st, tr)
 	registerSubAgentTools(st, cfg, tr)
+	startRoleWatcher(st, ws)
 
 	return st, nil
+}
+
+// startRoleWatcher starts the polling watcher that reloads the default
+// role registry when role files change outside the role tool (W6). It
+// reuses the search paths and the same resolver the role tool's reload
+// path uses, so tool mutations and raw file edits converge on one
+// registry swap. A construction failure only disables hot reload — the
+// registry keeps serving the definitions loaded at startup — and reports
+// the reason on stderr, matching the store-open posture above.
+func startRoleWatcher(st *loopInfraStage, ws *workspaceStage) {
+	w, err := runner.NewRoleWatcher(runner.RoleSearchPaths(ws.cwd), runner.BuiltinRoleFiles(), runner.SubAgentRoleResolver{})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: role hot reload disabled: %v\n", err)
+		return
+	}
+	w.Start()
+	st.roleWatcher = w
 }
 
 // loadProviderCatalog forces the embedded models.dev snapshot's one-time decode
