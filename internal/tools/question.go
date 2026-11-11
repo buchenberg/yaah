@@ -50,7 +50,7 @@ func (t *QuestionTool) Schema() json.RawMessage {
 					"type": "object",
 					"properties": {
 						"question": {"type": "string", "description": "The question text"},
-						"header": {"type": "string", "description": "Short label for the question (max 30 chars)"},
+						"header": {"type": "string", "maxLength": 30, "description": "Short label for the question (max 30 chars)"},
 						"options": {
 							"type": "array",
 							"items": {
@@ -93,6 +93,9 @@ func (t *QuestionTool) Execute(ctx context.Context, args string) (string, error)
 
 	entries := make([]QuestionEntry, len(params.Questions))
 	for i, q := range params.Questions {
+		if n := len([]rune(q.Header)); n > 30 {
+			return "", fmt.Errorf("question: header %q is %d characters; the maximum is 30", q.Header, n)
+		}
 		opts := make([]QuestionOption, len(q.Options))
 		for j, o := range q.Options {
 			opts[j] = QuestionOption{Label: o.Label, Description: o.Description}

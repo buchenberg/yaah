@@ -1,1 +1,3 @@
 Asks the user structured questions with multiple-choice options for interactive clarification. Each question has a `header` (short label), `question` text, and an array of `options` with `label` and `description` fields. Set `multiple: true` for multi-select. Use when you need user input on ambiguous choices — e.g., file selection, approach decisions, or configuration preferences.
+
+Each `header` is limited to 30 characters; a longer label is refused before anything is prompted.

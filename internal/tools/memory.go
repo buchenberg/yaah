@@ -415,7 +415,7 @@ func (t *MemoryAddTool) Schema() json.RawMessage {
 		"type": "object",
 		"properties": {
 			"text": {"type": "string", "description": "The memory note text"},
-			"tags": {"type": "string", "description": "Optional JSON array of tags"},
+			"tags": {"type": "array", "items": {"type": "string"}, "description": "Optional tags"},
 			"scope": {"type": "string", "enum": ["session", "global"], "description": "Optional tier: 'session' for atoms distilled from this conversation, 'global' (default) for facts meant to outlive it"},
 			"supersedes": {"type": "string", "description": "Optional ID of an existing atom this one corrects or replaces. The older atom is marked superseded: kept for audit, no longer returned by memory_search."}
 		},
@@ -429,12 +429,16 @@ func (t *MemoryAddTool) Execute(ctx context.Context, args string) (string, error
 	}
 
 	var params struct {
-		Text       string `json:"text"`
-		Tags       string `json:"tags"`
-		Scope      string `json:"scope"`
-		Supersedes string `json:"supersedes"`
+		Text       string          `json:"text"`
+		Tags       json.RawMessage `json:"tags"`
+		Scope      string          `json:"scope"`
+		Supersedes string          `json:"supersedes"`
 	}
 	if err := StrictToolArgs("memory_add", t.Schema(), args, &params); err != nil {
+		return "", err
+	}
+	tags, err := normalizeTags(params.Tags)
+	if err != nil {
 		return "", err
 	}
 
@@ -455,7 +459,7 @@ func (t *MemoryAddTool) Execute(ctx context.Context, args string) (string, error
 	entry := memory.Entry{
 		ID:        memory.NewEntryID(),
 		Text:      params.Text,
-		Tags:      params.Tags,
+		Tags:      tags,
 		Source:    "agent",
 		Scope:     normScope,
 		SessionID: t.SessionID,
@@ -872,4 +876,32 @@ func (t *MemorySessionSearchTool) sessionSummary(s memory.Session) string {
 	return fmt.Sprintf("%s[%s] %s | %s | %d msgs | model: %s%s%s\n  %s",
 		prefix, s.ID[:12], time.Unix(s.StartedAt, 0).Format("Jan 2 15:04"), status,
 		len(msgs), s.Model, tokenInfo, compactNote, topic)
+}
+
+// normalizeTags accepts both the schema's array form and the historical
+// JSON-array string, and stores the canonical JSON-array string the memory
+// store has always carried. Anything else is a tool error, not a silent "".
+func normalizeTags(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", nil
+	}
+	var tags []string
+	if err := json.Unmarshal(raw, &tags); err == nil {
+		out, _ := json.Marshal(tags)
+		return string(out), nil
+	}
+	var legacy string
+	if err := json.Unmarshal(raw, &legacy); err == nil {
+		legacy = strings.TrimSpace(legacy)
+		if legacy == "" {
+			return "", nil
+		}
+		var parsed []string
+		if err := json.Unmarshal([]byte(legacy), &parsed); err != nil {
+			return "", fmt.Errorf("memory_add: tags must be an array of strings (or a JSON array string): %w", err)
+		}
+		out, _ := json.Marshal(parsed)
+		return string(out), nil
+	}
+	return "", fmt.Errorf("memory_add: tags must be an array of strings")
 }
