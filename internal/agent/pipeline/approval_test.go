@@ -10,7 +10,7 @@ import (
 func TestApprovalMiddleware_DenyModeStripsDangerousCalls(t *testing.T) {
 	var deniedArgs string
 	m := &ApprovalMiddleware{
-		mode: "deny",
+		mode: modeDeny,
 		classify: func(name, args string) GateDecision {
 			if name == "bash" {
 				return GateGlobal
@@ -52,7 +52,7 @@ func TestApprovalMiddleware_DenyModeStripsDangerousCalls(t *testing.T) {
 func TestApprovalMiddleware_AskModeHonoursApprove(t *testing.T) {
 	calls := 0
 	m := &ApprovalMiddleware{
-		mode:     "ask",
+		mode:     modeAsk,
 		classify: func(name, args string) GateDecision { return GateGlobal },
 		approve:  func(_ context.Context, _ string, name, args string) bool { calls++; return true },
 		emitDeny: func(name, args, errMsg string) {},
@@ -78,7 +78,7 @@ func TestApprovalMiddleware_AskModeHonoursApprove(t *testing.T) {
 func TestApprovalMiddleware_AskModeUserDenial(t *testing.T) {
 	var emittedErr string
 	m := &ApprovalMiddleware{
-		mode:     "ask",
+		mode:     modeAsk,
 		classify: func(name, args string) GateDecision { return GateGlobal },
 		approve:  func(_ context.Context, _ string, name, args string) bool { return false },
 		emitDeny: func(name, args, errMsg string) { emittedErr = errMsg },
@@ -109,7 +109,7 @@ func TestApprovalMiddleware_AskModeUserDenial(t *testing.T) {
 // the historical behaviour now expressed via the gate decision.
 func TestApprovalMiddleware_GlobalAllowPassesGateGlobal(t *testing.T) {
 	m := &ApprovalMiddleware{
-		mode:     "allow",
+		mode:     modeAllow,
 		classify: func(name, args string) GateDecision { return GateGlobal },
 		approve: func(_ context.Context, _ string, name, args string) bool {
 			t.Fatal("approve must not run in allow mode")
@@ -132,7 +132,7 @@ func TestApprovalMiddleware_GlobalAllowPassesGateGlobal(t *testing.T) {
 // downgraded by the global mode.
 func TestApprovalMiddleware_MCPDenyIndependentOfGlobalMode(t *testing.T) {
 	m := &ApprovalMiddleware{
-		mode:     "allow",
+		mode:     modeAllow,
 		classify: func(name, args string) GateDecision { return GateDeny },
 		approve: func(_ context.Context, _ string, name, args string) bool {
 			t.Fatal("GateDeny must not consult the user")
@@ -159,7 +159,7 @@ func TestApprovalMiddleware_MCPDenyIndependentOfGlobalMode(t *testing.T) {
 func TestApprovalMiddleware_MCPAskIndependentOfGlobalMode(t *testing.T) {
 	asked := 0
 	m := &ApprovalMiddleware{
-		mode:     "allow",
+		mode:     modeAllow,
 		classify: func(name, args string) GateDecision { return GateAsk },
 		approve:  func(_ context.Context, _ string, name, args string) bool { asked++; return asked == 1 },
 		emitDeny: func(name, args, errMsg string) {},
@@ -184,7 +184,7 @@ func TestApprovalMiddleware_MCPAskIndependentOfGlobalMode(t *testing.T) {
 }
 
 func TestApprovalMiddleware_NilClassifyIsInert(t *testing.T) {
-	m := &ApprovalMiddleware{mode: "deny"}
+	m := &ApprovalMiddleware{mode: modeDeny}
 	msg := &types.Message{ToolCalls: []types.ToolCall{{ID: "1"}}}
 	if _, err := m.PostModel(context.Background(), msg, &Step{}); err != nil {
 		t.Fatal(err)
@@ -200,7 +200,7 @@ func TestApprovalMiddleware_NilClassifyIsInert(t *testing.T) {
 // control (review finding).
 func TestApprovalMiddleware_ModeWithheldNamesTheMode(t *testing.T) {
 	m := &ApprovalMiddleware{
-		mode:     "allow",
+		mode:     modeAllow,
 		classify: func(name, args string) GateDecision { return GateWithheld },
 		approve: func(_ context.Context, _ string, name, args string) bool {
 			t.Fatal("GateWithheld must not consult the user")

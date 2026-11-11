@@ -64,6 +64,38 @@ func SubAgentAskReason(tool, resource string) string {
 	return fmt.Sprintf("tool %q is refused for %q: its permission rule is `ask`, %s", tool, resource, tail)
 }
 
+// approvalMode is the resolved global posture the middleware enforces at
+// the GateGlobal stage. It is the typed form of the config's `approval`
+// scalar, resolved once at composition (resolveApprovalMode) so the
+// middleware branches on a settled value rather than re-interpreting the
+// raw string on every call.
+type approvalMode int
+
+const (
+	// modeAsk is the unset and explicit-"ask" posture: a GateGlobal call
+	// routes through the approve bridge. It is the zero value — asking
+	// is the conservative floor.
+	modeAsk approvalMode = iota
+	// modeAllow passes GateGlobal calls ungated.
+	modeAllow
+	// modeDeny refuses GateGlobal calls outright, naming the posture.
+	modeDeny
+)
+
+// resolveApprovalMode maps the raw approval scalar onto the typed posture.
+// Unknown values resolve to modeAsk: a posture word the code does not
+// recognize must never widen what the user configured.
+func resolveApprovalMode(raw string) approvalMode {
+	switch raw {
+	case "allow":
+		return modeAllow
+	case "deny":
+		return modeDeny
+	default: // "ask" and unset
+		return modeAsk
+	}
+}
+
 // ApprovalMiddleware enforces the tool approval policy before dispatch:
 // denied and withheld calls are stripped from the model's batch and every
 // tool_call_id is answered with a synthesized result.
@@ -76,7 +108,7 @@ func SubAgentAskReason(tool, resource string) string {
 // the provider invariant that every tool_call_id on an assistant message
 // receives a result.
 type ApprovalMiddleware struct {
-	mode string
+	mode approvalMode
 	// classify reports the gate decision for a call. When nil the
 	// middleware is inert regardless of mode.
 	classify func(name, args string) GateDecision
@@ -126,16 +158,16 @@ func (m *ApprovalMiddleware) PostModel(ctx context.Context, msg *types.Message, 
 			errMsg = fmt.Sprintf("error: tool %q was denied by user", name)
 		case GateGlobal:
 			switch m.mode {
-			case "deny":
+			case modeDeny:
 				errMsg = fmt.Sprintf("error: tool %q requires approval but approval mode is 'deny'", name)
-			case "ask":
+			case modeAsk:
 				if m.approve != nil && m.approve(ctx, tc.ID, name, args) {
 					filtered = append(filtered, tc)
 					continue
 				}
 				errMsg = fmt.Sprintf("error: tool %q was denied by user", name)
 			default:
-				// Global "allow"/unset: ungated.
+				// modeAllow: global "allow"/unset — ungated.
 				filtered = append(filtered, tc)
 				continue
 			}
