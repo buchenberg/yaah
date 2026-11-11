@@ -65,6 +65,24 @@ func (t *SkillTool) Schema() json.RawMessage {
 	}`)
 }
 
+// IsDangerous reports whether the action writes skill files. load, list and
+// search only read.
+func (t *SkillTool) IsDangerous(argsJSON string) bool {
+	var params struct {
+		Action string `json:"action"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &params); err != nil {
+		return true
+	}
+	switch params.Action {
+	// Empty means load (Execute's default), so it is a read.
+	case "", "load", "list", "search":
+		return false
+	default:
+		return true
+	}
+}
+
 func (t *SkillTool) Execute(ctx context.Context, args string) (string, error) {
 	var params struct {
 		Action      string `json:"action"`

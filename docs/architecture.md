@@ -669,6 +669,21 @@ call instead of silently taking the default — which, on `replace`, `bulk_files
 or `go_mod`, was the destructive action. Valid calls are unchanged, and the
 numeric-string coercion some tools accept is preserved.
 
+### Declared capabilities and danger policy
+
+`internal/tools/capability.go` declares every built-in tool's effects
+(`read`, `mutate`, `exec`, `network`), its danger policy (`none`, `classifier`,
+`always`, or a reasoned safe exception), and whether it belongs to the read-only
+inspection surface. `capability_test.go` fails when a tool is registered without
+a policy, when a mutating, executing or network tool has no danger declaration,
+or when a policy claims a classifier the tool does not implement. An agent test
+asserts the table agrees with `readOnlyToolNames` and `alwaysDangerous`.
+
+The name-keyed maps stay authoritative for their own questions (inheritance
+ceilings, the inspection surface, platform-independent shell gating); the table
+is the review surface and the drift detector, not a replacement for them.
+
+
 ### Tool execution flow (`executeAndCollect` — middleware path)
 
 ```

@@ -82,6 +82,23 @@ func (*ProposalTool) Schema() json.RawMessage {
 	}`)
 }
 
+// IsDangerous reports whether the action settles or extends a proposal.
+// list and show only read.
+func (t *ProposalTool) IsDangerous(argsJSON string) bool {
+	var params struct {
+		Action string `json:"action"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &params); err != nil {
+		return true
+	}
+	switch params.Action {
+	case "list", "show":
+		return false
+	default:
+		return true
+	}
+}
+
 func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error) {
 	var raw struct {
 		Action     string `json:"action"`
