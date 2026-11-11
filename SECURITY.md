@@ -180,13 +180,16 @@ applies to all tools — there is still no per-tool or per-path approval.
 
 ### Dangerous-command guard (best-effort, not a security boundary)
 
-The `bash` and `powershell` tools have a coarse deny-list of obviously
-destructive patterns (`rm -rf /`, disk-init commands, etc.). It catches
+The `bash`, `powershell`, and `background_process` `start`/`restart` paths
+have a coarse deny-list of obviously destructive patterns (`rm -rf /`,
+disk-init commands, etc.). It catches
 the most blatant mistakes. It is **not** a security boundary — model-
 generated shell can trivially evade a substring deny-list. Real
 protection comes from the `approval` gate above; the deny-list only
 buys you protection against accidental destructive commands when
-`approval: allow` is set.
+`approval: allow` is set. `background_process` `start` and `restart` are
+classified as dangerous calls, so they reach the approval gate even though
+`list`, `status`, `logs`, and `stop` do not.
 
 ### MCP server tools
 
