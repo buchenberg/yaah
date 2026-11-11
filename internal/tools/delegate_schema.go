@@ -31,6 +31,7 @@ func (t *DelegateTool) Schema() json.RawMessage {
 			"provider": {"type": "string", "description": "Optional provider override for this dispatch (must be a configured provider name). Prefer omitting — the role file or config decides. Omitted falls back to the role's resolution chain."},
 			"model": {"type": "string", "description": "Optional model override for this dispatch. Omitted falls back to the role's resolution chain (call > config role entry > role file > parent session model > config default)."}
 		},
+		"additionalProperties": false,
 		"required": ["description", "prompt", "role"]
 	}`)
 }
@@ -153,7 +154,8 @@ func BuildDelegateSchema(roleNames []string, roleDescriptions map[string]string)
 				"description": "Optional model override for this dispatch. Omitted falls back to the role's resolution chain (call > config role entry > role file > parent session model > config default).",
 			},
 		},
-		"required": []string{"description", "prompt", "role"},
+		"additionalProperties": false,
+		"required":             []string{"description", "prompt", "role"},
 	}
 	data, _ := json.Marshal(schema)
 	return json.RawMessage(data)

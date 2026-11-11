@@ -24,7 +24,7 @@ func TestDelegateSharedLaneRecordsWorld(t *testing.T) {
 		// A retained runtime exists but the lane bypasses it.
 		Retained: &RetainedRuntime{},
 	}
-	if _, err := d.Execute(ctx, `{"role":"developer","prompt":"p"}`); err != nil {
+	if _, err := d.Execute(ctx, `{"role":"developer","description":"d","prompt":"p"}`); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if got.Resolved != "shared" {
@@ -42,7 +42,7 @@ func TestDelegateSharedModeRecordsWorld(t *testing.T) {
 			return "ok", nil
 		},
 	}
-	if _, err := d.Execute(ctx, `{"role":"developer","prompt":"p"}`); err != nil {
+	if _, err := d.Execute(ctx, `{"role":"developer","description":"d","prompt":"p"}`); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if got.Resolved != "shared" {
@@ -71,7 +71,7 @@ func TestDelegateBackgroundSharedLaneSeedsWorld(t *testing.T) {
 		LaneForRole:    func(role string) DelegateLane { return LaneShared },
 		BackgroundJobs: mgr,
 	}
-	if _, err := d.Execute(context.Background(), `{"role":"developer","prompt":"p","background":true}`); err != nil {
+	if _, err := d.Execute(context.Background(), `{"role":"developer","description":"d","prompt":"p","background":true}`); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	select {

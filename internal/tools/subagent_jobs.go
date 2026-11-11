@@ -41,11 +41,16 @@ func (*SubAgentJobsTool) Schema() json.RawMessage {
 				"description": "Max seconds to wait (wait action only; default 60)"
 			}
 		},
+		"additionalProperties": false,
 		"required": ["action"]
 	}`)
 }
 
 func (t *SubAgentJobsTool) Execute(ctx context.Context, args string) (string, error) {
+	strict, err := DecodeStrictObject("subagent_jobs", args, "action", "job_id", "timeout_seconds")
+	if err != nil {
+		return "", err
+	}
 	if t.Jobs == nil {
 		return "", fmt.Errorf("subagent_jobs: no background job manager configured")
 	}
@@ -55,7 +60,11 @@ func (t *SubAgentJobsTool) Execute(ctx context.Context, args string) (string, er
 		JobID          string `json:"job_id"`
 		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
-	if err := json.Unmarshal([]byte(args), &raw); err != nil {
+	fixed, err := json.Marshal(strict)
+	if err != nil {
+		return "", fmt.Errorf("subagent_jobs: invalid arguments: %w", err)
+	}
+	if err := json.Unmarshal(fixed, &raw); err != nil {
 		return "", fmt.Errorf("subagent_jobs: invalid arguments: %w", err)
 	}
 

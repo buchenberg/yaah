@@ -26,3 +26,5 @@ three values:
   record was reaped. No job fields are reported, because there is no job.
 
 An envelope may carry `notes` when a call returned early or has a caveat: a cancellation request that has not stopped the job yet, a wait interrupted before the job finished, or a job record that disappeared. `notes` explains the early return; it does not change the reported `status` or `still_running` facts. It is absent when there is no caveat.
+
+Unknown argument names are rejected with the list of accepted keys; there is no silent default for a misspelled `job_id` or `timeout_seconds`.
