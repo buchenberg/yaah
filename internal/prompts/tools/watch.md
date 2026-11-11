@@ -48,3 +48,5 @@ that approval covers every later poll, so prefer a cheap status command.
 
 The `on`/`until` string form is deliberate; the rationale is recorded in
 `docs/wake-predicate-schema-decision.md`.
+
+`expires_in_seconds` is capped at 604800 and `interval_seconds` at 60; larger values are clamped.

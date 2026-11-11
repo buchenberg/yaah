@@ -100,8 +100,8 @@ func (t *WaitForTool) Execute(ctx context.Context, args string) (string, error) 
 	res, err := t.Manager.Wait(ctx, wake.WaitRequest{
 		On:       params.On,
 		Until:    params.Until,
-		Timeout:  clampSeconds(params.TimeoutSeconds, wake.DefaultWaitTimeout),
-		Interval: clampSeconds(params.IntervalSeconds, 0),
+		Timeout:  clampSeconds(params.TimeoutSeconds, wake.DefaultWaitTimeout, waitMaxTimeoutSeconds),
+		Interval: clampSeconds(params.IntervalSeconds, 0, waitMaxIntervalSeconds),
 		Handle:   params.Handle,
 	})
 	if err != nil {
@@ -116,9 +116,19 @@ func (t *WaitForTool) Execute(ctx context.Context, args string) (string, error) 
 
 // clampSeconds converts a positive integer number of seconds to a Duration,
 // returning def when the value is zero or negative.
-func clampSeconds(secs int, def time.Duration) time.Duration {
+const (
+	waitMaxTimeoutSeconds  = 86400
+	waitMaxIntervalSeconds = 60
+)
+
+// clampSeconds bounds a positive seconds knob to max. A non-positive value
+// means "use the default" (which may be zero, for knobs with no default).
+func clampSeconds(secs int, def time.Duration, max int) time.Duration {
 	if secs <= 0 {
 		return def
+	}
+	if secs > max {
+		secs = max
 	}
 	return time.Duration(secs) * time.Second
 }

@@ -38,7 +38,7 @@ func (t *MemorySearchTool) Schema() json.RawMessage {
 		"properties": {
 			"query": {"type": "string", "description": "The search query (empty to list all)"},
 			"tag": {"type": "string", "description": "Optional tag to filter by (e.g. 'user_info', 'preferences'). Supplying a tag forces keyword-only (FTS5) matching and withdraws semantic recall; omit it when searching by paraphrase."},
-			"top_k": {"type": "integer", "description": "Maximum number of results (default 10)"},
+			"top_k": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Maximum number of results (default 10; values above 100 are clamped)"},
 			"scope": {"type": "string", "enum": ["global", "session", "all"], "description": "Tier filter. 'global' (default) returns facts that outlive any single session; 'session' returns atoms distilled from conversations, including past ones; 'all' spans both. Session atoms are excluded unless you ask for them."}
 		},
 		"required": []
@@ -62,6 +62,7 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 	if params.TopK <= 0 {
 		params.TopK = 10
 	}
+	params.TopK = clampPositiveInt(params.TopK, memoryMaxTopK)
 	scope := t.Scope
 	if params.Scope != "" {
 		// An explicit request outranks the instance default: the default
@@ -399,6 +400,8 @@ func formatVectorResults(results []memory.VectorResult, note string) string {
 // caller cannot choose whose atoms its writes will look like. Empty (the
 // session's own registry, the CLI) leaves the link NULL, so those atoms are
 // never pruned by session.
+const memoryMaxTopK = 100
+
 type MemoryAddTool struct {
 	DB        *memory.DB
 	Scope     string
@@ -683,7 +686,7 @@ func (t *MemorySessionSearchTool) Schema() json.RawMessage {
 		"type": "object",
 		"properties": {
 			"query": {"type": "string", "description": "The search query (empty to list recent messages)"},
-			"top_k": {"type": "integer", "description": "Maximum number of results (default 10)"}
+			"top_k": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Maximum number of results (default 10; values above 100 are clamped)"}
 		},
 		"required": []
 	}`)
@@ -704,6 +707,7 @@ func (t *MemorySessionSearchTool) Execute(ctx context.Context, args string) (str
 	if params.TopK <= 0 {
 		params.TopK = 10
 	}
+	params.TopK = clampPositiveInt(params.TopK, memoryMaxTopK)
 
 	if params.Query == "" {
 		return t.listRecentMessages(params.TopK)

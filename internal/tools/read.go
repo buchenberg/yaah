@@ -12,6 +12,8 @@ import (
 // ReadTool reads a file and returns its contents. Offsets and limits are
 // applied to the split lines (zero-based for line-local offset, limit caps
 // the returned line count).
+const readMaxLines = 10000
+
 type ReadTool struct {
 	PV *PathValidator
 	WS Workspace
@@ -34,7 +36,7 @@ func (t *ReadTool) Schema() json.RawMessage {
 		"properties": {
 			"filePath": {"type": "string", "description": "The absolute path to the file to read"},
 			"offset": {"type": "integer", "description": "Line number to start from (1-based)"},
-			"limit": {"type": "integer", "description": "Maximum number of lines to return"}
+			"limit": {"type": "integer", "minimum": 0, "maximum": 10000, "description": "Maximum number of lines to return (values above 10000 are clamped)"}
 		},
 		"required": ["filePath"]
 	}`)
@@ -72,6 +74,7 @@ func (t *ReadTool) Execute(ctx context.Context, args string) (string, error) {
 		return "", fmt.Errorf("read: %w", err)
 	}
 
+	params.Limit = clampPositiveInt(params.Limit, readMaxLines)
 	if params.Offset > 0 || params.Limit > 0 {
 		lines := strings.Split(string(data), "\n")
 		// Split produces a phantom empty line for a trailing newline; drop it

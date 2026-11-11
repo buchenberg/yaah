@@ -17,3 +17,5 @@ a line-oriented tail has to search backward for a newline, bounded at 4 MiB.
 
 This is a read-only tool. Use `append` to write the log and `tail` to follow
 it; use `read` only when you need the beginning or a specific line range.
+
+`lines` is capped at 10000 and `bytes` at 8 MiB; larger values are clamped.

@@ -70,6 +70,8 @@ func (t *WatchTool) IsDangerous(argsJSON string) bool {
 	return p.Action == "arm" && wake.Spec{On: p.On}.SourceOf() == wake.SourceCommand
 }
 
+const watchMaxExpiresSeconds = 604800
+
 func (t *WatchTool) Execute(ctx context.Context, args string) (string, error) {
 	var params struct {
 		Action           string `json:"action"`
@@ -95,8 +97,8 @@ func (t *WatchTool) Execute(ctx context.Context, args string) (string, error) {
 			On:        params.On,
 			Until:     params.Until,
 			ID:        params.ID,
-			ExpiresIn: clampSeconds(params.ExpiresInSeconds, 0),
-			Interval:  clampSeconds(params.IntervalSeconds, 0),
+			ExpiresIn: clampSeconds(params.ExpiresInSeconds, 0, watchMaxExpiresSeconds),
+			Interval:  clampSeconds(params.IntervalSeconds, 0, waitMaxIntervalSeconds),
 		})
 		if err != nil {
 			return "", fmt.Errorf("watch: %w", err)
