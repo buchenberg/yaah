@@ -120,9 +120,9 @@ var toolPolicies = map[string]Policy{
 
 	// Network.
 	"http":                   {Effects: EffectNetwork, Danger: DangerPolicyClassifier},
-	"webfetch":               {Effects: EffectNetwork},
-	"memory_search":          {Effects: EffectRead | EffectNetwork},
-	"memory_search_sessions": {Effects: EffectRead | EffectNetwork},
+	"webfetch":               {Effects: EffectNetwork, Danger: DangerPolicySafe, Reason: "network read; SSRF guard applies and the result is text, with no local mutation or execution"},
+	"memory_search":          {Effects: EffectRead | EffectNetwork, Danger: DangerPolicySafe, Reason: "read-only memory query; an embedding call reaches the configured embedder, nothing is written"},
+	"memory_search_sessions": {Effects: EffectRead | EffectNetwork, Danger: DangerPolicySafe, Reason: "read-only session search; an embedding call reaches the configured embedder, nothing is written"},
 
 	// Read-only metadata and waiting.
 	"list_subagents": {Effects: EffectRead},

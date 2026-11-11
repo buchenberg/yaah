@@ -75,6 +75,7 @@ func (t *SkillTool) IsDangerous(argsJSON string) bool {
 		return true
 	}
 	switch params.Action {
+	// Empty means load (Execute's default), so it is a read.
 	case "", "load", "list", "search":
 		return false
 	default:

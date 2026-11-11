@@ -135,9 +135,15 @@ type goModResult struct {
 func (t *GoModTool) IsDangerous(argsJSON string) bool {
 	var params struct {
 		Action string `json:"action"`
+		DryRun bool   `json:"dry_run"`
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &params); err != nil {
 		return true
+	}
+	// dry_run turns every action into a report: tidy prints the diff it would
+	// apply, add/remove/upgrade report versions, and nothing is written.
+	if params.DryRun {
+		return false
 	}
 	switch params.Action {
 	case "verify", "graph", "why", "list":
