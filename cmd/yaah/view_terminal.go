@@ -97,6 +97,11 @@ func (v *terminalView) HandleEvent(evt agent.Event) {
 		// notes on the next run for buffered views: the transcript records
 		// which persona the session runs as and which regime it enforces.
 		fmt.Fprintf(os.Stderr, "\n  %s\n", Dim(e.Notice()))
+	case *agent.ModeChangedEvent:
+		// In-band mode marker, drained like the persona notices: a
+		// mid-session regime switch (TUI/REPL :mode) is recorded in the
+		// transcript, not only in the next prompt's directive.
+		fmt.Fprintf(os.Stderr, "\n  %s\n", Dim(e.Notice()))
 	case *agent.EscalationEvent:
 		severity := e.Severity
 		color := replYellow

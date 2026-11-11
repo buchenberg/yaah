@@ -333,6 +333,11 @@ func (v *sseView) HandleEvent(evt agent.Event) {
 		// announce at start (yaah-21uk.10); the header's mode badge is
 		// updated separately by SetSessionMode.
 		we = sseWireEvent{Type: "ctrl.status", Text: e.Notice()}
+	case *agent.ModeChangedEvent:
+		// One-line mode marker in the status line: a mid-session regime
+		// switch (the :mode picker) is announced in-band like a persona
+		// switch; the header badge is updated by the driver's SetSessionMode.
+		we = sseWireEvent{Type: "ctrl.status", Text: e.Notice()}
 	case *agent.WakeEvent:
 		// A watch fired between turns. The status line carries the digest's
 		// first line; the model receives the full evidence in the injected

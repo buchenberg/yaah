@@ -116,6 +116,17 @@ func (t *App) HandleEvent(event agent.Event) {
 			t.conversationLog = append(t.conversationLog, convItem{text: msg})
 			t.markDirty()
 		})
+	case *agent.ModeChangedEvent:
+		// In-band mode marker, same transcript line as a persona switch:
+		// the regime the session now runs stays visible in the
+		// conversation, next to the persona switch notices. dispatchEvent
+		// buffers it for views that cannot take writes between runs.
+		t.queueUpdateCritical(func() {
+			t.flushPendingTokens()
+			msg := fmt.Sprintf("[%s]%s[-]", t.Theme.Dim, e.Notice())
+			t.conversationLog = append(t.conversationLog, convItem{text: msg})
+			t.markDirty()
+		})
 	case *agent.WakeEvent:
 		// A watch fired between turns: record the injected prompt exactly
 		// where a user turn would appear, so the transcript shows what woke

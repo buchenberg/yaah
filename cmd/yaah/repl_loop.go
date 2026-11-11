@@ -128,6 +128,9 @@ func startREPL() error {
 		case repl.CmdAgent:
 			sess.agentCommand(repl.SlashAgentArg(input))
 			continue
+		case repl.CmdMode:
+			sess.modeCommand(repl.SlashModeArg(input))
+			continue
 		case repl.CmdLogin:
 			replLogin(sess)
 			continue
@@ -217,6 +220,7 @@ func printHelp() {
 	fmt.Printf("  %s  %s\n", repl.Bold("/logout"), repl.Dim("remove stored OAuth credentials"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/agents"), repl.Dim("list agent personas"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/agent [name]"), repl.Dim("switch this session's persona (bare reports the current persona)"))
+	fmt.Printf("  %s  %s\n", repl.Bold("/mode [mode]"), repl.Dim("switch this session's mode: read-only or full (bare reports the current mode)"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/?"), repl.Dim("show this help"))
 	fmt.Println()
 }

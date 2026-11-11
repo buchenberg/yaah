@@ -158,6 +158,35 @@ type AgentChangedEvent struct {
 
 func (*AgentChangedEvent) eventMarker() {}
 
+// ModeChangedEvent is emitted on a mid-session mode-axis switch (parity
+// follow-up of yaah-21uk.12: interactive mode switching in the TUI and
+// REPL, alongside the ACP session/set_mode surface). It carries the new
+// posture so every view can show the regime the session now runs —
+// read-only or full — in-band, the same way a persona switch is
+// announced. A switch to the mode the session already runs is a no-op
+// and emits nothing.
+type ModeChangedEvent struct {
+	// ReadOnly reports the NEW mode: true means the session is now
+	// read-only (the inspection set only), false full access.
+	ReadOnly bool
+	// Detail is the regime sentence the next run's directive enforces —
+	// the same clause the persona-switch notice carries, so both notices
+	// describe the regime identically.
+	Detail string
+}
+
+func (*ModeChangedEvent) eventMarker() {}
+
+// Notice renders the one-line in-band notice every view shows. The wording
+// states the mode, not the persona: the mode axis is session state —
+// switching it says nothing about which persona is running.
+func (e *ModeChangedEvent) Notice() string {
+	if e.ReadOnly {
+		return "Session mode: read-only — " + e.Detail
+	}
+	return "Session mode: full — " + e.Detail
+}
+
 // Notice renders the one-line in-band notice every view shows, so all
 // consumers describe the persona identically (mirrors StartedSummary). A
 // switch notice carries the Detail clause (regime sentence, deprecation);

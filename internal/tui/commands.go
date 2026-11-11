@@ -109,6 +109,21 @@ func (t *App) HandleCommand(cmd command.Cmd, arg string) bool {
 			t.OnAgentSelect(name)
 		})
 		return true
+	case command.CmdMode:
+		// Same picker-as-argument shape: the two mode words are the
+		// picker's entries, and selection hands the word to the driver,
+		// which switches this session's mode axis. The word the driver
+		// receives is already validated vocabulary — the picker cannot
+		// emit anything else — so the typed arg (if any) is ignored, like
+		// :agent.
+		if t.OnModeSelect == nil {
+			t.SetEphemeral("mode switching is unavailable in this session")
+			return false
+		}
+		t.ShowAgentPicker(modePickerNames, modePickerDescriptions, func(word string) {
+			t.OnModeSelect(word)
+		})
+		return true
 	case command.CmdSearch:
 		if arg == "" {
 			t.SetEphemeral("usage: " + command.Usage(command.CmdSearch))
@@ -167,3 +182,6 @@ func (t *App) toggleCommandPalette() {
 		t.showCommandList()
 	}
 }
+
+// sessionSwitchMode handles the :mode palette entry (W6): it dispatches
+// to the session the way :model dispatches, validating the word first.
