@@ -113,12 +113,14 @@ func TestRoleTool_StillAcceptsLegacyStrings(t *testing.T) {
 
 func TestEdit_RejectsOldStringWithEdits(t *testing.T) {
 	tool := &EditTool{}
-	_, err := tool.Execute(context.Background(), `{
-		"filePath":"x.go","oldString":"a","newString":"b",
-		"edits":[{"oldString":"c","newString":"d"}]
-	}`)
-	if err == nil || !strings.Contains(err.Error(), "not both") {
-		t.Fatalf("both shapes = %v, want an explicit conflict error", err)
+	for _, args := range []string{
+		`{"filePath":"x.go","oldString":"a","newString":"b","edits":[{"oldString":"c","newString":"d"}]}`,
+		`{"filePath":"x.go","oldString":"","newString":"b","edits":[{"oldString":"c","newString":"d"}]}`,
+	} {
+		_, err := tool.Execute(context.Background(), args)
+		if err == nil || !strings.Contains(err.Error(), "not both") {
+			t.Fatalf("both shapes (%s) = %v, want an explicit conflict error", args, err)
+		}
 	}
 }
 
