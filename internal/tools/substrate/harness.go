@@ -181,17 +181,31 @@ func (h *HarnessPaths) CheckSandboxWrites(hostDir, sandboxRoot string, paths []s
 		return nil
 	}
 	root := strings.TrimSuffix(filepath.ToSlash(sandboxRoot), "/")
+	hostRoot := canonicalPath(hostDir)
 	var blocked []string
 	for _, p := range paths {
 		slashed := filepath.ToSlash(p)
 		var hostPath string
+		mapped := false
 		switch {
 		case root != "" && strings.HasPrefix(slashed, root+"/"):
 			hostPath = filepath.Join(hostDir, filepath.FromSlash(strings.TrimPrefix(slashed, root+"/")))
+			mapped = true
 		case filepath.IsAbs(p):
+			// A backend that reports host paths already gives the policy
+			// something to match; leave the path as reported.
 			hostPath = p
 		default:
 			hostPath = filepath.Join(hostDir, filepath.FromSlash(slashed))
+			mapped = true
+		}
+		// A relative or root-mapped entry that escapes the host tree is a
+		// malformed delta (a ".." in a backend-supplied path), not a path we
+		// can classify honestly. Refuse the batch rather than compare the
+		// escaped path against the rules.
+		if mapped && !withinRoot(hostRoot, canonicalPath(hostPath)) {
+			blocked = append(blocked, p)
+			continue
 		}
 		if verdict, _ := h.Classify(hostPath); verdict != HarnessAllow {
 			blocked = append(blocked, p)

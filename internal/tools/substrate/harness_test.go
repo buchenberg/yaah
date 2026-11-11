@@ -231,3 +231,16 @@ func TestHarnessPaths_ClassifyResolvesSymlinkedRoot(t *testing.T) {
 		t.Fatalf("Classify through the symlinked root = %v, want ask", got)
 	}
 }
+
+func TestHarnessPaths_CheckSandboxWritesRejectsEscapes(t *testing.T) {
+	_, _, ws, h := newGuardFixture(t)
+	blocked := h.CheckSandboxWrites(ws, "/workspace", []string{
+		"/workspace/src/a.go",   // ordinary
+		"/workspace/../evil.go", // escapes via dot-dot after the root prefix
+		"../evil.go",            // relative escape
+		"/workspace/.yaah",      // protected
+	})
+	if len(blocked) != 3 {
+		t.Fatalf("CheckSandboxWrites = %v, want the two escapes and .yaah blocked", blocked)
+	}
+}
