@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.166.0](https://github.com/buchenberg/yaah/compare/v0.165.1...v0.166.0) (2026-11-11)
+
+
+### Features
+
+* **tools:** declare a capability and danger policy for every built-in tool ([7ce1b83](https://github.com/buchenberg/yaah/commit/7ce1b8335555fa51cf19f38792a5b828179ff133))
+* **tools:** declare a capability and danger policy for every built-in tool ([3d677d8](https://github.com/buchenberg/yaah/commit/3d677d8cf511563d24580b5fcd43c8b2c5139fc7))
+* **tools:** normalize typed input shapes and reject conflicting edits ([10ae506](https://github.com/buchenberg/yaah/commit/10ae506081e797a0f5231958b457438241644df6))
+* **tools:** normalize typed input shapes and reject conflicting edits ([02ff56a](https://github.com/buchenberg/yaah/commit/02ff56a5d05937669c7f6519ec3b3a99ae100a1e))
+* **tools:** strict argument decoding for every built-in tool ([6cfcdf6](https://github.com/buchenberg/yaah/commit/6cfcdf6e4aaacbc7a12bc842b41a34842c41cb8e))
+* **tools:** strict argument decoding for every built-in tool ([b2d052c](https://github.com/buchenberg/yaah/commit/b2d052c26689e25949500ae5c8d09ae57a896a9c))
+
+
+### Bug Fixes
+
+* **dispatch:** drop the duplicate proposal strategy validation ([96dc345](https://github.com/buchenberg/yaah/commit/96dc3454b42bc40aa435912802958c7361e99744))
+* **tools:** bound exec timeouts and refuse program-selecting flags ([8d2b0e5](https://github.com/buchenberg/yaah/commit/8d2b0e53283826989937b090267d9411e79922e1))
+* **tools:** bound exec timeouts and refuse program-selecting flags ([956c588](https://github.com/buchenberg/yaah/commit/956c5885a422353347676518980bc086be3615a9))
+* **tools:** classify dry-run module ops and declare network policies ([33a9160](https://github.com/buchenberg/yaah/commit/33a9160208a2fb292558d854e4cd43584a4d7670))
+* **tools:** refuse empty oldString alongside edits[] by key presence ([a6c1fc8](https://github.com/buchenberg/yaah/commit/a6c1fc8b5f4bcd7e7c3dcb8326f58137d743093d))
+* **tools:** reject invalid arguments consistently across every tool ([8deae08](https://github.com/buchenberg/yaah/commit/8deae08406d6873192025caae5cba252436c0cb0))
+* **tools:** reject invalid arguments consistently across every tool ([34997ae](https://github.com/buchenberg/yaah/commit/34997ae073c998d67338dff56f6599e50344188e))
+* **tools:** reject unknown delegate and subagent_jobs arguments ([f64a3e2](https://github.com/buchenberg/yaah/commit/f64a3e2c27646343380d9c8e178c7635d0de7916))
+* **tools:** reject unknown delegate and subagent_jobs arguments ([5f5ba38](https://github.com/buchenberg/yaah/commit/5f5ba38cbb0b1f514a059fe046818b29361c8bd4))
+* **tools:** send background_process start and restart through the approval gate ([00cdd66](https://github.com/buchenberg/yaah/commit/00cdd66f5221eaeefdca5c6cf0c934525a8f7e84))
+* **tools:** send background_process start and restart through the approval gate ([3372669](https://github.com/buchenberg/yaah/commit/3372669567cb4806035c8325d17db8e600b01087))
+
+
+### Tests
+
+* **tools:** assert the full delegate allowed-key list ([f56ea24](https://github.com/buchenberg/yaah/commit/f56ea2477e8f029f956477ed677102cc00f1961f))
+
 ## [0.165.1](https://github.com/buchenberg/yaah/compare/v0.165.0...v0.165.1) (2026-11-11)
 
 
