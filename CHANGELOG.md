@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.163.0](https://github.com/buchenberg/yaah/compare/v0.162.0...v0.163.0) (2026-11-11)
+
+
+### Features
+
+* **persona:** warn when a tools allowlist drops MCP tools ([b9719f3](https://github.com/buchenberg/yaah/commit/b9719f3ea8e25af3e0e2f388dc40da18a5f8be1f))
+
+
+### Bug Fixes
+
+* **mcp:** substitute ${VAR} in mcp_servers connection fields ([272985e](https://github.com/buchenberg/yaah/commit/272985e037ba245f0cfc8b5d9d7e0541ce83ee3a))
+* **mcp:** substitute mcp_servers env vars; warn on persona MCP narrowing ([c843110](https://github.com/buchenberg/yaah/commit/c8431106537e5c4ac32a9489d86e13a5f3a02781))
+
 ## [0.162.0](https://github.com/buchenberg/yaah/compare/v0.161.0...v0.162.0) (2026-11-10)
 
 
