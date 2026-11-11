@@ -4,7 +4,6 @@ import (
 	"time"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/permissions"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -124,12 +123,6 @@ func WithPipeline(enabled, disabled []string) Option {
 		l.Config.PipelineNames = enabled
 		l.Config.PipelineDisabled = disabled
 	}
-}
-
-// WithPermissionRules sets the path-based permission rules for the
-// PermissionMiddleware. When nil, no path-filtering is applied.
-func WithPermissionRules(rules []pipeline.PermissionRule) Option {
-	return func(l *Loop) { l.Config.PermissionRules = rules }
 }
 
 // WithSteer sets the mid-turn steering channel.

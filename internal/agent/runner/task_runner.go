@@ -99,11 +99,6 @@ type taskRunnerOpts struct {
 	// opt-out such as [evidence_guard] also applies inside delegated loops.
 	pipelineDisabled []string
 
-	// parentPermissionRules, when non-nil, are passed to the sub-agent's
-	// PermissionMiddleware so path-based deny rules from the parent
-	// session are enforced by child agents.
-	parentPermissionRules []pipeline.PermissionRule
-
 	// toolSpillDir is the directory where oversized sub-agent tool
 	// results are spilled to disk. Injected from the composition root so
 	// sub-agents inherit the parent's spill directory instead of reaching
@@ -520,7 +515,6 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			PruneProtectTokens:     opts.defaults.PruneProtectTokens,
 			PruneMinReclaim:        opts.defaults.PruneMinReclaim,
 			PruneMinTurns:          opts.defaults.PruneMinTurns,
-			PermissionRules:        opts.parentPermissionRules,
 			ContextWindow:          effectiveCW,
 			OtelEnabled:            opts.OtelEnabled,
 			OtelVerbose:            opts.OtelVerbose,

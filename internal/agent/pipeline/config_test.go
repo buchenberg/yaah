@@ -54,34 +54,6 @@ func TestPipeline_SubAgentNamesHonourDisabled(t *testing.T) {
 	}
 }
 
-func TestPipeline_SubAgentIncludesPermissionWhenRulesPresent(t *testing.T) {
-	cfg := PipelineConfig{
-		PermissionRules: []PermissionRule{{Tool: "bash", Path: "/etc/*", Mode: "deny"}},
-	}
-	p := NewSubAgentPipeline(cfg)
-	if p.Find("permission") == nil {
-		t.Fatal("sub-agent pipeline has no permission middleware despite PermissionRules being set (A1)")
-	}
-}
-
-func TestPipeline_SubAgentOmitsPermissionWithoutRules(t *testing.T) {
-	p := NewSubAgentPipeline(PipelineConfig{})
-	if p.Find("permission") != nil {
-		t.Error("sub-agent pipeline built permission middleware with no rules — should be opt-in")
-	}
-}
-
-func TestPipeline_SubAgentPermissionHonoursDisabled(t *testing.T) {
-	cfg := PipelineConfig{
-		PermissionRules:  []PermissionRule{{Tool: "bash", Mode: "deny"}},
-		PipelineDisabled: []string{"permission"},
-	}
-	p := NewSubAgentPipeline(cfg)
-	if p.Find("permission") != nil {
-		t.Error("permission middleware present despite being in PipelineDisabled")
-	}
-}
-
 func TestSubAgentTrace_UsesConfiguredStore(t *testing.T) {
 	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
@@ -201,10 +173,9 @@ func TestNoopShepherdTraceMiddleware(t *testing.T) {
 
 func TestBuilders_SharedEntriesProduceSameTypes(t *testing.T) {
 	cfg := PipelineConfig{
-		PermissionRules:    []PermissionRule{{Tool: "bash", Mode: "deny"}},
 		MaxToolConcurrency: 3,
 	}
-	for _, name := range []string{"permission", "tool_concurrency"} {
+	for _, name := range []string{"tool_concurrency"} {
 		builtin, okB := builtinBuilders[name]
 		sub, okS := subAgentBuilders[name]
 		if !okB || !okS {

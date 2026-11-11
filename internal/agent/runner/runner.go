@@ -38,26 +38,25 @@ import (
 // 20-parameter constructor: new sub-agent knobs no longer grow the
 // signature, and call sites read as keyed literals (finding C3).
 type DelegateToolOpts struct {
-	Provider              agent.Provider
-	ProviderName          string
-	SystemPrompt          string
-	ModelName             string
-	DB                    *memory.DB
-	SessionID             string
-	SubAgentProvider      agent.Provider
-	SubAgentModel         string
-	SubCfg                config.SubAgentConfig
-	RoleNames             []string
-	OtelEnabled           bool
-	OtelVerbose           bool
-	Tracker               *tools.ConflictTracker
-	EstimateFactor        float64
-	SubContextWindow      int
-	OutputLimit           int
-	ProviderMap           map[string]config.Provider
-	Defaults              config.Defaults
-	PipelineDisabled      []string
-	ParentPermissionRules []pipeline.PermissionRule
+	Provider         agent.Provider
+	ProviderName     string
+	SystemPrompt     string
+	ModelName        string
+	DB               *memory.DB
+	SessionID        string
+	SubAgentProvider agent.Provider
+	SubAgentModel    string
+	SubCfg           config.SubAgentConfig
+	RoleNames        []string
+	OtelEnabled      bool
+	OtelVerbose      bool
+	Tracker          *tools.ConflictTracker
+	EstimateFactor   float64
+	SubContextWindow int
+	OutputLimit      int
+	ProviderMap      map[string]config.Provider
+	Defaults         config.Defaults
+	PipelineDisabled []string
 
 	// ToolSpillDir is where oversized sub-agent tool results spill to
 	// disk. The composition root passes the same directory it injected
@@ -169,7 +168,6 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 		providerMap:           opts.ProviderMap,
 		defaults:              opts.Defaults,
 		pipelineDisabled:      opts.PipelineDisabled,
-		parentPermissionRules: opts.ParentPermissionRules,
 		toolSpillDir:          opts.ToolSpillDir,
 		pathValidator:         opts.PathValidator,
 		workspace:             opts.Workspace,

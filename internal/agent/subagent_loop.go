@@ -53,7 +53,6 @@ type SubAgentConfig struct {
 	PruneProtectTokens int
 	PruneMinReclaim    int
 	PruneMinTurns      int
-	PermissionRules    []pipeline.PermissionRule
 	// Permissions is the sub-agent's permission ruleset (parity W5.7):
 	// the role file's own rules with the parent's inherited ceiling
 	// APPENDED AFTER, so under last-match-wins an inherited deny wins
@@ -172,7 +171,6 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 			EvidenceGuardHalt:      cfg.EvidenceGuardHalt,
 			JSONMode:               cfg.JSONMode,
 			ToolSpillDir:           cfg.ToolSpillDir,
-			PermissionRules:        cfg.PermissionRules,
 			Permissions:            cfg.Permissions,
 			ContextWindow:          cfg.ContextWindow,
 			OtelEnabled:            cfg.OtelEnabled,
