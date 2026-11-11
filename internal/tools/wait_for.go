@@ -117,7 +117,10 @@ func (t *WaitForTool) Execute(ctx context.Context, args string) (string, error) 
 // clampSeconds converts a positive integer number of seconds to a Duration,
 // returning def when the value is zero or negative.
 const (
-	waitMaxTimeoutSeconds  = 86400
+	waitMaxTimeoutSeconds = 86400
+	// The wake engine backs off to at most 30s internally; 60 is the schema
+	// ceiling, not the engine's effective poll rate. Do not "align" this to 30
+	// without also changing the schema.
 	waitMaxIntervalSeconds = 60
 )
 

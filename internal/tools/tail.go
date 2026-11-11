@@ -13,7 +13,10 @@ import (
 const (
 	tailDefaultLines = 50
 	tailMaxLines     = 10000
-	tailMaxBytes     = 8 << 20
+	// A tail result is a single tool result, so the byte window is bounded by
+	// the package's result cap rather than a larger number the caller would
+	// never receive. Keep this equal to toolResultMaxBytes (result.go).
+	tailMaxBytes = toolResultMaxBytes
 	// tailChunkBytes is the backward read size; tailMaxBackBytes bounds how
 	// far a line-oriented tail searches for enough newlines.
 	tailChunkBytes   = 32 * 1024
@@ -45,7 +48,7 @@ func (t *TailTool) Schema() json.RawMessage {
 		"properties": {
 			"filePath": {"type": "string", "description": "The absolute path of the file to read."},
 			"lines": {"type": "integer", "minimum": 1, "maximum": 10000, "description": "Return the last N lines (default 50; max 10000). Mutually exclusive with bytes."},
-			"bytes": {"type": "integer", "minimum": 1, "maximum": 8388608, "description": "Return the last N bytes instead of lines (max 8 MiB)."},
+			"bytes": {"type": "integer", "minimum": 1, "maximum": 8192, "description": "Return the last N bytes instead of lines (max 8 KiB, the tool result cap)."},
 			"offset": {"type": "integer", "minimum": 0, "description": "With bytes, skip this many trailing bytes before the window (default 0)."}
 		},
 		"required": ["filePath"]

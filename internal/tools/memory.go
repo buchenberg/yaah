@@ -14,6 +14,10 @@ import (
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
+// memoryMaxTopK bounds one memory search. The schema advertises the same
+// maximum; a larger request would materialize an unbounded result set.
+const memoryMaxTopK = 100
+
 // MemorySearchTool searches persistent memory using FTS5 and, when
 // configured, vector embeddings for semantic search.
 type MemorySearchTool struct {
@@ -400,8 +404,6 @@ func formatVectorResults(results []memory.VectorResult, note string) string {
 // caller cannot choose whose atoms its writes will look like. Empty (the
 // session's own registry, the CLI) leaves the link NULL, so those atoms are
 // never pruned by session.
-const memoryMaxTopK = 100
-
 type MemoryAddTool struct {
 	DB        *memory.DB
 	Scope     string

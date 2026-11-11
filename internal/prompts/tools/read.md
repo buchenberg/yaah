@@ -4,4 +4,4 @@ Reads the file at `filePath`. `offset` (1-based line number to start from) and `
 
 See also: `ls` to list directories, `file_info` for metadata without content.
 
-`limit` is capped at 10000 lines per call; use `offset` to page through a larger file.
+`limit` is capped at 10000 lines per call; `limit: 0` or omitting it reads the whole file. Use `offset` to page through a larger file.

@@ -9,11 +9,13 @@ import (
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
+// readMaxLines bounds one read call. A limit of 0 (or absent) means "no
+// limit, read the whole file", so only the upper bound is clamped.
+const readMaxLines = 10000
+
 // ReadTool reads a file and returns its contents. Offsets and limits are
 // applied to the split lines (zero-based for line-local offset, limit caps
 // the returned line count).
-const readMaxLines = 10000
-
 type ReadTool struct {
 	PV *PathValidator
 	WS Workspace
@@ -74,6 +76,8 @@ func (t *ReadTool) Execute(ctx context.Context, args string) (string, error) {
 		return "", fmt.Errorf("read: %w", err)
 	}
 
+	// 0 means the whole file; clampPositiveInt preserves non-positive input
+	// and only lowers a limit above the maximum.
 	params.Limit = clampPositiveInt(params.Limit, readMaxLines)
 	if params.Offset > 0 || params.Limit > 0 {
 		lines := strings.Split(string(data), "\n")
