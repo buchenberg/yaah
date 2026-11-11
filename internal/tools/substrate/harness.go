@@ -200,14 +200,16 @@ func (h *HarnessPaths) CheckSandboxWrites(hostDir, sandboxRoot string, paths []s
 	return blocked
 }
 
-// Classify reports what the policy says about abs. The path is compared
-// lexically; callers that accept untrusted input must resolve symlinks first
-// (PathValidator.ResolvePath does).
+// Classify reports what the policy says about abs. Both the input and the rule
+// roots are canonicalised first (best effort): callers pass resolved paths from
+// the file tools, but direct writers and tests may pass the symlinked form —
+// macOS /var → /private/var is the everyday case — and a comparison that mixed
+// the two would silently classify every protected path as ordinary.
 func (h *HarnessPaths) Classify(abs string) (HarnessVerdict, string) {
 	if h == nil {
 		return HarnessAllow, ""
 	}
-	clean := filepath.Clean(abs)
+	clean := canonicalPath(abs)
 	for _, rule := range h.rules {
 		if withinRoot(rule.root, clean) && withinPrefix(rule.root, clean, rule.prefix) {
 			return rule.verdict, rule.reason
@@ -280,11 +282,21 @@ func canonicalDir(dir string) string {
 	if dir == "" {
 		return ""
 	}
-	abs, err := filepath.Abs(dir)
+	return canonicalPath(dir)
+}
+
+// canonicalPath resolves p to its real location, following the deepest
+// existing ancestor for a path whose leaf does not exist yet. It is best
+// effort: a path that cannot be resolved is returned clean and absolute.
+func canonicalPath(p string) string {
+	abs, err := filepath.Abs(p)
 	if err != nil {
-		return filepath.Clean(dir)
+		return filepath.Clean(p)
 	}
 	if real, err := filepath.EvalSymlinks(abs); err == nil {
+		return real
+	}
+	if real, err := resolveExistingAncestor(abs); err == nil {
 		return real
 	}
 	return abs

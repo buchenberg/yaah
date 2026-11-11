@@ -212,3 +212,22 @@ func TestLocalWorkspace_WriteMethodsGuardHarnessPaths(t *testing.T) {
 		t.Fatalf("ordinary source write: %v", err)
 	}
 }
+
+func TestHarnessPaths_ClassifyResolvesSymlinkedRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	// The rule roots are canonicalised, so a caller that passes the symlinked
+	// form of the same directory (macOS /var → /private/var) must still match.
+	real := t.TempDir()
+	linkParent := t.TempDir()
+	link := filepath.Join(linkParent, "alias")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	h := NewHarnessPaths("", "", real)
+	got, _ := h.Classify(filepath.Join(link, ".agents", "roles", "x.md"))
+	if got != HarnessAsk {
+		t.Fatalf("Classify through the symlinked root = %v, want ask", got)
+	}
+}
