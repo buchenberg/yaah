@@ -181,3 +181,35 @@ func TestApplyOutTool_IsDangerous(t *testing.T) {
 		}
 	}
 }
+
+// TestApplyOutTool_RefusesHarnessConfigDelta pins the accept-seam side of the
+// harness guard: a sandbox delta that rewrites a role file must not land on the
+// host, even though the per-file approval is a single batch decision and
+// approval mode "allow" would pass it.
+func TestApplyOutTool_RefusesHarnessConfigDelta(t *testing.T) {
+	ss, src := newApplyOutSession(t)
+	ws := ss.Workspace()
+
+	// The in-memory sandbox does not ship mkdir, so use a protected path
+	// whose parent already exists: a file named .yaah (session state) at the
+	// workspace root.
+	role, err := ws.ResolvePath(".yaah")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ws.WriteFile(context.Background(), role, []byte("spoofed state\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &ApplyOutTool{Sandbox: ss, HostDir: src, Harness: NewHarnessPaths("", "", src)}
+	if _, err := tool.Execute(context.Background(), `{"dry_run": true}`); err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	_, err = tool.Execute(context.Background(), `{}`)
+	if err == nil || !strings.Contains(err.Error(), "harness configuration") {
+		t.Fatalf("apply with a harness-config delta = %v, want a refusal naming harness configuration", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(src, ".yaah")); !os.IsNotExist(statErr) {
+		t.Errorf("refused apply must not land %s", filepath.Join(src, ".yaah"))
+	}
+}

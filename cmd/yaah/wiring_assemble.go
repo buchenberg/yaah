@@ -229,6 +229,15 @@ func wireSessionHooks(lc *sessionConfig, opts SessionOptions, ws *workspaceStage
 		ws.pathValidator.AskFn = sess.promptWorkspaceAccess
 	}
 
+	// Harness-configuration asks are NOT gated on workspace_ask: that
+	// option governs out-of-workspace access, while a role-file write is
+	// inside the workspace and must still reach a human. Attaching the
+	// surface unconditionally is also what keeps the guard independent of
+	// approval mode: "allow" suppresses dangerous-call prompts, not this.
+	if ws.harness != nil {
+		ws.harness.Ask = sess.promptWorkspaceAccess
+	}
+
 	// Attribute completed background sub-agent usage to the session
 	// total (session-scoped, so never lost across turns/runs) and to
 	// the session's sub-agent counter, so orchestrator and sub-agent

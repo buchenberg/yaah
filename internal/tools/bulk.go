@@ -115,7 +115,7 @@ func (t *BulkFilesTool) Execute(ctx context.Context, args string) (string, error
 		params.Path = "."
 	}
 	ws := workspaceOf(t.WS, t.PV)
-	root, err := ws.ResolvePath(params.Path)
+	root, err := ws.ResolveWritePath(params.Path)
 	if err != nil {
 		return "", fmt.Errorf("bulk_files: %w", err)
 	}
@@ -129,7 +129,7 @@ func (t *BulkFilesTool) Execute(ctx context.Context, args string) (string, error
 
 	var toRoot string
 	if params.Action != "delete" {
-		toRoot, err = ws.ResolvePath(params.To)
+		toRoot, err = ws.ResolveWritePath(params.To)
 		if err != nil {
 			return "", fmt.Errorf("bulk_files: %w", err)
 		}
@@ -207,7 +207,7 @@ func (t *BulkFilesTool) Execute(ctx context.Context, args string) (string, error
 				res.failf("%s %s: %v", params.Action, src, err)
 				continue
 			}
-			resolvedDst, rerr := ws.ResolvePath(dst)
+			resolvedDst, rerr := ws.ResolveWritePath(dst)
 			if rerr != nil {
 				res.failf("%s %s: %v", params.Action, src, rerr)
 				continue

@@ -53,7 +53,7 @@ func (t *WriteTool) Execute(ctx context.Context, args string) (string, error) {
 		return "", fmt.Errorf("write: filePath is required")
 	}
 	ws := workspaceOf(t.WS, t.PV)
-	resolved, err := ws.ResolvePath(params.FilePath)
+	resolved, err := ws.ResolveWritePath(params.FilePath)
 	if err != nil {
 		return "", writePathError(err)
 	}

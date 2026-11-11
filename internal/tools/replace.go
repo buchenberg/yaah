@@ -67,7 +67,7 @@ func (t *ReplaceTool) Execute(ctx context.Context, args string) (string, error) 
 		params.Path = "."
 	}
 	ws := workspaceOf(t.WS, t.PV)
-	resolved, err := ws.ResolvePath(params.Path)
+	resolved, err := ws.ResolveWritePath(params.Path)
 	if err != nil {
 		return "", err
 	}

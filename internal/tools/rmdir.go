@@ -65,7 +65,7 @@ func (t *RmdirTool) Execute(ctx context.Context, args string) (string, error) {
 	}
 
 	ws := workspaceOf(t.WS, t.PV)
-	resolved, err := ws.ResolvePath(params.Path)
+	resolved, err := ws.ResolveWritePath(params.Path)
 	if err != nil {
 		return "", fmt.Errorf("rmdir: %w", err)
 	}

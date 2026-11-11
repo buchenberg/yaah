@@ -157,6 +157,14 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, ro
 		// the ONE main tree — worktrees stay pristine, sealed deltas come out
 		// empty, and choose has nothing to apply (#312/#318).
 		pv := opts.pathValidator
+		// The harness-configuration policy is not part of the containment
+		// posture: an unrestricted session still must not let a sub-agent
+		// rewrite role files or config in its worktree. Capture it before the
+		// unrestricted-validator trim below can drop the pointer.
+		var harness *tools.HarnessPaths
+		if pv != nil {
+			harness = pv.Harness
+		}
 		if workdir != "" {
 			// An unrestricted *session* validator must not widen the
 			// worktree lane. AllowHomeAccess=true on a root-less session
@@ -172,6 +180,9 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, ro
 				pv = nil
 			}
 			pv = pv.WithWorkspaceRoot(workdir)
+			if pv.Harness == nil && harness != nil {
+				pv.Harness = harness.WithWorkspaceRoot(workdir)
+			}
 		}
 		reg.SetPathValidator(pv)
 

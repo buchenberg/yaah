@@ -41,6 +41,8 @@ type (
 	PathValidator       = substrate.PathValidator
 	PathRefusalError    = substrate.PathRefusalError
 	PathValidatorSetter = substrate.PathValidatorSetter
+	HarnessPaths        = substrate.HarnessPaths
+	HarnessRefusalError = substrate.HarnessRefusalError
 )
 
 var (
@@ -49,6 +51,7 @@ var (
 	NewConfinedLocalWorkspace = substrate.NewConfinedLocalWorkspace
 	WorkspaceConfined         = substrate.WorkspaceConfined
 	NewPathValidator          = substrate.NewPathValidator
+	NewHarnessPaths           = substrate.NewHarnessPaths
 )
 
 // Forwarders for helpers that moved with the workspace port. Leaf tool

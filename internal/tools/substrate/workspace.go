@@ -66,6 +66,12 @@ type Workspace interface {
 	// to operate on, enforcing containment.
 	ResolvePath(path string) (string, error)
 
+	// ResolveWritePath is ResolvePath plus the harness-configuration guard:
+	// a mutating tool must use it so a write to a role file, skill, plan, or
+	// yaah config/state is refused or requires approval. Reads use
+	// ResolvePath and are never gated.
+	ResolveWritePath(path string) (string, error)
+
 	// WorkDir is the directory relative paths and commands resolve against.
 	// Empty means the process working directory (the pre-workspace behaviour).
 	WorkDir() string
@@ -299,6 +305,23 @@ func (w *LocalWorkspace) ResolvePath(path string) (string, error) {
 	return ResolvePathWithPV(w.pv, path)
 }
 
+// ResolveWritePath applies the harness-path guard on top of ResolvePath. The
+// workspace write methods enforce the same policy as a backstop, so a tool that
+// forgets this still cannot write harness configuration.
+func (w *LocalWorkspace) ResolveWritePath(path string) (string, error) {
+	return ResolveWritePathWithPV(w.pv, path)
+}
+
+// checkWrite applies the harness-path guard to an already-resolved path. It is
+// the workspace-level backstop: a tool that forgets ResolveWritePath still
+// cannot write a role file, skill, plan, or yaah config/state.
+func (w *LocalWorkspace) checkWrite(path string) error {
+	if w.pv == nil {
+		return nil
+	}
+	return w.pv.CheckHarnessWrite(path)
+}
+
 func (w *LocalWorkspace) WorkDir() string {
 	if w.pv == nil {
 		return ""
@@ -336,6 +359,9 @@ func (w *LocalWorkspace) ReadFile(_ context.Context, path string) ([]byte, error
 // Append opens with O_APPEND so two writers cannot overwrite each other's
 // records; each Write is placed at the then-current end of file.
 func (w *LocalWorkspace) Append(_ context.Context, path string, data []byte, perm fs.FileMode) error {
+	if err := w.checkWrite(path); err != nil {
+		return err
+	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, perm)
 	if err != nil {
 		return err
@@ -370,6 +396,9 @@ func (w *LocalWorkspace) ReadRange(_ context.Context, path string, offset, lengt
 // WriteFile delegates to AtomicWriteFile so the crash-safety guarantee
 // (temp file plus rename in the same directory) is preserved exactly.
 func (w *LocalWorkspace) WriteFile(_ context.Context, path string, data []byte, perm fs.FileMode) error {
+	if err := w.checkWrite(path); err != nil {
+		return err
+	}
 	return AtomicWriteFile(path, data, perm)
 }
 
@@ -389,6 +418,9 @@ func (w *LocalWorkspace) ReadDir(_ context.Context, path string) ([]fs.DirEntry,
 func (w *LocalWorkspace) Remove(_ context.Context, path string) error {
 	// os.Remove already removes a file or an empty directory, which is the
 	// Workspace contract rmdir and delete both rely on.
+	if err := w.checkWrite(path); err != nil {
+		return err
+	}
 	return os.Remove(path)
 }
 
@@ -398,6 +430,9 @@ func (w *LocalWorkspace) Remove(_ context.Context, path string) error {
 func (w *LocalWorkspace) RemoveAll(_ context.Context, path string) error {
 	if IsRootPath(path) || (w.pv != nil && w.pv.WorkspaceRoot != "" && SameHostPath(path, w.pv.WorkspaceRoot)) {
 		return fmt.Errorf("refusing to remove the workspace root %s", path)
+	}
+	if err := w.checkWrite(path); err != nil {
+		return err
 	}
 	return os.RemoveAll(path)
 }
@@ -427,6 +462,9 @@ func SameHostPath(a, b string) bool {
 }
 
 func (w *LocalWorkspace) MkdirAll(_ context.Context, path string, perm fs.FileMode) error {
+	// Not harness-guarded: creating an empty directory changes no policy,
+	// and guarding it would double-prompt every write that creates its
+	// parent (the file itself is guarded at WriteFile/ResolveWritePath).
 	return os.MkdirAll(path, perm)
 }
 
@@ -466,6 +504,14 @@ func IsCrossDeviceErr(err error) bool {
 // (EXDEV) it falls back to Copy plus Remove, matching the sandbox mv's
 // transparent behavior at the cost of actually reading the bytes.
 func (w *LocalWorkspace) Move(ctx context.Context, src, dst string) error {
+	// Both ends matter: moving a role file out of the protected tree is a
+	// mutation just as much as moving one in.
+	if err := w.checkWrite(src); err != nil {
+		return err
+	}
+	if err := w.checkWrite(dst); err != nil {
+		return err
+	}
 	err := os.Rename(src, dst)
 	if err == nil || !IsCrossDeviceErr(err) {
 		return err
@@ -489,6 +535,9 @@ func (w *LocalWorkspace) Move(ctx context.Context, src, dst string) error {
 // setuid/setgid/sticky, is applied to the temp before the rename. Ownership and
 // extended attributes are not portable across filesystems and are not carried.
 func (w *LocalWorkspace) Copy(_ context.Context, src, dst string) error {
+	if err := w.checkWrite(dst); err != nil {
+		return err
+	}
 	in, err := os.Open(src)
 	if err != nil {
 		return err
