@@ -911,8 +911,12 @@ Tools from connected servers are registered alongside built-in tools.
 
 Use either `command` + `args` (stdio) or `url` (HTTP). `agents.default.mcp_approval`
 controls whether MCP-served tools are auto-approved, prompted, or denied.
-`headers` values are literal; `${VAR}` substitution applies only to provider
-connection fields and workspace containerd fields.
+`${VAR}` references are substituted from the environment in `command`,
+`args`, `env` values, `url`, and `headers` values at connection time —
+for example `Authorization: Bearer ${GITHUB_TOKEN}`. Map keys (env names,
+header names) are literal. An unset variable expands to the empty string,
+which surfaces as a connection/auth failure rather than being sent as
+literal `${...}`.
 
 ## Observability reference
 

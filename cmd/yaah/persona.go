@@ -195,6 +195,7 @@ func (s *agentSession) SetPersona(name string) error {
 	// routing falls back to the config default.
 	s.applyPersonaRouting(persona)
 	db, sessionID := s.db, s.sessionID
+	mcpNames := s.mcpToolNames
 	s.mu.Unlock()
 	// Persist the switch so the selection and its prompt survive the
 	// process: resume re-resolves the persona column and reads the
@@ -230,6 +231,10 @@ func (s *agentSession) SetPersona(name string) error {
 			}
 		}
 	}
+	// The new persona's tools list applies at the next loop build; if it
+	// drops MCP tools, say so now rather than letting the model discover
+	// the absence the next time it tries to call one.
+	warnPersonaMCPOmissions(persona.Name, persona.Tools, mcpNames)
 	// Announce the switch in-band, after the lock is released. The notice
 	// carries the regime sentence the next run's directive enforces, so the
 	// switch is observable from inside the conversation rather than only

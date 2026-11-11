@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -652,4 +653,58 @@ agents:
 			t.Error("unknown effect must fail the config load")
 		}
 	})
+}
+
+// TestMCPServerConfigResolve pins the MCP counterpart of Provider.Resolve:
+// Load keeps ${VAR} references raw (the config round-trips), and the
+// consumer substitutes them at manifest construction. Without it a
+// `Authorization: Bearer ${GITHUB_TOKEN}` header reaches the server
+// literally and the initialize handshake fails, so no tools register.
+func TestMCPServerConfigResolve(t *testing.T) {
+	t.Setenv("YAAH_TEST_MCP_TOKEN", "ghp_from_env")
+	t.Setenv("YAAH_TEST_MCP_HOME", "/opt/yaah")
+
+	in := MCPServerConfig{
+		Command:   "${YAAH_TEST_MCP_HOME}/bin/server",
+		Args:      []string{"--token", "${YAAH_TEST_MCP_TOKEN}", "--literal", "$NOT_A_REF"},
+		Env:       map[string]string{"TOKEN": "${YAAH_TEST_MCP_TOKEN}", "PLAIN": "value"},
+		URL:       "https://example.test/${YAAH_TEST_MCP_TOKEN}",
+		Transport: "http",
+		Headers:   map[string]string{"Authorization": "Bearer ${YAAH_TEST_MCP_TOKEN}", "X-Plain": "value"},
+	}
+
+	got := in.Resolve()
+
+	if got.Command != "/opt/yaah/bin/server" {
+		t.Errorf("Command = %q, want substituted path", got.Command)
+	}
+	wantArgs := []string{"--token", "ghp_from_env", "--literal", "$NOT_A_REF"}
+	if !slices.Equal(got.Args, wantArgs) {
+		t.Errorf("Args = %q, want %q", got.Args, wantArgs)
+	}
+	if got.Env["TOKEN"] != "ghp_from_env" || got.Env["PLAIN"] != "value" {
+		t.Errorf("Env = %v, want substituted TOKEN and untouched PLAIN", got.Env)
+	}
+	if got.URL != "https://example.test/ghp_from_env" {
+		t.Errorf("URL = %q, want substituted token", got.URL)
+	}
+	if got.Headers["Authorization"] != "Bearer ghp_from_env" || got.Headers["X-Plain"] != "value" {
+		t.Errorf("Headers = %v, want substituted Authorization and untouched X-Plain", got.Headers)
+	}
+
+	// The receiver is a value copy: resolving must not mutate the parsed
+	// config the caller still holds.
+	if in.Headers["Authorization"] != "Bearer ${YAAH_TEST_MCP_TOKEN}" {
+		t.Errorf("Resolve mutated the receiver: %q", in.Headers["Authorization"])
+	}
+	if in.Args[1] != "${YAAH_TEST_MCP_TOKEN}" {
+		t.Errorf("Resolve mutated the receiver args: %q", in.Args[1])
+	}
+
+	// An unset variable substitutes to empty, the same semantics as
+	// Provider.Resolve; it must not leave the literal reference on the wire.
+	t.Setenv("YAAH_TEST_MCP_HOME", "")
+	if got := in.Resolve(); got.Command != "/bin/server" {
+		t.Errorf("Command with unset var = %q, want the empty expansion", got.Command)
+	}
 }

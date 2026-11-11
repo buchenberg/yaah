@@ -517,6 +517,12 @@ func buildMCPSkills(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 				len(st.omittedMCP), strings.Join(st.omittedMCP, ", "))
 		}
 		st.mcpToolNames = nil
+	} else {
+		// A persona tools list is exact-match, and the MCP names exist
+		// only once the servers answered tools/list. A role file that
+		// predates the server (or simply lists its local tools) loses
+		// every remote tool with no other trace — say so at startup.
+		warnPersonaMCPOmissions(lc.persona.Persona.Name, lc.persona.Persona.Tools, st.mcpToolNames)
 	}
 
 	skillDirs := skillSearchPaths()
