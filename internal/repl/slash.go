@@ -16,6 +16,7 @@ const (
 	CmdLogout
 	CmdAgents
 	CmdAgent
+	CmdMode
 )
 
 // ParseSlashCommand checks if input is a recognized slash command.
@@ -45,6 +46,11 @@ func ParseSlashCommand(input string) SlashCommand {
 	if input == "/agent" || strings.HasPrefix(input, "/agent ") {
 		return CmdAgent
 	}
+	// /mode takes an optional mode word: the bare command reports the
+	// current mode axis, a word switches this session.
+	if input == "/mode" || strings.HasPrefix(input, "/mode ") {
+		return CmdMode
+	}
 	return CmdNone
 }
 
@@ -53,4 +59,11 @@ func ParseSlashCommand(input string) SlashCommand {
 // CmdAgent for the input.
 func SlashAgentArg(input string) string {
 	return strings.TrimSpace(strings.TrimPrefix(input, "/agent"))
+}
+
+// SlashModeArg extracts the mode word from a /mode input line, "" for
+// the bare command. ParseSlashCommand must have returned CmdMode for
+// the input.
+func SlashModeArg(input string) string {
+	return strings.TrimSpace(strings.TrimPrefix(input, "/mode"))
 }

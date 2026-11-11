@@ -4,6 +4,17 @@ import (
 	"github.com/buchenberg/yaah/internal/tui/components/command"
 )
 
+// modePickerNames and modePickerDescriptions back the :mode picker. The
+// words mirror the mode-axis vocabulary switchMode validates (read-only,
+// full) — the same axis ACP session/set_mode maps onto — and the picker
+// can only emit these, so selection hands the driver a validated word.
+var modePickerNames = []string{"read-only", "full"}
+
+var modePickerDescriptions = map[string]string{
+	"read-only": "inspection set only — read-only, no modification",
+	"full":      "full toolset",
+}
+
 // HandleCommand dispatches a colon command. It reports whether the command
 // consumed the input — false when it only complained (missing argument, no turn
 // to steer, unwired command), so the caller can keep the text for editing
@@ -107,6 +118,21 @@ func (t *App) HandleCommand(cmd command.Cmd, arg string) bool {
 		}
 		t.ShowAgentPicker(t.agentNames, t.agentDescs, func(name string) {
 			t.OnAgentSelect(name)
+		})
+		return true
+	case command.CmdMode:
+		// Same picker-as-argument shape: the two mode words are the
+		// picker's entries, and selection hands the word to the driver,
+		// which switches this session's mode axis. The word the driver
+		// receives is already validated vocabulary — the picker cannot
+		// emit anything else — so the typed arg (if any) is ignored, like
+		// :agent.
+		if t.OnModeSelect == nil {
+			t.SetEphemeral("mode switching is unavailable in this session")
+			return false
+		}
+		t.ShowAgentPicker(modePickerNames, modePickerDescriptions, func(word string) {
+			t.OnModeSelect(word)
 		})
 		return true
 	case command.CmdSearch:

@@ -186,6 +186,10 @@ type App struct {
 	// palette. The driver validates it and switches the current
 	// session to it (SetPersona).
 	OnAgentSelect func(name string)
+	// OnModeSelect receives the mode word the user picked in the :mode
+	// picker (read-only or full). The driver switches this session's mode
+	// axis, effective at the next run.
+	OnModeSelect func(word string)
 }
 
 type convItem struct {

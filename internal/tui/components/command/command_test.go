@@ -121,6 +121,15 @@ func TestParse_Model(t *testing.T) {
 	}
 }
 
+func TestParse_Mode(t *testing.T) {
+	tests := []string{"mode", "mode read-only", "mode full"}
+	for _, input := range tests {
+		if got := Parse(input); got != CmdMode {
+			t.Errorf("Parse(%q) = %v, want CmdMode", input, got)
+		}
+	}
+}
+
 func TestParse_Unknown(t *testing.T) {
 	if got := Parse("nonexistent"); got != CmdNone {
 		t.Errorf("Parse(nonexistent) = %v, want CmdNone", got)
