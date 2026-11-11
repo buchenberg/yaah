@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.164.0](https://github.com/buchenberg/yaah/compare/v0.163.0...v0.164.0) (2026-11-11)
+
+
+### Features
+
+* **mode:** complete the TUI mode selector ([7653d84](https://github.com/buchenberg/yaah/commit/7653d84dbacafe97574c03c5c14febf9d242d380))
+* **mode:** REPL /mode and TUI :mode selector (mode-axis parity with ACP) ([ebef2a6](https://github.com/buchenberg/yaah/commit/ebef2a6834a4064c2a338b49313c37fbf8f470ac))
+
 ## [0.163.0](https://github.com/buchenberg/yaah/compare/v0.162.0...v0.163.0) (2026-11-11)
 
 
