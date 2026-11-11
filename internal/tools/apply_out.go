@@ -82,6 +82,12 @@ type ApplyOutTool struct {
 	// HostDir is the host working tree the delta lands in — the source
 	// the bootstrap copied in.
 	HostDir string
+	// Harness refuses a delta that would land harness configuration (role
+	// files, skills, plans, yaah state) on the host. The accept prompt
+	// shows the diff but not reliably every path, and approval mode "allow"
+	// would pass a batch that rewrites a role. Nil disables the guard for
+	// tests.
+	Harness *HarnessPaths
 	// effects, when set, records what the accept landed as typed workspace
 	// effects after the host write succeeds. See EffectSink.
 	//
@@ -160,6 +166,15 @@ func (t *ApplyOutTool) Execute(ctx context.Context, args string) (string, error)
 	}
 	if t.preview != diff {
 		return "", fmt.Errorf("apply_out: the workspace changed since the preview — call with dry_run: true again and show the user the updated diff")
+	}
+
+	// Harness configuration is not part of an accept. A delta that writes a
+	// role file, skill, plan or yaah state is refused as a batch: the
+	// approval prompt shows the tool and its arguments, not a per-file
+	// decision, so there is no honest way to ask for a subset. The model
+	// must revert those files in the sandbox and preview again.
+	if blocked := t.Harness.CheckSandboxWrites(t.HostDir, t.Sandbox.Workspace().WorkDir(), files); len(blocked) > 0 {
+		return "", fmt.Errorf("apply_out: the delta writes harness configuration (%s); revert those files in the isolated workspace and preview again", strings.Join(blocked, ", "))
 	}
 
 	if err := t.Sandbox.ApplyOut(ctx, t.HostDir); err != nil {

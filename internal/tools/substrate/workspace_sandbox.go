@@ -78,6 +78,13 @@ func (w *SandboxWorkspace) ResolvePath(p string) (string, error) {
 	return "", fmt.Errorf("path %q escapes the workspace root %q", p, w.root)
 }
 
+// ResolveWritePath matches ResolvePath: the harness guard does not apply inside
+// a sandbox (there is no host config at these paths). A delta that would land
+// harness configuration on the host is refused by apply_out, the accept seam.
+func (w *SandboxWorkspace) ResolveWritePath(p string) (string, error) {
+	return w.ResolvePath(p)
+}
+
 func (w *SandboxWorkspace) WorkDir() string { return w.root }
 
 // Join always uses POSIX separators: the substrate is Linux by construction.

@@ -72,7 +72,7 @@ func (t *PatchTool) Execute(ctx context.Context, args string) (string, error) {
 		return "", fmt.Errorf("patch: could not determine file path from patch headers; provide filePath parameter")
 	}
 	ws := workspaceOf(t.WS, t.PV)
-	resolved, err := ws.ResolvePath(target)
+	resolved, err := ws.ResolveWritePath(target)
 	if err != nil {
 		return "", err
 	}

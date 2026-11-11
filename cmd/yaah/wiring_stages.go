@@ -123,6 +123,11 @@ type workspaceStage struct {
 
 	pathValidator  *tools.PathValidator
 	sessionSandbox *tools.SessionSandbox
+	// harness guards the harness's own configuration (role files, skills,
+	// plans, yaah state) against agent writes. It is built before the tool
+	// registry so direct writers (role, apply_out) can hold it, and its Ask
+	// surface is attached later in wireSessionHooks.
+	harness *tools.HarnessPaths
 
 	// cancelStart releases the containerd backend's startup bound. It is a
 	// no-op on the local path so the caller can always defer it.
@@ -183,6 +188,14 @@ func buildWorkspace(cfg *config.Config, opts SessionOptions) (*workspaceStage, e
 		st.deny = defaultWorkspaceDenyPatterns
 	}
 
+	// Harness-configuration guard: built here, before the tool registry, so
+	// the role and apply_out tools can hold the same policy the path
+	// validator uses. Both the session cwd and an explicit --workspace root
+	// are protected; a session started in $HOME still cannot downgrade the
+	// global rules, which are ordered first.
+	userHome, _ := os.UserHomeDir()
+	st.harness = tools.NewHarnessPaths(userHome, config.HomeDir(), st.cwd, opts.WorkspaceRoot)
+
 	return st, nil
 }
 
@@ -241,6 +254,7 @@ func buildContainment(cfg *config.Config, opts SessionOptions, ws *workspaceStag
 		}
 		ws.pathValidator = tools.NewPathValidator(opts.WorkspaceRoot, allowHome, patterns)
 		ws.pathValidator.WorkDir = ws.cwd
+		ws.pathValidator.Harness = ws.harness
 		// The local substrate's paths gate this registry directly. Exactly
 		// one substrate: the isolated backend instead hands the registry
 		// its workspace at the SetWorkspace gate, after every tool is
@@ -258,7 +272,7 @@ func buildContainment(cfg *config.Config, opts SessionOptions, ws *workspaceStag
 	// registered tool — and doing it during wiring, before any turn can
 	// dispatch, means no call can observe the tool half-configured.
 	if ws.sessionSandbox != nil {
-		tr.applyOutTool = &tools.ApplyOutTool{Sandbox: ws.sessionSandbox, HostDir: ws.cwd}
+		tr.applyOutTool = &tools.ApplyOutTool{Sandbox: ws.sessionSandbox, HostDir: ws.cwd, Harness: ws.harness}
 		tr.reg.Register(tr.applyOutTool)
 	}
 	return nil
@@ -556,7 +570,8 @@ func buildMCPSkills(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 	// session.
 	if ws.sessionSandbox == nil {
 		tr.reg.Register(&tools.RoleTool{
-			Dirs: roleDirs,
+			Dirs:    roleDirs,
+			Harness: ws.harness,
 			// Reload through the union: the process-wide registry carries
 			// every session's contributions (multi-session ACP); a reload
 			// from this session's paths alone would evict the rest. The

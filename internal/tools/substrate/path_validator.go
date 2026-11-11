@@ -41,6 +41,13 @@ type PathValidator struct {
 	// grants access for that path. A nil AskFn keeps hard-reject behaviour.
 	AskFn func(path, reason string) bool
 
+	// Harness, when non-nil, guards the harness's own configuration (role
+	// files, skills, plans, yaah config/state) against agent writes. It is
+	// checked only by ResolveWritePath and by the workspace write methods;
+	// reads are never gated. The policy owns its own approval surface and
+	// cache, so this is independent of AskFn and of the approval mode.
+	Harness *HarnessPaths
+
 	// mu guards approved.
 	mu sync.Mutex
 	// approved remembers granted exceptions keyed by path + reason class
@@ -107,6 +114,7 @@ func (pv *PathValidator) WithWorkspaceRoot(root string) *PathValidator {
 	}
 	derived := NewPathValidator(root, pv.AllowHomeAccess, pv.DenyPatterns)
 	derived.AskFn = pv.AskFn
+	derived.Harness = pv.Harness.WithWorkspaceRoot(root)
 	derived.WorkDir = derived.WorkspaceRoot
 	return derived
 }
@@ -223,6 +231,35 @@ func (pv *PathValidator) ResolvePath(input string) (string, error) {
 	}
 
 	return realPath, nil
+}
+
+// ResolveWritePath is ResolvePath plus the harness-configuration guard: every
+// mutating file tool uses it, so a write to a role file, skill, plan, or yaah
+// config/state is refused (global) or requires approval (workspace) before the
+// tool touches anything. Reads keep using ResolvePath and are never gated —
+// inspecting a role file is how the agent explains itself.
+//
+// The guard runs after symlink resolution and containment, so `..` traversal
+// and a symlink pointing at a role file cannot dodge it.
+func (pv *PathValidator) ResolveWritePath(input string) (string, error) {
+	abs, err := pv.ResolvePath(input)
+	if err != nil {
+		return "", err
+	}
+	if err := pv.CheckHarnessWrite(abs); err != nil {
+		return "", err
+	}
+	return abs, nil
+}
+
+// CheckHarnessWrite applies the harness-path policy to an already-resolved
+// absolute path. Direct writers that do not go through the workspace (the role
+// tool, apply_out) call it themselves.
+func (pv *PathValidator) CheckHarnessWrite(abs string) error {
+	if pv == nil || pv.Harness == nil {
+		return nil
+	}
+	return pv.Harness.CheckWrite(abs)
 }
 
 // resolveExistingAncestor resolves the deepest existing ancestor of abs

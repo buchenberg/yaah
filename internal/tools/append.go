@@ -55,7 +55,7 @@ func (t *AppendTool) Execute(ctx context.Context, args string) (string, error) {
 		return "", fmt.Errorf("append: filePath is required")
 	}
 	ws := workspaceOf(t.WS, t.PV)
-	resolved, err := ws.ResolvePath(params.FilePath)
+	resolved, err := ws.ResolveWritePath(params.FilePath)
 	if err != nil {
 		return "", fmt.Errorf("append: %w", err)
 	}

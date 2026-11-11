@@ -509,7 +509,42 @@ move-family tools that carry both a source and a destination: a resource
 rule matches the **source** path, so `move: { "docs/*": deny }` blocks
 moves *out of* `docs/`, not into it.
 
+### Harness path protection
+
+Role files, skills, plans, and yaah's own configuration decide what an agent
+may do — a role file names the toolset, provider, budgets and permission
+rules a dispatch runs under. They are therefore **not** writable as ordinary
+workspace content. The guard lives in the path resolver
+(`internal/tools/substrate/harness.go`), not in the ruleset above, so no
+rule, persona, or approval setting can widen it, and it is checked after
+symlink resolution and workspace containment.
+
+| Path | Agent write |
+|---|---|
+| `~/.yaah/**` (`$YAAH_HOME`, config and state) | **denied** |
+| `~/.agents/roles/**`, `~/.agents/skills/**` | **denied** |
+| `~/.agents/plans/**` | ask |
+| `<workspace>/.agents/roles/**`, `.agents/skills/**` | ask |
+| `<workspace>/.agents/plans/**`, `.yaah/**` | ask |
+| anything else | unaffected |
+
+`ask` reaches the same approval surface as a workspace-access prompt (TUI,
+web, ACP, or a stdin prompt in plain REPL). With no surface attached — a
+headless run, or a sub-agent whose dispatch has no bridge — the write is
+refused instead of silently allowed. A grant is cached per path for the
+session, so a create followed by an edit does not prompt twice.
+
+Reads are never gated: inspecting a role file or the config is how an agent
+explains its own behavior. The `plan` tool remains the sanctioned writer for
+plan files (plan mode is built around it); a direct `write`/`edit` to a plan
+file goes through the ask above. `apply_out` refuses a container delta that
+would land any protected path, because the accept prompt is one batch
+decision and cannot show a per-file subset. `bash`/`powershell` are not
+covered — as with `--workspace`, the guard bounds file tools, not shell
+commands.
+
 ## Workspace reference
+
 
 **`workspace`** — where the session's tools execute. Without the stanza
 everything runs on the host filesystem, as it always has.

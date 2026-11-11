@@ -131,11 +131,11 @@ func prepareTransfer(ctx context.Context, tool string, ws Workspace, args string
 	}
 
 	req := transferRequest{ws: ws, Force: params.Force}
-	src, err := ws.ResolvePath(params.Path)
+	src, err := ws.ResolveWritePath(params.Path)
 	if err != nil {
 		return transferRequest{}, fmt.Errorf("%s: %w", tool, err)
 	}
-	dst, err := ws.ResolvePath(params.To)
+	dst, err := ws.ResolveWritePath(params.To)
 	if err != nil {
 		return transferRequest{}, fmt.Errorf("%s: %w", tool, err)
 	}

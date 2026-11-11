@@ -52,6 +52,10 @@ func (m *memFS) ResolvePath(p string) (string, error) {
 	return path.Clean(m.root + "/" + p), nil
 }
 
+func (m *memFS) ResolveWritePath(p string) (string, error) {
+	return m.ResolvePath(p)
+}
+
 func (m *memFS) WorkDir() string            { return m.root }
 func (m *memFS) Join(elem ...string) string { return path.Join(elem...) }
 func (m *memFS) Local() bool                { return m.local }

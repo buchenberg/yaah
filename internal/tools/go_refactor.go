@@ -94,7 +94,7 @@ func (t *GoRefactorTool) doFormat(ctx context.Context, ws Workspace, file string
 	if file == "" {
 		return "", fmt.Errorf("go_refactor format: file is required")
 	}
-	resolved, err := ws.ResolvePath(file)
+	resolved, err := ws.ResolveWritePath(file)
 	if err != nil {
 		return "", err
 	}
@@ -156,7 +156,7 @@ func (t *GoRefactorTool) doInfo(ctx context.Context, ws Workspace, dir string) (
 	if dir == "" {
 		dir = "."
 	}
-	resolved, err := ws.ResolvePath(dir)
+	resolved, err := ws.ResolveWritePath(dir)
 	if err != nil {
 		return "", err
 	}

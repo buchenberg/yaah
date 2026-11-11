@@ -40,6 +40,10 @@ type fakeSandboxWorkspace struct{}
 func (fakeSandboxWorkspace) ResolvePath(p string) (string, error) {
 	return path.Join("/workspace", p), nil
 }
+
+func (fakeSandboxWorkspace) ResolveWritePath(p string) (string, error) {
+	return path.Join("/workspace", p), nil
+}
 func (fakeSandboxWorkspace) WorkDir() string            { return "/workspace" }
 func (fakeSandboxWorkspace) Join(elem ...string) string { return path.Join(elem...) }
 func (fakeSandboxWorkspace) Local() bool                { return false }

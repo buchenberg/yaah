@@ -143,7 +143,7 @@ func prepareTreeTransfer(ctx context.Context, tool string, ws Workspace, args st
 	if err != nil {
 		return treeRequest{}, fmt.Errorf("%s: %w", tool, err)
 	}
-	dst, err := ws.ResolvePath(params.To)
+	dst, err := ws.ResolveWritePath(params.To)
 	if err != nil {
 		return treeRequest{}, fmt.Errorf("%s: %w", tool, err)
 	}

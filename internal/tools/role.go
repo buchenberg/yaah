@@ -23,6 +23,10 @@ type RoleTool struct {
 	Dirs         []string          // role search directories (project-first, then user)
 	BuiltinFiles map[string][]byte // built-in role files passed to ReloadRoles
 	Resolver     RoleResolver      // role registry access (injected by agent/runner)
+	// Harness guards writes to role files (the harness's own
+	// configuration). Nil disables the guard for tests and embedders; the
+	// composition root always sets it.
+	Harness *HarnessPaths
 }
 
 func (t *RoleTool) Name() string        { return "role" }
@@ -166,6 +170,21 @@ type roleParams struct {
 	ContractFields  string `json:"contract_fields,omitempty"`
 }
 
+// checkWrite applies the harness-path guard to a role file the tool is about
+// to create, edit, or delete. Role frontmatter names the toolset, model and
+// permissions a dispatch runs under, so the file is configuration, not
+// workspace content.
+func (t *RoleTool) checkWrite(path string) error {
+	if t.Harness == nil {
+		return nil
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolving role path %s: %w", path, err)
+	}
+	return t.Harness.CheckWrite(abs)
+}
+
 // createRole writes a new role .md file and reloads the registry.
 func (t *RoleTool) createRole(p roleParams) (string, error) {
 	dir := t.writeDir()
@@ -173,6 +192,11 @@ func (t *RoleTool) createRole(p roleParams) (string, error) {
 	// untouched, so it cannot even make the roles directory.
 	path, err := roleFilePath(dir, p.Name)
 	if err != nil {
+		return "", err
+	}
+	// Guard before MkdirAll: a denied global write must not create ~/.agents
+	// as a side effect of the attempt.
+	if err := t.checkWrite(path); err != nil {
 		return "", err
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -233,6 +257,9 @@ func (t *RoleTool) editRole(p roleParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := t.checkWrite(path); err != nil {
+		return "", err
+	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -287,6 +314,9 @@ func (t *RoleTool) editRole(p roleParams) (string, error) {
 func (t *RoleTool) deleteRole(name string) (string, error) {
 	path, err := t.findRoleFile(name)
 	if err != nil {
+		return "", err
+	}
+	if err := t.checkWrite(path); err != nil {
 		return "", err
 	}
 	if err := os.Remove(path); err != nil {

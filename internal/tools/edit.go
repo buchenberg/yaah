@@ -67,7 +67,7 @@ func (t *EditTool) Execute(ctx context.Context, args string) (string, error) {
 		return "", fmt.Errorf("edit: filePath is required")
 	}
 	ws := workspaceOf(t.WS, t.PV)
-	resolved, err := ws.ResolvePath(params.FilePath)
+	resolved, err := ws.ResolveWritePath(params.FilePath)
 	if err != nil {
 		return "", err
 	}

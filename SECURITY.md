@@ -71,8 +71,13 @@ and an explicit opt-in for auto-approve.
 | `allow` | Run every tool call without prompting. Explicit opt-in.                  |
 | `deny`  | Refuse every tool call. Useful for read-only sessions.                   |
 
-Approval is a single global switch — there are no per-tool allow/ask/deny
-rules. If you need a read-only mode, set `approval: deny`.
+Approval is the **posture** for dangerous operations, not the whole policy:
+`agents.default.permissions` (and a role file's `permissions:`) adds ordered
+per-tool allow/ask/deny rules, and the `mode` axis (`read-only`) withholds
+mutating tools outright. See `docs/configuration.md#permission-rulesets` for
+the evaluation order. For a session that should never mutate, `read-only`
+mode is the hard boundary; `approval: deny` refuses the dangerous calls that
+remain.
 
 Two additional path-level controls exist alongside the approval switch:
 
@@ -88,13 +93,32 @@ Two additional path-level controls exist alongside the approval switch:
   outside it (`internal/tools/bash.go`: "Containment is NOT enforced for shell
   commands"). Treat `--workspace` as a file-tool guard, not a containment
   boundary.
-- **Permission middleware**: path-pattern allow/deny rules for tool calls,
-  enforced inside sub-agent loops as well (denied calls are filtered before
-  execution). Note: there is currently no user-facing config surface for
-  these rules — `WithPermissionRules` is exercised only by tests, and naming
-  `permission` in `agents.middleware.enabled` without rules is a no-op (an
-  empty rule set allows everything). It is a pipeline mechanism awaiting a
-  config schema, not yet an opt-in security control.
+- **Permission rulesets** (`agents.default.permissions`, role-file
+  `permissions:`, `agents.default.mode`): ordered per-tool rules plus the
+  read-only mode axis, enforced at dispatch even when the approval middleware
+  is disabled. See `docs/configuration.md#permission-rulesets`. `ask` rules
+  in a sub-agent dispatch are refused rather than silently allowed, because
+  nobody is attached to prompt.
+
+### Harness configuration is not agent-writable
+
+A role file selects the tools, model, budgets and permission rules a dispatch
+runs under, so writing one is a privilege change, not an edit. The path
+resolver refuses or asks for writes to the harness's own files, independently
+of the ruleset and of `approval` mode (a later user rule or an `allow`
+posture cannot reopen them); reads stay allowed.
+
+| Path | Agent write |
+|---|---|
+| `~/.yaah/**` (config and state) | denied |
+| `~/.agents/roles/**`, `~/.agents/skills/**` | denied |
+| `~/.agents/plans/**` | ask |
+| `<workspace>/.agents/{roles,skills,plans}/**`, `.yaah/**` | ask |
+
+A declined or unattended ask is a refusal; `apply_out` refuses a sandbox delta
+that would land any protected path. Manual edits by the user are unaffected —
+this bounds agent tool calls only, and (like `--workspace`) it does not bound
+`bash`/`powershell`.
 
 ### Confinement and egress for dispatched sub-agents
 

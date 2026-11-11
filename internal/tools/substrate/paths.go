@@ -38,3 +38,17 @@ func ResolvePathWithPV(pv *PathValidator, input string) (string, error) {
 	}
 	return ExpandHomeDir(input), nil
 }
+
+// ResolveWritePathWithPV is ResolvePathWithPV plus the harness-configuration
+// guard when a validator is attached. A nil validator keeps the legacy
+// behaviour: there is no workspace to protect, so the path is only home-expanded
+// and the workspace write methods do the guarding when they can.
+func ResolveWritePathWithPV(pv *PathValidator, input string) (string, error) {
+	if pv != nil {
+		return pv.ResolveWritePath(input)
+	}
+	if input == "" {
+		return ".", nil
+	}
+	return ExpandHomeDir(input), nil
+}
