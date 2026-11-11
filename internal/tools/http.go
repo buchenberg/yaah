@@ -15,7 +15,10 @@ import (
 )
 
 // httpDefaultTimeout is the max time for a single HTTP call.
-const httpDefaultTimeout = 30 * time.Second
+const (
+	httpDefaultTimeout    = 30 * time.Second
+	httpMaxTimeoutSeconds = 300
+)
 
 // toolHTTPClient is the shared client for tool-issued requests. It is
 // deliberately NOT http.DefaultClient: sharing the default client would
@@ -78,7 +81,9 @@ func (t *HTTPTool) Schema() json.RawMessage {
 			},
 			"timeout": {
 				"type": "integer",
-				"description": "Timeout in seconds (default: 30)"
+				"minimum": 1,
+				"maximum": 300,
+				"description": "Timeout in seconds (default: 30; values above 300 are clamped)"
 			}
 		},
 		"required": ["url"]
@@ -128,7 +133,7 @@ func (t *HTTPTool) Execute(ctx context.Context, args string) (string, error) {
 
 	timeout := httpDefaultTimeout
 	if params.Timeout > 0 {
-		timeout = time.Duration(params.Timeout) * time.Second
+		timeout = time.Duration(clampPositiveInt(params.Timeout, httpMaxTimeoutSeconds)) * time.Second
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

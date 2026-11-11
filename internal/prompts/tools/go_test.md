@@ -11,3 +11,5 @@ Read `status` before the counts:
 Never read `passed: 0, failed: 0` as green without checking `status`; `raw_output` carries the stream tail when there is one. A toolchain that cannot start at all (the `go` binary is missing or unrunnable) is a tool error, not a JSON result.
 
 Also returns per-package counts, timing, and optionally coverage.
+
+A `timeout_seconds` above 1800 is clamped to 1800. Flags that name a program to run instead of the test binary (`-exec`, `-toolexec`) are refused.

@@ -13,7 +13,10 @@ import (
 
 // Shared constants used across multiple tools.
 
-const bashDefaultTimeout = 30 * time.Second
+const (
+	bashDefaultTimeout    = 30 * time.Second
+	bashMaxTimeoutSeconds = 600
+)
 
 // rgAvailable reports whether ripgrep is on PATH; the grep and glob tools
 // fall back to a pure-Go walk when it is not.
@@ -311,4 +314,17 @@ func isDangerous(cmd string) bool {
 		}
 	}
 	return false
+}
+
+// clampPositiveInt bounds a positive integer knob (timeouts, context lines) to
+// max. A non-positive value means "use the tool's default" and stays 0, so a
+// negative or zero payload cannot acquire a meaning the schema never offered.
+func clampPositiveInt(v, max int) int {
+	if v <= 0 {
+		return 0
+	}
+	if v > max {
+		return max
+	}
+	return v
 }
