@@ -56,3 +56,54 @@ func TestApprovalSubAgentLoopUnaffected(t *testing.T) {
 		t.Error("sub-agent pipeline should not contain approval middleware")
 	}
 }
+
+// TestBackgroundProcessStartReachesApprovalViaPipeline is the was9.8
+// regression: background_process start (and restart) runs an arbitrary shell
+// command, so it must resolve through the same approval gate as bash. The safe
+// actions must stay ungated.
+func TestBackgroundProcessStartReachesApprovalViaPipeline(t *testing.T) {
+	cases := []struct {
+		name      string
+		mode      string
+		args      string
+		approve   bool
+		wantCalls int
+		wantKept  bool
+	}{
+		{"ask approves start", "ask", `{"action":"start","command":"echo hi"}`, true, 1, true},
+		{"ask declines start", "ask", `{"action":"start","command":"echo hi"}`, false, 1, false},
+		{"deny strips start", "deny", `{"action":"start","command":"echo hi"}`, false, 0, false},
+		{"allow passes start", "allow", `{"action":"start","command":"echo hi"}`, false, 0, true},
+		{"list stays ungated", "ask", `{"action":"list"}`, false, 0, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := tools.NewRegistry()
+			reg.Register(&tools.BackgroundProcessTool{})
+			l := &Loop{
+				CtxMgr:   &ContextManager{},
+				Registry: reg,
+				Config:   LoopConfig{ApprovalMode: tc.mode},
+			}
+			calls := 0
+			l.ApproveFn = func(name, args string) bool { calls++; return tc.approve }
+			l.applyDefaults()
+			pipe := l.buildPipeline()
+
+			msg := types.AssistantMsg("", []types.ToolCall{
+				{ID: "1", Function: types.ToolCallFn{Name: "background_process", Arguments: tc.args}},
+			})
+			step := &pipeline.Step{}
+			if _, err := pipe.RunPostModel(context.Background(), &msg, step); err != nil {
+				t.Fatal(err)
+			}
+			kept := len(msg.ToolCalls) == 1
+			if kept != tc.wantKept {
+				t.Errorf("call kept = %v, want %v (synthesized: %+v)", kept, tc.wantKept, step.SynthesizedResults)
+			}
+			if calls != tc.wantCalls {
+				t.Errorf("approval calls = %d, want %d", calls, tc.wantCalls)
+			}
+		})
+	}
+}

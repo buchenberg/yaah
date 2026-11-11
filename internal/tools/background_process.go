@@ -20,6 +20,27 @@ func (t *BackgroundProcessTool) Description() string {
 	return prompts.ToolDescription("background_process")
 }
 
+// IsDangerous classifies the command-running actions. `start` and `restart`
+// execute an arbitrary shell command, exactly like `bash`, so they must reach
+// the approval gate; `list`, `status`, `logs` and `stop` only read or signal an
+// existing process and stay ungated. Unknown or missing actions fail closed
+// (dangerous) even though Execute rejects them, so a malformed call can never
+// slip past the gate on its way to an error.
+func (t *BackgroundProcessTool) IsDangerous(argsJSON string) bool {
+	var params struct {
+		Action string `json:"action"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &params); err != nil {
+		return true
+	}
+	switch params.Action {
+	case "list", "status", "logs", "stop":
+		return false
+	default:
+		return true
+	}
+}
+
 func (t *BackgroundProcessTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
@@ -48,6 +69,12 @@ func (t *BackgroundProcessTool) Execute(ctx context.Context, args string) (strin
 	case "start":
 		if params.Command == "" {
 			return "", fmt.Errorf("background_process: command is required for start")
+		}
+		// Same best-effort dangerous-pattern guard as bash (NOT a security
+		// boundary). Approval gating is the real control; this catches the
+		// blatant commands even under approval: allow.
+		if isDangerous(params.Command) {
+			return "", fmt.Errorf("background_process: command matches a dangerous pattern; refused (enable approval gating for real protection)")
 		}
 		info, err := t.Manager.Start(params.Command, params.Description)
 		if err != nil {
@@ -106,6 +133,12 @@ func (t *BackgroundProcessTool) Execute(ctx context.Context, args string) (strin
 		info := t.Manager.Get(params.ID)
 		if info == nil {
 			return "", fmt.Errorf("background_process: process %s not found", params.ID)
+		}
+		// Check the stored command BEFORE stopping anything: a refused
+		// restart must leave the running process untouched, and the fresh
+		// approval decision must cover the command that will actually run.
+		if isDangerous(info.Command) {
+			return "", fmt.Errorf("background_process: stored command matches a dangerous pattern; refused (start a new process with an approved command instead)")
 		}
 		if info.Status() == "running" {
 			if err := t.Manager.Stop(params.ID); err != nil {
