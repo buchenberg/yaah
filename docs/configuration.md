@@ -475,7 +475,14 @@ Things the rules deliberately do **not** do:
   axis or the tool belt when you need a hard boundary.
 - `ask` routes through the approval prompt of the running surface (REPL,
   TUI, web, ACP). If the `approval` middleware is disabled, an `ask` rule
-  degrades to allow; `deny` rules are enforced regardless.
+  degrades to allow; `deny` rules are enforced regardless. A **sub-agent
+  dispatch is the exception**: it installs no approval middleware and nobody
+  is attached to it, so an `ask` rule is refused there rather than allowed —
+  the refusal names the rule and the missing prompt. A subagent-capable role
+  file that declares `ask` warns at load, and `headless: deny` in its
+  frontmatter states that the refusal is the intent (the only accepted
+  value; primary-only roles are exempt, since a persona's session has a
+  prompt).
 
 An unknown effect (`allo` instead of `allow`) fails the config load or the
 role file's parse — a typo never silently widens or narrows.
@@ -494,7 +501,10 @@ of the ceiling any deeper dispatch from that role carries. Shell rules
 deny inherited by a sub-agent that needs that command fails one level
 removed from the rule that caused it (the Kilo #11523 lesson); restrict
 shells on the parent, or scope the sub-agent's tool belt. `ask` rules do
-not propagate either — a sub-agent has no one to ask. Note for the
+not propagate either — a sub-agent has no one to ask — and an `ask` rule in
+the dispatched role's *own* ruleset is refused at dispatch for the same
+reason, naming the rule and the missing prompt; declare `headless: deny` in
+the role file to record that the refusal is intended. Note for the
 move-family tools that carry both a source and a destination: a resource
 rule matches the **source** path, so `move: { "docs/*": deny }` blocks
 moves *out of* `docs/`, not into it.

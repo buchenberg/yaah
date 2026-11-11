@@ -247,8 +247,10 @@ type LoopConfig struct {
 	// after, so the persona wins on overlap (last-match-wins). Consulted
 	// by classifyGate after the mode-axis floor and before the approval
 	// posture; admitTool additionally enforces deny at dispatch so a
-	// disabled approval pipeline cannot silently bypass it. Nil or empty
-	// means no rules — behavior is exactly the pre-W5 gates.
+	// disabled approval pipeline cannot silently bypass it, and refuses an
+	// ask rule outright on a sub-agent loop (a dispatch has no approval
+	// bridge, so ask there would otherwise be a silent allow). Nil or
+	// empty means no rules — behavior is exactly the pre-W5 gates.
 	Permissions permissions.Rules
 	// ToolSpillDir is the directory where oversized tool results are
 	// spilled to disk. Injected by the composition root (the yaah config

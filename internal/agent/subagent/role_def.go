@@ -79,6 +79,15 @@ type RoleDef struct {
 	// as Tools.
 	Permissions []permissions.Rule
 
+	// Headless is the role file's `headless:` declaration: what a headless
+	// run does with this role's `ask` rules. "deny" (the only accepted
+	// value) states that the dispatch path's refusal IS the intent, and
+	// silences validateHeadlessAsk's load-time warning. Empty is the
+	// historical default. Nothing keys dispatch behavior off it — a
+	// sub-agent always refuses ask — so the value is intent, reported at
+	// load rather than enforced.
+	Headless string
+
 	// Body is the role's markdown system-prompt body below the
 	// frontmatter fence.
 	Body string
@@ -98,6 +107,7 @@ func roleDefFrom(fm rolefile.Frontmatter, body string) RoleDef {
 		Mode:          normalizeRoleMode(fm.Mode, fm.Name),
 		SystemReplace: normalizeRoleSystem(fm.System, fm.Name),
 		Permissions:   []permissions.Rule(fm.Permissions),
+		Headless:      fm.Headless,
 		MaxLoopCycles: fm.MaxLoopCycles,
 		MinLoopCycles: fm.MinLoopCycles,
 		MaxToolTurns:  fm.MaxToolTurns,
@@ -145,6 +155,67 @@ func roleDefFrom(fm rolefile.Frontmatter, body string) RoleDef {
 	// > role file > parent session model > config default.
 
 	return def
+}
+
+// headlessPolicyDeny is the only value the role file's `headless:` key
+// accepts. A sub-agent dispatch refuses an `ask` rule either way (a
+// dispatch has no approval bridge, and letting the call through would
+// quietly widen the rule to allow); declaring the policy is how a file
+// says the refusal is what it meant, not a gap somebody forgot to close.
+const headlessPolicyDeny = "deny"
+
+// validateHeadlessAsk reports, at load, a subagent-capable role file that
+// declares `ask` permission rules without declaring a headless policy.
+//
+// The rules are not inert any more — the dispatch gate
+// (agent.Loop.admitTool) refuses an ask rule on a sub-agent loop — but the
+// author still cannot see the mismatch from the file: they wrote "ask me
+// first", and a dispatch has nobody to ask, so the boundary they intended
+// arrives as a mid-run refusal that reads like a harness bug. Naming the
+// role and its ask rules once per load is what closes that gap.
+//
+// This is the earliest point the distinction exists: roleDefFrom is where
+// the mode axis is normalized, so "subagent-capable" (mode `subagent` or
+// `all`, including a missing key) is finally known. Primary-only files are
+// exempt — a persona runs inside a session, where the approval middleware
+// is installed and ask works.
+//
+// Warn, not error: a broken project role must not brick startup (§4.6),
+// the same rule the budget clamps follow. The warning fires once per
+// registry load per role — startup, /reload-roles, and the reload every
+// role-tool mutation triggers — never once per dispatch.
+func validateHeadlessAsk(roleName string, def RoleDef) {
+	if def.Mode == "primary" {
+		return
+	}
+	asks := permissions.AskRules(def.Permissions)
+	if len(asks) == 0 {
+		return
+	}
+	switch def.Headless {
+	case headlessPolicyDeny:
+		return
+	case "":
+		slog.Warn("role file: `ask` permission rules cannot prompt on a sub-agent dispatch; a sub-agent role refuses them — declare `headless: deny` to state that the refusal is intended, or use `deny`",
+			"role", roleName, "rules", describeAskRules(asks))
+	default:
+		slog.Warn("role file: unknown headless value; a sub-agent dispatch refuses `ask` rules regardless of it",
+			"role", roleName, "value", def.Headless, "rules", describeAskRules(asks))
+	}
+}
+
+// describeAskRules renders ask rules for one log line as `tool:resource`,
+// or the bare tool when the rule matches every call of it.
+func describeAskRules(rules []permissions.Rule) string {
+	parts := make([]string, len(rules))
+	for i, rule := range rules {
+		if rule.Resource == "" {
+			parts[i] = rule.Tool
+			continue
+		}
+		parts[i] = rule.Tool + ":" + rule.Resource
+	}
+	return strings.Join(parts, ", ")
 }
 
 // normalizeRoleMode validates the role file's mode field (yaah-21uk D1;
@@ -250,6 +321,7 @@ func (r *RoleRegistry) LoadBytes(files map[string][]byte) error {
 		if err != nil {
 			return fmt.Errorf("role %q: %w", roleName, err)
 		}
+		validateHeadlessAsk(roleName, def)
 		r.entries[SubAgentRole(roleName)] = def
 	}
 	return nil
@@ -287,6 +359,7 @@ func (r *RoleRegistry) LoadDir(dir string) error {
 		if err != nil {
 			return fmt.Errorf("role %q: %w", path, err)
 		}
+		validateHeadlessAsk(roleName, def)
 		r.entries[key] = def
 	}
 	return nil

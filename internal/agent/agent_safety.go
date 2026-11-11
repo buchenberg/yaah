@@ -185,7 +185,8 @@ func (l *Loop) planModeWithholds(name, args string) bool {
 }
 
 // admitTool is the always-on dispatch gate: the advertised tool level plus plan
-// mode's per-call danger check. The approval middleware runs the danger
+// mode's per-call danger check, plus the ruleset's deny (and, for a sub-agent
+// loop, its ask — see the body). The approval middleware runs the danger
 // classification through classifyGate, but that middleware is optional
 // (middleware.disabled: [approval]) and a mode whose promise is "mutating
 // actions are withheld" must not be switchable off by configuration. The two
@@ -210,12 +211,29 @@ func (l *Loop) admitTool(name, args string) (bool, error) {
 	}
 	// Ruleset deny is enforced here as well as in the approval middleware
 	// because that middleware is optional (middleware.disabled): a rule
-	// that says deny must hold even when nothing can ask. Ruleset ask is
-	// deliberately NOT enforced here — dispatch has no way to prompt, and
-	// an ask that silently denied would break the contract that asking is
-	// the user's choice; it requires the approval pipeline (on by default).
-	if effect, ok := l.Config.Permissions.Match(name, permissions.ResourceFor(name, args)); ok && effect == permissions.Deny {
-		return false, fmt.Errorf("tool %q is denied by a permission rule", name)
+	// that says deny must hold even when nothing can ask.
+	//
+	// Ruleset ask is deliberately NOT enforced here for an orchestrator
+	// loop — dispatch has no way to prompt, and an ask that silently denied
+	// would break the contract that asking is the user's choice; it
+	// requires the approval pipeline (on by default). A SUB-AGENT loop is
+	// the opposite case, and the reason is structural rather than a
+	// preference: its pipeline never installs the approval middleware (see
+	// pipeline.subAgentPipelineNames) and nobody is attached to the run, so
+	// an ask rule has no enforcement point. Passing the call through turned
+	// a declared "ask" boundary into a silent allow — the user's security
+	// intent, dropped without a trace. Deny it instead, with the distinct
+	// reason that names the rule and the missing prompt.
+	resource := permissions.ResourceFor(name, args)
+	if effect, ok := l.Config.Permissions.Match(name, resource); ok {
+		switch effect {
+		case permissions.Deny:
+			return false, fmt.Errorf("tool %q is denied by a permission rule", name)
+		case permissions.Ask:
+			if l.Config.IsSubAgent {
+				return false, fmt.Errorf("%s", pipeline.SubAgentAskReason(name, resource))
+			}
+		}
 	}
 	return true, nil
 }

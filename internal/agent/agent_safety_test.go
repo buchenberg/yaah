@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
@@ -294,4 +295,82 @@ func TestAdmitTool_PermissionDeny(t *testing.T) {
 	if ok, err := l.admitTool("bash", `{"command":"ls"}`); !ok || err != nil {
 		t.Errorf("unmatched rule must pass: got (%v, %v)", ok, err)
 	}
+}
+
+// TestAdmitTool_SubAgentAskRefused pins the execution half of the sub-agent
+// `ask` fix. A sub-agent loop installs no approval middleware and nobody is
+// attached to the run, so an `ask` rule there had no enforcement point:
+// classifyGate produced GateAsk, no middleware consumed it, and admitTool
+// enforced only deny — the declared boundary dispatched as a silent allow.
+// The always-on gate now refuses it with a reason that names the rule and
+// the missing prompt, which is a distinct sentence (and a distinct fix)
+// from every other denial.
+func TestAdmitTool_SubAgentAskRefused(t *testing.T) {
+	rules := permissions.Rules{
+		{Tool: "bash", Resource: "git push*", Effect: permissions.Ask},
+		{Tool: "bash", Resource: "rm -rf*", Effect: permissions.Deny},
+		{Tool: "git", Effect: permissions.Ask},
+	}
+	sub := &Loop{Config: LoopConfig{IsSubAgent: true, Permissions: rules}}
+
+	t.Run("ask is refused, naming the rule and the missing prompt", func(t *testing.T) {
+		ok, err := sub.admitTool("bash", `{"command":"git push origin main"}`)
+		if ok || err == nil {
+			t.Fatalf("sub-agent ask rule must refuse at dispatch, got (%v, %v)", ok, err)
+		}
+		for _, want := range []string{`"bash"`, "git push origin main", "`ask`", "cannot prompt for approval"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("refusal %q is missing %q", err, want)
+			}
+		}
+	})
+
+	t.Run("the wording is distinct from a plain deny", func(t *testing.T) {
+		_, askErr := sub.admitTool("bash", `{"command":"git push origin main"}`)
+		_, denyErr := sub.admitTool("bash", `{"command":"rm -rf /"}`)
+		if askErr == nil || denyErr == nil {
+			t.Fatalf("both rules must refuse, got ask=%v deny=%v", askErr, denyErr)
+		}
+		if askErr.Error() == denyErr.Error() {
+			t.Errorf("ask and deny share one message: %q", askErr)
+		}
+		if strings.Contains(askErr.Error(), "denied by a permission rule") {
+			t.Errorf("ask refusal reuses the deny wording: %q", askErr)
+		}
+	})
+
+	t.Run("tool-name-only ask rule is refused too", func(t *testing.T) {
+		ok, err := sub.admitTool("git", `{"action":"status"}`)
+		if ok || err == nil {
+			t.Fatalf("a rule without a resource is still an ask, got (%v, %v)", ok, err)
+		}
+		if !strings.Contains(err.Error(), `"git"`) || !strings.Contains(err.Error(), "`ask`") {
+			t.Errorf("refusal must name the tool and the ask rule: %q", err)
+		}
+	})
+
+	t.Run("unmatched call still dispatches", func(t *testing.T) {
+		if ok, err := sub.admitTool("read", `{"filePath":"x.md"}`); !ok || err != nil {
+			t.Errorf("unmatched sub-agent call must pass, got (%v, %v)", ok, err)
+		}
+	})
+
+	t.Run("the orchestrator keeps ask for its approval pipeline", func(t *testing.T) {
+		parent := &Loop{Config: LoopConfig{Permissions: rules}}
+		if ok, err := parent.admitTool("bash", `{"command":"git push origin main"}`); !ok || err != nil {
+			t.Errorf("parent ask belongs to the approval pipeline, not dispatch: got (%v, %v)", ok, err)
+		}
+	})
+
+	// The gate only engages on a loop the constructor actually marks: the
+	// bug's first half was a sub-agent loop that never reached this path.
+	t.Run("NewSubAgentLoop wires the gate", func(t *testing.T) {
+		l := NewSubAgentLoop(nil, tools.NewEmptyRegistry(), "m", "p", SubAgentConfig{Permissions: rules})
+		if !l.Config.IsSubAgent {
+			t.Fatal("NewSubAgentLoop must mark the loop a sub-agent")
+		}
+		if ok, err := l.admitTool("bash", `{"command":"git push origin main"}`); ok || err == nil {
+			t.Errorf("ask via NewSubAgentLoop = (%v, %v), want a refusal", ok, err)
+		}
+	})
 }

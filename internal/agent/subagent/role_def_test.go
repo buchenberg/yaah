@@ -379,3 +379,88 @@ func TestRoleDefToProfilePermissions(t *testing.T) {
 		t.Errorf("zero profile carried %+v", got)
 	}
 }
+
+// TestRoleRegistryWarnsOnHeadlessAsk pins the load-time half of the
+// sub-agent `ask` fix. The dispatch gate refuses an ask rule, so the rule is
+// no longer inert — but the file's author wrote "ask me first" and a
+// dispatch has nobody to ask, so the mismatch has to be named at load:
+// once per role, naming the role and the rules — unless the file declares
+// the only policy a headless run can honour (`headless: deny`).
+//
+// Primary-only files are exempt: a persona runs inside a session, where the
+// approval middleware is installed and ask works.
+func TestRoleRegistryWarnsOnHeadlessAsk(t *testing.T) {
+	const askBlock = "permissions:\n  bash:\n    \"git push*\": ask\n"
+	tests := []struct {
+		name  string
+		front string   // frontmatter after the name key
+		want  []string // substrings the warning must carry; empty = no warning
+	}{
+		{
+			name:  "subagent mode without a headless policy warns",
+			front: "mode: subagent\ntools: [bash]\n" + askBlock,
+			want:  []string{"role=pusher", "bash:git push*", "headless: deny"},
+		},
+		{
+			name:  "missing mode (all) is subagent-capable and warns",
+			front: "tools: [bash]\n" + askBlock,
+			want:  []string{"role=pusher", "headless: deny"},
+		},
+		{
+			name:  "headless deny is the declaration that silences it",
+			front: "mode: all\ntools: [bash]\n" + askBlock + "headless: deny\n",
+		},
+		{
+			name:  "primary-only role is exempt",
+			front: "mode: primary\ntools: [bash]\n" + askBlock,
+		},
+		{
+			name:  "no ask rules: silent",
+			front: "mode: subagent\ntools: [bash]\npermissions:\n  bash:\n    \"rm -rf*\": deny\n",
+		},
+		{
+			name:  "unknown headless value warns",
+			front: "mode: subagent\ntools: [bash]\n" + askBlock + "headless: allow\n",
+			want:  []string{"role=pusher", "unknown headless value", "value=allow"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logs := captureSlogWarnings(t)
+			reg := NewRoleRegistry()
+			if err := reg.LoadBytes(map[string][]byte{
+				"pusher.md": []byte("---\nname: Pusher\n" + tt.front + "---\nbody"),
+			}); err != nil {
+				t.Fatalf("LoadBytes: %v", err)
+			}
+			got := logs()
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("warning is missing %q, log:\n%s", want, got)
+				}
+			}
+			if len(tt.want) == 0 && got != "" {
+				t.Errorf("unexpected warnings:\n%s", got)
+			}
+		})
+	}
+}
+
+// TestRoleLoadDirWarnsOnHeadlessAsk covers the second load path: project and
+// user role files arrive through LoadDir, so the case that matters most (a
+// committed project role declaring ask) must warn there too.
+func TestRoleLoadDirWarnsOnHeadlessAsk(t *testing.T) {
+	dir := t.TempDir()
+	src := "---\nname: Pusher\nmode: subagent\ntools: [bash]\npermissions:\n  bash:\n    \"git push*\": ask\n---\nbody\n"
+	if err := os.WriteFile(filepath.Join(dir, "pusher.md"), []byte(src), 0o644); err != nil {
+		t.Fatalf("write role file: %v", err)
+	}
+	logs := captureSlogWarnings(t)
+	reg := NewRoleRegistry()
+	if err := reg.LoadDir(dir); err != nil {
+		t.Fatalf("LoadDir: %v", err)
+	}
+	if got := logs(); !strings.Contains(got, "role=pusher") || !strings.Contains(got, "headless: deny") {
+		t.Errorf("LoadDir must warn about the ask rule, log:\n%s", got)
+	}
+}

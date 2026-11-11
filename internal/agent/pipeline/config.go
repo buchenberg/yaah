@@ -324,11 +324,14 @@ var defaultPipelineNames = []string{
 // don't need orchestrator-level middleware.
 //
 // Deliberately excluded:
-// - followup: orchestrator REPL channel, sub-agents never receive it
-// - approval: sub-agents auto-approve (the orchestrator gates dispatch)
-// - compaction: sub-agents use CtxMgr pruning internally, not pipeline compaction
-// - loop_detection: redundant with MaxLoopCycles/MaxToolTurns/WrapUpThreshold/ErrStuckChild
-// - soft_prune: CtxMgr.EnsurePruner() already handles context for short-lived loops
+//   - followup: orchestrator REPL channel, sub-agents never receive it
+//   - approval: a sub-agent has no approval bridge (no user is attached to
+//     the dispatch), so the middleware could only ever ask an unanswerable
+//     question. The dispatch gate (agent.Loop.admitTool) therefore refuses an
+//     ask rule outright instead of letting it through as an allow
+//   - compaction: sub-agents use CtxMgr pruning internally, not pipeline compaction
+//   - loop_detection: redundant with MaxLoopCycles/MaxToolTurns/WrapUpThreshold/ErrStuckChild
+//   - soft_prune: CtxMgr.EnsurePruner() already handles context for short-lived loops
 //
 // Included (conditionally, by NewSubAgentPipeline):
 //   - steer: when the run carries a supervision inject channel

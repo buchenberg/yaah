@@ -720,3 +720,53 @@ body
 		}
 	})
 }
+
+// TestRoundTripHeadlessField pins the `headless:` key — the declaration a
+// subagent-capable role uses to say its `ask` rules are meant to be refused
+// in a dispatch. The key parses, survives a Parse→Marshal rewrite (the role
+// tool rewrites files that way, so a key it cannot carry would be deleted
+// by any edit), and stays omitted when unset — files without it marshal
+// exactly as before.
+func TestRoundTripHeadlessField(t *testing.T) {
+	input := `---
+name: pusher
+tools: [bash]
+permissions:
+  bash: { "git push*": ask }
+headless: deny
+---
+body
+`
+	fm, body, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if fm.Headless != "deny" {
+		t.Fatalf("Headless = %q, want deny", fm.Headless)
+	}
+	out, err := Marshal(fm, body)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	fm2, _, err := Parse(out)
+	if err != nil {
+		t.Fatalf("re-parse after Marshal:\n%s\n%v", out, err)
+	}
+	if fm2.Headless != "deny" {
+		t.Errorf("round trip dropped the key: %q\n%s", fm2.Headless, out)
+	}
+
+	t.Run("absent key stays omitted", func(t *testing.T) {
+		fm, _, err := Parse("---\nname: quiet\ntools: [read]\n---\nbody\n")
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		out, err := Marshal(fm, "")
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		if strings.Contains(out, "headless:") {
+			t.Errorf("rewrite gained a headless key:\n%s", out)
+		}
+	})
+}

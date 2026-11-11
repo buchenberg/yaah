@@ -105,6 +105,16 @@ type Frontmatter struct {
 	// exactly as before.
 	Permissions permissions.Rules `yaml:"permissions,omitempty"`
 
+	// Headless declares what a headless run does with this role's `ask`
+	// permission rules. A sub-agent dispatch installs no approval
+	// middleware — nobody is attached to the run — so an `ask` rule is
+	// enforced as a denial there (parity: Kilo's headless agents deny
+	// sub-agent asks). "deny" is the only value and states that the
+	// denial is the intent; declaring it silences the load-time warning
+	// that a subagent-capable role with `ask` rules raises (see
+	// agent/subagent.roleDefFrom). Empty is the historical default.
+	Headless string `yaml:"headless,omitempty"`
+
 	// Temperature and TopP are per-role sampling overrides passed
 	// through to the provider request (parity W1.4). Pointers keep
 	// "unset" distinct from an explicit 0 — the most common determinism
