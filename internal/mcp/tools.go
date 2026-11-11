@@ -61,6 +61,12 @@ func (t *MCPTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{}}`)
 }
 
+// AllowAdditionalProperties keeps a remote tool's schema exactly as the server
+// published it: the server owns validation, and closing it locally could
+// reject arguments the server accepts. Built-in tools opt in to the closed
+// schema by not implementing this method.
+func (t *MCPTool) AllowAdditionalProperties() bool { return true }
+
 // Execute calls the tool on the MCP server.
 func (t *MCPTool) Execute(ctx context.Context, args string) (string, error) {
 	result, err := t.client.CallTool(ctx, t.tool.Name, json.RawMessage(args))

@@ -97,8 +97,8 @@ func bisectFoundCommit(output string) string {
 
 func (t *BisectTool) Execute(ctx context.Context, args string) (string, error) {
 	var params bisectParams
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("bisect: invalid arguments: %w", err)
+	if err := StrictToolArgs("bisect", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 
 	result := &bisectResult{Action: params.Action, Status: "in_progress"}

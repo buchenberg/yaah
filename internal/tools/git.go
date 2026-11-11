@@ -113,8 +113,8 @@ func (t *GitTool) Execute(ctx context.Context, args string) (string, error) {
 		Message string   `json:"message"`
 		Timeout int      `json:"timeout"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("git: invalid arguments: %w", err)
+	if err := StrictToolArgs("git", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.Action == "" {
 		return "", fmt.Errorf("git: action is required")

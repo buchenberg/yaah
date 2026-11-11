@@ -8,6 +8,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/buchenberg/yaah/internal/toolargs"
 )
 
 // ProposalTool settles retained sub-agent proposals (Plan 7 Phase 2). A retained
@@ -89,8 +90,8 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 		ExtraTurns int    `json:"extra_turns"`
 		Prompt     string `json:"prompt"`
 	}
-	if err := json.Unmarshal([]byte(args), &raw); err != nil {
-		return "", fmt.Errorf("proposal: invalid arguments: %w", err)
+	if err := toolargs.StrictToolArgs("proposal", t.Schema(), args, &raw); err != nil {
+		return "", err
 	}
 	if t.Proposals == nil {
 		return "", fmt.Errorf("proposal: no session registry configured — this tool is registered with the registry runner.NewDelegateTool creates")

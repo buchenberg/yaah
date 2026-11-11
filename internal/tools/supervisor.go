@@ -99,8 +99,8 @@ type supervisorActionArgs struct {
 
 func (t *SupervisorTool) Execute(ctx context.Context, args string) (string, error) {
 	var raw supervisorActionArgs
-	if err := json.Unmarshal([]byte(args), &raw); err != nil {
-		return "", fmt.Errorf("supervisor: invalid arguments: %w", err)
+	if err := StrictToolArgs("supervisor", t.Schema(), args, &raw); err != nil {
+		return "", err
 	}
 
 	mgr := t.ScopeManager

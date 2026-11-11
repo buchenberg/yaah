@@ -60,6 +60,7 @@ yaah/
 │   ├── skills/                 # SKILL.md discovery/parsing
 │   ├── spinner/                # terminal spinner primitives
 │   ├── todo/                   # todo-list model shared by views
+│   ├── toolargs/               # strict argument decoding shared by tools and dispatch
 │   ├── toolfmt/                # shared tool result formatting
 │   ├── tools/                  # built-in tools
 │   ├── tui/                    # tview components

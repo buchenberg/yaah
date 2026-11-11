@@ -43,8 +43,8 @@ func (t *DeleteTool) Execute(ctx context.Context, args string) (string, error) {
 	var params struct {
 		FilePath string `json:"filePath"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("delete: invalid arguments: %w", err)
+	if err := StrictToolArgs("delete", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.FilePath == "" {
 		return "", fmt.Errorf("delete: filePath is required")

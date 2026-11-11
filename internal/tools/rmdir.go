@@ -57,8 +57,8 @@ func (t *RmdirTool) Execute(ctx context.Context, args string) (string, error) {
 		Path      string `json:"path"`
 		Recursive bool   `json:"recursive"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("rmdir: invalid arguments: %w", err)
+	if err := StrictToolArgs("rmdir", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.Path == "" {
 		return "", fmt.Errorf("rmdir: path is required")

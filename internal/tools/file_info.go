@@ -57,8 +57,8 @@ func (t *FileInfoTool) Execute(ctx context.Context, args string) (string, error)
 	var params struct {
 		FilePath string `json:"filePath"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("file_info: invalid args: %w", err)
+	if err := StrictToolArgs("file_info", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.FilePath == "" {
 		return "", fmt.Errorf("file_info: filePath is required")

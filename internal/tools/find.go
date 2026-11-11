@@ -87,8 +87,8 @@ func (t *FindTool) Execute(ctx context.Context, args string) (string, error) {
 		NewerThan string `json:"newer_than"`
 		OlderThan string `json:"older_than"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("find: invalid arguments: %w", err)
+	if err := StrictToolArgs("find", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.Path == "" {
 		params.Path = "."

@@ -45,8 +45,8 @@ func (t *PatchTool) Execute(ctx context.Context, args string) (string, error) {
 		Patch    string `json:"patch"`
 		FilePath string `json:"filePath"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("patch: invalid arguments: %w", err)
+	if err := StrictToolArgs("patch", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.Patch == "" {
 		return "", fmt.Errorf("patch: patch text is required")

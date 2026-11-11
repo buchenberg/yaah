@@ -50,8 +50,8 @@ func (t *BashTool) Execute(ctx context.Context, args string) (string, error) {
 		Command string `json:"command"`
 		Timeout int    `json:"timeout"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("bash: invalid arguments: %w", err)
+	if err := StrictToolArgs("bash", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.Command == "" {
 		return "", fmt.Errorf("bash: command is required")

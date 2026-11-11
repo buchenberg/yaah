@@ -93,8 +93,8 @@ func (t *BulkFilesTool) Execute(ctx context.Context, args string) (string, error
 		MkdirP  bool   `json:"mkdir_p"`
 		DryRun  bool   `json:"dry_run"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("bulk_files: invalid arguments: %w", err)
+	if err := StrictToolArgs("bulk_files", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	switch params.Action {
 	case "copy", "move":

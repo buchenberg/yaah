@@ -51,8 +51,8 @@ func (t *PlanTool) Execute(ctx context.Context, args string) (string, error) {
 		Body        string `json:"body"`
 		Status      string `json:"status"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("plan: invalid arguments: %w", err)
+	if err := StrictToolArgs("plan", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 
 	switch params.Action {

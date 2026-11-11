@@ -90,8 +90,8 @@ func (t *WaitForTool) Execute(ctx context.Context, args string) (string, error) 
 		IntervalSeconds int    `json:"interval_seconds"`
 		Handle          string `json:"handle"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("wait_for: invalid arguments: %w", err)
+	if err := StrictToolArgs("wait_for", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.On == "" && params.Handle == "" {
 		return "", fmt.Errorf("wait_for: on is required (or pass a handle from a timed-out wait)")

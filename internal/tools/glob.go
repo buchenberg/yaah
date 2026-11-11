@@ -48,8 +48,8 @@ func (t *GlobTool) Execute(ctx context.Context, args string) (string, error) {
 		Pattern string `json:"pattern"`
 		Path    string `json:"path"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("glob: invalid arguments: %w", err)
+	if err := StrictToolArgs("glob", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.Pattern == "" {
 		return "", fmt.Errorf("glob: pattern is required")

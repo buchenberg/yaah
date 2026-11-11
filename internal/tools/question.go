@@ -84,8 +84,8 @@ func (t *QuestionTool) Execute(ctx context.Context, args string) (string, error)
 			Multiple bool `json:"multiple"`
 		} `json:"questions"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("question: invalid arguments: %w", err)
+	if err := StrictToolArgs("question", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if len(params.Questions) == 0 {
 		return "", fmt.Errorf("question: at least one question is required")

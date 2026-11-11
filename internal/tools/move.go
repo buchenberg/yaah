@@ -66,7 +66,7 @@ func (t *MoveTool) Schema() json.RawMessage {
 func (t *MoveTool) IsDangerous(string) bool { return true }
 
 func (t *MoveTool) Execute(ctx context.Context, args string) (string, error) {
-	req, err := prepareTransfer(ctx, "move", workspaceOf(t.WS, t.PV), args)
+	req, err := prepareTransfer(ctx, "move", t.Schema(), workspaceOf(t.WS, t.PV), args)
 	if err != nil {
 		return "", err
 	}
@@ -113,15 +113,15 @@ type transferRequest struct {
 // Both paths are resolved through the workspace's PathValidator first, so deny
 // patterns and workspace-root containment apply exactly as they do for
 // read/write/edit/delete.
-func prepareTransfer(ctx context.Context, tool string, ws Workspace, args string) (transferRequest, error) {
+func prepareTransfer(ctx context.Context, tool string, schema json.RawMessage, ws Workspace, args string) (transferRequest, error) {
 	var params struct {
 		Path   string `json:"path"`
 		To     string `json:"to"`
 		Force  bool   `json:"force"`
 		MkdirP bool   `json:"mkdir_p"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return transferRequest{}, fmt.Errorf("%s: invalid arguments: %w", tool, err)
+	if err := StrictToolArgs(tool, schema, args, &params); err != nil {
+		return transferRequest{}, err
 	}
 	if params.Path == "" {
 		return transferRequest{}, fmt.Errorf("%s: path is required", tool)

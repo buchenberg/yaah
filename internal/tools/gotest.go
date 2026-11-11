@@ -119,8 +119,8 @@ type goTestResult struct {
 
 func (t *GoTestTool) Execute(ctx context.Context, args string) (string, error) {
 	var params goTestParams
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("go_test: invalid arguments: %w", err)
+	if err := StrictToolArgs("go_test", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 
 	// packages becomes the argv element that sits where go test expects options

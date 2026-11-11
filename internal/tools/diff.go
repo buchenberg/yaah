@@ -86,8 +86,8 @@ const diffRawMaxBytes = 20480
 
 func (t *DiffTool) Execute(ctx context.Context, args string) (string, error) {
 	var params diffParams
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("diff: invalid arguments: %w", err)
+	if err := StrictToolArgs("diff", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 
 	mode := params.Mode

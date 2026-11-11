@@ -46,8 +46,8 @@ func (t *ReadTool) Execute(ctx context.Context, args string) (string, error) {
 		Offset   int    `json:"offset"`
 		Limit    int    `json:"limit"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("read: invalid arguments: %w", err)
+	if err := StrictToolArgs("read", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.FilePath == "" {
 		return "", fmt.Errorf("read: filePath is required")

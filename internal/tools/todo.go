@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/todo"
@@ -72,24 +73,35 @@ func validTodoPriority(s string) bool {
 	}
 }
 
-func parseTodoArgs(args string) (todoParams, error) {
+func parseTodoArgs(schema json.RawMessage, args string) (todoParams, error) {
 	var params todoParams
-	firstErr := json.Unmarshal([]byte(args), &params)
-	if firstErr == nil {
+	if strings.TrimSpace(args) == "" {
+		args = "{}"
+	}
+	keys, err := SchemaPropertyNames(schema)
+	if err != nil {
+		return params, err
+	}
+	raw, err := DecodeStrictObject("todowrite", args, keys...)
+	if err != nil {
+		return params, err
+	}
+	payload, err := json.Marshal(raw)
+	if err != nil {
+		return params, fmt.Errorf("todowrite: invalid arguments: %w", err)
+	}
+	if err := json.Unmarshal(payload, &params); err == nil {
 		return params, nil
 	}
 
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(args), &raw); err != nil {
-		return params, fmt.Errorf("todowrite: invalid arguments: %w", firstErr)
-	}
+	// Legacy shape: todos carried as a JSON-encoded string.
 	todosRaw, ok := raw["todos"]
 	if !ok {
-		return params, fmt.Errorf("todowrite: invalid arguments: %w", firstErr)
+		return params, fmt.Errorf("todowrite: invalid arguments: todos is required")
 	}
 	var todosStr string
 	if err := json.Unmarshal(todosRaw, &todosStr); err != nil {
-		return params, fmt.Errorf("todowrite: invalid arguments: %w", firstErr)
+		return params, fmt.Errorf("todowrite: invalid arguments: %w", err)
 	}
 	if err := json.Unmarshal([]byte(todosStr), &params.Todos); err != nil {
 		return params, fmt.Errorf("todowrite: invalid arguments: %w", err)
@@ -98,7 +110,7 @@ func parseTodoArgs(args string) (todoParams, error) {
 }
 
 func (t *TodoWriteTool) Execute(ctx context.Context, args string) (string, error) {
-	params, err := parseTodoArgs(args)
+	params, err := parseTodoArgs(t.Schema(), args)
 	if err != nil {
 		return "", err
 	}

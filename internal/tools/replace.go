@@ -57,8 +57,8 @@ func (t *ReplaceTool) Execute(ctx context.Context, args string) (string, error) 
 		Include     string `json:"include"`
 		DryRun      bool   `json:"dry_run"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("replace: invalid arguments: %w", err)
+	if err := StrictToolArgs("replace", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.Pattern == "" {
 		return "", fmt.Errorf("replace: pattern is required")

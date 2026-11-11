@@ -658,6 +658,17 @@ The gate turns on which host-only tools a registry holds. The default
 host-only tools (`role`, `background_process`, `go_refactor`) is accepted.
 The orchestrator runs on the host; a dispatched sub-agent can run isolated.
 
+### Argument contract
+
+Every built-in tool decodes arguments strictly (`internal/toolargs`, aliased in
+`internal/tools`): the accepted keys come from the tool's own schema
+(`properties`), unknown keys return an `UnknownArgumentError` naming them and
+listing the allowed set, and the schema advertised to the model is closed with
+`additionalProperties: false`. A typo such as `dryrun` for `dry_run` fails the
+call instead of silently taking the default — which, on `replace`, `bulk_files`
+or `go_mod`, was the destructive action. Valid calls are unchanged, and the
+numeric-string coercion some tools accept is preserved.
+
 ### Tool execution flow (`executeAndCollect` — middleware path)
 
 ```

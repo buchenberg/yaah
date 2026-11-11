@@ -61,8 +61,8 @@ func (t *BackgroundProcessTool) Execute(ctx context.Context, args string) (strin
 		Description string `json:"description"`
 		ID          string `json:"id"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("background_process: invalid arguments: %w", err)
+	if err := StrictToolArgs("background_process", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 
 	switch params.Action {

@@ -67,8 +67,8 @@ func (t *ChecksumTool) Execute(ctx context.Context, args string) (string, error)
 		Paths   []string `json:"paths"`
 		Compare bool     `json:"compare"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("checksum: invalid arguments: %w", err)
+	if err := StrictToolArgs("checksum", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if len(params.Paths) == 0 {
 		return "", fmt.Errorf("checksum: paths is required")

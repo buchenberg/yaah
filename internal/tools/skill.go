@@ -73,8 +73,8 @@ func (t *SkillTool) Execute(ctx context.Context, args string) (string, error) {
 		Body        string `json:"body"`
 		Query       string `json:"query"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("skill: invalid arguments: %w", err)
+	if err := StrictToolArgs("skill", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.Action == "" {
 		params.Action = "load"

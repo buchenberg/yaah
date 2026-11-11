@@ -59,8 +59,8 @@ func (t *JSONQueryTool) Execute(ctx context.Context, args string) (string, error
 		Action string `json:"action"`
 		Set    string `json:"set"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("json_query: invalid arguments: %w", err)
+	if err := StrictToolArgs("json_query", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.File == "" {
 		return "", fmt.Errorf("json_query: file is required")
