@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.165.1](https://github.com/buchenberg/yaah/compare/v0.165.0...v0.165.1) (2026-11-11)
+
+
+### Code Refactoring
+
+* **permissions:** delete the unwired path-rule middleware and SubAgentsOnly ([5ca806d](https://github.com/buchenberg/yaah/commit/5ca806dc096f17a87448788a92e25256a4d757bd))
+
+
+### Documentation
+
+* **permissions:** drop stale references to the deleted permission middleware ([744ffe0](https://github.com/buchenberg/yaah/commit/744ffe04c7537da82baf63f57b980042904e8146))
+
 ## [0.165.0](https://github.com/buchenberg/yaah/compare/v0.164.0...v0.165.0) (2026-11-11)
 
 
