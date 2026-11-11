@@ -10,6 +10,8 @@ import (
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
+const gitMaxTimeoutSeconds = 300
+
 var allowedGitActions = map[string]struct {
 	description string
 	dangerous   bool
@@ -70,7 +72,9 @@ func (t *GitTool) Schema() json.RawMessage {
 			},
 			"timeout": {
 				"type": "integer",
-				"description": "Timeout in seconds (default 30)"
+				"minimum": 1,
+				"maximum": 300,
+				"description": "Timeout in seconds (default 30; values above 300 are clamped)"
 			}
 		},
 		"required": ["action"]
@@ -136,7 +140,7 @@ func (t *GitTool) Execute(ctx context.Context, args string) (string, error) {
 
 	timeout := 30 * time.Second
 	if params.Timeout > 0 {
-		timeout = time.Duration(params.Timeout) * time.Second
+		timeout = time.Duration(clampPositiveInt(params.Timeout, gitMaxTimeoutSeconds)) * time.Second
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

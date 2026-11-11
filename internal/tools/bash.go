@@ -37,7 +37,7 @@ func (t *BashTool) Schema() json.RawMessage {
 		"type": "object",
 		"properties": {
 			"command": {"type": "string", "description": "The shell command to execute"},
-			"timeout": {"type": "integer", "description": "Timeout in seconds (default 30)"}
+			"timeout": {"type": "integer", "minimum": 1, "maximum": 600, "description": "Timeout in seconds (default 30; values above 600 are clamped)"}
 		},
 		"required": ["command"]
 	}`)
@@ -64,7 +64,7 @@ func (t *BashTool) Execute(ctx context.Context, args string) (string, error) {
 
 	timeout := bashDefaultTimeout
 	if params.Timeout > 0 {
-		timeout = time.Duration(params.Timeout) * time.Second
+		timeout = time.Duration(clampPositiveInt(params.Timeout, bashMaxTimeoutSeconds)) * time.Second
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)

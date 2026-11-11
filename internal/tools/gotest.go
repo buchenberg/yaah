@@ -49,7 +49,9 @@ func (t *GoTestTool) Schema() json.RawMessage {
 			},
 			"timeout_seconds": {
 				"type": "integer",
-				"description": "Timeout in seconds for the test run (default 120)"
+				"minimum": 1,
+				"maximum": 1800,
+				"description": "Timeout in seconds for the test run (default 120; values above 1800 are clamped)"
 			},
 			"flags": {
 				"type": "array",
@@ -64,6 +66,8 @@ func (t *GoTestTool) Schema() json.RawMessage {
 		"required": ["packages"]
 	}`)
 }
+
+const goTestMaxTimeoutSeconds = 1800
 
 type goTestParams struct {
 	Packages       string   `json:"packages"`
@@ -134,10 +138,19 @@ func (t *GoTestTool) Execute(ctx context.Context, args string) (string, error) {
 		return "", fmt.Errorf("go_test: packages %q is a package pattern, never an option — the value is forwarded where go test expects options, so a leading '-' would be parsed as one and -exec or -toolexec in that position run a caller-named binary; a packages value that opens with '-' is refused", params.Packages)
 	}
 
+	// The flag array is a trust boundary: `-exec` (and its build-tool twin
+	// `-toolexec`) names a program go test runs instead of the test binary.
+	// packages is already refused in option position; flags arrive after the
+	// subcommand, so check them directly.
+	if err := rejectGoTestExecFlags(params.Flags); err != nil {
+		return "", err
+	}
+
 	timeout := params.TimeoutSeconds
 	if timeout <= 0 {
 		timeout = 120
 	}
+	timeout = clampPositiveInt(timeout, goTestMaxTimeoutSeconds)
 
 	coverFile := ""
 	if params.Coverprofile {
@@ -365,4 +378,21 @@ func tailOutput(s string, n int) string {
 		cut++
 	}
 	return "...[output truncated]...\n" + s[cut:]
+}
+
+// denyGoTestFlags are the go test flags that name a program to execute. They
+// are checked by flag name, accepting both -flag=value and a bare -flag.
+var denyGoTestFlags = map[string]bool{"exec": true, "toolexec": true}
+
+func rejectGoTestExecFlags(flags []string) error {
+	for _, flag := range flags {
+		name := strings.TrimLeft(flag, "-")
+		if i := strings.IndexAny(name, "="); i >= 0 {
+			name = name[:i]
+		}
+		if denyGoTestFlags[name] {
+			return fmt.Errorf("go_test: flag %q is refused — it names a program go test runs instead of the test binary", flag)
+		}
+	}
+	return nil
 }

@@ -38,7 +38,9 @@ func (t *DiffTool) Schema() json.RawMessage {
 			},
 			"context_lines": {
 				"type": "integer",
-				"description": "Lines of context around each change (default 3)"
+				"minimum": 0,
+				"maximum": 100,
+				"description": "Lines of context around each change (default 3; values above 100 are clamped)"
 			},
 			"mode": {
 				"type": "string",
@@ -53,6 +55,8 @@ func (t *DiffTool) Schema() json.RawMessage {
 		"required": ["a"]
 	}`)
 }
+
+const diffMaxContextLines = 100
 
 type diffParams struct {
 	A            string `json:"a"`
@@ -101,6 +105,7 @@ func (t *DiffTool) Execute(ctx context.Context, args string) (string, error) {
 	if contextLines <= 0 {
 		contextLines = 3
 	}
+	contextLines = clampPositiveInt(contextLines, diffMaxContextLines)
 
 	var cmdArgs []string
 	useGit := true

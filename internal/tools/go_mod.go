@@ -138,6 +138,10 @@ func (t *GoModTool) Execute(ctx context.Context, args string) (string, error) {
 
 	result := &goModResult{Action: params.Action}
 
+	if err := rejectGoModFlags(params.Flags); err != nil {
+		return "", err
+	}
+
 	switch params.Action {
 	case "tidy":
 		t.runTidy(ctx, params, result)
@@ -397,4 +401,23 @@ func (t *GoModTool) runUpgrade(ctx context.Context, params goModParams, result *
 	if tidyErr != nil {
 		recordTidyFailure(result, "tidy after upgrade", tidyOut, tidyErrOut, tidyErr)
 	}
+}
+
+// denyGoModFlags are the go flags that change which files or directory the
+// command operates on outside the call's declared intent. -C moves the working
+// directory; -modfile points the build at a different module file. Both turn a
+// "mutate go.mod here" call into a write somewhere the caller did not name.
+var denyGoModFlags = map[string]bool{"C": true, "modfile": true}
+
+func rejectGoModFlags(flags []string) error {
+	for _, flag := range flags {
+		name := strings.TrimLeft(flag, "-")
+		if i := strings.IndexAny(name, "="); i >= 0 {
+			name = name[:i]
+		}
+		if denyGoModFlags[name] {
+			return fmt.Errorf("go_mod: flag %q is refused — it changes the directory or module file the command operates on", flag)
+		}
+	}
+	return nil
 }

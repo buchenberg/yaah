@@ -1,1 +1,3 @@
 Performs Go module operations: tidy, verify, add/remove/upgrade dependencies, list modules, show the dependency graph, or trace why a module is needed — selected by `action`. With `dry_run: true` nothing is modified: add reports the module's available versions, remove reports the current requirement, upgrade lists current versions, and tidy prints the diff that would apply; the versions a real run resolves are decided by that run. Extra `flags` are passed to the underlying go command. All operations run in the current module directory.
+
+Flags that change the directory or module file the command operates on (`-C`, `-modfile`) are refused; the call's declared action must name what it mutates.
