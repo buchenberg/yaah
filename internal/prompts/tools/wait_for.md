@@ -47,3 +47,5 @@ the turn, the result is `interrupted: true`, which is not a timeout.
 
 The `on`/`until` string form is deliberate; the rationale is recorded in
 `docs/wake-predicate-schema-decision.md`.
+
+`timeout_seconds` is capped at 86400 and `interval_seconds` at 60; larger values are clamped.
