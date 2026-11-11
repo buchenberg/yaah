@@ -130,6 +130,23 @@ type goModResult struct {
 	Summary string        `json:"summary,omitempty"`
 }
 
+// IsDangerous reports whether the action rewrites go.mod/go.sum. tidy, add,
+// remove and upgrade do; verify, graph, why and list only read.
+func (t *GoModTool) IsDangerous(argsJSON string) bool {
+	var params struct {
+		Action string `json:"action"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &params); err != nil {
+		return true
+	}
+	switch params.Action {
+	case "verify", "graph", "why", "list":
+		return false
+	default:
+		return true
+	}
+}
+
 func (t *GoModTool) Execute(ctx context.Context, args string) (string, error) {
 	var params goModParams
 	if err := StrictToolArgs("go_mod", t.Schema(), args, &params); err != nil {

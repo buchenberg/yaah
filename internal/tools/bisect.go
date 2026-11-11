@@ -95,6 +95,23 @@ func bisectFoundCommit(output string) string {
 	return ""
 }
 
+// IsDangerous reports whether the action changes git state. start, good, bad,
+// skip and reset check out commits or move the bisect ref; log only reads.
+func (t *BisectTool) IsDangerous(argsJSON string) bool {
+	var params struct {
+		Action string `json:"action"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &params); err != nil {
+		return true
+	}
+	switch params.Action {
+	case "log":
+		return false
+	default:
+		return true
+	}
+}
+
 func (t *BisectTool) Execute(ctx context.Context, args string) (string, error) {
 	var params bisectParams
 	if err := StrictToolArgs("bisect", t.Schema(), args, &params); err != nil {

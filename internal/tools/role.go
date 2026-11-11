@@ -50,6 +50,23 @@ func (t *RoleTool) Schema() json.RawMessage {
 	}`)
 }
 
+// IsDangerous reports whether the action writes harness configuration.
+// list and show only read.
+func (t *RoleTool) IsDangerous(argsJSON string) bool {
+	var params struct {
+		Action string `json:"action"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &params); err != nil {
+		return true
+	}
+	switch params.Action {
+	case "", "list", "show":
+		return false
+	default:
+		return true
+	}
+}
+
 func (t *RoleTool) Execute(ctx context.Context, args string) (string, error) {
 	var params struct {
 		Action          string `json:"action"`
