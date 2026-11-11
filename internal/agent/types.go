@@ -63,8 +63,6 @@ type ToolsLevel int
 const (
 	// FullTools is the default — all tools from the registry.
 	FullTools ToolsLevel = iota
-	// SubAgentsOnly gives only the task tool — the agent coordinates through sub-agents.
-	SubAgentsOnly
 	// ReadOnlyTools (a historical name — read it as "inspection set") exposes
 	// the inspection set only: read, grep, glob, ls, file_info, go_outline,
 	// calculate, diff, question, git restricted to its inspection actions,
@@ -282,7 +280,6 @@ type LoopConfig struct {
 	SessionID                string
 	PipelineNames            []string
 	PipelineDisabled         []string
-	PermissionRules          []pipeline.PermissionRule
 	OtelEnabled              bool
 	OtelVerbose              bool
 	SystemPrompt             string

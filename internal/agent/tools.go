@@ -19,8 +19,6 @@ import (
 func (l *Loop) buildToolsForLevel() []types.ToolDef {
 	var defs []types.ToolDef
 	switch l.Config.ToolsLevel {
-	case SubAgentsOnly:
-		defs = l.agentTools()
 	case ReadOnlyTools:
 		defs = l.readOnlyTools()
 	default:
@@ -119,8 +117,6 @@ func (l *Loop) allowsTool(name string) bool {
 	switch l.Config.ToolsLevel {
 	case ReadOnlyTools:
 		return readOnlyToolNames[name]
-	case SubAgentsOnly:
-		return subAgentToolNames[name]
 	default:
 		return true
 	}
@@ -147,30 +143,6 @@ func (l *Loop) readOnlyTools() []types.ToolDef {
 				Parameters:  json.RawMessage(t.Schema()),
 			},
 		})
-	}
-	return defs
-}
-
-var subAgentToolNames = map[string]bool{"delegate": true, "list_subagents": true}
-
-// agentTools returns only the sub-agent related tools.
-func (l *Loop) agentTools() []types.ToolDef {
-	var defs []types.ToolDef
-	for _, name := range l.Registry.List() {
-		if subAgentToolNames[name] {
-			t := l.Registry.Get(name)
-			if t == nil {
-				continue
-			}
-			defs = append(defs, types.ToolDef{
-				Type: "function",
-				Function: types.ToolFn{
-					Name:        t.Name(),
-					Description: t.Description(),
-					Parameters:  json.RawMessage(t.Schema()),
-				},
-			})
-		}
 	}
 	return defs
 }

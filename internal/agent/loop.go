@@ -147,7 +147,6 @@ func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
 			l.Hooks.Emit(HookEvent{Event: events.ToolStart, ToolName: name, ToolArgs: args})
 			l.Hooks.Emit(HookEvent{Event: events.ToolEnd, ToolName: name, ToolArgs: args, ToolError: errMsg, ToolResult: errMsg})
 		},
-		PermissionRules:          l.Config.PermissionRules,
 		LoopDetectCount:          l.Config.LoopDetectCount,
 		LoopDetectWindow:         l.Config.LoopDetectWindow,
 		IntentSteerAfter:         l.Config.IntentSteerAfter,

@@ -32,8 +32,7 @@ type PipelineConfig struct {
 	// keeping steer→compaction knowledge out of the steer middleware.
 	SteerDrain DrainFunc
 
-	ApprovalMode    string
-	PermissionRules []PermissionRule
+	ApprovalMode string
 
 	// Approval callbacks injected by the composition site. classify
 	// returns a GateDecision (pass / ask / deny / defer to global mode)
@@ -162,11 +161,6 @@ func NewFromConfig(cfg PipelineConfig) *Pipeline {
 	return NewPipeline(mws...)
 }
 
-// buildPermission is shared by the orchestrator and sub-agent pipelines.
-func buildPermission(cfg PipelineConfig) Middleware {
-	return &PermissionMiddleware{rules: cfg.PermissionRules}
-}
-
 // buildToolConcurrency is shared by the orchestrator and sub-agent
 // pipelines. When cfg.ToolConc carries the Loop-owned instance, both
 // share it instead of allocating a second semaphore.
@@ -245,7 +239,6 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 	"evidence_guard": func(cfg PipelineConfig) Middleware {
 		return NewEvidenceGuardMiddleware(cfg.EvidenceGuardNudge, cfg.EvidenceGuardHalt)
 	},
-	"permission":       buildPermission,
 	"tool_concurrency": buildToolConcurrency,
 	"shepherd_trace":   buildShepherdTrace,
 	"prompt_caching":   func(cfg PipelineConfig) Middleware { return &PromptCachingMiddleware{enabled: cfg.PromptCaching} },
@@ -264,7 +257,6 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 }
 
 var subAgentBuilders = map[string]func(PipelineConfig) Middleware{
-	"permission": buildPermission,
 	// supervisor_guard: the blocking pre-dispatch net (adoption plan
 	// B2). Installed only when cfg.DestructiveGuard is wired; the
 	// builder below would otherwise install a pass-through no-op.
@@ -338,9 +330,6 @@ var defaultPipelineNames = []string{
 //     (shepherd-adoption plan A2) — the supervisor's guidance must reach
 //     the loop between turns. Without a channel there is nothing to
 //     drain, and the orchestrator's REPL steering remains excluded.
-//   - permission: when the orchestrator passed parent permission rules they are
-//     enforced inside the sub-agent loop, filtering denied tool calls before
-//     concurrency gating or tracing (finding A1)
 //
 // Included always:
 // - tool_concurrency: prevents uncontrolled parallel tool dispatch
@@ -393,22 +382,16 @@ func SubAgentPipelineNames(disabled []string) []string {
 // defaults; the shepherd_trace builder writes through the session-shared
 // store (set by InitShepherdInfrastructure during wiring).
 //
-// When cfg carries parent permission rules, the permission middleware is
-// prepended so denied tool calls are stripped before any other middleware
-// observes them. Opting out via PipelineDisabled is honoured.
+// The sub-agent pipeline is built from subAgentPipelineNames; conditional
+// prepends (steer, supervisor_guard) are documented on that list.
 func NewSubAgentPipeline(cfg PipelineConfig) *Pipeline {
 	names := SubAgentPipelineNames(cfg.PipelineDisabled)
 	// Prepend in reverse of the intended order so the last prepend is
 	// first: steer must run before everything — injected guidance has to
-	// reach the model before it repeats the mistake — permission second,
-	// gating the turn's tool calls ahead of concurrency and tracing,
-	// and the supervisor guard third — the blocking net after any
-	// explicit rules, before anything dispatches.
+	// reach the model before it repeats the mistake — and the supervisor
+	// guard second, the blocking net before anything dispatches.
 	if cfg.DestructiveGuard != nil && !slices.Contains(cfg.PipelineDisabled, "supervisor_guard") {
 		names = append([]string{"supervisor_guard"}, names...)
-	}
-	if len(cfg.PermissionRules) > 0 && !slices.Contains(cfg.PipelineDisabled, "permission") {
-		names = append([]string{"permission"}, names...)
 	}
 	if cfg.Steer != nil && !slices.Contains(cfg.PipelineDisabled, "steer") {
 		names = append([]string{"steer"}, names...)

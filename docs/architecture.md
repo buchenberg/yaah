@@ -38,7 +38,7 @@ The loop lives in `internal/agent/loop.go`; turn processing is in `turn.go`. The
 
 | Group | Fields |
 |---|---|
-| `Config` (`LoopConfig`) | `Model`, `ProviderName`, `SystemPrompt`, `MaxLoopCycles`, `MaxToolTurns`, `ContextWindow`, `ApprovalMode`, `MaxToolConcurrency`, `MaxSubAgentConcurrency`, `PermissionRules`, `MCPToolNames`, `MCPApproval`, `QualityGates`, `OtelEnabled` |
+| `Config` (`LoopConfig`) | `Model`, `ProviderName`, `SystemPrompt`, `MaxLoopCycles`, `MaxToolTurns`, `ContextWindow`, `ApprovalMode`, `MaxToolConcurrency`, `MaxSubAgentConcurrency`, `MCPToolNames`, `MCPApproval`, `QualityGates`, `OtelEnabled` |
 | `State` (`LoopState`) | `Messages`, token/usage totals, last finish reason/model, compaction counters, turn checkpoint IDs |
 | Direct fields | `Provider`, `Registry`, `View`, `LLM`, `Persister`, `Hooks`, `Steer`, `FollowUps`, `ApproveFn`, `ContinueAfterMaxIter`, `ConflictTracker`, `CtxMgr`, `BackgroundJobs`, `OnUsage`, `OnSubUsage` |
 
@@ -259,7 +259,7 @@ Current behavior:
 
 #### ApprovalMiddleware (`pipeline/approval.go`)
 
-Enforces the approval policy in `PostModel`, mirroring the call-stripping pattern of `PermissionMiddleware`. For each dangerous tool call (classified via injected callback wired to `Loop.classifyGate` / the `tools.DangerClassifier` interface):
+Enforces the approval policy in `PostModel`. For each dangerous tool call (classified via injected callback wired to `Loop.classifyGate` / the `tools.DangerClassifier` interface):
 
 - **deny** mode: the call is stripped and a synthesized error tool-result (`error: tool %q requires approval but approval mode 'deny'`) is appended to `step.SynthesizedResults`.
 - **ask** mode: the injected approve callback prompts (or consults `Loop.ApproveFn`); an approval keeps the call, a refusal strips it with `error: tool %q was denied by user`.
@@ -274,10 +274,6 @@ Caps tool calls dispatched per turn in `PostModel`. When a batch exceeds `MaxInl
 #### LoopDetectionMiddleware (`pipeline/loopdetect.go`)
 
 Tracks a sliding window of SHA-256 hashes of `(tool_name, tool_arguments, tool_result)` triples. If any hash appears `count` or more times within the last `window` executions, the pipeline halts with an error. Uses the package-level `toolCallHash()` function.
-
-#### PermissionMiddleware (`pipeline/permission.go`)
-
-Filters tool calls in `PostModel` based on path-pattern rules. Rules are configured as `PermissionRule` structs with `Tool` (name), `Path` (glob), and `Mode` (allow/deny). Denied tool calls are removed from the assistant message and replaced with a synthesized denial tool result, so every `tool_call_id` is answered. Rule matching uses `filepath.Match` for glob support. Paths are extracted from tool arguments by key (`path`, `filePath`, or `command` for shell tools).
 
 #### ConflictDetectMiddleware (`pipeline/conflictdetect.go`)
 
