@@ -80,6 +80,21 @@ func (r Rules) Match(tool, resource string) (Effect, bool) {
 	return hit, found
 }
 
+// AskRules returns the rules whose effect is Ask, in source order. It is
+// what a loading surface needs to name the exact boundaries a headless run
+// cannot honour: a sub-agent dispatch has no approval bridge, so an `ask`
+// rule there is a boundary whose enforcement point does not exist (the
+// dispatch denies it — see the role registry's load-time warning).
+func AskRules(rules Rules) []Rule {
+	var out []Rule
+	for _, rule := range rules {
+		if rule.Effect == Ask {
+			out = append(out, rule)
+		}
+	}
+	return out
+}
+
 // globMatch reports whether pattern matches value. Patterns are
 // workspace-relative globs using forward slashes; the value is normalized
 // the same way so Windows backslash paths match.

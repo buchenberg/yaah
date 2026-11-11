@@ -59,10 +59,13 @@ type SubAgentConfig struct {
 	// APPENDED AFTER, so under last-match-wins an inherited deny wins
 	// over any role-file rule for the same tool and resource — a ceiling
 	// narrows, never widens. The sub-agent loop runs at ApprovalMode
-	// "allow" with no approval middleware, so admitTool's always-on deny
-	// is the enforcement point; ask rules have no one to ask and are not
-	// part of what the parent forwards. Nil/empty behaves exactly as
-	// before this field existed.
+	// "allow" with no approval middleware, so admitTool's always-on gate
+	// is the enforcement point: it denies a deny rule and refuses an ask
+	// rule outright (a dispatch cannot prompt, so ask has no enforcement
+	// point there — refusing keeps the declared boundary from silently
+	// becoming an allow). The parent's inherited ceiling never carries ask
+	// rules in the first place; ask rules named here are the role file's
+	// own. Nil/empty behaves exactly as before this field existed.
 	Permissions     permissions.Rules
 	ContextWindow   int
 	OtelEnabled     bool

@@ -148,3 +148,31 @@ webfetch: deny
 		}
 	}
 }
+
+// TestAskRules pins the helper the role loader uses to name the boundaries
+// a headless run cannot honour: ask rules only, in source order, and
+// resource-less (tool-name-only) rules included — those are still asks.
+func TestAskRules(t *testing.T) {
+	rules := mustParse(t, `
+edit: { "*": deny, "*.md": allow }
+bash: { "git push*": ask, "git status*": allow, "rm -rf*": ask }
+webfetch: ask
+`)
+	got := AskRules(rules)
+	want := []Rule{
+		{Tool: "bash", Resource: "git push*", Effect: Ask},
+		{Tool: "bash", Resource: "rm -rf*", Effect: Ask},
+		{Tool: "webfetch", Effect: Ask},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("AskRules = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("ask rule %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	if len(AskRules(nil)) != 0 {
+		t.Errorf("nil rules must yield no ask rules, got %+v", AskRules(nil))
+	}
+}

@@ -42,6 +42,28 @@ func WithheldReason(tool string) string {
 	return fmt.Sprintf("tool %q is withheld in plan mode — mutating actions are not available; switch back to build mode to run it", tool)
 }
 
+// SubAgentAskReason explains a refusal produced by the always-on dispatch
+// gate (agent.Loop.admitTool) when a sub-agent's ruleset says `ask`.
+//
+// It is deliberately distinct from every other denial, because each names a
+// different fix: GateDeny points at a policy the user controls, GateWithheld
+// at the mode, "denied by user" at the approval prompt, and this one at a
+// boundary that has no enforcement point at all. A sub-agent dispatch runs
+// with no approval middleware and nobody attached to it, so the question can
+// never be put to anyone; letting the call through would have silently
+// widened the role file's `ask` into `allow`, which is the bug this wording
+// exists to make impossible to miss. The message names the rule and the
+// missing prompt so the author's next move (declare `deny`, or run the call
+// from the parent session) is in the text. Parity: Kilo's headless agents
+// deny a sub-agent ask.
+func SubAgentAskReason(tool, resource string) string {
+	const tail = "and a sub-agent cannot prompt for approval — nobody is attached to a dispatch; declare the rule `deny` (or drop it) to make the intent explicit, or run this call from the parent session"
+	if resource == "" {
+		return fmt.Sprintf("tool %q is refused: its permission rule is `ask`, %s", tool, tail)
+	}
+	return fmt.Sprintf("tool %q is refused for %q: its permission rule is `ask`, %s", tool, resource, tail)
+}
+
 // ApprovalMiddleware enforces the tool approval policy before dispatch,
 // mirroring the call-stripping behaviour of PermissionMiddleware.
 // Classification, user prompting, and hook emission are injected as
