@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.165.0](https://github.com/buchenberg/yaah/compare/v0.164.0...v0.165.0) (2026-11-11)
+
+
+### Features
+
+* **permissions:** guard harness configuration paths against agent writes ([b018fa0](https://github.com/buchenberg/yaah/commit/b018fa011786e48b1ff1b72e820f86d594e6f406))
+* **permissions:** guard harness configuration paths against agent writes ([bb784af](https://github.com/buchenberg/yaah/commit/bb784af72c9bd5e1bac2bae166ba314ab7817f0f))
+
+
+### Bug Fixes
+
+* **permissions:** canonicalise harness paths before classification ([5443901](https://github.com/buchenberg/yaah/commit/5443901929d21889a81d37d2f1bdfb913d7993f6))
+* **permissions:** refuse sandbox delta paths that escape the host tree ([d95afa2](https://github.com/buchenberg/yaah/commit/d95afa2761d42ee0407c292a47567bf92d1afc41))
+
 ## [0.164.0](https://github.com/buchenberg/yaah/compare/v0.163.0...v0.164.0) (2026-11-11)
 
 
