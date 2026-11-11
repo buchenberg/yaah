@@ -172,9 +172,6 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 		if raw.ProposalID == "" {
 			return "", fmt.Errorf("proposal: proposal_id required for %s", raw.Action)
 		}
-		if raw.Strategy != "" && raw.Action != "apply" {
-			return "", fmt.Errorf("proposal: strategy is only valid with apply")
-		}
 		out, err := t.Proposals.settleRetainedProposalWithStrategy(ctx, raw.ProposalID, raw.Action, raw.Strategy)
 		if err != nil {
 			var conflict *proposalApplyConflict
