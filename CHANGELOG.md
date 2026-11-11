@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.166.1](https://github.com/buchenberg/yaah/compare/v0.166.0...v0.166.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* **tools:** address schema-bounds review ([0e18dc4](https://github.com/buchenberg/yaah/commit/0e18dc4e2e3df36c6e7ef5237dab23b48810ef00))
+* **tools:** make code clamps and schema bounds agree ([81cc8f6](https://github.com/buchenberg/yaah/commit/81cc8f6f5d6510a51736fb1d7a7d03180ed2c6f3))
+
 ## [0.166.0](https://github.com/buchenberg/yaah/compare/v0.165.1...v0.166.0) (2026-11-11)
 
 
