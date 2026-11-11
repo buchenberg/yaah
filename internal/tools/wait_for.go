@@ -80,9 +80,6 @@ func (t *WaitForTool) IsDangerous(argsJSON string) bool {
 }
 
 func (t *WaitForTool) Execute(ctx context.Context, args string) (string, error) {
-	if t.Manager == nil {
-		return "", fmt.Errorf("wait_for: the wake engine is not configured in this session")
-	}
 	var params struct {
 		On              string `json:"on"`
 		Until           string `json:"until"`
@@ -95,6 +92,9 @@ func (t *WaitForTool) Execute(ctx context.Context, args string) (string, error) 
 	}
 	if params.On == "" && params.Handle == "" {
 		return "", fmt.Errorf("wait_for: on is required (or pass a handle from a timed-out wait)")
+	}
+	if t.Manager == nil {
+		return "", fmt.Errorf("wait_for: the wake engine is not configured in this session")
 	}
 
 	res, err := t.Manager.Wait(ctx, wake.WaitRequest{

@@ -110,6 +110,9 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 	if err := toolargs.StrictToolArgs("proposal", t.Schema(), args, &raw); err != nil {
 		return "", err
 	}
+	if raw.Strategy != "" && raw.Action != "apply" {
+		return "", fmt.Errorf("proposal: strategy is only valid with apply")
+	}
 	if t.Proposals == nil {
 		return "", fmt.Errorf("proposal: no session registry configured — this tool is registered with the registry runner.NewDelegateTool creates")
 	}
@@ -168,9 +171,6 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 	case "select", "apply", "release", "discard":
 		if raw.ProposalID == "" {
 			return "", fmt.Errorf("proposal: proposal_id required for %s", raw.Action)
-		}
-		if raw.Strategy != "" && raw.Action != "apply" {
-			return "", fmt.Errorf("proposal: strategy is only valid with apply")
 		}
 		out, err := t.Proposals.settleRetainedProposalWithStrategy(ctx, raw.ProposalID, raw.Action, raw.Strategy)
 		if err != nil {
