@@ -63,6 +63,9 @@ func (t *EditTool) Execute(ctx context.Context, args string) (string, error) {
 	if err := StrictToolArgs("edit", t.Schema(), args, &params); err != nil {
 		return "", err
 	}
+	if len(params.Edits) > 0 && params.OldString != "" {
+		return "", fmt.Errorf("edit: provide either oldString/newString or edits[], not both — edits[] wins silently otherwise")
+	}
 	if params.FilePath == "" {
 		return "", fmt.Errorf("edit: filePath is required")
 	}

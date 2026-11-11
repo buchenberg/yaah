@@ -60,8 +60,7 @@ func (t *SkillTool) Schema() json.RawMessage {
 			"description": {"type": "string", "description": "Skill description (required for create, optional for edit)"},
 			"body": {"type": "string", "description": "Skill body in markdown (required for create, optional for edit)"},
 			"query": {"type": "string", "description": "Natural-language search query for semantic skill discovery (required for search)"}
-		},
-		"required": ["action"]
+		}
 	}`)
 }
 

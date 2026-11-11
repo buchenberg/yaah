@@ -36,33 +36,40 @@ func (t *RoleTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"action": {"type": "string", "enum": ["list", "show", "create", "edit", "delete"], "description": "Action to perform"},
+			"action": {"type": "string", "enum": ["list", "show", "create", "edit", "delete"], "description": "Action to perform (default: list)"},
 			"name": {"type": "string", "description": "Role name (required for show, create, edit, delete)"},
 			"description": {"type": "string", "description": "One-line role description (required for create, optional for edit)"},
 			"body": {"type": "string", "description": "Role system prompt body in markdown (required for create, optional for edit)"},
-			"tools": {"type": "string", "description": "JSON array or comma-separated tool names (optional)"},
+			"tools": {"type": "array", "items": {"type": "string"}, "description": "Tool names (optional; a comma-separated string is still accepted)"},
 			"specialty": {"type": "string", "description": "Short specialty label (optional)"},
 			"contract_heading": {"type": "string", "description": "create: heading for the response contract block (overrides the default). Omitted, along with contract_fields, uses the default worker-shaped contract. edit: not a tool field - edit the file directly."},
-			"contract_fields": {"type": "string", "description": "create: comma-separated contract field names, each optionally typed as name:evidence or name:interpretation (untyped = interpretation). Omitted, along with contract_heading, uses the default worker-shaped contract: files/tests/summary findings under a Changes heading. edit: not a tool field - edit the file directly."},
+			"contract_fields": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "kind": {"type": "string", "enum": ["evidence", "interpretation"]}}, "required": ["name"]}, "description": "create: contract fields, each name plus optional kind (untyped = interpretation). A comma-separated name:kind string is still accepted. Omitted, along with contract_heading, uses the default worker-shaped contract. edit: not a tool field - edit the file directly."},
 			"mode": {"type": "string", "enum": ["primary", "subagent", "all"], "description": "Capability mode: primary = orchestrator-eligible, subagent = delegate-only, all = both; omitted means all (the file-format default) and the key is omitted from the file. edit: omitted means unchanged; there is no unset via this tool — an explicit \"subagent\" restores the delegate-only capability but keeps the key; removing the key restores the all default and is a direct file edit, not a tool operation."}
-		},
-		"required": ["action"]
+		}
 	}`)
 }
 
 func (t *RoleTool) Execute(ctx context.Context, args string) (string, error) {
 	var params struct {
-		Action          string `json:"action"`
-		Name            string `json:"name"`
-		Description     string `json:"description"`
-		Body            string `json:"body"`
-		Tools           string `json:"tools"`
-		Specialty       string `json:"specialty"`
-		Mode            string `json:"mode"`
-		ContractHeading string `json:"contract_heading"`
-		ContractFields  string `json:"contract_fields"`
+		Action          string          `json:"action"`
+		Name            string          `json:"name"`
+		Description     string          `json:"description"`
+		Body            string          `json:"body"`
+		Tools           json.RawMessage `json:"tools"`
+		Specialty       string          `json:"specialty"`
+		Mode            string          `json:"mode"`
+		ContractHeading string          `json:"contract_heading"`
+		ContractFields  json.RawMessage `json:"contract_fields"`
 	}
 	if err := StrictToolArgs("role", t.Schema(), args, &params); err != nil {
+		return "", err
+	}
+	toolsArg, err := normalizeRoleTools(params.Tools)
+	if err != nil {
+		return "", err
+	}
+	contractArg, err := normalizeContractFields(params.ContractFields)
+	if err != nil {
 		return "", err
 	}
 
@@ -85,11 +92,11 @@ func (t *RoleTool) Execute(ctx context.Context, args string) (string, error) {
 			Name:            params.Name,
 			Description:     params.Description,
 			Body:            params.Body,
-			Tools:           params.Tools,
+			Tools:           toolsArg,
 			Specialty:       params.Specialty,
 			Mode:            params.Mode,
 			ContractHeading: params.ContractHeading,
-			ContractFields:  params.ContractFields,
+			ContractFields:  contractArg,
 		})
 	case "edit":
 		if params.Name == "" {
@@ -102,7 +109,7 @@ func (t *RoleTool) Execute(ctx context.Context, args string) (string, error) {
 			Name:        params.Name,
 			Description: params.Description,
 			Body:        params.Body,
-			Tools:       params.Tools,
+			Tools:       toolsArg,
 			Specialty:   params.Specialty,
 			Mode:        params.Mode,
 		})
@@ -529,4 +536,55 @@ func parseToolsList(s string) []string {
 		}
 	}
 	return arr
+}
+
+// normalizeRoleTools accepts the schema's array form and the historical
+// comma-separated string, returning the internal list form parseToolsList
+// consumes. Empty means "unchanged" on edit and "the role's default" on create.
+func normalizeRoleTools(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", nil
+	}
+	var names []string
+	if err := json.Unmarshal(raw, &names); err == nil {
+		return strings.Join(names, ","), nil
+	}
+	var legacy string
+	if err := json.Unmarshal(raw, &legacy); err == nil {
+		return legacy, nil
+	}
+	return "", fmt.Errorf("role: tools must be an array of strings or a comma-separated string")
+}
+
+// normalizeContractFields accepts the schema's array of {name, kind} objects
+// and the historical name:kind,... string, returning the string form
+// parseContract consumes.
+func normalizeContractFields(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", nil
+	}
+	var fields []struct {
+		Name string `json:"name"`
+		Kind string `json:"kind"`
+	}
+	if err := json.Unmarshal(raw, &fields); err == nil {
+		parts := make([]string, 0, len(fields))
+		for _, f := range fields {
+			name := strings.TrimSpace(f.Name)
+			if name == "" {
+				return "", fmt.Errorf("role: contract_fields entries require a name")
+			}
+			if f.Kind == "" {
+				parts = append(parts, name)
+				continue
+			}
+			parts = append(parts, name+":"+f.Kind)
+		}
+		return strings.Join(parts, ","), nil
+	}
+	var legacy string
+	if err := json.Unmarshal(raw, &legacy); err == nil {
+		return legacy, nil
+	}
+	return "", fmt.Errorf("role: contract_fields must be an array of {name, kind} objects or a name:kind,... string")
 }
