@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/gdamore/tcell/v2"
+
+	"github.com/buchenberg/yaah/internal/tui/components/command"
 )
 
 // newColonUI builds a test App whose UI event queue is drained, so colon
@@ -317,5 +319,12 @@ func TestModals_NestedLayersReleaseInOrder(t *testing.T) {
 	ui.endModal()
 	if ui.focus != focusNormal {
 		t.Fatalf("focus = %v after an extra endModal, want focusNormal", ui.focus)
+	}
+}
+
+func TestHandleCommand_ModeRefusedWhenUnwired(t *testing.T) {
+	ui := newColonUI(t)
+	if ui.HandleCommand(command.CmdMode, "") {
+		t.Fatal(":mode with no OnModeSelect wired should be refused, not consumed")
 	}
 }

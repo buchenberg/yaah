@@ -4,6 +4,17 @@ import (
 	"github.com/buchenberg/yaah/internal/tui/components/command"
 )
 
+// modePickerNames and modePickerDescriptions back the :mode picker. The
+// words mirror the mode-axis vocabulary switchMode validates (read-only,
+// full) — the same axis ACP session/set_mode maps onto — and the picker
+// can only emit these, so selection hands the driver a validated word.
+var modePickerNames = []string{"read-only", "full"}
+
+var modePickerDescriptions = map[string]string{
+	"read-only": "inspection set only — read-only, no modification",
+	"full":      "full toolset",
+}
+
 // HandleCommand dispatches a colon command. It reports whether the command
 // consumed the input — false when it only complained (missing argument, no turn
 // to steer, unwired command), so the caller can keep the text for editing
@@ -182,6 +193,3 @@ func (t *App) toggleCommandPalette() {
 		t.showCommandList()
 	}
 }
-
-// sessionSwitchMode handles the :mode palette entry (W6): it dispatches
-// to the session the way :model dispatches, validating the word first.

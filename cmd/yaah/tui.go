@@ -147,6 +147,15 @@ func runTUI() error {
 		app.SetModel(sess.ModelName())
 		app.SetEphemeral(reply)
 	}
+	// Mode picker (W6): selection switches the CURRENT session's mode axis
+	// (read-only/full), the interactive parity surface for ACP
+	// session/set_mode. The word is already validated vocabulary; the reply
+	// is the confirmation and the info-pane badge re-derives.
+	app.OnModeSelect = func(word string) {
+		reply, _ := sess.switchMode(word)
+		app.SetMode(sess.Mode())
+		app.SetEphemeral(reply)
+	}
 
 	var cancelAgent context.CancelFunc
 	app.OnSubmit = func(input string) {
