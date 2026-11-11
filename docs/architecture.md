@@ -97,8 +97,10 @@ whether to work inline or dispatch a sub-agent.
   `delegate`; nesting is depth-limited for custom roles that opt in.
 - **Model tiering.** Sub-agents can use a different provider/model than
   the orchestrator.
-- **Approval.** Sub-agent loops run with approval `allow`; the parent's
-  permission rules are still enforced by the `permission` middleware.
+- **Approval.** Sub-agent loops run with approval `allow` (nobody is attached
+  to prompt). The always-on dispatch gate (`Loop.admitTool`) still enforces
+  the merged permission ruleset — deny strips the call, and an `ask` rule is
+  refused rather than silently widened to allow.
 
 **Dispatch flow:**
 

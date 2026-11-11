@@ -64,8 +64,9 @@ func SubAgentAskReason(tool, resource string) string {
 	return fmt.Sprintf("tool %q is refused for %q: its permission rule is `ask`, %s", tool, resource, tail)
 }
 
-// ApprovalMiddleware enforces the tool approval policy before dispatch,
-// mirroring the call-stripping behaviour of PermissionMiddleware.
+// ApprovalMiddleware enforces the tool approval policy before dispatch:
+// denied and withheld calls are stripped from the model's batch and every
+// tool_call_id is answered with a synthesized result.
 // Classification, user prompting, and hook emission are injected as
 // functions by the composition site (Loop.toPipelineConfig), keeping
 // the pipeline→agent dependency direction clean.
