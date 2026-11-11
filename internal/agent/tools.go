@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"slices"
 	"strings"
 
@@ -140,7 +139,7 @@ func (l *Loop) readOnlyTools() []types.ToolDef {
 			Function: types.ToolFn{
 				Name:        t.Name(),
 				Description: t.Description(),
-				Parameters:  json.RawMessage(t.Schema()),
+				Parameters:  advertisedSchema(t),
 			},
 		})
 	}

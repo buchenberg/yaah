@@ -65,8 +65,8 @@ func (t *PowerShellTool) Execute(ctx context.Context, args string) (string, erro
 		Command string `json:"command"`
 		Timeout int    `json:"timeout"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("powershell: invalid arguments: %w", err)
+	if err := StrictToolArgs("powershell", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.Command == "" {
 		return "", fmt.Errorf("powershell: command is required")

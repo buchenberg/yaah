@@ -45,8 +45,8 @@ func (t *LsTool) Execute(ctx context.Context, args string) (string, error) {
 		Path  string `json:"path"`
 		Depth int    `json:"depth"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("ls: invalid arguments: %w", err)
+	if err := StrictToolArgs("ls", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.Path == "" {
 		params.Path = "."

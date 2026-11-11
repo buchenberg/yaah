@@ -82,8 +82,8 @@ func (t *WatchTool) Execute(ctx context.Context, args string) (string, error) {
 		ExpiresInSeconds int    `json:"expires_in_seconds"`
 		IntervalSeconds  int    `json:"interval_seconds"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("watch: invalid arguments: %w", err)
+	if err := StrictToolArgs("watch", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 
 	switch params.Action {

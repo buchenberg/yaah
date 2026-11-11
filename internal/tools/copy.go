@@ -62,7 +62,7 @@ func (t *CopyTool) Schema() json.RawMessage {
 func (t *CopyTool) IsDangerous(string) bool { return true }
 
 func (t *CopyTool) Execute(ctx context.Context, args string) (string, error) {
-	req, err := prepareTransfer(ctx, "copy", workspaceOf(t.WS, t.PV), args)
+	req, err := prepareTransfer(ctx, "copy", t.Schema(), workspaceOf(t.WS, t.PV), args)
 	if err != nil {
 		return "", err
 	}

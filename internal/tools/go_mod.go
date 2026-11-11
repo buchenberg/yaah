@@ -132,8 +132,8 @@ type goModResult struct {
 
 func (t *GoModTool) Execute(ctx context.Context, args string) (string, error) {
 	var params goModParams
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("go_mod: invalid arguments: %w", err)
+	if err := StrictToolArgs("go_mod", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 
 	result := &goModResult{Action: params.Action}

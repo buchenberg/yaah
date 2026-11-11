@@ -46,8 +46,8 @@ func (t *WriteTool) Execute(ctx context.Context, args string) (string, error) {
 		Content  string `json:"content"`
 		FilePath string `json:"filePath"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("write: invalid arguments: %w", err)
+	if err := StrictToolArgs("write", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.FilePath == "" {
 		return "", fmt.Errorf("write: filePath is required")

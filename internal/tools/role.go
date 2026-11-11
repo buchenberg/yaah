@@ -62,8 +62,8 @@ func (t *RoleTool) Execute(ctx context.Context, args string) (string, error) {
 		ContractHeading string `json:"contract_heading"`
 		ContractFields  string `json:"contract_fields"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("role: invalid arguments: %w", err)
+	if err := StrictToolArgs("role", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 
 	switch params.Action {

@@ -60,8 +60,8 @@ func (t *EditTool) Execute(ctx context.Context, args string) (string, error) {
 		ReplaceAll bool        `json:"replaceAll"`
 		Edits      []editEntry `json:"edits"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("edit: invalid arguments: %w", err)
+	if err := StrictToolArgs("edit", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.FilePath == "" {
 		return "", fmt.Errorf("edit: filePath is required")

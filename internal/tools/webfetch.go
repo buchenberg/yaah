@@ -46,8 +46,8 @@ type webFetchParams struct {
 
 func (t *WebFetchTool) Execute(ctx context.Context, args string) (string, error) {
 	var params webFetchParams
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("webfetch: invalid arguments: %w", err)
+	if err := StrictToolArgs("webfetch", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.URL == "" {
 		return "", fmt.Errorf("webfetch: url is required")

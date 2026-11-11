@@ -35,7 +35,7 @@ func (t *CopyTreeTool) Description() string { return prompts.ToolDescription("co
 func (t *CopyTreeTool) Schema() json.RawMessage { return treeTransferSchema() }
 func (t *CopyTreeTool) IsDangerous(string) bool { return true }
 func (t *CopyTreeTool) Execute(ctx context.Context, args string) (string, error) {
-	req, err := prepareTreeTransfer(ctx, "copy_tree", workspaceOf(t.WS, t.PV), args)
+	req, err := prepareTreeTransfer(ctx, "copy_tree", t.Schema(), workspaceOf(t.WS, t.PV), args)
 	if err != nil {
 		return "", err
 	}
@@ -71,7 +71,7 @@ func (t *MoveTreeTool) Description() string { return prompts.ToolDescription("mo
 func (t *MoveTreeTool) Schema() json.RawMessage { return treeTransferSchema() }
 func (t *MoveTreeTool) IsDangerous(string) bool { return true }
 func (t *MoveTreeTool) Execute(ctx context.Context, args string) (string, error) {
-	req, err := prepareTreeTransfer(ctx, "move_tree", workspaceOf(t.WS, t.PV), args)
+	req, err := prepareTreeTransfer(ctx, "move_tree", t.Schema(), workspaceOf(t.WS, t.PV), args)
 	if err != nil {
 		return "", err
 	}
@@ -123,15 +123,15 @@ type treeRequest struct {
 	DestExists bool
 }
 
-func prepareTreeTransfer(ctx context.Context, tool string, ws Workspace, args string) (treeRequest, error) {
+func prepareTreeTransfer(ctx context.Context, tool string, schema json.RawMessage, ws Workspace, args string) (treeRequest, error) {
 	var params struct {
 		Path   string `json:"path"`
 		To     string `json:"to"`
 		Force  bool   `json:"force"`
 		MkdirP bool   `json:"mkdir_p"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return treeRequest{}, fmt.Errorf("%s: invalid arguments: %w", tool, err)
+	if err := StrictToolArgs(tool, schema, args, &params); err != nil {
+		return treeRequest{}, err
 	}
 	if params.Path == "" {
 		return treeRequest{}, fmt.Errorf("%s: path is required", tool)

@@ -56,8 +56,8 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 		TopK  int    `json:"top_k"`
 		Scope string `json:"scope"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("memory_search: invalid arguments: %w", err)
+	if err := StrictToolArgs("memory_search", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.TopK <= 0 {
 		params.TopK = 10
@@ -434,8 +434,8 @@ func (t *MemoryAddTool) Execute(ctx context.Context, args string) (string, error
 		Scope      string `json:"scope"`
 		Supersedes string `json:"supersedes"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("memory_add: invalid arguments: %w", err)
+	if err := StrictToolArgs("memory_add", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 
 	// Scope precedence: the call's own scope, then the tool's configured
@@ -527,8 +527,8 @@ func (t *MemoryPromoteTool) Execute(_ context.Context, args string) (string, err
 	var params struct {
 		ID string `json:"id"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("memory_promote: invalid arguments: %w", err)
+	if err := StrictToolArgs("memory_promote", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.ID == "" {
 		return "", fmt.Errorf("memory_promote: id is required")
@@ -580,8 +580,8 @@ func (t *MemoryDeleteTool) Execute(ctx context.Context, args string) (string, er
 	var params struct {
 		ID string `json:"id"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("memory_delete: invalid arguments: %w", err)
+	if err := StrictToolArgs("memory_delete", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if err := t.DB.DeleteMemory(params.ID); err != nil {
 		return "", fmt.Errorf("memory_delete: %w", err)
@@ -620,8 +620,8 @@ func (t *MemoryUpdateTool) Execute(ctx context.Context, args string) (string, er
 		ID   string `json:"id"`
 		Text string `json:"text"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("memory_update: invalid arguments: %w", err)
+	if err := StrictToolArgs("memory_update", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 
 	// Ownership guard. Each restriction applies on its own trigger and neither
@@ -694,8 +694,8 @@ func (t *MemorySessionSearchTool) Execute(ctx context.Context, args string) (str
 		Query string `json:"query"`
 		TopK  int    `json:"top_k"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("memory_search_sessions: invalid arguments: %w", err)
+	if err := StrictToolArgs("memory_search_sessions", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.TopK <= 0 {
 		params.TopK = 10

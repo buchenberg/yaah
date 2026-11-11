@@ -60,8 +60,8 @@ func (t *TailTool) Execute(ctx context.Context, args string) (string, error) {
 		Bytes    int64  `json:"bytes"`
 		Offset   int64  `json:"offset"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("tail: invalid arguments: %w", err)
+	if err := StrictToolArgs("tail", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.FilePath == "" {
 		return "", fmt.Errorf("tail: filePath is required")

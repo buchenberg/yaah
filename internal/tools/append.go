@@ -48,8 +48,8 @@ func (t *AppendTool) Execute(ctx context.Context, args string) (string, error) {
 		FilePath string `json:"filePath"`
 		Content  string `json:"content"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("append: invalid arguments: %w", err)
+	if err := StrictToolArgs("append", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.FilePath == "" {
 		return "", fmt.Errorf("append: filePath is required")

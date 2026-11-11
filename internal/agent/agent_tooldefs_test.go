@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/buchenberg/yaah/internal/tools"
@@ -139,5 +140,30 @@ func TestAllowsTool_ReadOnlyLevel(t *testing.T) {
 		if loop.allowsTool(name) {
 			t.Errorf("plan-mode execution gate allowed %q", name)
 		}
+	}
+}
+
+type openSchemaTool struct{}
+
+func (openSchemaTool) Name() string        { return "remote_tool" }
+func (openSchemaTool) Description() string { return "a server-owned schema" }
+func (openSchemaTool) Schema() json.RawMessage {
+	return json.RawMessage(`{"type":"object","properties":{"x":{}},"additionalProperties":true}`)
+}
+func (openSchemaTool) Execute(context.Context, string) (string, error) { return "", nil }
+
+// AllowAdditionalProperties opts out of the local closing: an MCP server
+// owns its schema and may accept keys we cannot see.
+func (openSchemaTool) AllowAdditionalProperties() bool { return true }
+
+func TestAdvertisedSchema_ClosesBuiltinsAndLeavesRemoteSchemasOpen(t *testing.T) {
+	builtin := tools.CloseSchema(json.RawMessage(`{"type":"object","properties":{"a":{}}}`))
+	if !strings.Contains(string(builtin), `"additionalProperties":false`) {
+		t.Errorf("built-in schema not closed: %s", builtin)
+	}
+
+	remote := advertisedSchema(openSchemaTool{})
+	if !strings.Contains(string(remote), `"additionalProperties":true`) {
+		t.Errorf("remote schema was rewritten: %s", remote)
 	}
 }

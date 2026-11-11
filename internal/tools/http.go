@@ -107,8 +107,8 @@ func (t *HTTPTool) Execute(ctx context.Context, args string) (string, error) {
 		Body    string            `json:"body"`
 		Timeout int               `json:"timeout"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("http: invalid arguments: %w", err)
+	if err := StrictToolArgs("http", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.URL == "" {
 		return "", fmt.Errorf("http: url is required")

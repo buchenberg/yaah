@@ -62,8 +62,8 @@ func (t *GoOutlineTool) Execute(ctx context.Context, args string) (string, error
 		File   string `json:"file"`
 		Name   string `json:"name"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("go_outline: invalid arguments: %w", err)
+	if err := StrictToolArgs("go_outline", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.Action == "" {
 		return "", fmt.Errorf("go_outline: action is required (outline or extract)")

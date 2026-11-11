@@ -134,8 +134,8 @@ type applyOutParams struct {
 func (t *ApplyOutTool) Execute(ctx context.Context, args string) (string, error) {
 	var p applyOutParams
 	if args != "" {
-		if err := json.Unmarshal([]byte(args), &p); err != nil {
-			return "", fmt.Errorf("apply_out: parse arguments: %w", err)
+		if err := StrictToolArgs("apply_out", t.Schema(), args, &p); err != nil {
+			return "", err
 		}
 	}
 

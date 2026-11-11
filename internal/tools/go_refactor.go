@@ -71,8 +71,8 @@ func (t *GoRefactorTool) Execute(ctx context.Context, args string) (string, erro
 		File   string `json:"file"`
 		Dir    string `json:"dir"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("go_refactor: invalid arguments: %w", err)
+	if err := StrictToolArgs("go_refactor", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	ws := workspaceOf(t.WS, t.PV)
 

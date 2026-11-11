@@ -49,8 +49,8 @@ func (t *GrepTool) Execute(ctx context.Context, args string) (string, error) {
 		Path    string `json:"path"`
 		Include string `json:"include"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("grep: invalid arguments: %w", err)
+	if err := StrictToolArgs("grep", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.Pattern == "" {
 		return "", fmt.Errorf("grep: pattern is required")

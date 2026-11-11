@@ -144,8 +144,8 @@ var diagRe = regexp.MustCompile(`^(.+?):(\d+):(\d+):\s*(.*)$`)
 
 func (t *StaticcheckTool) Execute(ctx context.Context, args string) (string, error) {
 	var params staticcheckParams
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("staticcheck: invalid arguments: %w", err)
+	if err := StrictToolArgs("staticcheck", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 
 	// packages becomes the argv element that sits where the analyzer expects

@@ -39,8 +39,8 @@ func (t *CalculateTool) Execute(ctx context.Context, args string) (string, error
 	var params struct {
 		Expr string `json:"expr"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("calculate: invalid arguments: %w", err)
+	if err := StrictToolArgs("calculate", t.Schema(), args, &params); err != nil {
+		return "", err
 	}
 	if params.Expr == "" {
 		return "", fmt.Errorf("calculate: expr is required")
