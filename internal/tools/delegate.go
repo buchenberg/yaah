@@ -110,8 +110,23 @@ func (t *DelegateTool) Description() string {
 }
 
 func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error) {
+	// Strict keys: a typo such as "backgroud", "seed_form" or "max_turn"
+	// used to be ignored and silently change the dispatch (foreground
+	// instead of background, fresh instead of threaded, role default
+	// instead of the requested cap). Reject it with the allowed list.
+	strict, err := DecodeStrictObject("delegate", args,
+		"description", "prompt", "role", "timeout_seconds", "max_iterations",
+		"max_turns", "json_mode", "output_limit", "background", "seed_from",
+		"seed_mode", "provider", "model")
+	if err != nil {
+		return "", err
+	}
+	strictJSON, err := json.Marshal(strict)
+	if err != nil {
+		return "", fmt.Errorf("delegate: invalid arguments: %w", err)
+	}
 	var raw map[string]any
-	if err := json.Unmarshal([]byte(args), &raw); err != nil {
+	if err := json.Unmarshal(strictJSON, &raw); err != nil {
 		return "", fmt.Errorf("delegate: invalid arguments: %w", err)
 	}
 
@@ -147,8 +162,14 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 	if err := json.Unmarshal(fixed, &params); err != nil {
 		return "", fmt.Errorf("delegate: invalid arguments: %w", err)
 	}
+	if strings.TrimSpace(params.Description) == "" {
+		return "", fmt.Errorf("delegate: description is required — a 3-5 word summary of the subtask")
+	}
 	if params.Prompt == "" {
 		return "", fmt.Errorf("delegate: prompt is required")
+	}
+	if len(params.Prompt) > maxDelegatePromptBytes {
+		return "", fmt.Errorf("delegate: prompt is %d bytes; the maximum is %d — split the task or summarize the context", len(params.Prompt), maxDelegatePromptBytes)
 	}
 
 	// Role is required: there is no default role. Reject empty and
@@ -368,6 +389,13 @@ func (t *DelegateTool) classifyRunnerResult(result string, err error, role strin
 	}
 	return result, nil
 }
+
+// maxDelegatePromptBytes bounds one dispatch prompt. The prompt is sent as a
+// single user message, so an unbounded payload can defeat the context-window
+// budget before the sub-agent's first turn. 64 KiB leaves room for a large
+// code snippet while keeping the failure a clear tool error, not a transport
+// or context overflow.
+const maxDelegatePromptBytes = 64 << 10
 
 // clampTimeoutSeconds caps the model-supplied timeout at the schema's
 // 600s maximum so a runaway or injected value cannot pin a sub-agent
