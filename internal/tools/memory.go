@@ -46,9 +46,6 @@ func (t *MemorySearchTool) Schema() json.RawMessage {
 }
 
 func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, error) {
-	if t.DB == nil {
-		return "", fmt.Errorf("memory database not available")
-	}
 
 	var params struct {
 		Query string `json:"query"`
@@ -58,6 +55,9 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 	}
 	if err := StrictToolArgs("memory_search", t.Schema(), args, &params); err != nil {
 		return "", err
+	}
+	if t.DB == nil {
+		return "", fmt.Errorf("memory database not available")
 	}
 	if params.TopK <= 0 {
 		params.TopK = 10
@@ -424,9 +424,6 @@ func (t *MemoryAddTool) Schema() json.RawMessage {
 }
 
 func (t *MemoryAddTool) Execute(ctx context.Context, args string) (string, error) {
-	if t.DB == nil {
-		return "", fmt.Errorf("memory database not available")
-	}
 
 	var params struct {
 		Text       string          `json:"text"`
@@ -440,6 +437,9 @@ func (t *MemoryAddTool) Execute(ctx context.Context, args string) (string, error
 	tags, err := normalizeTags(params.Tags)
 	if err != nil {
 		return "", err
+	}
+	if t.DB == nil {
+		return "", fmt.Errorf("memory database not available")
 	}
 
 	// Scope precedence: the call's own scope, then the tool's configured
@@ -525,14 +525,14 @@ func (t *MemoryPromoteTool) Schema() json.RawMessage {
 }
 
 func (t *MemoryPromoteTool) Execute(_ context.Context, args string) (string, error) {
-	if t.DB == nil {
-		return "", fmt.Errorf("memory database not available")
-	}
 	var params struct {
 		ID string `json:"id"`
 	}
 	if err := StrictToolArgs("memory_promote", t.Schema(), args, &params); err != nil {
 		return "", err
+	}
+	if t.DB == nil {
+		return "", fmt.Errorf("memory database not available")
 	}
 	if params.ID == "" {
 		return "", fmt.Errorf("memory_promote: id is required")
@@ -578,14 +578,14 @@ func (t *MemoryDeleteTool) Schema() json.RawMessage {
 }
 
 func (t *MemoryDeleteTool) Execute(ctx context.Context, args string) (string, error) {
-	if t.DB == nil {
-		return "", fmt.Errorf("memory database not available")
-	}
 	var params struct {
 		ID string `json:"id"`
 	}
 	if err := StrictToolArgs("memory_delete", t.Schema(), args, &params); err != nil {
 		return "", err
+	}
+	if t.DB == nil {
+		return "", fmt.Errorf("memory database not available")
 	}
 	if err := t.DB.DeleteMemory(params.ID); err != nil {
 		return "", fmt.Errorf("memory_delete: %w", err)
@@ -617,15 +617,15 @@ func (t *MemoryUpdateTool) Schema() json.RawMessage {
 }
 
 func (t *MemoryUpdateTool) Execute(ctx context.Context, args string) (string, error) {
-	if t.DB == nil {
-		return "", fmt.Errorf("memory database not available")
-	}
 	var params struct {
 		ID   string `json:"id"`
 		Text string `json:"text"`
 	}
 	if err := StrictToolArgs("memory_update", t.Schema(), args, &params); err != nil {
 		return "", err
+	}
+	if t.DB == nil {
+		return "", fmt.Errorf("memory database not available")
 	}
 
 	// Ownership guard. Each restriction applies on its own trigger and neither
@@ -690,9 +690,6 @@ func (t *MemorySessionSearchTool) Schema() json.RawMessage {
 }
 
 func (t *MemorySessionSearchTool) Execute(ctx context.Context, args string) (string, error) {
-	if t.DB == nil {
-		return "", fmt.Errorf("session search database not available")
-	}
 
 	var params struct {
 		Query string `json:"query"`
@@ -700,6 +697,9 @@ func (t *MemorySessionSearchTool) Execute(ctx context.Context, args string) (str
 	}
 	if err := StrictToolArgs("memory_search_sessions", t.Schema(), args, &params); err != nil {
 		return "", err
+	}
+	if t.DB == nil {
+		return "", fmt.Errorf("session search database not available")
 	}
 	if params.TopK <= 0 {
 		params.TopK = 10

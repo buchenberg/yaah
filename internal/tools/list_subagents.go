@@ -59,6 +59,10 @@ func (t *ListSubAgentsTool) Schema() json.RawMessage {
 }
 
 func (t *ListSubAgentsTool) Execute(ctx context.Context, args string) (string, error) {
+	var noArgs struct{}
+	if err := StrictToolArgs("list_subagents", t.Schema(), args, &noArgs); err != nil {
+		return "", err
+	}
 	if t.Lister == nil {
 		return "", fmt.Errorf("list_subagents: lister not configured")
 	}

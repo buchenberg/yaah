@@ -71,9 +71,6 @@ func (t *WatchTool) IsDangerous(argsJSON string) bool {
 }
 
 func (t *WatchTool) Execute(ctx context.Context, args string) (string, error) {
-	if t.Manager == nil {
-		return "", fmt.Errorf("watch: the wake engine is not configured in this session")
-	}
 	var params struct {
 		Action           string `json:"action"`
 		On               string `json:"on"`
@@ -84,6 +81,9 @@ func (t *WatchTool) Execute(ctx context.Context, args string) (string, error) {
 	}
 	if err := StrictToolArgs("watch", t.Schema(), args, &params); err != nil {
 		return "", err
+	}
+	if t.Manager == nil {
+		return "", fmt.Errorf("watch: the wake engine is not configured in this session")
 	}
 
 	switch params.Action {
