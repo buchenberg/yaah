@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.175.2](https://github.com/buchenberg/yaah/compare/v0.175.1...v0.175.2) (2026-11-12)
+
+
+### Bug Fixes
+
+* **reaper:** spare resumed scopes that carry a re-adopted substrate (yaah-dbik) ([5eec20a](https://github.com/buchenberg/yaah/commit/5eec20a5716d6a1363b602ebd6d2a4d9c6102ba9))
+
+
+### Documentation
+
+* **design:** resolve the lazy toolbelt review questions (yaah-6mi9.4) ([6ce0734](https://github.com/buchenberg/yaah/commit/6ce0734e757dafbc5cd0af38ea0f09be7b011240))
+* **design:** resolve the lazy toolbelt review questions (yaah-6mi9.4) ([aa1767b](https://github.com/buchenberg/yaah/commit/aa1767b965ec43cd96c593fe1d3afd9de476ab4b))
+
 ## [0.175.1](https://github.com/buchenberg/yaah/compare/v0.175.0...v0.175.1) (2026-11-12)
 
 
