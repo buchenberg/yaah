@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.166.4](https://github.com/buchenberg/yaah/compare/v0.166.3...v0.166.4) (2026-11-12)
+
+
+### Code Refactoring
+
+* **permissions:** fold approval/mcp_approval posture into the single Authorize evaluator ([b0f4b35](https://github.com/buchenberg/yaah/commit/b0f4b35d6792dd219828f8cdf47bb425413d15f5))
+
 ## [0.166.3](https://github.com/buchenberg/yaah/compare/v0.166.2...v0.166.3) (2026-11-12)
 
 
