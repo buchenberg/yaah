@@ -7,14 +7,13 @@ import "github.com/buchenberg/yaah/internal/agent/pipeline"
 // evaluator resolves MCP calls against a settled value object instead of
 // re-interpreting raw scalar config at each stage.
 //
-// The posture is deliberately derived (not consulted live) so classifyGate
-// and the mcpGate ceiling walk cannot drift apart about what an
-// mcp_approval posture means. The derivation is total: each field resolves
-// the scalar in exactly one place, and the evaluators branch only on the
-// resolved value. The global approval posture is deliberately out of scope
-// here: the approval middleware resolves that axis on its own
-// (resolveApprovalMode), so it cannot consume this agent-level type without
-// a dependency cycle.
+// The posture is deliberately derived (not consulted live) so the Authorize
+// gate stages cannot drift apart about what an mcp_approval posture means. The
+// derivation is total: each field resolves the scalar in exactly one place, and
+// the evaluators branch only on the resolved value. The global approval posture
+// is deliberately out of scope here: the approval middleware resolves that axis
+// on its own (resolveApprovalMode), so it cannot consume this agent-level type
+// without a dependency cycle.
 type approvalPosture struct {
 	// allow: the mcp_approval posture passes MCP-origin calls that no
 	// user rule narrows. allow is a ceiling for the ruleset, not a floor.
@@ -33,6 +32,15 @@ func deriveApprovalPosture(cfg LoopConfig) approvalPosture {
 		mcpAllow: cfg.MCPApproval == "allow",
 		mcpDeny:  cfg.MCPApproval == "deny",
 	}
+}
+
+// posture derives the session's approval posture. Derived per call from
+// the settled Config: the loop's Config is written only during wiring
+// (options, builder), so the value is stable for the loop's lifetime
+// while Loop literals in tests — which bypass the builder — still see a
+// correct derivation.
+func (l *Loop) posture() approvalPosture {
+	return deriveApprovalPosture(l.Config)
 }
 
 // mcpDefault is the posture's verdict for an MCP-origin call that no user

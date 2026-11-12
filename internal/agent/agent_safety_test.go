@@ -80,12 +80,12 @@ func TestApproveTool_NilApproveFn(t *testing.T) {
 func TestClassifyDanger_ShellToolsPlatformIndependent(t *testing.T) {
 	l := &Loop{Registry: tools.NewEmptyRegistry()}
 	for _, name := range []string{"bash", "powershell"} {
-		if got := l.classifyGate(name, "{}"); got != pipeline.GateGlobal {
-			t.Errorf("classifyGate(%q) = %v on empty registry; shell tools must always gate", name, got)
+		if got := l.Authorize(name, "{}").Gate; got != pipeline.GateGlobal {
+			t.Errorf("Authorize(%q) = %v on empty registry; shell tools must always gate", name, got)
 		}
 	}
 	// Unknown non-shell names stay ungated.
-	if got := l.classifyGate("mystery", "{}"); got != pipeline.GatePass {
+	if got := l.Authorize("mystery", "{}").Gate; got != pipeline.GatePass {
 		t.Error("unknown tool names should not be gated")
 	}
 }
@@ -112,16 +112,16 @@ func TestClassifyDanger_MCPToolsGatedByPolicy(t *testing.T) {
 	}
 
 	for _, registered := range []bool{false, true} {
-		if got := newLoop("", registered).classifyGate("github_create_issue", "{}"); got != pipeline.GateAsk {
+		if got := newLoop("", registered).Authorize("github_create_issue", "{}").Gate; got != pipeline.GateAsk {
 			t.Errorf("unset mcp_approval should gate MCP tools (default ask, registered=%v); got %v", registered, got)
 		}
-		if got := newLoop("ask", registered).classifyGate("github_create_issue", "{}"); got != pipeline.GateAsk {
+		if got := newLoop("ask", registered).Authorize("github_create_issue", "{}").Gate; got != pipeline.GateAsk {
 			t.Errorf("mcp_approval=ask should gate MCP tools (registered=%v); got %v", registered, got)
 		}
-		if got := newLoop("allow", registered).classifyGate("github_create_issue", "{}"); got != pipeline.GatePass {
+		if got := newLoop("allow", registered).Authorize("github_create_issue", "{}").Gate; got != pipeline.GatePass {
 			t.Errorf("mcp_approval=allow should pass MCP tools (registered=%v); got %v", registered, got)
 		}
-		if got := newLoop("deny", registered).classifyGate("github_create_issue", "{}"); got != pipeline.GateDeny {
+		if got := newLoop("deny", registered).Authorize("github_create_issue", "{}").Gate; got != pipeline.GateDeny {
 			t.Errorf("mcp_approval=deny should gate MCP tools (registered=%v); got %v", registered, got)
 		}
 	}
@@ -135,7 +135,7 @@ func TestClassifyDanger_MCPToolsGatedByPolicy(t *testing.T) {
 			MCPToolNames: map[string]bool{"github_create_issue": true},
 			Permissions:  permissions.Rules{{Tool: "github_create_issue", Effect: permissions.Deny}},
 		}}
-		if got := l.classifyGate("github_create_issue", "{}"); got != pipeline.GateDeny {
+		if got := l.Authorize("github_create_issue", "{}").Gate; got != pipeline.GateDeny {
 			t.Errorf("ruleset deny on allow-policy MCP tool = %v, want GateDeny", got)
 		}
 	}
@@ -145,13 +145,13 @@ func TestClassifyDanger_MCPToolsGatedByPolicy(t *testing.T) {
 			MCPToolNames: map[string]bool{"github_create_issue": true},
 			Permissions:  permissions.Rules{{Tool: "github_create_issue", Effect: permissions.Allow}},
 		}}
-		if got := l.classifyGate("github_create_issue", "{}"); got != pipeline.GateAsk {
+		if got := l.Authorize("github_create_issue", "{}").Gate; got != pipeline.GateAsk {
 			t.Errorf("ruleset allow must not downgrade MCP ask = %v, want GateAsk", got)
 		}
 	}
 	// A name that is neither registered nor MCP-known stays ungated even
 	// under deny — the policy applies to identified MCP tools only.
-	if got := newLoop("deny", false).classifyGate("unknown_tool", "{}"); got != pipeline.GatePass {
+	if got := newLoop("deny", false).Authorize("unknown_tool", "{}").Gate; got != pipeline.GatePass {
 		t.Error("deny policy must not gate unknown non-MCP names")
 	}
 }
@@ -172,7 +172,7 @@ func TestClassifyDanger_PlanModeDeniesDangerousCalls(t *testing.T) {
 
 	plan := newGitLoop(ReadOnlyTools)
 	// A read-only git action is inspection and passes untouched.
-	if got := plan.classifyGate("git", `{"action":"status"}`); got != pipeline.GatePass {
+	if got := plan.Authorize("git", `{"action":"status"}`).Gate; got != pipeline.GatePass {
 		t.Errorf("git status in plan mode = %v, want GatePass", got)
 	}
 	for _, args := range []string{
@@ -182,27 +182,27 @@ func TestClassifyDanger_PlanModeDeniesDangerousCalls(t *testing.T) {
 		`{"action":"pull"}`,
 		`{"action":"branch","flags":["-D"],"paths":["main"]}`,
 	} {
-		if got := plan.classifyGate("git", args); got != pipeline.GateWithheld {
+		if got := plan.Authorize("git", args).Gate; got != pipeline.GateWithheld {
 			t.Errorf("dangerous git call %s in plan mode = %v, want GateWithheld", args, got)
 		}
 	}
 	// Defense in depth: dialect recovery can synthesize calls to names plan
 	// mode never advertises; they are denied rather than gated globally.
 	for _, name := range []string{"bash", "powershell"} {
-		if got := plan.classifyGate(name, "{}"); got != pipeline.GateWithheld {
+		if got := plan.Authorize(name, "{}").Gate; got != pipeline.GateWithheld {
 			t.Errorf("always-dangerous %q in plan mode = %v, want GateWithheld", name, got)
 		}
 	}
 
 	// Build mode is unchanged: the global approval mode still decides.
 	full := newGitLoop(FullTools)
-	if got := full.classifyGate("git", `{"action":"commit","message":"x"}`); got != pipeline.GateGlobal {
+	if got := full.Authorize("git", `{"action":"commit","message":"x"}`).Gate; got != pipeline.GateGlobal {
 		t.Errorf("dangerous git call in build mode = %v, want GateGlobal", got)
 	}
-	if got := full.classifyGate("bash", "{}"); got != pipeline.GateGlobal {
+	if got := full.Authorize("bash", "{}").Gate; got != pipeline.GateGlobal {
 		t.Errorf("bash in build mode = %v, want GateGlobal", got)
 	}
-	if got := full.classifyGate("git", `{"action":"status"}`); got != pipeline.GatePass {
+	if got := full.Authorize("git", `{"action":"status"}`).Gate; got != pipeline.GatePass {
 		t.Errorf("git status in build mode = %v, want GatePass", got)
 	}
 }
@@ -241,38 +241,38 @@ func TestClassifyGate_PermissionRuleset(t *testing.T) {
 
 	// ask routes through the approval pipeline even though the call is
 	// dangerous and the global posture would have been GateGlobal.
-	if got := newLoop(FullTools, rules).classifyGate("bash", `{"command":"git push origin main"}`); got != pipeline.GateAsk {
+	if got := newLoop(FullTools, rules).Authorize("bash", `{"command":"git push origin main"}`).Gate; got != pipeline.GateAsk {
 		t.Errorf("ruleset ask on dangerous call = %v, want GateAsk", got)
 	}
 	// deny strips a non-dangerous tool outright.
-	if got := newLoop(FullTools, rules).classifyGate("webfetch", "{}"); got != pipeline.GateDeny {
+	if got := newLoop(FullTools, rules).Authorize("webfetch", "{}").Gate; got != pipeline.GateDeny {
 		t.Errorf("ruleset deny = %v, want GateDeny", got)
 	}
 	// allow falls through to the danger classification: read is not
 	// dangerous, so it passes.
 	safeAllow := permissions.Rules{{Tool: "read", Effect: permissions.Allow}}
-	if got := newLoop(FullTools, safeAllow).classifyGate("read", `{"filePath":"x.md"}`); got != pipeline.GatePass {
+	if got := newLoop(FullTools, safeAllow).Authorize("read", `{"filePath":"x.md"}`).Gate; got != pipeline.GatePass {
 		t.Errorf("ruleset allow on safe call = %v, want GatePass", got)
 	}
 	// allow does NOT bypass the dangerous-call posture: an allow rule on a
 	// mutating command still lands on GateGlobal (the approval mode
 	// decides), never GatePass.
 	allowRm := permissions.Rules{{Tool: "bash", Resource: "rm*", Effect: permissions.Allow}}
-	if got := newLoop(FullTools, allowRm).classifyGate("bash", `{"command":"rm -rf /"}`); got != pipeline.GateGlobal {
+	if got := newLoop(FullTools, allowRm).Authorize("bash", `{"command":"rm -rf /"}`).Gate; got != pipeline.GateGlobal {
 		t.Errorf("ruleset allow on dangerous call = %v, want GateGlobal", got)
 	}
 	// The mode-axis floor beats every rule: in read-only mode a dangerous
 	// call is withheld even when a rule allows or asks it.
 	for _, rs := range []permissions.Rules{rules, allowRm} {
-		if got := newLoop(ReadOnlyTools, rs).classifyGate("bash", `{"command":"git push origin main"}`); got != pipeline.GateWithheld {
+		if got := newLoop(ReadOnlyTools, rs).Authorize("bash", `{"command":"git push origin main"}`).Gate; got != pipeline.GateWithheld {
 			t.Errorf("read-only floor beaten by ruleset = %v, want GateWithheld", got)
 		}
 	}
 	// No matching rule: behavior is exactly the pre-W5 gates.
-	if got := newLoop(FullTools, rules).classifyGate("git", `{"action":"commit","message":"x"}`); got != pipeline.GateGlobal {
+	if got := newLoop(FullTools, rules).Authorize("git", `{"action":"commit","message":"x"}`).Gate; got != pipeline.GateGlobal {
 		t.Errorf("unmatched rule on dangerous call = %v, want GateGlobal", got)
 	}
-	if got := newLoop(FullTools, nil).classifyGate("bash", `{"command":"git push"}`); got != pipeline.GateGlobal {
+	if got := newLoop(FullTools, nil).Authorize("bash", `{"command":"git push"}`).Gate; got != pipeline.GateGlobal {
 		t.Errorf("no ruleset on dangerous call = %v, want GateGlobal", got)
 	}
 }
@@ -300,7 +300,7 @@ func TestAdmitTool_PermissionDeny(t *testing.T) {
 // TestAdmitTool_SubAgentAskRefused pins the execution half of the sub-agent
 // `ask` fix. A sub-agent loop installs no approval middleware and nobody is
 // attached to the run, so an `ask` rule there had no enforcement point:
-// classifyGate produced GateAsk, no middleware consumed it, and admitTool
+// Authorize produced GateAsk, no middleware consumed it, and admitTool
 // enforced only deny — the declared boundary dispatched as a silent allow.
 // The always-on gate now refuses it with a reason that names the rule and
 // the missing prompt, which is a distinct sentence (and a distinct fix)

@@ -13,7 +13,7 @@ import (
 // role/skill files are denied outright, workspace copies require approval, and
 // ordinary source files are untouched. The guard is independent of the
 // permission ruleset and of approval mode by construction, so these tests
-// exercise it directly rather than through classifyGate.
+// exercise it directly rather than through Authorize.
 
 func newGuardFixture(t *testing.T) (home, configDir, ws string, h *HarnessPaths) {
 	t.Helper()

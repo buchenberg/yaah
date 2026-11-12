@@ -242,11 +242,11 @@ type LoopConfig struct {
 	MCPToolNames map[string]bool
 	// Permissions is the merged permission ruleset (parity W5): the
 	// global config rules first, the session persona's rules appended
-	// after, so the persona wins on overlap (last-match-wins). Consulted
-	// by classifyGate after the mode-axis floor and before the approval
-	// posture; admitTool additionally enforces deny at dispatch so a
-	// disabled approval pipeline cannot silently bypass it, and refuses an
-	// ask rule outright on a sub-agent loop (a dispatch has no approval
+	// after, so the persona wins on overlap (last-match-wins). The
+	// Authorize decision path resolves it after the mode-axis floor and
+	// the MCP posture; admitTool additionally enforces deny at dispatch so
+	// a disabled approval pipeline cannot silently bypass it, and refuses
+	// an ask rule outright on a sub-agent loop (a dispatch has no approval
 	// bridge, so ask there would otherwise be a silent allow). Nil or
 	// empty means no rules — behavior is exactly the pre-W5 gates.
 	Permissions permissions.Rules
