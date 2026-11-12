@@ -81,6 +81,32 @@ func (g *guardWorkspace) WriteFile(_ context.Context, path string, data []byte, 
 	return nil
 }
 
+// resolvedPath canonicalizes a path the way the validator does
+// (EvalSymlinks), so a path a test produced itself and one the workspace
+// resolved compare equal on Windows, where EvalSymlinks yields the 8.3 short
+// form (C:\Users\RUNNER~1\…) while t.TempDir() hands back the long form.
+// Without it a test double keyed on an exact path silently never fires.
+func resolvedPath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil && r != "" {
+		return strings.ToLower(filepath.Clean(r))
+	}
+	return strings.ToLower(filepath.Clean(p))
+}
+
+// wantFileMode asserts a permission bit set, but only where permission bits
+// mean anything: Windows reports 0666 for every file, so the guard's mode
+// hand-off is not observable there and asserting it would only teach the
+// suite to fail on one platform.
+func wantFileMode(t *testing.T, got, want fs.FileMode, label string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		return
+	}
+	if got.Perm() != want.Perm() {
+		t.Errorf("%s = %o, want %o", label, got.Perm(), want.Perm())
+	}
+}
+
 // realWorkspace builds the established test construction: a local workspace
 // whose validator roots, resolves, and displays paths under a temp dir.
 func realWorkspace(t *testing.T) (Workspace, string) {
@@ -162,9 +188,7 @@ func TestWithFileWrite_RefusesStaleWrite(t *testing.T) {
 		if string(cur) != string(original) {
 			t.Errorf("cur = %q, want the on-disk content %q", cur, original)
 		}
-		if mode.Perm() != 0o600 {
-			t.Errorf("mode = %o, want the existing file's 0600", mode.Perm())
-		}
+		wantFileMode(t, mode, 0o600, "mutate mode")
 		// An out-of-band writer (another process, an editor) replaces the
 		// file while the tool computes its result.
 		if werr := os.WriteFile(abs, []byte("out-of-band"), 0o600); werr != nil {
@@ -226,9 +250,7 @@ func TestWithFileWrite_ReceiptExistingFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotMode.Perm() != 0o640 {
-		t.Errorf("mutate mode = %o, want the existing file's 0640", gotMode.Perm())
-	}
+	wantFileMode(t, gotMode, 0o640, "mutate mode")
 
 	want := FileWriteReceipt{
 		Path:        "existing.txt",
@@ -255,9 +277,7 @@ func TestWithFileWrite_ReceiptExistingFile(t *testing.T) {
 	if serr != nil {
 		t.Fatal(serr)
 	}
-	if info.Mode().Perm() != 0o640 {
-		t.Errorf("file mode = %o, want the preserved 0640", info.Mode().Perm())
-	}
+	wantFileMode(t, info.Mode(), 0o640, "file mode")
 }
 
 // TestWithFileWrite_ReceiptNewFile pins the missing-file path: nil cur, mode
@@ -309,9 +329,7 @@ func TestWithFileWrite_ReceiptNewFile(t *testing.T) {
 	if serr != nil {
 		t.Fatal(serr)
 	}
-	if info.Mode().Perm() != 0o644 {
-		t.Errorf("file mode = %o, want the default 0644", info.Mode().Perm())
-	}
+	wantFileMode(t, info.Mode(), 0o644, "file mode")
 }
 
 // TestWithFileWriteSet_HoldsEveryPathThenReleases pins the multi-path shape:

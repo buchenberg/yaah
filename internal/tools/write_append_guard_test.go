@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -137,6 +138,15 @@ func TestAppendGuard_RewriteVsAppendNeverTears(t *testing.T) {
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
+			// Windows has mandatory file locking: a reader that opens the
+			// file while an atomic write renames over it gets a sharing
+			// violation rather than the old or new bytes. That is the
+			// substrate's replacement model, not a torn record, so skip the
+			// sample instead of failing the guarantee being pinned.
+			if runtime.GOOS == "windows" {
+				samples++
+				continue
+			}
 			t.Fatalf("observer read: %v", err)
 		}
 		if !strings.HasPrefix(string(data), rewrite) {
@@ -190,7 +200,7 @@ type staleRewriteWorkspace struct {
 
 func (w *staleRewriteWorkspace) ReadFile(ctx context.Context, path string) ([]byte, error) {
 	data, err := w.Workspace.ReadFile(ctx, path)
-	if err == nil && path == w.target {
+	if err == nil && resolvedPath(path) == resolvedPath(w.target) {
 		if werr := os.WriteFile(path, []byte("out-of-band"), 0o600); werr != nil {
 			return nil, werr
 		}
@@ -245,16 +255,16 @@ func TestWriteGuard_CreatesNewFileAndNotifiesOverwrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The success line is unchanged; the guard's receipt line follows it.
-	if first, _, _ := strings.Cut(msg, "\n"); first != fmt.Sprintf("Wrote %d bytes to %s", len("first"), fresh) {
+	first, _, _ := strings.Cut(msg, "\n")
+	prefix := fmt.Sprintf("Wrote %d bytes to ", len("first"))
+	if !strings.HasPrefix(first, prefix) || resolvedPath(strings.TrimPrefix(first, prefix)) != resolvedPath(fresh) {
 		t.Errorf("message = %q, want the unchanged success format on the first line", msg)
 	}
 	info, serr := os.Stat(fresh)
 	if serr != nil {
 		t.Fatal(serr)
 	}
-	if info.Mode().Perm() != 0o644 {
-		t.Errorf("fresh mode = %o, want 0644", info.Mode().Perm())
-	}
+	wantFileMode(t, info.Mode(), 0o644, "fresh mode")
 	data, rerr := os.ReadFile(fresh)
 	if rerr != nil {
 		t.Fatal(rerr)
@@ -279,9 +289,7 @@ func TestWriteGuard_CreatesNewFileAndNotifiesOverwrite(t *testing.T) {
 	if serr != nil {
 		t.Fatal(serr)
 	}
-	if info.Mode().Perm() != 0o600 {
-		t.Errorf("overwrite mode = %o, want the preserved 0600", info.Mode().Perm())
-	}
+	wantFileMode(t, info.Mode(), 0o600, "overwrite mode")
 	data, rerr = os.ReadFile(existing)
 	if rerr != nil {
 		t.Fatal(rerr)

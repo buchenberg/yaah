@@ -106,7 +106,7 @@ func TestPatchReceipt_AgreesWithLineCounts(t *testing.T) {
 	// countLines counts the empty line a trailing newline implies, so a
 	// two-line file reports 3 -> 3. Pinning it keeps the receipt honest
 	// against the line counts printed directly above it.
-	if !strings.Contains(out, fmt.Sprintf("Patch applied to %s (3 → 3 lines)", path)) {
+	if !strings.HasPrefix(out, "Patch applied to ") || !strings.Contains(out, "(3 → 3 lines)") {
 		t.Errorf("patch must keep its line-count line, got %q", out)
 	}
 	want := fmt.Sprintf("wrote %s (11 -> %d bytes, sha256:%s)", filepath.Base(path), len(after), receiptDigest(after))

@@ -33,7 +33,7 @@ type racingReadWorkspace struct {
 
 func (w *racingReadWorkspace) ReadFile(ctx context.Context, path string) ([]byte, error) {
 	data, err := w.Workspace.ReadFile(ctx, path)
-	if err == nil && path == w.path {
+	if err == nil && resolvedPath(path) == resolvedPath(w.path) {
 		if werr := os.WriteFile(path, w.onto, 0o644); werr != nil {
 			return nil, werr
 		}

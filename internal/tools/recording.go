@@ -392,6 +392,30 @@ func conflictWorkspaceRel(ws Workspace, abs string) string {
 	if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return normalizeTrackedPath(rel)
 	}
+	// On Windows the root and the resolved path can spell the same directory
+	// differently: the validator canonicalizes through EvalSymlinks, which
+	// yields the 8.3 short form (C:\Users\RUNNER~1\…) while a root captured
+	// before that keeps the long form, so Rel sees two unrelated trees. Retry
+	// with both sides canonicalized before falling back to the absolute path —
+	// a receipt or a refusal naming C:/Users/RUNNER~1/AppData/…/x.go instead of
+	// x.go is noise the reader has to decode.
+	// Canonicalize the root first: on Windows the resolved path is already in
+	// the short form, so relating it to a canonical root needs no second
+	// lookup, and relating works even for a path that does not exist yet.
+	if realRoot, err := filepath.EvalSymlinks(root); err == nil && realRoot != "" {
+		if rel, err := filepath.Rel(realRoot, abs); err == nil &&
+			rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return normalizeTrackedPath(rel)
+		}
+		// The path may itself have been reached through a symlinked
+		// directory while the root is real.
+		if realAbs, err := filepath.EvalSymlinks(abs); err == nil && realAbs != "" {
+			if rel, err := filepath.Rel(realRoot, realAbs); err == nil &&
+				rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return normalizeTrackedPath(rel)
+			}
+		}
+	}
 	return normalizeTrackedPath(abs)
 }
 

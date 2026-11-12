@@ -101,7 +101,7 @@ type staleReadWorkspace struct {
 
 func (w *staleReadWorkspace) ReadFile(ctx context.Context, path string) ([]byte, error) {
 	data, err := w.Workspace.ReadFile(ctx, path)
-	if err == nil && path == w.hookPath {
+	if err == nil && resolvedPath(path) == resolvedPath(w.hookPath) {
 		if werr := w.Workspace.WriteFile(ctx, path, w.oob, 0o644); werr != nil {
 			return nil, werr
 		}
