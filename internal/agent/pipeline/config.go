@@ -201,7 +201,7 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 	},
 	"approval": func(cfg PipelineConfig) Middleware {
 		return &ApprovalMiddleware{
-			mode:     cfg.ApprovalMode,
+			mode:     resolveApprovalMode(cfg.ApprovalMode),
 			classify: cfg.ApprovalClassify,
 			approve:  cfg.ApprovalApprove,
 			emitDeny: cfg.ApprovalEmitDeny,

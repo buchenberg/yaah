@@ -94,50 +94,67 @@ var alwaysDangerous = map[string]bool{
 //     dangerousGate, which is where the tool level is honoured.
 func (l *Loop) classifyGate(name, args string) pipeline.GateDecision {
 	if l.Config.MCPToolNames[name] {
-		switch l.Config.MCPApproval {
-		case "deny":
-			// The per-origin policy denies; no rule widens it.
-			return pipeline.GateDeny
-		case "allow":
-			// Fall through to the ruleset: an allow policy is the
-			// policy's ceiling for the ruleset, not a floor — a deny
-			// or ask rule on the tool still narrows it.
-		default: // "ask" and unset
-			// The policy asks; the ruleset may only keep or tighten
-			// that (deny below). Fall through to the shared narrowing.
-		}
-		if effect, ok := l.Config.Permissions.Match(name, permissions.ResourceFor(name, args)); ok {
-			switch effect {
-			case permissions.Deny:
-				return pipeline.GateDeny
-			case permissions.Ask:
-				return pipeline.GateAsk
-			}
-		}
-		if l.Config.MCPApproval == "allow" {
-			return pipeline.GatePass
-		}
-		return pipeline.GateAsk
+		return l.mcpGate(name, args)
 	}
 	if l.dangerousCall(name, args) && l.Config.ToolsLevel == ReadOnlyTools {
 		// The mode-axis floor: withheld before any ruleset is consulted.
 		return pipeline.GateWithheld
 	}
-	if effect, ok := l.Config.Permissions.Match(name, permissions.ResourceFor(name, args)); ok {
-		switch effect {
-		case permissions.Deny:
-			return pipeline.GateDeny
-		case permissions.Ask:
-			return pipeline.GateAsk
-		case permissions.Allow:
-			// Fall through: allow suppresses the ruleset's own veto, not
-			// the danger classification below.
-		}
+	if decision, resolved := l.rulesetGate(name, args); resolved {
+		return decision
 	}
 	if l.dangerousCall(name, args) {
 		return l.dangerousGate()
 	}
 	return pipeline.GatePass
+}
+
+// mcpGate resolves a policy-gated MCP call. The mcp_approval posture is the
+// ceiling for what the ruleset below may narrow to: an allow posture falls
+// through to the shared narrowing unchanged, a deny posture is final (no
+// later rule can widen it), and the ask posture stands unless the ruleset
+// tightens it. The shared narrowing is the same ruleset walk the
+// non-MCP path uses, so the two paths cannot disagree about what a matching
+// rule means.
+func (l *Loop) mcpGate(name, args string) pipeline.GateDecision {
+	p := l.posture()
+	if p.mcpDeny {
+		// The per-origin policy denies; no rule can widen it.
+		return pipeline.GateDeny
+	}
+	if decision, resolved := l.rulesetGate(name, args); resolved {
+		return decision
+	}
+	return p.mcpDefault()
+}
+
+// posture derives the session's approval posture. Derived per call from
+// the settled Config: the loop's Config is written only during wiring
+// (options, builder), so the value is stable for the loop's lifetime
+// while Loop literals in tests — which bypass the builder — still see a
+// correct derivation.
+func (l *Loop) posture() approvalPosture {
+	return deriveApprovalPosture(l.Config)
+}
+
+// rulesetGate is the shared ruleset walk: the last matching permission
+// rule's effect resolves the call. deny strips (GateDeny, not approvable),
+// ask routes through the approval pipeline (GateAsk), and allow falls
+// through — it suppresses the ruleset's own veto, never the stage below it
+// (the mode floor ran earlier; the danger classification runs later).
+func (l *Loop) rulesetGate(name, args string) (pipeline.GateDecision, bool) {
+	effect, matched := l.Config.Permissions.Match(name, permissions.ResourceFor(name, args))
+	if !matched {
+		return pipeline.GatePass, false
+	}
+	switch effect {
+	case permissions.Deny:
+		return pipeline.GateDeny, true
+	case permissions.Ask:
+		return pipeline.GateAsk, true
+	default: // Allow: fall through to the next stage.
+		return pipeline.GatePass, false
+	}
 }
 
 // dangerousCall reports whether a call would mutate refs, files, or processes,
