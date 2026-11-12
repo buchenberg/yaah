@@ -232,10 +232,18 @@ type LoopConfig struct {
 	IntentHaltAfter        int
 	EvidenceGuardNudge     int
 	EvidenceGuardHalt      int
-	ApprovalMode           string
+	// ApprovalMode is the global `approval` posture: "allow", "ask" (the
+	// config default), or "deny". It is derived into the approval posture
+	// (posture.go) and resolved by the one authorization evaluator, so it
+	// applies to dangerous calls and nothing else: ask routes them through the
+	// approval bridge, deny refuses them outright, and allow suppresses that
+	// veto without ever pre-approving a call.
+	ApprovalMode string
 	// MCPApproval gates tools served by MCP servers. Remote tools
-	// cannot implement tools.DangerClassifier, so classifyDanger
-	// applies this policy to them: "ask" (default), "allow", "deny".
+	// cannot implement tools.DangerClassifier, so the evaluator applies
+	// this policy to them instead: "ask" (default), "allow", "deny". It
+	// is a ceiling the user ruleset may narrow but never widen — its deny
+	// is final and its ask stands under an allow rule (review finding S3).
 	MCPApproval string
 	// MCPToolNames lists tool names registered from MCP servers so
 	// classifyDanger can apply MCPApproval to them.
@@ -243,12 +251,13 @@ type LoopConfig struct {
 	// Permissions is the merged permission ruleset (parity W5): the
 	// global config rules first, the session persona's rules appended
 	// after, so the persona wins on overlap (last-match-wins). The
-	// Authorize decision path resolves it after the mode-axis floor and
-	// the MCP posture; admitTool additionally enforces deny at dispatch so
-	// a disabled approval pipeline cannot silently bypass it, and refuses
-	// an ask rule outright on a sub-agent loop (a dispatch has no approval
-	// bridge, so ask there would otherwise be a silent allow). Nil or
-	// empty means no rules — behavior is exactly the pre-W5 gates.
+	// Authorize decision path folds it together with the posture the call's
+	// class derives (Stricter, Deny > Ask > Allow); admitTool enforces every
+	// terminal verdict at dispatch, so a disabled approval pipeline cannot
+	// silently bypass a deny, and refuses an ask on a sub-agent loop (a
+	// dispatch has no approval bridge, so ask there would otherwise be a
+	// silent allow). Nil or empty means no rules — behavior is exactly the
+	// pre-W5 gates.
 	Permissions permissions.Rules
 	// ToolSpillDir is the directory where oversized tool results are
 	// spilled to disk. Injected by the composition root (the yaah config

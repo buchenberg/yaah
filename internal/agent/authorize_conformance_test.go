@@ -122,7 +122,7 @@ func authorizeCases() []authorizeCase {
 		{
 			name: "git-commit/full/no-rule", tools: FullTools,
 			tool: "git", args: gitCommitArgs,
-			want: authorizeWant{gate: pipeline.GateGlobal, origin: pipeline.OriginDanger, admitted: true, dispatch: true},
+			want: authorizeWant{gate: pipeline.GateAsk, origin: pipeline.OriginDanger, admitted: true, dispatch: true},
 		},
 		{
 			name: "git-commit/full/rule-ask", tools: FullTools,
@@ -138,17 +138,18 @@ func authorizeCases() []authorizeCase {
 		},
 		{
 			// allow never bypasses the danger classification: a mutating
-			// call still defers to the global approval mode.
+			// call still answers to the global approval posture, so the
+			// stricter of (ask, allow) is what the call gets.
 			name: "git-commit/full/rule-allow-falls-through", tools: FullTools,
 			rules: permissions.Rules{{Tool: "git", Effect: permissions.Allow}},
 			tool:  "git", args: gitCommitArgs,
-			want: authorizeWant{gate: pipeline.GateGlobal, origin: pipeline.OriginDanger, admitted: true, ruleMatched: true, dispatch: true},
+			want: authorizeWant{gate: pipeline.GateAsk, origin: pipeline.OriginDanger, admitted: true, ruleMatched: true, dispatch: true},
 		},
 		{
 			name: "git-commit/full/rule-other-tool", tools: FullTools,
 			rules: permissions.Rules{{Tool: "bash", Effect: permissions.Deny}},
 			tool:  "git", args: gitCommitArgs,
-			want: authorizeWant{gate: pipeline.GateGlobal, origin: pipeline.OriginDanger, admitted: true, dispatch: true},
+			want: authorizeWant{gate: pipeline.GateAsk, origin: pipeline.OriginDanger, admitted: true, dispatch: true},
 		},
 		{
 			// The mode floor: withheld, not offered for approval.
@@ -188,7 +189,7 @@ func authorizeCases() []authorizeCase {
 			name: "git-commit/full/persona-excludes", tools: FullTools,
 			persona: []string{"read", "grep"},
 			tool:    "git", args: gitCommitArgs,
-			want: authorizeWant{gate: pipeline.GateGlobal, origin: pipeline.OriginDanger, admitted: false, narrowedBy: pipeline.OriginPersona, dispatch: false, refusal: "not available at the current tool level"},
+			want: authorizeWant{gate: pipeline.GateAsk, origin: pipeline.OriginDanger, admitted: false, narrowedBy: pipeline.OriginPersona, dispatch: false, refusal: "not available at the current tool level"},
 		},
 		{
 			// The persona narrows first, so it is the named cause even though
@@ -203,7 +204,7 @@ func authorizeCases() []authorizeCase {
 		{
 			name: "bash/full/no-rule", tools: FullTools,
 			tool: "bash", args: bashArgs,
-			want: authorizeWant{gate: pipeline.GateGlobal, origin: pipeline.OriginDanger, admitted: true, resource: "rm -rf /", dispatch: true},
+			want: authorizeWant{gate: pipeline.GateAsk, origin: pipeline.OriginDanger, admitted: true, resource: "rm -rf /", dispatch: true},
 		},
 		{
 			name: "bash/full/rule-deny-resource-match", tools: FullTools,
@@ -215,19 +216,19 @@ func authorizeCases() []authorizeCase {
 			name: "bash/full/rule-ask-resource-miss", tools: FullTools,
 			rules: permissions.Rules{{Tool: "bash", Resource: "git push*", Effect: permissions.Ask}},
 			tool:  "bash", args: bashArgs,
-			want: authorizeWant{gate: pipeline.GateGlobal, origin: pipeline.OriginDanger, admitted: true, resource: "rm -rf /", dispatch: true},
+			want: authorizeWant{gate: pipeline.GateAsk, origin: pipeline.OriginDanger, admitted: true, resource: "rm -rf /", dispatch: true},
 		},
 		{
 			name: "bash/full/persona-names-it", tools: FullTools,
 			persona: []string{"bash"},
 			tool:    "bash", args: bashArgs,
-			want: authorizeWant{gate: pipeline.GateGlobal, origin: pipeline.OriginDanger, admitted: true, resource: "rm -rf /", dispatch: true},
+			want: authorizeWant{gate: pipeline.GateAsk, origin: pipeline.OriginDanger, admitted: true, resource: "rm -rf /", dispatch: true},
 		},
 		{
 			name: "bash/full/persona-excludes", tools: FullTools,
 			persona: []string{"read"},
 			tool:    "bash", args: bashArgs,
-			want: authorizeWant{gate: pipeline.GateGlobal, origin: pipeline.OriginDanger, admitted: false, narrowedBy: pipeline.OriginPersona, resource: "rm -rf /", dispatch: false, refusal: "not available at the current tool level"},
+			want: authorizeWant{gate: pipeline.GateAsk, origin: pipeline.OriginDanger, admitted: false, narrowedBy: pipeline.OriginPersona, resource: "rm -rf /", dispatch: false, refusal: "not available at the current tool level"},
 		},
 		{
 			// bash is outside the inspection set, so in read-only mode the
@@ -257,17 +258,19 @@ func authorizeCases() []authorizeCase {
 			want: authorizeWant{gate: pipeline.GateAsk, origin: pipeline.OriginMCPPosture, admitted: true, dispatch: true},
 		},
 		{
+			// An allow posture passes the call: nothing narrowed it, so no
+			// stage decided and the decision claims no provenance.
 			name: "mcp/full/posture-allow", tools: FullTools, mcp: "allow", mcpTool: true,
 			tool: mcpToolName, args: mcpArgs,
-			want: authorizeWant{gate: pipeline.GatePass, origin: pipeline.OriginMCPPosture, admitted: true, dispatch: true},
+			want: authorizeWant{gate: pipeline.GatePass, origin: pipeline.OriginNone, admitted: true, dispatch: true},
 		},
 		{
-			// The posture's deny is the middleware's call: dispatch enforces
-			// the admission axis and the ruleset, and leaves an origin
-			// policy to the approval pipeline (which is on by default).
+			// The posture's deny is terminal at BOTH layers: the middleware
+			// strips it and dispatch refuses it, so disabling that middleware
+			// (or running a sub-agent loop, which has none) cannot widen it.
 			name: "mcp/full/posture-deny", tools: FullTools, mcp: "deny", mcpTool: true,
 			tool: mcpToolName, args: mcpArgs,
-			want: authorizeWant{gate: pipeline.GateDeny, origin: pipeline.OriginMCPPosture, admitted: true, dispatch: true},
+			want: authorizeWant{gate: pipeline.GateDeny, origin: pipeline.OriginMCPPosture, admitted: true, dispatch: false, refusal: "mcp_approval 'deny'"},
 		},
 		{
 			// A user deny rule narrows an allow posture.
@@ -284,11 +287,12 @@ func authorizeCases() []authorizeCase {
 			want: authorizeWant{gate: pipeline.GateAsk, origin: pipeline.OriginMCPPosture, admitted: true, ruleMatched: true, dispatch: true},
 		},
 		{
-			// ... nor re-enable a deny posture.
+			// ... nor re-enable a deny posture: the allow rule is the weaker
+			// operand, and dispatch refuses what the middleware would strip.
 			name: "mcp/full/posture-deny-rule-allow", tools: FullTools, mcp: "deny", mcpTool: true,
 			rules: permissions.Rules{{Tool: mcpToolName, Effect: permissions.Allow}},
 			tool:  mcpToolName, args: mcpArgs,
-			want: authorizeWant{gate: pipeline.GateDeny, origin: pipeline.OriginMCPPosture, admitted: true, ruleMatched: true, dispatch: true},
+			want: authorizeWant{gate: pipeline.GateDeny, origin: pipeline.OriginMCPPosture, admitted: true, ruleMatched: true, dispatch: false, refusal: "mcp_approval 'deny'"},
 		},
 		{
 			// A user ask rule tightens an allow posture.
@@ -433,6 +437,12 @@ func TestAuthorizeDecisionMatrix(t *testing.T) {
 // verdict the shared decision implies — for every row of the matrix and every
 // global approval posture — without consulting the admission axis.
 //
+// The posture sweep is the posture-migration half of this test: since the
+// global `approval` posture is derived into the decision, changing it must
+// change the decision (and therefore the middleware's behaviour) with no mode
+// plumbing left in the middleware; the middleware's contract is only the gate
+// the decision reports.
+//
 // The admission axis is what makes this a conformance test rather than a
 // restatement: rows whose name the tool level excludes still pass the
 // middleware (it classifies the model's batch before dispatch), and the
@@ -465,7 +475,7 @@ func TestAuthorizeMiddlewareUsesTheSameDecision(t *testing.T) {
 						t.Fatalf("pipeline: %v", err)
 					}
 
-					wantKept := middlewareKeeps(d, mode, answer)
+					wantKept := middlewareKeeps(d, answer)
 					if kept := len(msg.ToolCalls) == 1; kept != wantKept {
 						t.Fatalf("approved=%v: call kept = %v, want %v (gate %v, origin %v)", answer, kept, wantKept, d.Gate, d.Origin)
 					}
@@ -494,24 +504,16 @@ func TestAuthorizeMiddlewareUsesTheSameDecision(t *testing.T) {
 }
 
 // middlewareKeeps is the approval middleware's contract with the gate axis,
-// written independently of the decision path: a pass never gates, an origin
-// ask always prompts, a dangerous call defers to the global mode, and deny or
-// withheld is terminal.
-func middlewareKeeps(d pipeline.Decision, mode string, approved bool) bool {
+// written independently of the decision path: a pass never gates, an ask is
+// decided by the prompt, and deny or withheld is terminal. The middleware holds
+// no posture of its own — the global approval posture is already folded into
+// the decision — so nothing here depends on the configured mode.
+func middlewareKeeps(d pipeline.Decision, approved bool) bool {
 	switch d.Gate {
 	case pipeline.GatePass:
 		return true
 	case pipeline.GateAsk:
 		return approved
-	case pipeline.GateGlobal:
-		switch mode {
-		case "deny":
-			return false
-		case "allow":
-			return true
-		default: // "ask" and unset
-			return approved
-		}
 	default: // GateDeny, GateWithheld
 		return false
 	}

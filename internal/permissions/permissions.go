@@ -46,6 +46,28 @@ const (
 	Ask Effect = "ask"
 )
 
+// Stricter returns the more restrictive of two effects, ordered
+// Deny > Ask > Allow. The empty effect means "no constraint" and ranks as
+// Allow, so Stricter("", Ask) is Ask and Stricter("", "") is Allow.
+//
+// It is the combinator behind the single authorization evaluator: a call's
+// verdict is the stricter of its user-ruleset effect and the posture effect
+// its class derives (the global `approval` posture for a dangerous call, the
+// `mcp_approval` posture for an MCP-origin call). Expressing "a posture can be
+// narrowed but never widened by a rule" as one comparison is what retires the
+// per-origin branches: every origin now feeds the same ordering, so no stage
+// can widen what another narrowed.
+func Stricter(a, b Effect) Effect {
+	switch {
+	case a == Deny || b == Deny:
+		return Deny
+	case a == Ask || b == Ask:
+		return Ask
+	default:
+		return Allow
+	}
+}
+
 // Rule is one permission rule: an effect applied to calls of one tool whose
 // resource matches a glob. An empty Resource matches every invocation of
 // the tool (tool-name-only).

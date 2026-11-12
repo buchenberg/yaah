@@ -7,18 +7,17 @@ import (
 	"github.com/buchenberg/yaah/internal/types"
 )
 
-func TestApprovalMiddleware_DenyModeStripsDangerousCalls(t *testing.T) {
+func TestApprovalMiddleware_DenyStripsDangerousCalls(t *testing.T) {
 	var deniedArgs string
 	m := &ApprovalMiddleware{
-		mode: modeDeny,
 		authorize: func(name, args string) Decision {
 			if name == "bash" {
-				return Decision{Gate: GateGlobal, Origin: OriginDanger}
+				return Decision{Gate: GateDeny, Origin: OriginDanger}
 			}
 			return Decision{Gate: GatePass, Admitted: true}
 		},
 		approve: func(_ context.Context, _ string, name, args string) bool {
-			t.Fatal("approve must not run in deny mode")
+			t.Fatal("approve must not run for a terminal deny")
 			return false
 		},
 		emitDeny: func(name, args, errMsg string) { deniedArgs = args },
@@ -37,6 +36,9 @@ func TestApprovalMiddleware_DenyModeStripsDangerousCalls(t *testing.T) {
 	if len(step.SynthesizedResults) != 1 {
 		t.Fatalf("expected 1 synthesized result, got %d", len(step.SynthesizedResults))
 	}
+	// The global approval posture is now resolved by the evaluator, so the
+	// middleware only reports the decision's origin — with the wording the
+	// dispatch gate uses for the same verdict.
 	wantErr := `error: tool "bash" requires approval but approval mode is 'deny'`
 	if !contains(step.SynthesizedResults[0].Content, wantErr) {
 		t.Errorf("synthesized result = %q, want substring %q", step.SynthesizedResults[0].Content, wantErr)
@@ -49,11 +51,10 @@ func TestApprovalMiddleware_DenyModeStripsDangerousCalls(t *testing.T) {
 	}
 }
 
-func TestApprovalMiddleware_AskModeHonoursApprove(t *testing.T) {
+func TestApprovalMiddleware_AskHonoursApprove(t *testing.T) {
 	calls := 0
 	m := &ApprovalMiddleware{
-		mode:      modeAsk,
-		authorize: func(name, args string) Decision { return Decision{Gate: GateGlobal} },
+		authorize: func(name, args string) Decision { return Decision{Gate: GateAsk} },
 		approve:   func(_ context.Context, _ string, name, args string) bool { calls++; return true },
 		emitDeny:  func(name, args, errMsg string) {},
 	}
@@ -75,11 +76,10 @@ func TestApprovalMiddleware_AskModeHonoursApprove(t *testing.T) {
 	}
 }
 
-func TestApprovalMiddleware_AskModeUserDenial(t *testing.T) {
+func TestApprovalMiddleware_AskUserDenial(t *testing.T) {
 	var emittedErr string
 	m := &ApprovalMiddleware{
-		mode:      modeAsk,
-		authorize: func(name, args string) Decision { return Decision{Gate: GateGlobal} },
+		authorize: func(name, args string) Decision { return Decision{Gate: GateAsk} },
 		approve:   func(_ context.Context, _ string, name, args string) bool { return false },
 		emitDeny:  func(name, args, errMsg string) { emittedErr = errMsg },
 	}
@@ -104,15 +104,15 @@ func TestApprovalMiddleware_AskModeUserDenial(t *testing.T) {
 	}
 }
 
-// TestApprovalMiddleware_GlobalAllowPassesGateGlobal pins that built-in
-// dangerous tools (GateGlobal) stay ungated under global "allow" mode —
-// the historical behaviour now expressed via the gate decision.
-func TestApprovalMiddleware_GlobalAllowPassesGateGlobal(t *testing.T) {
+// TestApprovalMiddleware_PassKeepsCalls pins that the middleware holds no
+// posture of its own: `approval: allow` reaches it as GatePass (the evaluator
+// resolved the scalar), and a pass is never gated or prompted. The middleware
+// no longer carries a mode field to disagree with the decision about.
+func TestApprovalMiddleware_PassKeepsCalls(t *testing.T) {
 	m := &ApprovalMiddleware{
-		mode:      modeAllow,
-		authorize: func(name, args string) Decision { return Decision{Gate: GateGlobal} },
+		authorize: func(name, args string) Decision { return Decision{Gate: GatePass} },
 		approve: func(_ context.Context, _ string, name, args string) bool {
-			t.Fatal("approve must not run in allow mode")
+			t.Fatal("approve must not run for a pass")
 			return false
 		},
 		emitDeny: func(name, args, errMsg string) {},
@@ -122,17 +122,16 @@ func TestApprovalMiddleware_GlobalAllowPassesGateGlobal(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(msg.ToolCalls) != 1 {
-		t.Error("global allow must not strip GateGlobal calls")
+		t.Error("a passing call must not be stripped")
 	}
 }
 
-// TestApprovalMiddleware_MCPDenyIndependentOfGlobalMode pins review
-// finding S3: mcp_approval "deny" strips MCP tool calls even when the
-// global approval mode is "allow" — the per-origin policy cannot be
-// downgraded by the global mode.
-func TestApprovalMiddleware_MCPDenyIndependentOfGlobalMode(t *testing.T) {
+// TestApprovalMiddleware_MCPDenyIsFinal pins review finding S3: mcp_approval
+// "deny" strips MCP tool calls whatever the global approval posture is — the
+// per-origin policy cannot be downgraded by it, and the denial names the MCP
+// posture rather than a rule the user wrote.
+func TestApprovalMiddleware_MCPDenyIsFinal(t *testing.T) {
 	m := &ApprovalMiddleware{
-		mode: modeAllow,
 		authorize: func(name, args string) Decision {
 			return Decision{Gate: GateDeny, Origin: OriginMCPPosture}
 		},
@@ -148,20 +147,18 @@ func TestApprovalMiddleware_MCPDenyIndependentOfGlobalMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(msg.ToolCalls) != 0 {
-		t.Error("GateDeny call survived under global allow mode")
+		t.Error("GateDeny call survived")
 	}
 	if len(step.SynthesizedResults) != 1 || !contains(step.SynthesizedResults[0].Content, "mcp_approval 'deny'") {
 		t.Errorf("synthesized results = %+v, want mcp_approval denial", step.SynthesizedResults)
 	}
 }
 
-// TestApprovalMiddleware_MCPAskIndependentOfGlobalMode pins that
-// mcp_approval "ask" prompts even when the global approval mode is
-// "allow", and honours the user's answer.
-func TestApprovalMiddleware_MCPAskIndependentOfGlobalMode(t *testing.T) {
+// TestApprovalMiddleware_MCPAskPrompts pins that mcp_approval "ask" prompts
+// and honours the user's answer, one call at a time.
+func TestApprovalMiddleware_MCPAskPrompts(t *testing.T) {
 	asked := 0
 	m := &ApprovalMiddleware{
-		mode:      modeAllow,
 		authorize: func(name, args string) Decision { return Decision{Gate: GateAsk} },
 		approve:   func(_ context.Context, _ string, name, args string) bool { asked++; return asked == 1 },
 		emitDeny:  func(name, args, errMsg string) {},
@@ -175,7 +172,7 @@ func TestApprovalMiddleware_MCPAskIndependentOfGlobalMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	if asked != 2 {
-		t.Errorf("approve invoked %d times, want 2 (GateAsk prompts under global allow)", asked)
+		t.Errorf("approve invoked %d times, want 2 (GateAsk always prompts)", asked)
 	}
 	if len(msg.ToolCalls) != 1 || msg.ToolCalls[0].Function.Name != "mcp_one" {
 		t.Errorf("surviving calls = %+v, want only the approved mcp_one", msg.ToolCalls)
@@ -186,7 +183,7 @@ func TestApprovalMiddleware_MCPAskIndependentOfGlobalMode(t *testing.T) {
 }
 
 func TestApprovalMiddleware_NilAuthorizeIsInert(t *testing.T) {
-	m := &ApprovalMiddleware{mode: modeDeny}
+	m := &ApprovalMiddleware{}
 	msg := &types.Message{ToolCalls: []types.ToolCall{{ID: "1"}}}
 	if _, err := m.PostModel(context.Background(), msg, &Step{}); err != nil {
 		t.Fatal(err)
@@ -196,13 +193,12 @@ func TestApprovalMiddleware_NilAuthorizeIsInert(t *testing.T) {
 	}
 }
 
-// TestApprovalMiddleware_ModeWithheldNamesTheMode pins that a plan-mode denial
+// TestApprovalMiddleware_WithheldNamesTheMode pins that a plan-mode denial
 // does not claim an MCP origin policy caused it. The two are different
 // promises, and the false cause sent callers to fix a policy they do not
 // control (review finding).
-func TestApprovalMiddleware_ModeWithheldNamesTheMode(t *testing.T) {
+func TestApprovalMiddleware_WithheldNamesTheMode(t *testing.T) {
 	m := &ApprovalMiddleware{
-		mode: modeAllow,
 		authorize: func(name, args string) Decision {
 			return Decision{Gate: GateWithheld, Origin: OriginModeFloor}
 		},
@@ -239,7 +235,6 @@ func TestApprovalMiddleware_ModeWithheldNamesTheMode(t *testing.T) {
 // have set. The middleware now takes the wording from the decision's origin.
 func TestApprovalMiddleware_RuleDenyNamesTheRule(t *testing.T) {
 	m := &ApprovalMiddleware{
-		mode: modeAllow,
 		authorize: func(name, args string) Decision {
 			return Decision{Gate: GateDeny, Origin: OriginRuleset, Reason: "permission rule: deny"}
 		},

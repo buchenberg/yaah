@@ -64,8 +64,8 @@ func TestToPipelineConfig_ApprovalHooksWired(t *testing.T) {
 	if cfg.ApprovalAuthorize == nil || cfg.ApprovalApprove == nil || cfg.ApprovalEmitDeny == nil {
 		t.Fatal("approval callbacks not wired into PipelineConfig")
 	}
-	if got := cfg.ApprovalAuthorize("bash", "{}").Gate; got != pipeline.GateGlobal {
-		t.Errorf("authorize should flag bash (implements DangerClassifier); got %v", got)
+	if got := cfg.ApprovalAuthorize("bash", "{}").Gate; got != pipeline.GateAsk {
+		t.Errorf("authorize should flag bash (implements DangerClassifier) as asking under the default approval posture; got %v", got)
 	}
 	if got := cfg.ApprovalAuthorize("read", "{}").Gate; got != pipeline.GatePass {
 		t.Errorf("authorize should pass read; got %v", got)

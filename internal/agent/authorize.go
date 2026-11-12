@@ -14,9 +14,9 @@ import (
 //   - The approval middleware (pipeline.ApprovalMiddleware, wired from
 //     Loop.toPipelineConfig) consumes the gate axis: Gate, Origin, Reason.
 //   - The always-on dispatch gate (admitTool) consumes the whole decision:
-//     the admission axis for the tool level, the gate axis for plan mode's
-//     withholding, and the recorded ruleset match for the deny/ask rules it
-//     must enforce on its own.
+//     the admission axis for the tool level, and the gate axis for every
+//     terminal verdict — plan mode's withholding and a posture or ruleset
+//     deny — so none of them depends on the optional middleware running.
 //
 // Neither consumer re-derives a policy: the ruleset is walked once here, the
 // danger classification runs once here, and the posture is derived once per
@@ -31,8 +31,10 @@ func (l *Loop) Authorize(name, args string) pipeline.Decision {
 	d := pipeline.Decision{Gate: pipeline.GatePass, Admitted: true}
 
 	// The ruleset resolution is a fact about the call rather than a stage
-	// verdict: record it once, so the MCP ceiling below and the dispatch gate
-	// read the same match instead of walking the ruleset twice.
+	// verdict: record it once, so the gate evaluator below reads the same
+	// match instead of walking the ruleset twice. It stays the raw user-ruleset
+	// fact even when a posture is what actually decided — provenance must not
+	// claim a rule the user did not write.
 	d.Resource = permissions.ResourceFor(name, args)
 	if effect, matched := l.Config.Permissions.Match(name, d.Resource); matched {
 		d.RuleMatched, d.RuleEffect = true, effect
@@ -73,43 +75,38 @@ func (l *Loop) allowsTool(name string) bool {
 }
 
 // authorizeGate fills in the gate axis of d: the stages that decide whether
-// the call proceeds, prompts, or is stripped. They run in the order the
-// parity plan (W5.3) pins, each able to narrow but none able to widen the one
-// before it:
+// the call proceeds, prompts, or is stripped.
+//
+// It is ONE evaluator over two inputs — the posture the call's class derives
+// from config and the user ruleset's effect on the call — and it runs in the
+// order the parity plan (W5.3) pins:
 //
 //  1. The mode floor FIRST: in read-only mode a mutating call is withheld
 //     before any policy is consulted. Nothing below can re-enable it — an
-//     allow rule, an MCP posture, and the global approval mode all defer to
-//     the mode's own promise, which is why this is GateWithheld and not
-//     GateDeny or GateGlobal.
-//  2. The MCP origin policy NEXT: MCP-served tools are registered as
-//     *mcp.MCPTool wrappers that cannot implement tools.DangerClassifier
-//     (they are remote), so the registry path below would return GatePass for
-//     them and fail open. The mcp_approval posture applies regardless of
-//     registry presence and independently of the global approval mode
-//     (review finding S3). The ruleset still narrows an MCP decision — a deny
-//     rule naming an MCP tool fires — but it can never widen one: the
-//     posture's deny is final and its ask stands even under an allow rule.
-//  3. The permission ruleset: the last matching rule's verdict wins. deny
-//     strips (GateDeny, not approvable), ask routes through the approval
-//     pipeline (GateAsk), and allow only falls through — it suppresses
-//     nothing and never bypasses the danger classification below, so "allow"
-//     cannot sneak a dangerous call past the global approval posture.
-//  4. The danger classification LAST: registered tools with a
-//     DangerClassifier defer to it; alwaysDangerous names gate even when not
-//     registered on this platform. The call then defers to the global
-//     approval mode — GateGlobal is the only verdict left, since the mode
-//     floor above already took the read-only case.
+//     allow rule, an MCP posture, and the global approval posture all defer to
+//     the mode's own promise, which is why this verdict is GateWithheld rather
+//     than a deny that names a policy the user controls.
+//  2. The posture effect: MCP-served tools are registered as *mcp.MCPTool
+//     wrappers that cannot implement tools.DangerClassifier (they are remote),
+//     so danger classification would clear them and the evaluator would fail
+//     open. They therefore answer to the mcp_approval posture, which applies
+//     regardless of registry presence and independently of the global approval
+//     posture (review finding S3). A dangerous built-in call answers to the
+//     global `approval` posture; a safe non-MCP call answers to neither, so no
+//     posture can ever block it.
+//  3. The user ruleset effect, resolved once in Authorize and recorded on the
+//     decision, is the second operand.
+//  4. The verdict is the STRICTER of the two, Deny > Ask > Allow
+//     (permissions.Stricter). That one comparison is what the retired
+//     per-origin branches were approximating: a rule narrows a posture and
+//     never widens it, a posture deny stands under an allow rule, and
+//     `approval: allow` passes a dangerous call only because the posture
+//     itself is allow — an allow rule cannot produce that verdict ("allow
+//     suppresses a veto; it does not pre-approve").
 //
-// Stages 1 and 2 run floor-then-posture, not the historical
-// posture-then-floor, because the floor has to be absolute for both
-// consumers of this decision. The only call the two orders disagree about is
-// one that is MCP-origin AND mutating AND in read-only mode: a name collision
-// between an MCP server's tool and a built-in inspection tool that classifies
-// per call (git). The old split let the middleware report the posture while
-// dispatch withheld the same call; the refusal and its wording were identical
-// either way, so nothing observable changes except that one decision now
-// stands for both layers.
+// Provenance follows the operand that decided: a deny/ask equal to the user
+// rule's own effect is the ruleset's, otherwise it is the posture's (the MCP
+// posture for an MCP-origin call, the global approval posture otherwise).
 func (l *Loop) authorizeGate(name, args string, d *pipeline.Decision) {
 	if l.Config.ToolsLevel == ReadOnlyTools && l.dangerousCall(name, args) {
 		d.Gate = pipeline.GateWithheld
@@ -117,81 +114,69 @@ func (l *Loop) authorizeGate(name, args string, d *pipeline.Decision) {
 		d.Reason = fmt.Sprintf("%q mutates and the read-only tool level withholds mutating calls", name)
 		return
 	}
-	if l.Config.MCPToolNames[name] {
-		l.authorizeMCP(name, d)
-		return
-	}
-	if applyRuleset(name, d) {
-		return
-	}
-	if l.dangerousCall(name, args) {
-		d.Gate = pipeline.GateGlobal
-		d.Origin = pipeline.OriginDanger
-		d.Reason = fmt.Sprintf("%q mutates, so the global approval mode decides", name)
-	}
-}
 
-// authorizeMCP fills in the gate axis for a policy-gated MCP call. The
-// mcp_approval posture is the ceiling for what the ruleset may narrow to: an
-// allow posture falls through to the shared narrowing unchanged, a deny
-// posture is final (no later rule can widen it), and the ask posture stands
-// unless the ruleset tightens it. The shared narrowing is the same ruleset
-// resolution the non-MCP path uses, so the two paths cannot disagree about
-// what a matching rule means.
-func (l *Loop) authorizeMCP(name string, d *pipeline.Decision) {
-	p := l.posture()
-	if p.mcpDeny {
-		// The per-origin policy denies; no rule can widen it.
-		d.Gate = pipeline.GateDeny
-		d.Origin = pipeline.OriginMCPPosture
-		d.Reason = `mcp_approval "deny" denies MCP-origin calls and no rule can widen it`
-		return
-	}
-	if applyRuleset(name, d) {
-		return
-	}
-	d.Gate = p.mcpDefault()
-	d.Origin = pipeline.OriginMCPPosture
-	if d.Gate == pipeline.GatePass {
-		d.Reason = `mcp_approval "allow" passes MCP-origin calls no rule narrows`
-	} else {
-		d.Reason = `mcp_approval "ask" (or unset) gates MCP-origin calls`
-	}
-}
+	isMCP := l.Config.MCPToolNames[name]
+	isDanger := l.dangerousCall(name, args)
 
-// applyRuleset resolves the call's recorded ruleset match into the decision,
-// reporting whether it was final. deny and ask are final for this stage;
-// allow and no-match fall through, which is the whole meaning of "allow
-// suppresses nothing".
-func applyRuleset(name string, d *pipeline.Decision) bool {
-	if !d.RuleMatched {
-		return false
+	// The posture the call's class derives. A safe non-MCP call has none, and
+	// "no posture" is Allow: nothing of the configuration's own making gates it.
+	postureEffect := permissions.Allow
+	switch {
+	case isMCP:
+		postureEffect = l.posture().mcpEffect()
+	case isDanger:
+		postureEffect = l.posture().approvalEffect()
 	}
-	switch d.RuleEffect {
+
+	// The user's own say. An unmatched call carries no constraint, which is
+	// Allow and leaves the posture's verdict untouched.
+	userEffect := permissions.Allow
+	if d.RuleMatched {
+		userEffect = d.RuleEffect
+	}
+
+	final := permissions.Stricter(postureEffect, userEffect)
+	switch final {
 	case permissions.Deny:
 		d.Gate = pipeline.GateDeny
 	case permissions.Ask:
 		d.Gate = pipeline.GateAsk
-	default: // permissions.Allow: fall through to the stage below.
-		return false
+	default: // permissions.Allow: nothing narrowed the call.
+		return
 	}
-	d.Origin = pipeline.OriginRuleset
-	if d.Resource == "" {
-		d.Reason = fmt.Sprintf("permission rule: the last matching rule is %q for tool %q", d.RuleEffect, name)
-	} else {
-		d.Reason = fmt.Sprintf("permission rule: the last matching rule is %q for %q", d.RuleEffect, d.Resource)
+
+	if d.RuleMatched && d.RuleEffect == final {
+		d.Origin = pipeline.OriginRuleset
+		if d.Resource == "" {
+			d.Reason = fmt.Sprintf("permission rule: the last matching rule is %q for tool %q", final, name)
+		} else {
+			d.Reason = fmt.Sprintf("permission rule: the last matching rule is %q for %q", final, d.Resource)
+		}
+		return
 	}
-	return true
+	if isMCP {
+		d.Origin = pipeline.OriginMCPPosture
+		if final == permissions.Deny {
+			d.Reason = `mcp_approval "deny" denies MCP-origin calls and no rule can widen it`
+		} else {
+			d.Reason = `mcp_approval "ask" (or unset) gates MCP-origin calls`
+		}
+		return
+	}
+	d.Origin = pipeline.OriginDanger
+	d.Reason = fmt.Sprintf("%q mutates, so the approval mode %q decides", name, final)
 }
 
 // admitTool is the always-on dispatch gate: the second consumer of the
 // Authorize decision, and the one that cannot be switched off. The approval
 // middleware runs the gate axis, but that middleware is optional
-// (middleware.disabled: [approval]) and a mode whose promise is "mutating
-// actions are withheld" must not be switchable off by configuration. Dispatch
-// adds the admission axis (the tool level, name-keyed) on top, so nothing it
-// withholds is ever admitted while a gate-passed call can still be refused at
-// the tool level.
+// (middleware.disabled: [approval]) and absent entirely from a sub-agent loop,
+// so every terminal verdict must hold here too: a mode whose promise is
+// "mutating actions are withheld", a posture that denies, and a rule that
+// denies must not be switchable off by configuration. Dispatch adds the
+// admission axis (the tool level, name-keyed) on top, so nothing it withholds
+// is ever admitted while a gate-passed call can still be refused at the tool
+// level.
 //
 // The verdict is shared; the wording is per layer. This gate runs the
 // admission axis first, so in read-only mode a name the level excludes is
@@ -209,25 +194,31 @@ func (l *Loop) admitTool(name, args string) (bool, error) {
 	if d.Withheld() {
 		return false, fmt.Errorf("%s", pipeline.WithheldReason(name))
 	}
-	// Ruleset deny is enforced here as well as in the approval middleware
-	// because that middleware is optional (middleware.disabled): a rule that
-	// says deny must hold even when nothing can ask.
+	// Every terminal gate verdict is enforced here, not only in the approval
+	// middleware, because dispatch is the layer that cannot be disabled.
 	//
-	// Ruleset ask is deliberately NOT enforced here for an orchestrator loop
-	// — dispatch has no way to prompt, and an ask that silently denied would
+	// GateDeny is final whatever produced it: a user rule, the mcp_approval
+	// posture, or the global approval posture being "deny". Leaving the posture
+	// halves to the middleware made `mcp_approval: deny` a no-op whenever the
+	// approval middleware was disabled or absent (every sub-agent loop), which
+	// is the bug this gate closes. The wording comes from the decision's
+	// origin, so a posture denial never reads as a rule the user wrote.
+	//
+	// GateAsk is deliberately NOT enforced here for an orchestrator loop —
+	// dispatch has no way to prompt, and an ask that silently denied would
 	// break the contract that asking is the user's choice; it requires the
 	// approval pipeline (on by default). A SUB-AGENT loop is the opposite
 	// case, and the reason is structural rather than a preference: its
 	// pipeline never installs the approval middleware (see
-	// pipeline.subAgentPipelineNames) and nobody is attached to the run, so
-	// an ask rule has no enforcement point. Passing the call through turned a
-	// declared "ask" boundary into a silent allow — the user's security
-	// intent, dropped without a trace. Deny it instead, with the distinct
-	// reason that names the rule and the missing prompt.
+	// pipeline.subAgentPipelineNames) and nobody is attached to the run, so an
+	// ask has no enforcement point. Passing the call through turned a declared
+	// "ask" boundary into a silent allow — the user's security intent, dropped
+	// without a trace. Deny it instead, with the distinct reason that names the
+	// boundary and the missing prompt.
 	switch {
-	case d.RuleDenies():
-		return false, fmt.Errorf("%s", pipeline.RuleDenyReason(name, d.Resource))
-	case d.RuleAsks() && l.Config.IsSubAgent:
+	case d.Gate == pipeline.GateDeny:
+		return false, fmt.Errorf("%s", d.StripReason(name))
+	case d.Gate == pipeline.GateAsk && l.Config.IsSubAgent:
 		return false, fmt.Errorf("%s", pipeline.SubAgentAskReason(name, d.Resource))
 	}
 	return true, nil

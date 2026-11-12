@@ -32,16 +32,13 @@ type PipelineConfig struct {
 	// keeping steer→compaction knowledge out of the steer middleware.
 	SteerDrain DrainFunc
 
-	ApprovalMode string
-
 	// Approval callbacks injected by the composition site. authorize
 	// returns the one authorization decision for a call (the same value
-	// the always-on dispatch gate consumes in package agent), so
-	// origin-specific policies like mcp_approval apply even when the
-	// global ApprovalMode would not gate them and a denial can name the
-	// stage that decided; approve prompts the user; emitDeny fires hook
-	// events for stripped calls. When authorize is nil the approval
-	// middleware is inert regardless of mode.
+	// the always-on dispatch gate consumes in package agent), so every
+	// policy — the global `approval` posture, mcp_approval, the mode floor,
+	// and the user ruleset — is already resolved into the gate it reports;
+	// approve prompts the user; emitDeny fires hook events for stripped
+	// calls. When authorize is nil the approval middleware is inert.
 	ApprovalAuthorize func(name, args string) Decision
 	ApprovalApprove   func(ctx context.Context, callID, name, args string) bool
 	ApprovalEmitDeny  func(name, args, errMsg string)
@@ -202,7 +199,6 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 	},
 	"approval": func(cfg PipelineConfig) Middleware {
 		return &ApprovalMiddleware{
-			mode:      resolveApprovalMode(cfg.ApprovalMode),
 			authorize: cfg.ApprovalAuthorize,
 			approve:   cfg.ApprovalApprove,
 			emitDeny:  cfg.ApprovalEmitDeny,
@@ -320,8 +316,9 @@ var defaultPipelineNames = []string{
 //   - followup: orchestrator REPL channel, sub-agents never receive it
 //   - approval: a sub-agent has no approval bridge (no user is attached to
 //     the dispatch), so the middleware could only ever ask an unanswerable
-//     question. The dispatch gate (agent.Loop.admitTool) therefore refuses an
-//     ask rule outright instead of letting it through as an allow
+//     question. The dispatch gate (agent.Loop.admitTool) therefore refuses
+//     every terminal verdict outright — a deny from any posture or rule, and
+//     an ask — instead of letting an ask through as an allow.
 //   - compaction: sub-agents use CtxMgr pruning internally, not pipeline compaction
 //   - loop_detection: redundant with MaxLoopCycles/MaxToolTurns/WrapUpThreshold/ErrStuckChild
 //   - soft_prune: CtxMgr.EnsurePruner() already handles context for short-lived loops

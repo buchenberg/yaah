@@ -7,30 +7,29 @@ import (
 	"github.com/buchenberg/yaah/internal/types"
 )
 
-// GateDecision is the approval classification for a tool call. It
-// decouples origin-specific policies (e.g. MCP tools) from the global
-// ApprovalMode so the per-origin policy cannot be downgraded by it
-// (review finding S3).
+// GateDecision is the approval classification for a tool call. It is the
+// verdict of the one authorization evaluator (agent.Loop.Authorize), which
+// folds every origin's policy — the mode floor, the global `approval` posture,
+// the mcp_approval posture, and the user ruleset — into a single answer, so no
+// origin-specific policy can be downgraded by another (review finding S3).
 type GateDecision int
 
 const (
 	// GatePass never gates the call.
 	GatePass GateDecision = iota
-	// GateAsk always prompts the user, regardless of the global
-	// approval mode (MCP "ask" policy).
+	// GateAsk always prompts the user: a rule asks, a posture asks, or an MCP
+	// "ask" policy applies. The prompt is the only thing that can pass it.
 	GateAsk
-	// GateDeny always strips the call, regardless of the global
-	// approval mode (MCP "deny" policy).
+	// GateDeny always strips the call, regardless of the approval middleware:
+	// a rule denies, the mcp_approval posture denies, or the global approval
+	// posture is "deny".
 	GateDeny
-	// GateGlobal defers to the global ApprovalMode: "ask" prompts,
-	// "deny" strips, anything else passes (built-in dangerous tools).
-	GateGlobal
 	// GateWithheld denies the call because the current mode withholds it
-	// (plan mode's inspection set), independent of the global approval
-	// mode. It is a distinct decision from GateDeny so the denial names the
-	// cause that actually applied: an MCP origin policy and a mode-level
-	// withholding are different promises, and reporting the first when the
-	// second happened sends the caller to fix a policy it does not control.
+	// (plan mode's inspection set), independent of every posture and rule. It
+	// is a distinct decision from GateDeny so the denial names the cause that
+	// actually applied: an origin policy and a mode-level withholding are
+	// different promises, and reporting the first when the second happened
+	// sends the caller to fix a policy it does not control.
 	GateWithheld
 )
 
@@ -64,38 +63,6 @@ func SubAgentAskReason(tool, resource string) string {
 	return fmt.Sprintf("tool %q is refused for %q: its permission rule is `ask`, %s", tool, resource, tail)
 }
 
-// approvalMode is the resolved global posture the middleware enforces at
-// the GateGlobal stage. It is the typed form of the config's `approval`
-// scalar, resolved once at composition (resolveApprovalMode) so the
-// middleware branches on a settled value rather than re-interpreting the
-// raw string on every call.
-type approvalMode int
-
-const (
-	// modeAsk is the unset and explicit-"ask" posture: a GateGlobal call
-	// routes through the approve bridge. It is the zero value — asking
-	// is the conservative floor.
-	modeAsk approvalMode = iota
-	// modeAllow passes GateGlobal calls ungated.
-	modeAllow
-	// modeDeny refuses GateGlobal calls outright, naming the posture.
-	modeDeny
-)
-
-// resolveApprovalMode maps the raw approval scalar onto the typed posture.
-// Unknown values resolve to modeAsk: a posture word the code does not
-// recognize must never widen what the user configured.
-func resolveApprovalMode(raw string) approvalMode {
-	switch raw {
-	case "allow":
-		return modeAllow
-	case "deny":
-		return modeDeny
-	default: // "ask" and unset
-		return modeAsk
-	}
-}
-
 // ApprovalMiddleware enforces the tool approval policy before dispatch:
 // denied and withheld calls are stripped from the model's batch and every
 // tool_call_id is answered with a synthesized result.
@@ -115,12 +82,11 @@ func resolveApprovalMode(raw string) approvalMode {
 // the provider invariant that every tool_call_id on an assistant message
 // receives a result.
 type ApprovalMiddleware struct {
-	mode approvalMode
 	// authorize reports the authorization decision for a call. When nil the
-	// middleware is inert regardless of mode.
+	// middleware is inert.
 	authorize func(name, args string) Decision
-	// approve asks the user (or ApproveFn); consulted for GateAsk and
-	// GateGlobal under "ask" mode.
+	// approve asks the user (or ApproveFn); consulted for GateAsk, the only
+	// verdict a prompt can change.
 	approve func(ctx context.Context, callID, name, args string) bool
 	// emitDeny fires the ToolStart/ToolEnd hook pair for a stripped call.
 	emitDeny func(name, args, errMsg string)
@@ -156,27 +122,13 @@ func (m *ApprovalMiddleware) PostModel(ctx context.Context, msg *types.Message, 
 			// is not reported as an mcp_approval denial.
 			errMsg = "error: " + decision.StripReason(name)
 		case GateAsk:
-			// Origin policy asks independent of the global mode.
+			// Ask is the only verdict the prompt can change: a rule, a posture,
+			// or the MCP policy asked, and the answer decides.
 			if m.approve != nil && m.approve(ctx, tc.ID, name, args) {
 				filtered = append(filtered, tc)
 				continue
 			}
 			errMsg = fmt.Sprintf("error: tool %q was denied by user", name)
-		case GateGlobal:
-			switch m.mode {
-			case modeDeny:
-				errMsg = fmt.Sprintf("error: tool %q requires approval but approval mode is 'deny'", name)
-			case modeAsk:
-				if m.approve != nil && m.approve(ctx, tc.ID, name, args) {
-					filtered = append(filtered, tc)
-					continue
-				}
-				errMsg = fmt.Sprintf("error: tool %q was denied by user", name)
-			default:
-				// modeAllow: global "allow"/unset — ungated.
-				filtered = append(filtered, tc)
-				continue
-			}
 		}
 		m.emitDeny(name, args, errMsg)
 		step.SynthesizedResults = append(step.SynthesizedResults,
