@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.166.2](https://github.com/buchenberg/yaah/compare/v0.166.1...v0.166.2) (2026-11-12)
+
+
+### Code Refactoring
+
+* **permissions:** address approval-posture review comments ([27a3933](https://github.com/buchenberg/yaah/commit/27a39339a3bf6047331341ddba95c070a2e82b20))
+* **permissions:** derive the approval posture into one value object ([afcc344](https://github.com/buchenberg/yaah/commit/afcc3440a51985549929735be73b50b696481898))
+* **permissions:** extract mcpGate from classifyGate ([d41a3cb](https://github.com/buchenberg/yaah/commit/d41a3cbb60842ef7d7925983b9f1f77ed2dd3227))
+* **permissions:** fold approval posture into derived values (bead 133) ([e584f11](https://github.com/buchenberg/yaah/commit/e584f117b79d0a3060e64dabb24a0e203b2d13b2))
+* **pipeline:** typed approval posture on the middleware ([d56e0e7](https://github.com/buchenberg/yaah/commit/d56e0e7bd77577f0ee04c12c910f5db67704babd))
+
+
+### Tests
+
+* **permissions:** posture conformance matrix for the gate evaluator ([eca0a9f](https://github.com/buchenberg/yaah/commit/eca0a9f55b1b4cd2d935cb489c8e56fa05012724))
+
 ## [0.166.1](https://github.com/buchenberg/yaah/compare/v0.166.0...v0.166.1) (2026-11-11)
 
 
