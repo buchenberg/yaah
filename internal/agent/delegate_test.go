@@ -41,17 +41,25 @@ func TestDelegateToolTimeoutReturnsStructuredResult(t *testing.T) {
 		t.Fatalf("expected structured result on timeout, got error: %v", err)
 	}
 	var parsed struct {
-		Error   string `json:"error"`
-		Partial string `json:"partial"`
+		Status     string `json:"status"`
+		StopReason string `json:"stop_reason"`
+		Result     string `json:"result"`
+		Partial    bool   `json:"partial"`
 	}
 	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
 		t.Fatalf("result not valid JSON: %v (raw: %s)", err, result)
 	}
-	if parsed.Error != "timed out" {
-		t.Errorf("error = %q, want \"timed out\"", parsed.Error)
+	if parsed.Status != "error" {
+		t.Errorf("status = %q, want \"error\"", parsed.Status)
 	}
-	if parsed.Partial != "partial output" {
-		t.Errorf("partial = %q, want \"partial output\"", parsed.Partial)
+	if parsed.StopReason != "timeout" {
+		t.Errorf("stop_reason = %q, want \"timeout\"", parsed.StopReason)
+	}
+	if parsed.Result != "partial output" {
+		t.Errorf("result = %q, want \"partial output\"", parsed.Result)
+	}
+	if !parsed.Partial {
+		t.Errorf("partial = false, want true")
 	}
 }
 
@@ -70,12 +78,12 @@ func TestDelegateToolPerCallTimeoutOverridesDefault(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var parsed struct {
-		Error   string `json:"error"`
-		Timeout string `json:"timeout"`
+		StopReason string `json:"stop_reason"`
+		Timeout    string `json:"timeout"`
 	}
 	json.Unmarshal([]byte(result), &parsed)
-	if parsed.Error != "timed out" {
-		t.Errorf("error = %q, want \"timed out\"", parsed.Error)
+	if parsed.StopReason != "timeout" {
+		t.Errorf("stop_reason = %q, want \"timeout\"", parsed.StopReason)
 	}
 	if parsed.Timeout != "1s" {
 		t.Errorf("timeout = %q, want \"1s\"", parsed.Timeout)
@@ -148,15 +156,23 @@ func TestDelegateToolCancellationReturnsStructuredResult(t *testing.T) {
 		t.Fatalf("expected structured result on cancel, got error: %v", err)
 	}
 	var parsed struct {
-		Error   string `json:"error"`
-		Partial string `json:"partial"`
+		Status     string `json:"status"`
+		StopReason string `json:"stop_reason"`
+		Result     string `json:"result"`
+		Partial    bool   `json:"partial"`
 	}
 	json.Unmarshal([]byte(result), &parsed)
-	if parsed.Error != "cancelled" {
-		t.Errorf("error = %q, want \"cancelled\"", parsed.Error)
+	if parsed.Status != "error" {
+		t.Errorf("status = %q, want \"error\"", parsed.Status)
 	}
-	if parsed.Partial != "partial" {
-		t.Errorf("partial = %q, want \"partial\"", parsed.Partial)
+	if parsed.StopReason != "canceled" {
+		t.Errorf("stop_reason = %q, want \"canceled\"", parsed.StopReason)
+	}
+	if parsed.Result != "partial" {
+		t.Errorf("result = %q, want \"partial\"", parsed.Result)
+	}
+	if !parsed.Partial {
+		t.Errorf("partial = false, want true")
 	}
 }
 
@@ -471,7 +487,7 @@ func TestLoop_stuckChildPreservesPartial(t *testing.T) {
 	if !strings.Contains(stuckMsg, "half-finished review notes") {
 		t.Errorf("stuck message dropped the partial output: %q", stuckMsg)
 	}
-	if !strings.Contains(stuckMsg, `"error":"cancelled"`) {
+	if !strings.Contains(stuckMsg, `"stop_reason":"canceled"`) {
 		t.Errorf("stuck message dropped the structured task result: %q", stuckMsg)
 	}
 }
@@ -594,7 +610,7 @@ func TestLoop_backgroundSubAgentSurvivesDispatchingTurn(t *testing.T) {
 
 	var mu sync.Mutex
 	var delivered string
-	mgr.Deliver = func(role, desc, res string, err error) {
+	mgr.Deliver = func(job jobs.BackgroundJobStatus, res string, err error) {
 		mu.Lock()
 		delivered = res
 		mu.Unlock()

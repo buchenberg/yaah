@@ -201,11 +201,50 @@ type proposalEnvelope struct {
 	// Strategy records the apply strategy used by a settlement.
 	Strategy string `json:"strategy,omitempty"`
 	// StopReason is why a dispatch/continuation run ended: completed,
-	// turn_budget, iteration_budget, max_tokens, timeout, halted, canceled, or
-	// provider_error. It turns the continue/fork/redispatch decision from prose
-	// inference into a typed signal.
+	// turn_budget, iteration_budget, max_tokens, timeout, stuck, halted,
+	// canceled, or provider_error. It turns the continue/fork/redispatch
+	// decision from prose inference into a typed signal.
 	StopReason string   `json:"stop_reason,omitempty"`
 	Next       []string `json:"next,omitempty"`
+
+	// ---- Universal dispatch-completion fields (yaah-was9.1) -------------
+	// The fields below make this one envelope serve every dispatch lane
+	// instead of only the proposal lane. They are additive and omitempty, so
+	// the settlement vocabulary the proposal tool reads (status, proposal_id,
+	// files, diff, next, stop_reason, error, result) is unchanged.
+	//
+	// DispatchID is the per-dispatch identifier the conflict tracker already
+	// mints ("label#n"), so a result envelope and the conflict evidence name
+	// the same dispatch.
+	DispatchID string `json:"dispatch_id,omitempty"`
+	// Role is the sub-agent role that ran.
+	Role string `json:"role,omitempty"`
+	// Lane is the dispatch lane that produced this result: proposal, report,
+	// or shared.
+	Lane string `json:"lane,omitempty"`
+	// Model is the model the runner resolved for the child; absent when the
+	// lane never learned it.
+	Model string `json:"model,omitempty"`
+	// DurationMs is the wall-clock span of the dispatch.
+	DurationMs int64 `json:"duration_ms,omitempty"`
+	// Timeout is the effective deadline the dispatch ran under, as a
+	// duration string. Absent when the role/config resolved no deadline.
+	Timeout string `json:"timeout,omitempty"`
+	// Contract is RESERVED for yaah-was9.2 (the per-role completion
+	// contract). It is always absent today.
+	Contract *ResultContract `json:"contract,omitempty"`
+	// Warnings is the typed list of caveats: world degradations, teardown
+	// notes. Warning above keeps the first of them as a single line.
+	Warnings []string `json:"warnings,omitempty"`
+	// Partial reports that result is what the run produced before it stopped,
+	// not a finished deliverable.
+	Partial bool `json:"partial,omitempty"`
+	// Artifacts is the nested view of the work a dispatch produced. The flat
+	// proposal_id/files/diff above stay authoritative for settlement.
+	Artifacts *ResultArtifacts `json:"artifacts,omitempty"`
+	// Recovery says whether re-dispatching can make progress and what to do
+	// next. It is derived from stop_reason, never from prose.
+	Recovery *ResultRecovery `json:"recovery,omitempty"`
 }
 
 // proposalVerbs is the settlement vocabulary advertised to the orchestrator,

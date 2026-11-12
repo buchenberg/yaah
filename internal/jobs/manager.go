@@ -36,6 +36,35 @@ type BackgroundJobStatus struct {
 	StillRunning bool   `json:"still_running,omitempty"`
 	DurationMs   int64  `json:"duration_ms,omitempty"`
 	Error        string `json:"error,omitempty"`
+	// World is the resolved dispatch world ("worktree", "container", or
+	// "shared") once the runner has reported it; empty while unresolved.
+	World string `json:"world,omitempty"`
+	// Result is the bounded runner output of a terminal job (yaah-was9.1).
+	// A status/wait read sees the head of the result; the full text is
+	// reachable through Result(id). ResultAvailable is true when a terminal
+	// job produced a non-empty result, so a caller can tell "empty output"
+	// from "no result yet".
+	Result          string `json:"result,omitempty"`
+	ResultAvailable bool   `json:"result_available,omitempty"`
+}
+
+// maxStatusResultBytes bounds the result text a BackgroundJobStatus carries.
+// The full text stays reachable through Result(id); the snapshot is a signal,
+// not the payload (yaah-was9.1).
+const maxStatusResultBytes = 4000
+
+// boundResult truncates a runner result to the status snapshot's bound on a
+// UTF-8 boundary, marking the cut so a truncated read is never mistaken for
+// the whole answer.
+func boundResult(s string) string {
+	if len(s) <= maxStatusResultBytes {
+		return s
+	}
+	cut := maxStatusResultBytes
+	for cut > 0 && s[cut]&0xC0 == 0x80 {
+		cut--
+	}
+	return s[:cut] + "\n…[result truncated; full text via subagent_jobs status]"
 }
 
 // backgroundJob is the live, mutable tracking record for one background
@@ -98,6 +127,11 @@ func (j *backgroundJob) snapshot() BackgroundJobStatus {
 	if j.finished && j.err != nil {
 		s.Error = j.err.Error()
 	}
+	s.World = j.world.Resolved
+	if j.finished && j.result != "" {
+		s.Result = boundResult(j.result)
+		s.ResultAvailable = true
+	}
 	return s
 }
 
@@ -142,11 +176,12 @@ type BackgroundJobs struct {
 	// caller may set a bound).
 	maxKept int
 
-	// Deliver is called (in the completing job's goroutine) with the
-	// final result/error. Wired to push onto the follow-up channel.
+	// Deliver is called (in the completing job's goroutine) once a job
+	// reaches a terminal state, with its full snapshot and raw result text,
+	// so the caller can render the one completion envelope (yaah-was9.1).
 	// Implementations MUST be safe to call after Close (e.g. select on
 	// Done()) so a job completing during shutdown does not block forever.
-	Deliver func(role, description, result string, err error)
+	Deliver func(job BackgroundJobStatus, result string, err error)
 
 	// OnUsage attributes a completed job's token usage to a persistent
 	// accumulator (typically the session total). Session-scoped: always
@@ -459,7 +494,7 @@ func (m *BackgroundJobs) run(job *backgroundJob, jobCtx context.Context, jobCanc
 		onEnd(job.id, job.role, job.model, job.description, result, job.duration, errStr, job.worldSnapshot())
 	}
 	if m.Deliver != nil {
-		m.Deliver(job.role, job.description, result, runErr)
+		m.Deliver(job.snapshot(), result, runErr)
 	}
 
 	m.reapFinished()

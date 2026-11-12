@@ -56,6 +56,51 @@ func WriteSubAgentModel(ctx context.Context, model string) {
 	}
 }
 
+// WithSubAgentModelTap observes the sub-agent's resolved model WITHOUT
+// displacing the writeback already installed on ctx. A dispatch body that needs
+// the model for its result envelope must not simply install a pointer: the
+// agent loop's start event reads the same writeback, and shadowing it would
+// leave that event with no model. Wrapping the writer keeps both readers.
+func WithSubAgentModelTap(ctx context.Context, tap func(string)) context.Context {
+	prev, _ := ctx.Value(subAgentModelWriterKey{}).(func(string))
+	return WithSubAgentModelWriter(ctx, func(model string) {
+		if tap != nil {
+			tap(model)
+		}
+		if prev != nil {
+			prev(model)
+		}
+	})
+}
+
+// dispatchIDKey stores the per-dispatch identifier minted by the conflict
+// tracker (label#n) so the result envelope names the same dispatch the conflict
+// evidence does.
+const dispatchIDKey contextKey = "yaah-dispatch-id"
+
+// WithDispatchID records the per-dispatch identity on ctx. It lives in this
+// package rather than with the conflict tracker because the background job
+// manager must read it back when it builds a completion delivery, and jobs
+// cannot import its callers.
+func WithDispatchID(ctx context.Context, id string) context.Context {
+	if id == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, dispatchIDKey, id)
+}
+
+// DispatchIDFrom returns the dispatch identity recorded by WithDispatchID, or
+// "" when none was.
+func DispatchIDFrom(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if v, ok := ctx.Value(dispatchIDKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
 // subAgentStartKey is a context key for the start notifier the runner
 // fires once the sub-agent's provider and model are resolved, just
 // before its loop begins.
@@ -105,6 +150,21 @@ func WriteSubAgentWorld(ctx context.Context, w SubAgentWorld) {
 	if write, ok := ctx.Value(subAgentWorldWriterKey{}).(func(SubAgentWorld)); ok && write != nil {
 		write(w)
 	}
+}
+
+// WithSubAgentWorldTap observes the resolved dispatch world without displacing
+// the writeback already installed on ctx, for the same reason
+// WithSubAgentModelTap wraps rather than replaces.
+func WithSubAgentWorldTap(ctx context.Context, tap func(SubAgentWorld)) context.Context {
+	prev, _ := ctx.Value(subAgentWorldWriterKey{}).(func(SubAgentWorld))
+	return WithSubAgentWorldWriter(ctx, func(w SubAgentWorld) {
+		if tap != nil {
+			tap(w)
+		}
+		if prev != nil {
+			prev(w)
+		}
+	})
 }
 
 // SubAgentWorldFromContext returns the world last written through a pointer

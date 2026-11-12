@@ -1,10 +1,12 @@
 Manage background sub-agent jobs dispatched via `delegate` with `background: true`. Provides `action: list` (all jobs), `status` (details for one `job_id`), `cancel` (abort a running job), and `wait` (block until a job finishes or `timeout_seconds` elapses — default 60s, max 300s). Use `list` first to discover job ids and pending count.
 
 A job snapshot carries `id`, `role`, `description`, `model` when known,
-`status`, `still_running` when true, `duration_ms` when finished, and `error`
-when it failed. `list` returns `jobs` and `pending`; `status` returns one
-snapshot; `cancel` adds `cancel` and optional `notes`; `wait` adds `timed_out`,
-`interrupted`, and optional `notes`.
+`status`, `still_running` when true, `duration_ms` when finished, `error`
+when it failed, `world` once resolved, and — for a terminal job — `result`
+(the bounded head of the runner output) plus `result_available` (`true` when
+a non-empty result exists). `list` returns `jobs` and `pending`; `status`
+returns one snapshot; `cancel` adds `cancel` and optional `notes`; `wait` adds
+`timed_out`, `interrupted`, and optional `notes`.
 
 Job state is reported truthfully. A job that has not finished carries
 `still_running: true` alongside its `status`; a `wait` that hits its deadline

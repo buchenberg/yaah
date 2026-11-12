@@ -184,8 +184,8 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 		}
 	}
 
-	// Watchdog kill: task.go already converted the cancellation into a
-	// structured {"error":"cancelled","partial":...} result. Keep that
+	// Watchdog kill: delegate already converted the cancellation into a
+	// structured {"status":"error","stop_reason":"canceled",...} envelope. Keep that
 	// payload so the child's partial output survives and surface the kill
 	// classification alongside it (yaah-1ep). The verdict distinguishes a
 	// child that went silent mid-run (stuck) from one that never started
