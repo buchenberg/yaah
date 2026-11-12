@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.173.0](https://github.com/buchenberg/yaah/compare/v0.172.0...v0.173.0) (2026-11-12)
+
+
+### Features
+
+* **permissions:** saved-allow secrets carve-out, rolefile schema, config hot reload ([699172c](https://github.com/buchenberg/yaah/commit/699172c3e1bf50a87d364d4cf1fcde35eb289d81))
+* **permissions:** saved-allow secrets carve-out, rolefile schema, permission hot reload ([d0fe694](https://github.com/buchenberg/yaah/commit/d0fe694659e921d836229d547e97525de359b649))
+
+
+### Bug Fixes
+
+* **config:** keep last-known permission rules when config.yaml vanishes ([fa27da8](https://github.com/buchenberg/yaah/commit/fa27da876430e4781d3306c48b6e2b9f102a766d))
+* **permissions:** decide the saved-allow carve-out on the call, not the row ([39e6ed6](https://github.com/buchenberg/yaah/commit/39e6ed6c0428f4682a8bff7007489c13759a6eca))
+
+
+### Documentation
+
+* cover saved-allow carve-out, rolefile schema, permission hot reload ([3b24dcd](https://github.com/buchenberg/yaah/commit/3b24dcd77fa11cd27030e578c6ce3c03570d13c2))
+* **rolefile:** accept empty enum values; correct the carve-out and reload docs ([fdb87e6](https://github.com/buchenberg/yaah/commit/fdb87e6fb77a48af968aadb4b99c4698b98e3c6a))
+
 ## [0.172.0](https://github.com/buchenberg/yaah/compare/v0.171.1...v0.172.0) (2026-11-12)
 
 
