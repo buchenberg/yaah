@@ -130,6 +130,16 @@ func TestRegistry_AdmitWidensTheBelt(t *testing.T) {
 	if slices.Contains(belt.Unknown(), "mcp_list_files") {
 		t.Errorf("an admitted-but-unregistered name must not read as a typo, got Unknown() = %v", belt.Unknown())
 	}
+
+	// A padded name is known by its trimmed twin — the same one that was
+	// allowed — so whitespace alone cannot split allow from know.
+	reg.Admit("  mcp_pad  ")
+	if !belt.Allows("mcp_pad") {
+		t.Error("Admit must trim before allowing")
+	}
+	if slices.Contains(belt.Unknown(), "mcp_pad") || slices.Contains(belt.Unknown(), "  mcp_pad  ") {
+		t.Errorf("a padded admitted name must not read as a typo, got Unknown() = %v", belt.Unknown())
+	}
 }
 
 // TestRegistry_AdmitOnAllowAll: an allow-all belt ignores Admit —

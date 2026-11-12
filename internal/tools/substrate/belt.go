@@ -74,11 +74,13 @@ func (b *Belt) Admit(names ...string) {
 	if b.allowed == nil {
 		b.allowed = make(map[string]bool, len(names))
 	}
+	trimmed := make([]string, 0, len(names))
 	for _, name := range names {
 		n := strings.TrimSpace(name)
 		if n == "" {
 			continue
 		}
+		trimmed = append(trimmed, n)
 		b.allowed[n] = true
 		// A prior registration attempt may have refused the name (a
 		// retried server); admitting it now means that refusal is
@@ -93,8 +95,9 @@ func (b *Belt) Admit(names ...string) {
 	// registration never follows (a server that died between Admit and
 	// Register, a future caller breaking the contract), the name must
 	// not read as a typo in Unknown() — it is a real tool this session
-	// expected and did not get.
-	b.Know(names...)
+	// expected and did not get. Know the trimmed name — the same one
+	// allowed — or a padded caller would allow "tool" and know " tool".
+	b.Know(trimmed...)
 }
 
 // Know records a tool name the session knows about, whether or not it was
