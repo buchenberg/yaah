@@ -141,7 +141,7 @@ func (t *JSONQueryTool) doWrite(ctx context.Context, ws Workspace, filePath, pat
 
 	var rewrote bool
 	var toolErr error
-	_, err := withFileWrite(ctx, ws, filePath, func(cur []byte, _ fs.FileMode) ([]byte, error) {
+	receipt, err := withFileWrite(ctx, ws, filePath, func(cur []byte, _ fs.FileMode) ([]byte, error) {
 		if cur == nil {
 			toolErr = fmt.Errorf("json_query: %w", guardMissingRead(ctx, ws, filePath))
 			return nil, toolErr
@@ -179,7 +179,7 @@ func (t *JSONQueryTool) doWrite(ctx context.Context, ws Workspace, filePath, pat
 		return "", toolErr
 	}
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("json_query: %w", err)
 	}
 
 	var report multiResult
@@ -187,6 +187,9 @@ func (t *JSONQueryTool) doWrite(ctx context.Context, ws Workspace, filePath, pat
 	if rewrote {
 		report.donef("note: rewrote the whole file with 2-space indentation and sorted object keys")
 	}
+	// The guard's receipt is the final line: the path, the byte delta, and
+	// the digest of what is on disk now.
+	report.donef("%s", receipt.String())
 	return report.Report(fmt.Sprintf("json_query: wrote %s", filePath))
 }
 
@@ -200,7 +203,7 @@ func (t *JSONQueryTool) doDelete(ctx context.Context, ws Workspace, filePath, pa
 
 	var rewrote bool
 	var toolErr error
-	_, err := withFileWrite(ctx, ws, filePath, func(cur []byte, _ fs.FileMode) ([]byte, error) {
+	receipt, err := withFileWrite(ctx, ws, filePath, func(cur []byte, _ fs.FileMode) ([]byte, error) {
 		if cur == nil {
 			toolErr = fmt.Errorf("json_query: %w", guardMissingRead(ctx, ws, filePath))
 			return nil, toolErr
@@ -232,13 +235,15 @@ func (t *JSONQueryTool) doDelete(ctx context.Context, ws Workspace, filePath, pa
 		return "", toolErr
 	}
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("json_query: %w", err)
 	}
 
 	var report multiResult
 	if rewrote {
 		report.donef("note: rewrote the whole file with 2-space indentation and sorted object keys")
 	}
+	// Same receipt as a write: the delete's reformat is a write too.
+	report.donef("%s", receipt.String())
 	return report.Report(fmt.Sprintf("Deleted %s", path))
 }
 
@@ -483,22 +488,4 @@ func pathPrefix(parts []string, upTo int) string {
 		sb.WriteString(parts[i])
 	}
 	return sb.String()
-}
-
-// abJSONUnguarded is the A/B double for the lost-update regression: the same
-// shape as withFileWrite but a bare read → mutate → write with no lock and no
-// compare-and-swap. TEMPORARY — deleted after the A/B run.
-func abJSONUnguarded(ctx context.Context, ws Workspace, abs string, mutate func(cur []byte, mode fs.FileMode) ([]byte, error)) (FileWriteReceipt, error) {
-	cur, err := ws.ReadFile(ctx, abs)
-	if err != nil {
-		return FileWriteReceipt{}, err
-	}
-	next, err := mutate(cur, 0o644)
-	if err != nil {
-		return FileWriteReceipt{}, err
-	}
-	if err := ws.WriteFile(ctx, abs, next, 0o644); err != nil {
-		return FileWriteReceipt{}, err
-	}
-	return FileWriteReceipt{}, nil
 }

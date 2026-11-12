@@ -387,3 +387,31 @@ func TestWithFileWriteSet_ReturnsFnError(t *testing.T) {
 		t.Errorf("err = %v, want the fn error unchanged", err)
 	}
 }
+
+// TestGuardRoutedToolsImplementSelfGuardsPath pins the invariant that makes
+// the RecordingTool wrapper safe: every tool that takes the per-path lock
+// inside its own Execute must implement selfGuardingTool, or the wrapper
+// acquires the same non-reentrant lock first and the tool deadlocks on
+// itself. It was missing on PatchTool once; nothing else noticed, because a
+// deadlock needs a sub-agent dispatch to show up. A new guard-routed tool
+// belongs in this list.
+func TestGuardRoutedToolsImplementSelfGuardsPath(t *testing.T) {
+	guardRouted := []struct {
+		name string
+		tool Tool
+	}{
+		{"append", &AppendTool{}},
+		{"edit", &EditTool{}},
+		{"json_query", &JSONQueryTool{}},
+		{"patch", &PatchTool{}},
+		{"replace", &ReplaceTool{}},
+		{"write", &WriteTool{}},
+	}
+	for _, tt := range guardRouted {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, ok := tt.tool.(selfGuardingTool); !ok {
+				t.Fatalf("%s takes the per-path write guard inside Execute but does not implement selfGuardsPath: the RecordingTool wrapper would hold the same non-reentrant lock across it and deadlock", tt.name)
+			}
+		})
+	}
+}

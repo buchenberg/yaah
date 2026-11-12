@@ -49,6 +49,35 @@ func TestAppendToolRequiresExistingParent(t *testing.T) {
 	}
 }
 
+// TestAppendToolReceiptLine pins the append receipt: the success message
+// keeps its line and gains exactly one final line with the byte count
+// appended — no digest, by design (appends cannot lose each other, so a
+// post-write digest would cost a full read-back for no diagnostic gain).
+func TestAppendToolReceiptLine(t *testing.T) {
+	dir, ws := appendTailWorkspace(t)
+	tool := &AppendTool{WS: ws}
+	path := filepath.Join(dir, "ledger.jsonl")
+
+	first := `{"n":1}` + "\n" // 9 bytes
+	out, err := tool.Execute(context.Background(), fmt.Sprintf(`{"filePath":%q,"content":%q}`, path, first))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := fmt.Sprintf("Appended %d bytes to %s\nappended to %s (+%d bytes)", len(first), path, path, len(first)); out != want {
+		t.Fatalf("first append out = %q, want %q", out, want)
+	}
+
+	// A second append reports its own byte count, not the file's size.
+	second := "tail" // 4 bytes
+	out, err = tool.Execute(context.Background(), fmt.Sprintf(`{"filePath":%q,"content":%q}`, path, second))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := fmt.Sprintf("Appended %d bytes to %s\nappended to %s (+%d bytes)", len(second), path, path, len(second)); out != want {
+		t.Fatalf("second append out = %q, want %q", out, want)
+	}
+}
+
 func TestTailToolLinesAndBytes(t *testing.T) {
 	dir, ws := appendTailWorkspace(t)
 	path := filepath.Join(dir, "big.log")

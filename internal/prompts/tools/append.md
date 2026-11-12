@@ -9,6 +9,17 @@ each other's records — the guarantee is append-versus-append only. A single
 call's chunks from different writers may interleave in a sandbox, but no data
 is lost; use one call per record for a clean JSONL ledger.
 
+The call also holds the per-path write lock for its whole duration, so
+appends are serialized in-process against same-file rewrites: an append
+cannot land inside a rewrite's compare-and-swap window and make that write
+look stale. Success ends with a receipt line, `appended to <filePath>
+(+N bytes)`, naming the byte count added; the digest the other write
+receipts carry is omitted here for cost — appends cannot lose each other, so
+a post-write digest would be a full read of the file for no diagnostic gain.
+A rewrite whose file changed since it was read is refused with both digests
+(`file changed by another writer ...; re-read and retry`), leaving that file
+untouched — which is why the batching note below still stands.
+
 A rewrite of the same file — `write`, `edit`, `patch`, `replace`,
 `json_query` — reads the file and then writes it back, so its content was
 computed before a concurrent append landed: it can discard that append, or be

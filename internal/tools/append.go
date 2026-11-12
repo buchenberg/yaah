@@ -83,7 +83,15 @@ func (t *AppendTool) Execute(ctx context.Context, args string) (string, error) {
 	if err := ws.Append(ctx, params.FilePath, []byte(params.Content), 0o644); err != nil {
 		return "", fmt.Errorf("append: %w", err)
 	}
-	return fmt.Sprintf("Appended %d bytes to %s", len(params.Content), params.FilePath), nil
+	// Receipt line, with no digest on purpose. Appends cannot lose each
+	// other — the substrate's append primitive is append-atomic and the
+	// per-path lock above orders this call against in-process rewrites — so
+	// a post-write digest would cost a full read of the file for no
+	// diagnostic gain. A before -> after size pair would likewise need a
+	// stat after the append; the appended byte count is exact by
+	// construction and is all the receipt needs here.
+	return fmt.Sprintf("Appended %d bytes to %s\nappended to %s (+%d bytes)",
+		len(params.Content), params.FilePath, params.FilePath, len(params.Content)), nil
 }
 
 // selfGuardsPath marks append as taking the per-path lock inside its own

@@ -71,13 +71,14 @@ func (t *WriteTool) Execute(ctx context.Context, args string) (string, error) {
 	// guard writes against — no second stat, no window between notice and
 	// write. The notice is advisory (yaah-0fn): the destructive_file_guard
 	// warns on an overwrite, it does not refuse one.
-	if _, err := withFileWrite(ctx, ws, params.FilePath, func(cur []byte, _ fs.FileMode) ([]byte, error) {
+	receipt, err := withFileWrite(ctx, ws, params.FilePath, func(cur []byte, _ fs.FileMode) ([]byte, error) {
 		SetSupervisionMeta(ctx, types.SupervisionKeyFileExisted, cur != nil)
 		return []byte(params.Content), nil
-	}); err != nil {
+	})
+	if err != nil {
 		return "", fmt.Errorf("write: %w", err)
 	}
-	return fmt.Sprintf("Wrote %d bytes to %s", len(params.Content), params.FilePath), nil
+	return fmt.Sprintf("Wrote %d bytes to %s\n%s", len(params.Content), params.FilePath, receipt.String()), nil
 }
 
 // selfGuardsPath marks write as taking the per-path write guard inside its

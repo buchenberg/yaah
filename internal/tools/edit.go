@@ -140,7 +140,7 @@ func (t *EditTool) executeSingleEdit(ctx context.Context, ws Workspace, filePath
 	// and silently discard the loser's result.
 	var result string
 	var decision error
-	_, err := withFileWrite(ctx, ws, filePath, func(cur []byte, _ fs.FileMode) ([]byte, error) {
+	receipt, err := withFileWrite(ctx, ws, filePath, func(cur []byte, _ fs.FileMode) ([]byte, error) {
 		data, rerr := currentEditBytes(ctx, ws, filePath, cur)
 		if rerr != nil {
 			decision = rerr
@@ -218,9 +218,9 @@ func (t *EditTool) executeSingleEdit(ctx context.Context, ws Workspace, filePath
 		return "", decision
 	}
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("edit: %w", err)
 	}
-	return result, nil
+	return appendEditReceipt(result, receipt), nil
 }
 
 func (t *EditTool) executeMultiEdit(ctx context.Context, ws Workspace, filePath string, edits []editEntry) (string, error) {
@@ -229,7 +229,7 @@ func (t *EditTool) executeMultiEdit(ctx context.Context, ws Workspace, filePath 
 	// racing on the same file in one batch serialize instead of clobbering.
 	var result string
 	var decision error
-	_, err := withFileWrite(ctx, ws, filePath, func(cur []byte, _ fs.FileMode) ([]byte, error) {
+	receipt, err := withFileWrite(ctx, ws, filePath, func(cur []byte, _ fs.FileMode) ([]byte, error) {
 		data, rerr := currentEditBytes(ctx, ws, filePath, cur)
 		if rerr != nil {
 			decision = rerr
@@ -314,9 +314,21 @@ func (t *EditTool) executeMultiEdit(ctx context.Context, ws Workspace, filePath 
 		return "", decision
 	}
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("edit: %w", err)
 	}
-	return result, nil
+	return appendEditReceipt(result, receipt), nil
+}
+
+// appendEditReceipt closes a successful edit result with the write guard's
+// receipt as its final line: the path, the byte delta, and the post-write
+// digest. That line is what makes a lost update legible in the result
+// itself — "375 -> 383" immediately after "375 -> 396" is visibly
+// impossible, where a bare "edited" is not. Trailing newlines on the
+// message are collapsed so the receipt is always the last line, separated
+// by exactly one newline: never glued to the message, never floated by a
+// blank line, never duplicated.
+func appendEditReceipt(msg string, r FileWriteReceipt) string {
+	return strings.TrimRight(msg, "\n") + "\n" + r.String()
 }
 
 // matchEdit locates oldStr in content, preferring an exact match, then the

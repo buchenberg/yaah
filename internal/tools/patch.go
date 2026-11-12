@@ -18,6 +18,11 @@ type PatchTool struct {
 	WS Workspace
 }
 
+// selfGuardsPath marks patch as taking the per-path write guard inside its own
+// Execute (fileguard.go), so the RecordingTool wrapper does not hold the same
+// non-reentrant lock across it.
+func (*PatchTool) selfGuardsPath() {}
+
 var (
 	_ PathValidatorSetter = (*PatchTool)(nil)
 	_ WorkspaceSetter     = (*PatchTool)(nil)
@@ -85,8 +90,9 @@ func (t *PatchTool) Execute(ctx context.Context, args string) (string, error) {
 	// base changed under it. The tool's own WriteFile is gone — the guard
 	// writes the bytes mutate returns.
 	var beforeLines, afterLines int
+	var receipt FileWriteReceipt
 	var toolErr error
-	_, err = withFileWrite(ctx, ws, target, func(cur []byte, _ fs.FileMode) ([]byte, error) {
+	receipt, err = withFileWrite(ctx, ws, target, func(cur []byte, _ fs.FileMode) ([]byte, error) {
 		if cur == nil {
 			toolErr = fmt.Errorf("patch: %w", guardMissingRead(ctx, ws, target))
 			return nil, toolErr
@@ -110,7 +116,7 @@ func (t *PatchTool) Execute(ctx context.Context, args string) (string, error) {
 		return "", err
 	}
 
-	return fmt.Sprintf("Patch applied to %s (%d → %d lines)", target, beforeLines, afterLines), nil
+	return fmt.Sprintf("Patch applied to %s (%d → %d lines)\n%s", target, beforeLines, afterLines, receipt.String()), nil
 }
 
 // guardMissingRead derives the missing-file error for a path the write guard

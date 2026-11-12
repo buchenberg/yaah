@@ -9,6 +9,8 @@ package tools
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -257,4 +259,68 @@ func TestJSONQuery_InvalidJSONThroughGuard(t *testing.T) {
 			assertFileContent(t, path, original)
 		})
 	}
+}
+
+// TestJSONQuery_SuccessEndsWithReceipt pins the receipt the guard returns at
+// the json_query boundary: a successful write and a successful delete each
+// end with one final line — wrote <file> (before -> after bytes,
+// sha256:<12 hex>) — whose numbers and digest match the file on disk, after
+// the tool's existing report lines.
+func TestJSONQuery_SuccessEndsWithReceipt(t *testing.T) {
+	sha12 := func(b []byte) string {
+		sum := sha256.Sum256(b)
+		return hex.EncodeToString(sum[:])[:12]
+	}
+
+	t.Run("write", func(t *testing.T) {
+		ws, dir := realWorkspace(t)
+		path := filepath.Join(dir, "cfg.json")
+		seed := []byte(`{"react":"17.0.0"}`)
+		writeFileAt(t, path, string(seed))
+
+		jq := &JSONQueryTool{WS: ws}
+		args, _ := json.Marshal(map[string]any{"file": path, "path": "react", "set": `"19.0.0"`})
+		result, err := jq.Execute(context.Background(), string(args))
+		if err != nil {
+			t.Fatalf("write failed: %v", err)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The receipt names the file workspace-relative, as the stale refusal
+		// does, and its numbers and digest must match the disk.
+		want := fmt.Sprintf("wrote %s (%d -> %d bytes, sha256:%s)", filepath.Base(path), len(seed), len(after), sha12(after))
+		if !strings.HasSuffix(result, want) {
+			t.Errorf("result must end with the receipt %q, got %q", want, result)
+		}
+		if !strings.Contains(result, "Set react") {
+			t.Errorf("the Set line must keep its place before the receipt: %q", result)
+		}
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		ws, dir := realWorkspace(t)
+		path := filepath.Join(dir, "cfg.json")
+		seed := []byte(`{"keep":"yes","remove":"no"}`)
+		writeFileAt(t, path, string(seed))
+
+		jq := &JSONQueryTool{WS: ws}
+		args, _ := json.Marshal(map[string]any{"file": path, "path": "remove", "action": "delete"})
+		result, err := jq.Execute(context.Background(), string(args))
+		if err != nil {
+			t.Fatalf("delete failed: %v", err)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := fmt.Sprintf("wrote %s (%d -> %d bytes, sha256:%s)", filepath.Base(path), len(seed), len(after), sha12(after))
+		if !strings.HasSuffix(result, want) {
+			t.Errorf("result must end with the receipt %q, got %q", want, result)
+		}
+		if !strings.Contains(result, "Deleted remove") {
+			t.Errorf("the Deleted line must keep its place before the receipt: %q", result)
+		}
+	})
 }

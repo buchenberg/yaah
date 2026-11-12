@@ -2,11 +2,15 @@ package tools
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -148,6 +152,55 @@ func TestReplace_RefusesStaleWrite(t *testing.T) {
 	// Pinned decision: the run continues past a stale refusal.
 	assertFileContent(t, filepath.Join(dir, "a.txt"), "keep BBB\n")
 	assertFileContent(t, filepath.Join(dir, "c.txt"), "keep BBB\n")
+}
+
+// TestReplace_ReportCarriesReceipts pins the receipt folded into each
+// written file's report line: the match count keeps its place, the byte
+// delta reflects the real before/after sizes, and the 12-hex digest matches
+// the file on disk. The dry-run line stays bare (pinned above), the summary
+// headline is unchanged, and a file the pattern did not change stays
+// silent.
+func TestReplace_ReportCarriesReceipts(t *testing.T) {
+	ws, dir := realWorkspace(t)
+	writeFileAt(t, filepath.Join(dir, "a.txt"), "keep AAA\n")      // 9 -> 10 bytes
+	writeFileAt(t, filepath.Join(dir, "b.txt"), "no match here\n") // unchanged: stays silent
+
+	rt := &ReplaceTool{WS: ws}
+	args, err := json.Marshal(map[string]any{
+		"pattern": "AAA", "replacement": "XXXX", "path": dir, "include": "*.txt",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := rt.Execute(context.Background(), string(args))
+	if err != nil {
+		t.Fatalf("replace failed: %v", err)
+	}
+
+	after, err := os.ReadFile(filepath.Join(dir, "a.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != "keep XXXX\n" {
+		t.Fatalf("a.txt = %q, want the substitution applied", after)
+	}
+	sum := sha256.Sum256(after)
+	wantDigest := hex.EncodeToString(sum[:])[:12]
+
+	// Shape pin: <path>: N match(es), before -> after bytes, sha256:<12 hex>.
+	line := regexp.MustCompile(`a\.txt: 1 match\(es\), 9 -> 10 bytes, sha256:([0-9a-f]{12})`).FindStringSubmatch(result)
+	if line == nil {
+		t.Fatalf("per-file receipt line missing or wrong shape: %q", result)
+	}
+	if line[1] != wantDigest {
+		t.Errorf("receipt digest = %s, want the on-disk digest %s", line[1], wantDigest)
+	}
+	if !strings.Contains(result, "Replaced 1 match(es) across 1 file(s):") {
+		t.Errorf("summary headline changed: %q", result)
+	}
+	if strings.Contains(result, "b.txt:") {
+		t.Errorf("an unchanged file must stay silent: %q", result)
+	}
 }
 
 // TestReplace_GuardDryRunWritesNothing re-pins dry-run under the two-phase

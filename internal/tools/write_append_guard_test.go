@@ -244,8 +244,9 @@ func TestWriteGuard_CreatesNewFileAndNotifiesOverwrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if msg != fmt.Sprintf("Wrote %d bytes to %s", len("first"), fresh) {
-		t.Errorf("message = %q, want the unchanged success format", msg)
+	// The success line is unchanged; the guard's receipt line follows it.
+	if first, _, _ := strings.Cut(msg, "\n"); first != fmt.Sprintf("Wrote %d bytes to %s", len("first"), fresh) {
+		t.Errorf("message = %q, want the unchanged success format on the first line", msg)
 	}
 	info, serr := os.Stat(fresh)
 	if serr != nil {
