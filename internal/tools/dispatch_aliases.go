@@ -6,9 +6,8 @@ import "github.com/buchenberg/yaah/internal/dispatch"
 // The tool leaves in this package (delegate, proposal) keep their historical
 // unqualified names through this seam.
 type (
-	RetainedRuntime  = dispatch.RetainedRuntime
-	retainedRunError = dispatch.RetainedRunError
-	ProposalTool     = dispatch.ProposalTool
+	RetainedRuntime = dispatch.RetainedRuntime
+	ProposalTool    = dispatch.ProposalTool
 	// proposalEnvelope is reachable through an exported alias so the tool
 	// leaves' tests can decode retained results.
 	proposalEnvelope = dispatch.ProposalEnvelope
