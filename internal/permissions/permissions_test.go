@@ -176,3 +176,36 @@ webfetch: ask
 		t.Errorf("nil rules must yield no ask rules, got %+v", AskRules(nil))
 	}
 }
+
+// TestStricter pins the ordering the single authorization evaluator combines a
+// posture and a user rule with: Deny > Ask > Allow, with the empty effect
+// ("no constraint") ranking as Allow. It also pins commutativity, which is what
+// lets the evaluator treat "the posture narrowed the call" and "the rule
+// narrowed the call" as one comparison instead of two branches.
+func TestStricter(t *testing.T) {
+	cases := []struct{ a, b, want Effect }{
+		{"", "", Allow},
+		{"", Allow, Allow},
+		{"", Ask, Ask},
+		{"", Deny, Deny},
+		{Allow, Allow, Allow},
+		{Allow, Ask, Ask},
+		{Ask, Allow, Ask},
+		{Allow, Deny, Deny},
+		{Deny, Allow, Deny},
+		{Ask, Ask, Ask},
+		{Ask, Deny, Deny},
+		{Deny, Ask, Deny},
+		{Deny, Deny, Deny},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.a)+"/"+string(tc.b), func(t *testing.T) {
+			if got := Stricter(tc.a, tc.b); got != tc.want {
+				t.Errorf("Stricter(%q, %q) = %q, want %q", tc.a, tc.b, got, tc.want)
+			}
+			if got := Stricter(tc.b, tc.a); got != tc.want {
+				t.Errorf("Stricter(%q, %q) = %q, want %q (not commutative)", tc.b, tc.a, got, tc.want)
+			}
+		})
+	}
+}

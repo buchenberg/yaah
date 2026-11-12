@@ -41,8 +41,9 @@ const (
 	// OriginRuleset is the user's permission ruleset, resolved
 	// last-match-wins.
 	OriginRuleset
-	// OriginDanger is the danger classification, which defers to the global
-	// approval mode: "ask" prompts, "deny" strips, "allow" passes.
+	// OriginDanger is the danger classification folded with the global
+	// approval posture: "deny" strips, "ask" prompts, and "allow" passes
+	// the call (an allow rule alone cannot produce that pass).
 	OriginDanger
 )
 
@@ -113,9 +114,10 @@ type Decision struct {
 	// RuleMatched reports whether a permission rule matched the call, and
 	// RuleEffect is the effect of the last matching rule. It is a recorded
 	// fact about the call, not a stage verdict: a rule may match `allow`
-	// and still leave the call to be gated as dangerous below, and dispatch
-	// enforces a matching deny or ask even when the middleware that owns
-	// the gate decision is disabled.
+	// and still leave the call to be gated as dangerous, and a posture may
+	// be stricter than the rule so that Gate — not this field — carries the
+	// verdict. It is never overwritten with a posture's effect, so a decision
+	// can always name which of the two produced it.
 	RuleMatched bool
 	RuleEffect  permissions.Effect
 }
@@ -125,33 +127,25 @@ type Decision struct {
 // controls.
 func (d Decision) Withheld() bool { return d.Gate == GateWithheld }
 
-// RuleDenies reports whether a permission rule denies the call.
-func (d Decision) RuleDenies() bool {
-	return d.RuleMatched && d.RuleEffect == permissions.Deny
-}
-
-// RuleAsks reports whether a permission rule asks for the call. It is the
-// dispatch gate's concern only for a sub-agent loop, which has no approval
-// bridge; an orchestrator loop hands ask to the approval pipeline.
-func (d Decision) RuleAsks() bool {
-	return d.RuleMatched && d.RuleEffect == permissions.Ask
-}
-
 // StripReason is the sentence a consumer reports for a terminal decision —
 // GateDeny or GateWithheld, the two verdicts the user cannot approve past —
 // chosen from the Origin so the report names the mechanism that actually
 // applied. Before Origin existed the middleware had only the gate value and
 // blamed mcp_approval for every deny, including a user's own deny rule.
 //
-// Any other gate returns "": a pass needs no explanation, and ask/global
-// denials depend on the answer at the prompt, which no Decision can carry.
+// Any other gate returns "": a pass needs no explanation, and an ask denial
+// depends on the answer at the prompt, which no Decision can carry.
 func (d Decision) StripReason(tool string) string {
 	switch d.Gate {
 	case GateDeny:
-		if d.Origin == OriginMCPPosture {
+		switch d.Origin {
+		case OriginMCPPosture:
 			return MCPDenyReason(tool)
+		case OriginDanger:
+			return ApprovalDenyReason(tool)
+		default:
+			return RuleDenyReason(tool, d.Resource)
 		}
-		return RuleDenyReason(tool, d.Resource)
 	case GateWithheld:
 		return WithheldReason(tool)
 	default:
@@ -177,4 +171,14 @@ func RuleDenyReason(tool, resource string) string {
 // persona).
 func MCPDenyReason(tool string) string {
 	return fmt.Sprintf("tool %q is denied by mcp_approval 'deny'", tool)
+}
+
+// ApprovalDenyReason explains a denial caused by the global `approval` posture
+// being "deny": the call is dangerous and the session refuses dangerous calls
+// outright. Distinct from RuleDenyReason because the fix is a config scalar
+// rather than a rule, and distinct from MCPDenyReason because no MCP server is
+// involved. The wording is the one the approval middleware has always used, so
+// a denial reads the same whichever layer enforced it.
+func ApprovalDenyReason(tool string) string {
+	return fmt.Sprintf("tool %q requires approval but approval mode is 'deny'", tool)
 }

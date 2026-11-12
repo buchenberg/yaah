@@ -132,7 +132,6 @@ func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
 		SteerDrain: func(ctx context.Context, messages []types.Message) []types.Message {
 			return l.Compact(ctx, messages, 0)
 		},
-		ApprovalMode:      l.Config.ApprovalMode,
 		ApprovalAuthorize: l.Authorize,
 		ApprovalApprove: func(ctx context.Context, callID, name, args string) bool {
 			if l.ApproveCallFn != nil {

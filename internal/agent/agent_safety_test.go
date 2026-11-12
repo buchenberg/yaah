@@ -80,7 +80,9 @@ func TestApproveTool_NilApproveFn(t *testing.T) {
 func TestClassifyDanger_ShellToolsPlatformIndependent(t *testing.T) {
 	l := &Loop{Registry: tools.NewEmptyRegistry()}
 	for _, name := range []string{"bash", "powershell"} {
-		if got := l.Authorize(name, "{}").Gate; got != pipeline.GateGlobal {
+		// Unset ApprovalMode resolves to the posture floor, ask, so the call
+		// is gated by the prompt rather than silently passing.
+		if got := l.Authorize(name, "{}").Gate; got != pipeline.GateAsk {
 			t.Errorf("Authorize(%q) = %v on empty registry; shell tools must always gate", name, got)
 		}
 	}
@@ -157,12 +159,12 @@ func TestClassifyDanger_MCPToolsGatedByPolicy(t *testing.T) {
 }
 
 // TestClassifyDanger_PlanModeDeniesDangerousCalls pins the plan-mode promise:
-// a dangerous call is withheld, not offered for approval. Plain GateGlobal
-// would defer to the global ApprovalMode, whose default is "ask", so plan mode
-// had to resolve danger to a mode-level withholding (GateWithheld — GateDeny
-// is reserved for MCP origin policy, and claiming it here named the wrong
-// cause) — otherwise admitting git to the inspection set would have let `git
-// commit` through on a user approval that the mode says cannot exist.
+// a dangerous call is withheld, not offered for approval. Deferring to the
+// global `approval` posture — "ask" by default — would let a user approve a
+// mutating call plan mode says cannot exist, so plan mode resolves danger to a
+// mode-level withholding (GateWithheld; GateDeny would name a policy the user
+// does not control) — otherwise admitting git to the inspection set would have
+// let `git commit` through on that approval.
 func TestClassifyDanger_PlanModeDeniesDangerousCalls(t *testing.T) {
 	newGitLoop := func(level ToolsLevel) *Loop {
 		reg := tools.NewEmptyRegistry()
@@ -194,13 +196,14 @@ func TestClassifyDanger_PlanModeDeniesDangerousCalls(t *testing.T) {
 		}
 	}
 
-	// Build mode is unchanged: the global approval mode still decides.
+	// Build mode is unchanged: a dangerous call still defers to the global
+	// approval posture, which resolves to ask (the config default).
 	full := newGitLoop(FullTools)
-	if got := full.Authorize("git", `{"action":"commit","message":"x"}`).Gate; got != pipeline.GateGlobal {
-		t.Errorf("dangerous git call in build mode = %v, want GateGlobal", got)
+	if got := full.Authorize("git", `{"action":"commit","message":"x"}`).Gate; got != pipeline.GateAsk {
+		t.Errorf("dangerous git call in build mode = %v, want GateAsk", got)
 	}
-	if got := full.Authorize("bash", "{}").Gate; got != pipeline.GateGlobal {
-		t.Errorf("bash in build mode = %v, want GateGlobal", got)
+	if got := full.Authorize("bash", "{}").Gate; got != pipeline.GateAsk {
+		t.Errorf("bash in build mode = %v, want GateAsk", got)
 	}
 	if got := full.Authorize("git", `{"action":"status"}`).Gate; got != pipeline.GatePass {
 		t.Errorf("git status in build mode = %v, want GatePass", got)
@@ -221,12 +224,12 @@ func (f *fakeRemoteTool) Schema() json.RawMessage                               
 func (f *fakeRemoteTool) Execute(ctx context.Context, args string) (string, error) { return "", nil }
 
 // TestClassifyGate_PermissionRuleset pins the W5 resolver order: the
-// ruleset is consulted after the mode-axis floor and before the danger
-// classification, deny strips, ask routes to the approval pipeline, and
-// allow only falls through — it never bypasses the dangerous-call
-// GateGlobal posture, and in read-only mode it never re-enables a
-// withheld tool. Matching domains (plan W5.2): bash command strings,
-// file-tool paths, everything else tool-name-only.
+// ruleset is compared against the posture the call's class derives, deny
+// strips, ask routes to the approval pipeline, and allow only narrows what the
+// posture already permits — it never bypasses the danger classification, and
+// in read-only mode it never re-enables a withheld tool. Matching domains
+// (plan W5.2): bash command strings, file-tool paths, everything else
+// tool-name-only.
 func TestClassifyGate_PermissionRuleset(t *testing.T) {
 	newLoop := func(level ToolsLevel, rules permissions.Rules) *Loop {
 		reg := tools.NewEmptyRegistry()
@@ -240,7 +243,7 @@ func TestClassifyGate_PermissionRuleset(t *testing.T) {
 	}
 
 	// ask routes through the approval pipeline even though the call is
-	// dangerous and the global posture would have been GateGlobal.
+	// dangerous — the rule and the default ask posture agree.
 	if got := newLoop(FullTools, rules).Authorize("bash", `{"command":"git push origin main"}`).Gate; got != pipeline.GateAsk {
 		t.Errorf("ruleset ask on dangerous call = %v, want GateAsk", got)
 	}
@@ -254,12 +257,12 @@ func TestClassifyGate_PermissionRuleset(t *testing.T) {
 	if got := newLoop(FullTools, safeAllow).Authorize("read", `{"filePath":"x.md"}`).Gate; got != pipeline.GatePass {
 		t.Errorf("ruleset allow on safe call = %v, want GatePass", got)
 	}
-	// allow does NOT bypass the dangerous-call posture: an allow rule on a
-	// mutating command still lands on GateGlobal (the approval mode
-	// decides), never GatePass.
+	// allow does NOT bypass the danger classification: an allow rule on a
+	// mutating command still answers to the global approval posture, never
+	// GatePass — Stricter(ask, allow) is ask.
 	allowRm := permissions.Rules{{Tool: "bash", Resource: "rm*", Effect: permissions.Allow}}
-	if got := newLoop(FullTools, allowRm).Authorize("bash", `{"command":"rm -rf /"}`).Gate; got != pipeline.GateGlobal {
-		t.Errorf("ruleset allow on dangerous call = %v, want GateGlobal", got)
+	if got := newLoop(FullTools, allowRm).Authorize("bash", `{"command":"rm -rf /"}`).Gate; got != pipeline.GateAsk {
+		t.Errorf("ruleset allow on dangerous call = %v, want GateAsk", got)
 	}
 	// The mode-axis floor beats every rule: in read-only mode a dangerous
 	// call is withheld even when a rule allows or asks it.
@@ -268,12 +271,12 @@ func TestClassifyGate_PermissionRuleset(t *testing.T) {
 			t.Errorf("read-only floor beaten by ruleset = %v, want GateWithheld", got)
 		}
 	}
-	// No matching rule: behavior is exactly the pre-W5 gates.
-	if got := newLoop(FullTools, rules).Authorize("git", `{"action":"commit","message":"x"}`).Gate; got != pipeline.GateGlobal {
-		t.Errorf("unmatched rule on dangerous call = %v, want GateGlobal", got)
+	// No matching rule: the posture alone decides, and it defaults to ask.
+	if got := newLoop(FullTools, rules).Authorize("git", `{"action":"commit","message":"x"}`).Gate; got != pipeline.GateAsk {
+		t.Errorf("unmatched rule on dangerous call = %v, want GateAsk", got)
 	}
-	if got := newLoop(FullTools, nil).Authorize("bash", `{"command":"git push"}`).Gate; got != pipeline.GateGlobal {
-		t.Errorf("no ruleset on dangerous call = %v, want GateGlobal", got)
+	if got := newLoop(FullTools, nil).Authorize("bash", `{"command":"git push"}`).Gate; got != pipeline.GateAsk {
+		t.Errorf("no ruleset on dangerous call = %v, want GateAsk", got)
 	}
 }
 
