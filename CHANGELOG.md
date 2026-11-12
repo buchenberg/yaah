@@ -1,10 +1,17 @@
 # Changelog
 
-## [0.174.1](https://github.com/buchenberg/yaah/compare/v0.174.0...v0.174.1) (2026-11-12)
+## [0.175.0](https://github.com/buchenberg/yaah/compare/v0.174.0...v0.175.0) (2026-11-12)
+
+
+### Features
+
+* **wake:** gate wait_for and watch to interactive sessions (yaah-6mi9.2) ([485e5e1](https://github.com/buchenberg/yaah/commit/485e5e19aaaed954150a72b315cdb5d73976bb62))
+* **wake:** gate wait_for and watch to interactive sessions (yaah-6mi9.2) ([b20afd3](https://github.com/buchenberg/yaah/commit/b20afd3059d37cc480ebc896bd76f351449cbc7a))
 
 
 ### Bug Fixes
 
+* **belt:** local sessions belt-know apply_out (yaah-6mi9.2 smoke) ([066fad4](https://github.com/buchenberg/yaah/commit/066fad4c9009006471540f5fffdc8fa5bccff413))
 * **roles:** make counter and checker work in bash-denied sandboxes ([df7f737](https://github.com/buchenberg/yaah/commit/df7f7372136f74eb8326be18386a6af946c210c0))
 * **roles:** make counter and checker work in bash-denied sandboxes ([ecb6210](https://github.com/buchenberg/yaah/commit/ecb6210e08b1c232d5f26b116e2d2ea2e9590c3a))
 
