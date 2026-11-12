@@ -278,7 +278,7 @@ func buildContainment(cfg *config.Config, opts SessionOptions, ws *workspaceStag
 	} else {
 		// Local mode has no accept seam, so nothing registers under the
 		// name — and since the curated default belt admits apply_out
-		// (yaah-6mi9.1), an unnknown entry would read as a typo in the
+		// (yaah-6mi9.1), an unknown entry would read as a typo in the
 		// config warning at startup. Name it on the belt for the same
 		// reason the memory gates do (couldn't, not didn't): the tool
 		// exists; this session shape just has no door for it.
