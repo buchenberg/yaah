@@ -1,0 +1,12 @@
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: malformed-selector
+spec:
+  steps:
+    - id: a
+      kind: fanout
+      over: 42
+      body:
+        kind: emit
+        value: x

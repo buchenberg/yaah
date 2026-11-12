@@ -1,0 +1,15 @@
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: bad-action
+spec:
+  steps:
+    - id: build
+      kind: delegate
+      role: developer
+      output: proposal
+      prompt: build it
+    - id: land
+      kind: settle
+      proposals: steps.build.output
+      action: merge

@@ -1,0 +1,9 @@
+apiVersion: yaah.workflow/v1alpha1
+kind: Workflow
+metadata:
+  name: wrong-apiversion
+spec:
+  steps:
+    - id: a
+      kind: emit
+      value: x

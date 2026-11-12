@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.169.0](https://github.com/buchenberg/yaah/compare/v0.168.0...v0.169.0) (2026-11-12)
+
+
+### Features
+
+* **workflow:** spec types, JSON schema, strict decoder, and canonical hash (yaah-0u0v.3) ([25d9455](https://github.com/buchenberg/yaah/commit/25d945599f670a0fdba8525ffcf7c3e866f0f59b))
+* **workflow:** spec types, JSON schema, strict decoder, and canonical hash (yaah-0u0v.3) ([80a98b2](https://github.com/buchenberg/yaah/commit/80a98b280cf38060574700c7e19eea0bb4f74a71))
+
+## [0.168.0](https://github.com/buchenberg/yaah/compare/v0.167.1...v0.168.0) (2026-11-12)
+
+
+### Features
+
+* **acp:** persist allow-always decisions project-scoped (yaah-x6vi.6) ([3fe9bc7](https://github.com/buchenberg/yaah/commit/3fe9bc700a9938a241016c16caa3b2988c8adf28))
+* **acp:** persist allow-always decisions to the saved-approval store (yaah-x6vi.6, write half) ([7fa207c](https://github.com/buchenberg/yaah/commit/7fa207c5bf34a54b933263812174d03aea05eeaf))
+* **acp:** wire the saved-approval store into ACP serve (yaah-x6vi.6) ([36afca7](https://github.com/buchenberg/yaah/commit/36afca75a3727150c3589006e00252ca50a18156))
+
+## [0.167.1](https://github.com/buchenberg/yaah/compare/v0.167.0...v0.167.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **tools:** drop unused retainedRunError alias ([f35f916](https://github.com/buchenberg/yaah/commit/f35f916b41a19a7c088422b93c66ccfececf7794))
+
+
+### Code Refactoring
+
+* **dispatch:** extract typed Run and Settle core ([391b9cb](https://github.com/buchenberg/yaah/commit/391b9cbafeccd3ed28fdb2ba6ff649301bf939d7))
+* **dispatch:** extract typed Run and Settle core (yaah-0u0v.2) ([e981534](https://github.com/buchenberg/yaah/commit/e981534f65f89c18480378149e11f5d7ccf35b8d))
+
 ## [0.167.0](https://github.com/buchenberg/yaah/compare/v0.166.4...v0.167.0) (2026-11-12)
 
 

@@ -1,0 +1,11 @@
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: malformed-output
+spec:
+  steps:
+    - id: a
+      kind: delegate
+      role: worker
+      prompt: do it
+      output: [fast, slow]

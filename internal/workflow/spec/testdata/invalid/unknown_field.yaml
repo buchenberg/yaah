@@ -1,0 +1,11 @@
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: unknown-field
+spec:
+  steps:
+    - id: a
+      kind: delegate
+      role: planner
+      prompt: plan it
+      kolect: proposals
