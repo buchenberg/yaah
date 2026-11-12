@@ -117,30 +117,35 @@ func mergePermissions(global, persona permissions.Rules) permissions.Rules {
 	return out
 }
 
-// mergeSavedPermissions prepends the workspace's saved "always" allows to the
-// resolved ruleset, so a configured rule (evaluated later, last-match-wins)
-// always has the final say on overlap.
+// savedAllowConsult is the persisted-"always" consultant the loop's
+// evaluator asks before prompting: it reports whether a saved row already
+// approves (tool, resource). The consult never widens — its only caller is
+// the evaluator's Ask branch, so a deny from the ruleset or a posture stays
+// terminal whatever the store says.
 //
 // The cwd is canonicalized exactly like the rows that were written
-// (cwdpath.CanonicalStored), so a session started from a symlinked path still
-// reads the rows it wrote. A query error warns and degrades to the unmerged
-// ruleset rather than failing the build: the store refines the belt, it never
-// gates it.
-func mergeSavedPermissions(db *memory.DB, cwd string, merged permissions.Rules) permissions.Rules {
+// (cwdpath.CanonicalStored), so a session started from a symlinked path
+// still reads the rows it wrote. A query failure is not its caller's deny:
+// the consultant warns and reports "no saved row", which re-asks — a store
+// problem must re-prompt, never silently allow.
+func savedAllowConsult(db *memory.DB, cwd string) func(name, resource string) bool {
 	if db == nil {
-		return merged
+		return nil
 	}
 	rows, err := db.SavedPermissions(cwdpath.CanonicalStored(cwd))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: saved approvals unavailable, continuing with config ruleset: %v\n", err)
-		return merged
+		fmt.Fprintf(os.Stderr, "warning: saved approvals unavailable, re-asking every call: %v\n", err)
+		return nil
 	}
 	if len(rows) == 0 {
-		return merged
+		return nil
 	}
-	out := make(permissions.Rules, 0, len(rows)+len(merged))
+	rules := make(permissions.Rules, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, permissions.Rule{Tool: r.Action, Resource: r.Resource, Effect: permissions.Allow})
+		rules = append(rules, permissions.Rule{Tool: r.Action, Resource: r.Resource, Effect: permissions.Allow})
 	}
-	return append(out, merged...)
+	return func(name, resource string) bool {
+		eff, matched := rules.Match(name, resource)
+		return matched && eff == permissions.Allow
+	}
 }
