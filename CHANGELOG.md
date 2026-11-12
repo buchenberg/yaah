@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.175.4](https://github.com/buchenberg/yaah/compare/v0.175.3...v0.175.4) (2026-11-12)
+
+
+### Bug Fixes
+
+* **resume:** hydrate the anchored summary and stop duplicating it (yaah-an55) ([c7e0c3a](https://github.com/buchenberg/yaah/commit/c7e0c3aacb25f597cee716ba99beb13cdd521773))
+* **resume:** hydrate the anchored summary and stop duplicating it (yaah-an55) ([7599696](https://github.com/buchenberg/yaah/commit/7599696f36609a562fc33c05210ddbd456f18962))
+
 ## [0.175.3](https://github.com/buchenberg/yaah/compare/v0.175.2...v0.175.3) (2026-11-12)
 
 
