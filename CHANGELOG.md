@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.172.0](https://github.com/buchenberg/yaah/compare/v0.171.1...v0.172.0) (2026-11-12)
+
+
+### Features
+
+* **tools:** write receipts make a lost update visible (yaah-qlli) ([2f4e8bf](https://github.com/buchenberg/yaah/commit/2f4e8bfebb55ce29274f008f0e86573ed6e61a35))
+
+
+### Bug Fixes
+
+* **tools:** relate a receipt path to its root through any alias (yaah-qlli) ([4afbc89](https://github.com/buchenberg/yaah/commit/4afbc8902d139330cb0b725b7ba812ffe3154693))
+* **tools:** serialize same-path writes and refuse stale ones (yaah-qlli) ([fe28cec](https://github.com/buchenberg/yaah/commit/fe28cec076e6f7a5a6e1012a97a333054a639568))
+* **tools:** serialize same-path writes, refuse stale ones, report receipts (yaah-qlli) ([f536187](https://github.com/buchenberg/yaah/commit/f5361877ef9f4e8b8d6f7a4bc7ed33ca6102b239))
+
+
+### Documentation
+
+* **tools:** scope the append guarantee to append-vs-append (yaah-qlli) ([f47c87c](https://github.com/buchenberg/yaah/commit/f47c87c0c86ab531ec7ca1dce2a78055489d4ece))
+
+
+### Tests
+
+* **tools:** make the file-write guard tests platform-correct (yaah-qlli) ([64323ad](https://github.com/buchenberg/yaah/commit/64323ada7bf473935be46c51fa7d74e6dcec51c4))
+* **tools:** pin the aliased-root relation against real paths (yaah-qlli) ([37a1b30](https://github.com/buchenberg/yaah/commit/37a1b30e73a736f7f6301d06f9f696a0d8b55422))
+
 ## [0.171.1](https://github.com/buchenberg/yaah/compare/v0.171.0...v0.171.1) (2026-11-12)
 
 
