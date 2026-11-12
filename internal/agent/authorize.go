@@ -141,6 +141,17 @@ func (l *Loop) authorizeGate(name, args string, d *pipeline.Decision) {
 		d.Gate = pipeline.GateDeny
 	case permissions.Ask:
 		d.Gate = pipeline.GateAsk
+		// A saved allow (yaah-x6vi.6) lifts an ask: the user answered
+		// "always" for this (tool, resource) shape at an earlier prompt and
+		// the row is persisted project-scoped. The consult fires only here
+		// — the Ask case — so a deny from the ruleset or a posture stays
+		// terminal (deny-before-saved), and the read-only floor above
+		// returned long before anything could consult the store. The
+		// origin is left at the stage that asked: the saved row narrows the
+		// verdict, it does not become a new policy the user did not write.
+		if l.Config.SavedAllow != nil && l.Config.SavedAllow(name, d.Resource) {
+			d.Gate = pipeline.GatePass
+		}
 	default: // permissions.Allow: nothing narrowed the call.
 		return
 	}

@@ -10,8 +10,11 @@ package yaah
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
+	"github.com/buchenberg/yaah/internal/cwdpath"
+	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/permissions"
 )
 
@@ -99,7 +102,7 @@ func unknownToolWarnings(tr *toolRegistryStage) []string {
 // persona's rules (parity W5.4, opencode semantics): global rules first,
 // persona rules appended after, and last-match-wins means the persona's
 // rule wins wherever both name the same tool-and-resource. Neither side
-// can widen the tool belt or re-enabled a withheld tool — the ruleset
+// can widen the tool belt or re-enable a withheld tool — the ruleset
 // only refines within what the mode axis and the belt already allow.
 func mergePermissions(global, persona permissions.Rules) permissions.Rules {
 	if len(global) == 0 {
@@ -112,4 +115,32 @@ func mergePermissions(global, persona permissions.Rules) permissions.Rules {
 	out = append(out, global...)
 	out = append(out, persona...)
 	return out
+}
+
+// mergeSavedPermissions prepends the workspace's saved "always" allows to the
+// resolved ruleset, so a configured rule (evaluated later, last-match-wins)
+// always has the final say on overlap.
+//
+// The cwd is canonicalized exactly like the rows that were written
+// (cwdpath.CanonicalStored), so a session started from a symlinked path still
+// reads the rows it wrote. A query error warns and degrades to the unmerged
+// ruleset rather than failing the build: the store refines the belt, it never
+// gates it.
+func mergeSavedPermissions(db *memory.DB, cwd string, merged permissions.Rules) permissions.Rules {
+	if db == nil {
+		return merged
+	}
+	rows, err := db.SavedPermissions(cwdpath.CanonicalStored(cwd))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: saved approvals unavailable, continuing with config ruleset: %v\n", err)
+		return merged
+	}
+	if len(rows) == 0 {
+		return merged
+	}
+	out := make(permissions.Rules, 0, len(rows)+len(merged))
+	for _, r := range rows {
+		out = append(out, permissions.Rule{Tool: r.Action, Resource: r.Resource, Effect: permissions.Allow})
+	}
+	return append(out, merged...)
 }

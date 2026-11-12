@@ -259,7 +259,7 @@ func (s *agentSession) loopBuilder(
 		Registry:                   s.toolReg,
 		ToolsLevel:                 sessionToolsLevel(readOnly),
 		PersonaTools:               normalizeToolNames(persona.Tools),
-		Permissions:                mergePermissions(s.cfg.Agent.Default.Permissions, persona.Permissions),
+		Permissions:                mergeSavedPermissions(s.db, s.cwd, mergePermissions(s.cfg.Agent.Default.Permissions, persona.Permissions)),
 		Model:                      modelName,
 		SystemPrompt:               s.modeDirective(persona),
 		Messages:                   msgs,

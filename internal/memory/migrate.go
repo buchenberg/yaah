@@ -127,6 +127,17 @@ func (d *DB) migrate() error {
 		PRIMARY KEY (session_id, id)
 	);
 
+	-- Saved approvals (yaah-x6vi.6, saved_permission_repo.go) are durable,
+	-- project-scoped "always" decisions. Additive and IF NOT EXISTS, so no
+	-- schema-version bump is needed.
+	CREATE TABLE IF NOT EXISTS saved_permissions (
+		project_id TEXT NOT NULL,
+		action     TEXT NOT NULL,
+		resource   TEXT NOT NULL,
+		created_at INTEGER NOT NULL,
+		UNIQUE (project_id, action, resource)
+	);
+
 	-- The read is WHERE session_id = ? ORDER BY armed_at, id. The PK's
 	-- (session_id, id) prefix already serves the equality; this index adds
 	-- the ordering instead of duplicating the prefix alone.
