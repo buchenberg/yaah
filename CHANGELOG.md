@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.171.0](https://github.com/buchenberg/yaah/compare/v0.170.0...v0.171.0) (2026-11-12)
+
+
+### Features
+
+* **dispatch:** universal typed result envelope for delegate lanes (yaah-was9.1) ([65d8768](https://github.com/buchenberg/yaah/commit/65d87686e9d1aaf4ac295236c9ff6e1ebacf0c0f))
+
 ## [0.170.0](https://github.com/buchenberg/yaah/compare/v0.169.0...v0.170.0) (2026-11-12)
 
 
