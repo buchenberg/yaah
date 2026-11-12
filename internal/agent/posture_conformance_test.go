@@ -17,9 +17,9 @@ func TestPostureConformanceMatrix(t *testing.T) {
 		return &Loop{
 			Registry: reg,
 			Config: LoopConfig{
-				MCPApproval: mcpApproval,
+				MCPApproval:  mcpApproval,
 				MCPToolNames: map[string]bool{"mcp_remote": true},
-				Permissions: perms,
+				Permissions:  perms,
 			},
 		}
 	}
@@ -58,7 +58,7 @@ func TestPostureConformanceMatrix(t *testing.T) {
 			}
 			got := l.classifyGate(name, "{}")
 			if got != tc.want {
-				t.Errorf("mcp=%q: got %v, want %v", tc.mcp, got, tc.want)
+				t.Errorf("mcp=%q perms=%v call=%q: got %v, want %v", tc.mcp, tc.perms, tc.call, got, tc.want)
 			}
 		})
 	}

@@ -117,14 +117,15 @@ func (l *Loop) classifyGate(name, args string) pipeline.GateDecision {
 // non-MCP path uses, so the two paths cannot disagree about what a matching
 // rule means.
 func (l *Loop) mcpGate(name, args string) pipeline.GateDecision {
-	if l.posture().mcpDeny {
+	p := l.posture()
+	if p.mcpDeny {
 		// The per-origin policy denies; no rule can widen it.
 		return pipeline.GateDeny
 	}
 	if decision, resolved := l.rulesetGate(name, args); resolved {
 		return decision
 	}
-	return l.posture().mcpDefault()
+	return p.mcpDefault()
 }
 
 // posture derives the session's approval posture. Derived per call from
