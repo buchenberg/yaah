@@ -28,8 +28,10 @@ type Belt struct {
 }
 
 // NewBelt builds a belt from the configured allowlist. An empty list
-// allows every tool — the default, and the belt of a session that did not
-// configure one.
+// allows every tool — the substrate primitive's default. The session
+// seam does not rely on that: cmd/yaah resolves a curated default
+// (orchestratorBeltNames) or an explicit config list before calling
+// this, so the belt it hands the registry always names its surface.
 func NewBelt(names []string) *Belt {
 	if len(names) == 0 {
 		return &Belt{allowAll: true}
@@ -54,6 +56,38 @@ func (b *Belt) Allows(name string) bool {
 		return true
 	}
 	return b.allowed[name]
+}
+
+// Admit adds tool names to the allowlist after construction. Its use is
+// the runtime-wired feature lane whose names could not be known when the
+// belt was built: an MCP server's tools register only as the server
+// connects, and configuring the server is itself the opt-in, so refusing
+// its tools at the belt would silently drop a configured feature. Admit is
+// a widening operation by design — unlike everything else in this file —
+// and lives at the registration site, not in config resolution: the
+// caller vouches that the named tool carries its own gate.
+// An allow-all belt ignores it — everything is admitted already.
+func (b *Belt) Admit(names ...string) {
+	if b == nil || b.allowAll {
+		return
+	}
+	if b.allowed == nil {
+		b.allowed = make(map[string]bool, len(names))
+	}
+	for _, name := range names {
+		n := strings.TrimSpace(name)
+		if n == "" {
+			continue
+		}
+		b.allowed[n] = true
+		// A prior registration attempt may have refused the name (a
+		// retried server); admitting it now means that refusal is
+		// stale, and leaving it in Refused() would keep the prompt
+		// naming a tool the session now holds. Re-widening retracts.
+		if i := slices.Index(b.refused, n); i >= 0 {
+			b.refused = slices.Delete(b.refused, i, i+1)
+		}
+	}
 }
 
 // Know records a tool name the session knows about, whether or not it was

@@ -69,13 +69,15 @@ agents:
     # with the registry, and a name the registry refuses (platform
     # rules, unknown tool) is skipped with a warning, not added.
     # Omit the key (or leave it empty) for the curated orchestrator
-    # default — the general-purpose belt. Use ["*"] or ["all"] for the
-    # full registry surface.
+    # default — the general-purpose belt (see agents.default in the
+    # reference below for what it withholds). Use ["*"] or ["all"] for
+    # the full registry surface.
     # The belt covers the main session; a sub-agent's tools come from
     # its role file. A tool the belt excludes is never registered, and
     # the session is told which ones are missing. MCP-served tools are
-    # part of the belt too: an MCP tool that is not named here is
-    # refused like any other, so list its name to keep it.
+    # admitted at registration: a configured mcp_servers entry is
+    # itself the opt-in, so this list cannot silently drop a server's
+    # tools (name them to narrow them back out on purpose).
     tools: [read, write, edit, bash, grep, glob, ls, file_info]
 
     compaction_threshold: 0.5          # fraction of context_window
@@ -296,10 +298,10 @@ rather than retrying a request that cannot succeed.
 | `mcp_approval` | `ask` | `allow`, `ask`, or `deny` for MCP-served tools |
 | `permissions` | — | Permission ruleset applied to every agent: ordered per-tool `allow`/`deny`/`ask` rules over a glob, evaluated last-match-wins. See [Permission rulesets](#permission-rulesets) |
 | `mode` | `full` | The session mode axis default: `full` allows mutation, `read-only` withholds the mutating tools (the inspection set only). Independent of the persona — any agent can run in either mode — and switchable mid-session over ACP |
-| `tools` | curated orchestrator default | The main session's tool belt. Explicit list is narrow-only (intersected with the registry; refused entries are warned and skipped). Empty/omitted = curated general-purpose belt; `["*"]` or `["all"]` = full registry surface |
+| `tools` | curated orchestrator default | The main session's tool belt. Explicit list is narrow-only (intersected with the registry; refused entries are warned and skipped). Empty/omitted = curated general-purpose belt; `["*"]` or `["all"]` = full registry surface. Withheld by the curated default, so name them to get them back: the file cluster `append`, `bulk_files`, `checksum`, `copy`, `copy_tree`, `find`, `mkdir`, `move`, `move_tree`, `rmdir`, `tail` (the developer role carries them — reach them through `delegate`) and the wake pair `wait_for`, `watch` (interactive sessions only, until yaah-6mi9.2 gates them); see `cmd/yaah/orchestrator_belt.go`. Gated feature lanes (`proposal` settlement, the `memory_*` cluster, the Go quintet `go_test`/`go_mod`/`go_outline`/`go_refactor`/`staticcheck`, `apply_out`) are belt-admitted and register when their own gate opens — a session that opens the lane keeps its tools. MCP-served tools are admitted at registration: a configured `mcp_servers` entry is itself the opt-in |
 | `workspace_ask` | `false` | With `--workspace`: prompt before denying out-of-bounds access |
 | `workspace_deny_patterns` | nil (built-in secret defaults) | Globs denied even inside the workspace. `nil` applies `.env`, `*.pem`, `*.key`, SSH keys; `[]` disables the built-ins |
-| `idle_wake_turns` | `true` | Allow a watch that fires while an interactive session is idle to start a turn. `false` queues the digest as a follow-up instead; the tool belt still controls whether `wait_for`/`watch` exist |
+| `idle_wake_turns` | `true` | Allow a watch that fires while an interactive session is idle to start a turn. `false` queues the digest as a follow-up instead; the tool belt still controls whether `wait_for`/`watch` exist. Note: the curated default belt withholds the wake pair, so in a default-config session this knob has nothing to act on until yaah-6mi9.2 gates their registration by session shape |
 | `max_inline_tools_per_turn` | 0 (unlimited) | Cap inline tool calls per turn |
 | `estimate_factor` | 1.3 | Token estimate multiplier for preflight compaction |
 | `compaction_threshold` | 0.5 | Fraction of `context_window` that triggers summarisation (effective tokens after cache subtraction) |

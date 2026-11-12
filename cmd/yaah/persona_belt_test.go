@@ -194,10 +194,9 @@ func TestUnknownToolWarnings(t *testing.T) {
 			want:         []string{"warning: persona \"planner\" names unknown tool \"ghost\"; ignored"},
 		},
 		{
-			name:         "persona name on a real tool the belt refuses stays silent here",
-			beltNames:    []string{"read"},
-			registered:   []string{"read"},
-			refused:      []string{"bash"},
+			name:         "persona name on a real tool the session holds stays silent",
+			beltNames:    []string{"read", "bash"},
+			registered:   []string{"read", "bash"},
 			personaName:  "planner",
 			personaTools: []string{"read", "bash"},
 			want:         nil,
@@ -208,10 +207,26 @@ func TestUnknownToolWarnings(t *testing.T) {
 			registered: []string{"read"},
 			// memory_add is runtime-wired, never a leaf tool: the belt
 			// knows it (gate admission) without a registry registration.
+			// Known-but-unheld is exactly the unavailable class the
+			// curated default created (yaah-6mi9.1): the persona's
+			// narrowing drops it, so the warning says so instead of
+			// staying silent.
 			knownOnly:    []string{"memory_add"},
 			personaName:  "recaller",
 			personaTools: []string{"read", "memory_add"},
-			want:         nil,
+			want:         []string{"warning: persona \"recaller\" names tool \"memory_add\" that is not available in this session (withheld from the default belt, or its lane is gated off here); narrowed away"},
+		},
+		{
+			name:       "persona naming a tool withheld by the default belt warns, not silences",
+			beltNames:  []string{"read"},
+			registered: []string{"read"},
+			// copy is belt-refused (it is in removedFromOrchestratorDefault),
+			// so it is known without being held: the persona loses it
+			// silently unless this warns.
+			refused:      []string{"copy"},
+			personaName:  "mover",
+			personaTools: []string{"read", "copy"},
+			want:         []string{"warning: persona \"mover\" names tool \"copy\" that is not available in this session (withheld from the default belt, or its lane is gated off here); narrowed away"},
 		},
 		{
 			name:       "golden: no persona tools warns exactly as today",
@@ -227,14 +242,13 @@ func TestUnknownToolWarnings(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			belt := tools.NewBelt(tt.beltNames)
-			reg := tools.NewRegistry()
+			// An empty registry, like the belt-curated session: the held
+			// set is exactly what the case registered, so known-but-
+			// unheld (the unavailable class) is distinguishable here.
+			reg := tools.NewEmptyRegistry()
 			for _, name := range tt.registered {
 				belt.Know(name)
-				// NewRegistry installs the built-ins already; registering a
-				// built-in name again hands Register a nil leaf wrapper.
-				if reg.Get(name) == nil {
-					reg.Register(tools.NewLeafTool(name))
-				}
+				reg.Register(tools.NewLeafTool(name))
 			}
 			for _, name := range tt.knownOnly {
 				belt.Know(name)

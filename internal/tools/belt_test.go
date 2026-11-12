@@ -90,3 +90,46 @@ func TestRegistry_NoBeltKeepsEveryTool(t *testing.T) {
 		t.Error("the default registry must carry the full belt")
 	}
 }
+
+// TestRegistry_AdmitWidensTheBelt pins the MCP seam (yaah-6mi9.1): a
+// configured server's tools were not in the belt when it was built, so
+// they are admitted at registration. Admit is the belt's one widening
+// operation and retracts a stale refusal so the prompt cannot keep
+// naming a tool the session now holds.
+func TestRegistry_AdmitWidensTheBelt(t *testing.T) {
+	belt := NewBelt([]string{"read"})
+	reg := NewRegistryWithBelt(belt)
+
+	// Before admission the registration is refused, exactly like any
+	// late registration outside the belt.
+	reg.Register(&WriteTool{})
+	if reg.Get("write") != nil {
+		t.Fatal("a registration outside the belt must be refused first")
+	}
+
+	// Admit-then-register is the honest order and the produced effect.
+	reg.Admit("write")
+	if !belt.Allows("write") {
+		t.Error("Admit must widen the belt to the named tool")
+	}
+	// The stale refusal from the pre-admission attempt is retracted, so
+	// Refused() cannot keep naming a tool the session is about to hold.
+	if slices.Contains(belt.Refused(), "write") {
+		t.Errorf("Admit must retract the stale refusal, got %v", belt.Refused())
+	}
+	reg.Register(&WriteTool{})
+	if reg.Get("write") == nil {
+		t.Error("an admitted registration must install the tool")
+	}
+}
+
+// TestRegistry_AdmitOnAllowAll: an allow-all belt ignores Admit —
+// everything is admitted already, and the accounting stays untouched.
+func TestRegistry_AdmitOnAllowAll(t *testing.T) {
+	belt := NewBelt(nil)
+	reg := NewRegistry()
+	reg.Admit("anything")
+	if belt.Refused() != nil {
+		t.Errorf("Admit on an allow-all belt must not record anything, got %v", belt.Refused())
+	}
+}

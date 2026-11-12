@@ -77,8 +77,15 @@ func effectiveBeltNames(configured, persona []string) []string {
 // against the registry rather than the belt: since narrowing moved to
 // the per-run seam (yaah-21uk.12) the belt is config-only, so a persona
 // name is a typo exactly when the registry holds no tool under it and
-// the belt never met the name — not known via a gate (memory tools,
-// role) and not refused as a real tool the config belt turned away.
+// the belt never met the name. A persona name the belt KNOWS but the
+// registry does not hold is not a typo either — it is a real tool this
+// session cannot call: withheld by the curated default (copy, tail),
+// or registered behind a gate that is closed here (memory tools in a
+// fresh one-shot store, question in one-shot, go_test outside a Go
+// module). Before the curated default (yaah-6mi9.1) that class was
+// empty for a belt-less config — every registered tool was held — so
+// no warning was warranted; now the narrowing drops it silently
+// without one.
 func unknownToolWarnings(tr *toolRegistryStage) []string {
 	if tr.belt == nil {
 		return nil
@@ -90,10 +97,20 @@ func unknownToolWarnings(tr *toolRegistryStage) []string {
 		out = append(out, fmt.Sprintf("warning: config `agents.default.tools` names unknown tool %q; ignored", name))
 	}
 	for _, name := range tr.personaTools {
-		if warned[name] || tr.reg.Get(name) != nil || tr.belt.Knows(name) {
+		if warned[name] || tr.reg.Get(name) != nil {
 			continue
 		}
-		out = append(out, fmt.Sprintf("warning: persona %q names unknown tool %q; ignored", tr.personaName, name))
+		if !tr.belt.Knows(name) {
+			warned[name] = true
+			out = append(out, fmt.Sprintf("warning: persona %q names unknown tool %q; ignored", tr.personaName, name))
+			continue
+		}
+		// The tool exists but this session does not hold it: a real
+		// name, unavailable here. The narrowing drops it either way —
+		// the warning is so a role file does not lose a tool it names
+		// in silence.
+		warned[name] = true
+		out = append(out, fmt.Sprintf("warning: persona %q names tool %q that is not available in this session (withheld from the default belt, or its lane is gated off here); narrowed away", tr.personaName, name))
 	}
 	return out
 }
