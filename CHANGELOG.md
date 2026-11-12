@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.168.0](https://github.com/buchenberg/yaah/compare/v0.167.1...v0.168.0) (2026-11-12)
+
+
+### Features
+
+* **acp:** persist allow-always decisions project-scoped (yaah-x6vi.6) ([3fe9bc7](https://github.com/buchenberg/yaah/commit/3fe9bc700a9938a241016c16caa3b2988c8adf28))
+* **acp:** persist allow-always decisions to the saved-approval store (yaah-x6vi.6, write half) ([7fa207c](https://github.com/buchenberg/yaah/commit/7fa207c5bf34a54b933263812174d03aea05eeaf))
+* **acp:** wire the saved-approval store into ACP serve (yaah-x6vi.6) ([36afca7](https://github.com/buchenberg/yaah/commit/36afca75a3727150c3589006e00252ca50a18156))
+
 ## [0.167.1](https://github.com/buchenberg/yaah/compare/v0.167.0...v0.167.1) (2026-11-12)
 
 
