@@ -26,17 +26,6 @@ type SavedPermission struct {
 	CreatedAt int64
 }
 
-// savedPermissionTable is the additive v5 table backing saved approvals. It
-// lives in the base schema (migrate.go) — declared here so the repo methods
-// and the DDL name one constant, not two string literals.
-const savedPermissionTable = `CREATE TABLE IF NOT EXISTS saved_permissions (
-	project_id TEXT NOT NULL,
-	action     TEXT NOT NULL,
-	resource   TEXT NOT NULL,
-	created_at INTEGER NOT NULL,
-	UNIQUE (project_id, action, resource)
-);`
-
 // SaveSavedPermission records one allow decision. Rows are unique per
 // (project, action, resource): re-saving a decision the user has already
 // made is a no-op, not a second row.
