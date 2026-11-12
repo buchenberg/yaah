@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.166.3](https://github.com/buchenberg/yaah/compare/v0.166.2...v0.166.3) (2026-11-12)
+
+
+### Bug Fixes
+
+* **permissions:** name the matched resource in ruleset deny refusals ([e87c97a](https://github.com/buchenberg/yaah/commit/e87c97a93d21dd96a8cf796ae2464cd027358a88))
+
+
+### Code Refactoring
+
+* **permissions:** single Authorize() entry point (bead yaah-x6vi.4) ([614ff48](https://github.com/buchenberg/yaah/commit/614ff484e28f227315aebd1a685525d0187b16ca))
+* **permissions:** single Authorize() entry point + decision-matrix conformance test ([1bcf36c](https://github.com/buchenberg/yaah/commit/1bcf36c2ee043029e29211d2dcd8cef16af9cb2a))
+
 ## [0.166.2](https://github.com/buchenberg/yaah/compare/v0.166.1...v0.166.2) (2026-11-12)
 
 
