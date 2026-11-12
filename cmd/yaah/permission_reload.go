@@ -44,10 +44,18 @@ import (
 // the same reason: timestamp granularity must never miss an edit.
 //
 // A reload that cannot complete (config vanished beneath us, failed to
-// re-read, failed to parse) keeps the last-known rules and warns on
-// stderr: a broken file tightening a session to nothing or widening it
-// silently are both wrong, and the old rules are the last thing the
-// user expressed that the harness could actually load.
+// re-read, failed to parse, or parsed into a config Validate rejects)
+// keeps the last-known rules and warns on stderr: a broken file
+// tightening a session to nothing or widening it silently are both
+// wrong, and the old rules are the last thing the user expressed that
+// the harness could actually load.
+//
+// A DELETED config file is treated the same way once it has been seen.
+// Absence at construction is a state — the no-config-yet user, whose
+// ruleset is empty anyway. Absence AFTER a config was loaded is a
+// deletion, and deleting the file is not how a rule is revoked:
+// silently adopting the empty ruleset there would drop every global
+// deny and ask the session was running under.
 type permissionRulesCache struct {
 	mu    sync.Mutex
 	last  string
@@ -56,13 +64,28 @@ type permissionRulesCache struct {
 
 // newPermissionRulesCache seeds the cache from the construction-time
 // config so the first run boundary does not re-read what startup just
-// read. The seed's rules and the file's hash are then compared from
-// the first current() call on.
+// read, and records the content hash it was built from so the first
+// current() call has something to compare against. A construction with
+// no readable config seeds the absent marker, so the file's later
+// appearance counts as a change.
 func newPermissionRulesCache(cfg *config.Config) *permissionRulesCache {
+	c := &permissionRulesCache{}
 	if cfg == nil {
-		return &permissionRulesCache{}
+		return c
 	}
-	return &permissionRulesCache{rules: cfg.Agent.Default.Permissions}
+	c.rules = cfg.Agent.Default.Permissions
+	path, err := config.ConfigPath()
+	if err != nil {
+		return c
+	}
+	data, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		c.last = contentHash(data)
+	case os.IsNotExist(err):
+		c.last = absentConfigHash
+	}
+	return c
 }
 
 // current returns the global permission ruleset for this run, reloading
@@ -79,21 +102,32 @@ func (c *permissionRulesCache) current() permissions.Rules {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		// An absent config file is a state, not a failure — the same
-		// distinction config.Load makes (NotExist yields the built-in
-		// defaults without a word). Absent means the empty ruleset a
-		// fresh session would see, observed once and silently, so the
-		// common no-config-yet user gets no per-run warning spam.
-		// Only a file that exists but cannot be read warns and keeps
-		// the last-known rules.
 		if os.IsNotExist(err) {
-			c.observe(absentConfigHash, nil)
-			return c.rules
+			switch c.last {
+			case absentConfigHash:
+				// Known absent: the no-config-yet state, already reconciled
+				// once. Nothing changed, so nothing is said.
+				return c.rules
+			case "":
+				// First observation with no seeded state: adopt the empty
+				// ruleset a fresh session would see, silently.
+				c.observe(absentConfigHash, nil)
+				return c.rules
+			default:
+				// A config we loaded has vanished. Keep the rules and say so
+				// — deleting the file is not how a rule is revoked, and an
+				// accidental disappearance must not silently drop every deny
+				// and ask the session was running under. The hash is left
+				// alone, so a file that comes back unchanged settles back
+				// onto these same rules instead of being re-read.
+				fmt.Fprintf(os.Stderr, "warning: permission reload kept the last-known rules (%s disappeared; restore it, or revoke rules deliberately)\n", path)
+				return c.rules
+			}
 		}
 		fmt.Fprintf(os.Stderr, "warning: permission reload kept the last-known rules (reading %s: %v)\n", path, err)
 		return c.rules
 	}
-	sum := fmt.Sprintf("%x", sha256.Sum256(data))
+	sum := contentHash(data)
 	if sum == c.last {
 		return c.rules
 	}
@@ -102,8 +136,27 @@ func (c *permissionRulesCache) current() permissions.Rules {
 		fmt.Fprintf(os.Stderr, "warning: permission reload kept the last-known rules (new config rejected: %v)\n", err)
 		return c.rules
 	}
+	// config.Load re-reads the file, so a write landing between our hash and
+	// its parse would record a hash that does not describe the rules we took.
+	// Skip this boundary and pick the edit up on the next one.
+	if again, rerr := os.ReadFile(path); rerr != nil || contentHash(again) != sum {
+		return c.rules
+	}
+	// Construction runs Validate as well as Load. Without it a config that
+	// startup would refuse outright could still push its permissions stanza
+	// live, so the parity the file header claims would not hold.
+	if err := config.Validate(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: permission reload kept the last-known rules (new config rejected: %v)\n", err)
+		return c.rules
+	}
 	c.observe(sum, cfg.Agent.Default.Permissions)
 	return c.rules
+}
+
+// contentHash is the change detector: content, not mtime, so an edit cannot
+// hide behind a coarse timestamp.
+func contentHash(data []byte) string {
+	return fmt.Sprintf("%x", sha256.Sum256(data))
 }
 
 // absentConfigHash is the content hash stand-in for a config file that
