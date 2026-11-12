@@ -275,6 +275,15 @@ func buildContainment(cfg *config.Config, opts SessionOptions, ws *workspaceStag
 	if ws.sessionSandbox != nil {
 		tr.applyOutTool = &tools.ApplyOutTool{Sandbox: ws.sessionSandbox, HostDir: ws.cwd, Harness: ws.harness}
 		tr.reg.Register(tr.applyOutTool)
+	} else {
+		// Local mode has no accept seam, so nothing registers under the
+		// name — and since the curated default belt admits apply_out
+		// (yaah-6mi9.1), an unnknown entry would read as a typo in the
+		// config warning at startup. Name it on the belt for the same
+		// reason the memory gates do (couldn't, not didn't): the tool
+		// exists; this session shape just has no door for it.
+		tr.belt.Know("apply_out")
+		tr.omittedTools = append(tr.omittedTools, "apply_out")
 	}
 	return nil
 }

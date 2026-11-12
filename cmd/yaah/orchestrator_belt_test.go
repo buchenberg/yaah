@@ -206,6 +206,37 @@ func TestOrchestratorBeltRegistryBoundary(t *testing.T) {
 	}
 }
 
+// TestApplyOutLocalShapeKnowsTheName pins the fix for the bogus startup
+// warning the smoke run surfaced: the curated belt admits apply_out
+// (yaah-6mi9.1), and a local session (no containerd sandbox) has no
+// accept seam, so nothing registers under the name. Unless the gate
+// marks it known, every default-config local session warned "config
+// agents.default.tools names unknown tool apply_out" — a misattribution:
+// the user configured nothing.
+func TestApplyOutLocalShapeKnowsTheName(t *testing.T) {
+	cfg := &config.Config{}
+	ws := &workspaceStage{cwd: t.TempDir()}
+	st, err := buildToolRegistry(cfg, SessionOptions{}, ws, subagent.Persona{}, nil)
+	if err != nil {
+		t.Fatalf("buildToolRegistry: %v", err)
+	}
+	if err := buildContainment(cfg, SessionOptions{}, ws, st); err != nil {
+		t.Fatalf("buildContainment: %v", err)
+	}
+	if st.reg.Get("apply_out") != nil {
+		t.Error("a local session must not hold apply_out; only isolated mode has the accept seam")
+	}
+	if !st.belt.Knows("apply_out") {
+		t.Error("the admitted-but-unregistered apply_out must be known, or every local startup warns it as a config typo")
+	}
+	if slices.Contains(st.belt.Unknown(), "apply_out") {
+		t.Errorf("apply_out must not read as a config typo, got Unknown() = %v", st.belt.Unknown())
+	}
+	if !slices.Contains(st.omittedTools, "apply_out") {
+		t.Errorf("the gate must record the omission so the prompt can say couldn't, not didn't; got %v", st.omittedTools)
+	}
+}
+
 // TestOrchestratorBeltPassesThroughTheLoopSeam documents the wiring
 // shape since the mid-session persona switch (yaah-21uk.12): the belt is
 // config-only, and buildToolRegistry hands effectiveBeltNames a nil
