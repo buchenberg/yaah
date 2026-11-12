@@ -11,6 +11,7 @@ package yaah
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/cwdpath"
@@ -77,23 +78,50 @@ func effectiveBeltNames(configured, persona []string) []string {
 // against the registry rather than the belt: since narrowing moved to
 // the per-run seam (yaah-21uk.12) the belt is config-only, so a persona
 // name is a typo exactly when the registry holds no tool under it and
-// the belt never met the name — not known via a gate (memory tools,
-// role) and not refused as a real tool the config belt turned away.
+// the belt never met the name. A persona name the belt KNOWS but the
+// registry does not hold is not a typo either — it is a real tool this
+// session cannot call: withheld by the curated default (copy, tail),
+// or registered behind a gate that is closed here (memory tools in a
+// fresh one-shot store, question in one-shot, go_test outside a Go
+// module). Before the curated default (yaah-6mi9.1) that class was
+// empty for a belt-less config — every registered tool was held — so
+// no warning was warranted; now the narrowing drops it silently
+// without one.
 func unknownToolWarnings(tr *toolRegistryStage) []string {
 	if tr.belt == nil {
 		return nil
 	}
 	var out []string
 	warned := make(map[string]bool)
+	refused := tr.belt.Refused()
 	for _, name := range tr.belt.Unknown() {
 		warned[name] = true
 		out = append(out, fmt.Sprintf("warning: config `agents.default.tools` names unknown tool %q; ignored", name))
 	}
 	for _, name := range tr.personaTools {
-		if warned[name] || tr.reg.Get(name) != nil || tr.belt.Knows(name) {
+		if warned[name] || tr.reg.Get(name) != nil {
 			continue
 		}
-		out = append(out, fmt.Sprintf("warning: persona %q names unknown tool %q; ignored", tr.personaName, name))
+		if !tr.belt.Knows(name) {
+			warned[name] = true
+			out = append(out, fmt.Sprintf("warning: persona %q names unknown tool %q; ignored", tr.personaName, name))
+			continue
+		}
+		// The tool exists but this session does not hold it: a real
+		// name, unavailable here. The narrowing drops it either way —
+		// the warning is so a role file does not lose a tool it names
+		// in silence. The belt distinguishes the two reasons: a name
+		// it refused is a belt withholding the fix is config for (the
+		// curated default or an explicit list), while a name it merely
+		// knows is a lane whose registration gate — store, Go module,
+		// session shape — is closed in this session, and no belt entry
+		// would change that.
+		warned[name] = true
+		if slices.Contains(refused, name) {
+			out = append(out, fmt.Sprintf("warning: persona %q names tool %q withheld by the session's tool belt (name it in agents.default.tools to get it back); narrowed away", tr.personaName, name))
+			continue
+		}
+		out = append(out, fmt.Sprintf("warning: persona %q names tool %q that is registered only when its feature gate opens (closed in this session); narrowed away", tr.personaName, name))
 	}
 	return out
 }

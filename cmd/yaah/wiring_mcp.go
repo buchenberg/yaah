@@ -63,6 +63,14 @@ func initMCP(cfg *config.Config, toolReg *tools.Registry, skipMCP, register bool
 	names := make(map[string]bool, len(mcpTools))
 	for _, t := range mcpTools {
 		if register {
+			// A configured MCP server is itself the opt-in, and its
+			// tool names could not be in the belt when the belt was
+			// built: admit before registering, so curation of the
+			// built-in registry (or an explicit agents.default.tools
+			// list) cannot silently drop a configured server. This
+			// deletes the old belt contract that refused unnamed MCP
+			// tools; docs/configuration.md says so.
+			toolReg.Admit(t.Name())
 			toolReg.Register(t)
 		}
 		names[t.Name()] = true

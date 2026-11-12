@@ -391,6 +391,19 @@ func (r *Registry) Register(t Tool) {
 	r.inject(t)
 }
 
+// Admit widens the session's belt to a tool name about to register, so
+// a registration the belt would otherwise refuse can proceed
+// (substrate.Belt.Admit). Its only use is the MCP seam: a configured
+// server's tools were not in the belt when it was built, and the
+// configuration itself is the opt-in. Callers must call it before
+// Register — a belt refusal that already happened is retracted, but the
+// honest order is admit-then-register.
+func (r *Registry) Admit(name string) {
+	if r.belt != nil {
+		r.belt.Admit(name)
+	}
+}
+
 // Unregister removes a tool from the belt. Used for mode-driven
 // omissions (e.g. the question tool in a non-interactive one-shot
 // session, where a blocking question has no one to answer it and

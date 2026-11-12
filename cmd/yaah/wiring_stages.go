@@ -322,7 +322,9 @@ func buildToolRegistry(cfg *config.Config, opts SessionOptions, ws *workspaceSta
 	// Tool belt (yaah-w8x): the session's allowlist of tools. The belt
 	// is enforced by the registry at registration — a tool it does not
 	// admit is never installed, so a late registration is refused like
-	// any other. An unset list admits every tool (the default).
+	// any other. An unset list resolves to the curated orchestrator
+	// default (yaah-6mi9.1, orchestrator_belt.go); "*" alone restores
+	// the full surface.
 	//
 	// Persona narrowing (yaah-21uk.7) rode this belt; since the
 	// mid-session switch (yaah-21uk.12) it happens per loop build — the
@@ -337,7 +339,13 @@ func buildToolRegistry(cfg *config.Config, opts SessionOptions, ws *workspaceSta
 	pTools := normalizeToolNames(persona.Tools)
 	st.personaName = persona.Name
 	st.personaTools = pTools
-	belt := tools.NewBelt(effectiveBeltNames(cfg.Agent.Default.Tools, nil))
+	// The configured belt resolves through the curated default
+	// (yaah-6mi9.1): empty config takes defaultOrchestratorBelt, an
+	// explicit list wins verbatim, and "*" alone restores the full
+	// surface. The persona narrows at loop build (narrowToPersonaTools,
+	// also narrow-only), not here — personaTools does not feed this
+	// call; the nil keeps the resolved list verbatim.
+	belt := tools.NewBelt(effectiveBeltNames(orchestratorBeltNames(cfg.Agent.Default.Tools), nil))
 	st.belt = belt
 	if isolated {
 		st.reg = tools.NewIsolatedRegistryWithBelt(belt)
