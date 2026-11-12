@@ -74,6 +74,7 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 	s.mu.Lock()
 	s.messages = loop.State.Messages
 	s.msgIdx = loop.Persister.MsgIdx()
+	s.previousSummary = loop.State.PreviousSummary
 	s.turnBudgetExhausted = loop.State.TurnBudgetExhausted
 	s.mu.Unlock()
 
@@ -264,6 +265,7 @@ func (s *agentSession) loopBuilder(
 		Model:                      modelName,
 		SystemPrompt:               s.modeDirective(persona),
 		Messages:                   msgs,
+		PreviousSummary:            s.previousSummary,
 		SessionID:                  s.sessionID,
 		TraceStore:                 agent.TraceSinkOf(s.traceStore),
 		Persister:                  persister,

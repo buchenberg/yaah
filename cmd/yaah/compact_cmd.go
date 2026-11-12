@@ -97,6 +97,7 @@ func (s *agentSession) compactContext() {
 
 	s.mu.Lock()
 	s.messages = loop.State.Messages
+	s.previousSummary = loop.State.PreviousSummary
 	compacted := s.messages
 	s.mu.Unlock()
 

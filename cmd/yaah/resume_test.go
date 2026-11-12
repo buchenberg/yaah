@@ -1,16 +1,20 @@
 package yaah
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	agentctx "github.com/buchenberg/yaah/internal/agent/context"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/buchenberg/yaah/internal/types"
 )
 
 // TestRestoreMessage_carriesReasoningSignature pins that resume does not drop
@@ -88,6 +92,144 @@ func TestRestoreSession_FreshSessionKeepsCallerPrompt(t *testing.T) {
 	}
 	if got.SystemPrompt != "BASE PROMPT" {
 		t.Fatalf("SystemPrompt = %q; want the caller's prompt", got.SystemPrompt)
+	}
+	if got.PreviousSummary != "" {
+		t.Fatalf("PreviousSummary = %q; a fresh session has no anchored summary", got.PreviousSummary)
+	}
+}
+
+// newSummaryResumeFixture persists a session row (with its anchored-summary
+// column) and the given transcript rows — the shapes resume must tell apart.
+func newSummaryResumeFixture(t *testing.T, id, systemPrompt, summary string, transcript []memory.Message) *memory.DB {
+	t.Helper()
+	db, err := memory.Open(filepath.Join(t.TempDir(), "resume.db"))
+	if err != nil {
+		t.Fatalf("memory.Open() error: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	now := time.Now().Unix()
+	if err := db.CreateSession(memory.Session{ID: id, StartedAt: now, SystemPrompt: systemPrompt}); err != nil {
+		t.Fatalf("CreateSession() error: %v", err)
+	}
+	for i := range transcript {
+		transcript[i].SessionID = id
+		transcript[i].Idx = i
+		transcript[i].ID = fmt.Sprintf("%s-%d", id, i)
+		if transcript[i].Timestamp == 0 {
+			transcript[i].Timestamp = now
+		}
+		if err := db.AddMessage(transcript[i]); err != nil {
+			t.Fatalf("AddMessage(%d) error: %v", i, err)
+		}
+	}
+	if summary != "" {
+		if err := db.UpdateSessionSummary(id, summary); err != nil {
+			t.Fatalf("UpdateSessionSummary() error: %v", err)
+		}
+	}
+	return db
+}
+
+// countSummaryCopies counts the resumed messages whose content carries the
+// summary — the duplication guard for every shape below.
+func countSummaryCopies(msgs []types.Message, summary string) int {
+	n := 0
+	for _, m := range msgs {
+		if strings.Contains(m.Content, summary) {
+			n++
+		}
+	}
+	return n
+}
+
+// TestRestoreSession_HydratesPreviousSummary pins the core of yaah-an55: the
+// persisted anchored summary feeds the next compaction's prompt, the live
+// transcript keeps exactly one copy (the rebased notice), and the head of
+// the conversation stays the identity prompt — a summary at the head is
+// what the next compaction "preserves" as its system message.
+func TestRestoreSession_HydratesPreviousSummary(t *testing.T) {
+	const (
+		summary = "## Goal\n- land the resume hydration\n\n## Progress\n- wired the builder option"
+		prompt  = "SYSTEM PROMPT"
+	)
+	db := newSummaryResumeFixture(t, "sess-hydrate", prompt, summary, []memory.Message{
+		{Role: "system", Content: prompt},
+		{Role: "system", Content: agentctx.ContinuationNotice(summary)},
+		{Role: "user", Content: "carry on"},
+	})
+
+	restored, err := restoreSession(db, "sess-hydrate", "base")
+	if err != nil {
+		t.Fatalf("restoreSession() error: %v", err)
+	}
+	if restored.PreviousSummary != summary {
+		t.Fatalf("PreviousSummary = %q, want the persisted anchored summary", restored.PreviousSummary)
+	}
+	if len(restored.Messages) == 0 || restored.Messages[0].Role != "system" || restored.Messages[0].Content != prompt {
+		t.Fatalf("head = %+v, want the identity prompt", restored.Messages[0])
+	}
+	if got := countSummaryCopies(restored.Messages, summary); got != 1 {
+		t.Fatalf("the summary appears %d time(s) in the resumed transcript, want 1", got)
+	}
+}
+
+// TestRestoreSession_InjectsFallbackMarkerNotice pins the trim-marker shape:
+// the rollover row carries a marker rather than an anchored summary, trim
+// rebased persistence without installing a notice, so resume must install
+// one — after the system prompt — while keeping the marker out of the
+// compaction prompt's anchored-summary slot.
+func TestRestoreSession_InjectsFallbackMarkerNotice(t *testing.T) {
+	const prompt = "SYSTEM PROMPT"
+	marker := agentctx.FallbackMarker("summary rejected: no substantive content (every section is a placeholder)")
+	db := newSummaryResumeFixture(t, "sess-marker", prompt, marker, []memory.Message{
+		{Role: "system", Content: prompt},
+		{Role: "user", Content: "carry on"},
+	})
+
+	restored, err := restoreSession(db, "sess-marker", "base")
+	if err != nil {
+		t.Fatalf("restoreSession() error: %v", err)
+	}
+	if restored.PreviousSummary != "" {
+		t.Fatalf("PreviousSummary = %q; a fallback marker is not an anchored summary to update", restored.PreviousSummary)
+	}
+	if len(restored.Messages) < 2 || restored.Messages[0].Content != prompt {
+		t.Fatalf("head = %+v, want the identity prompt", restored.Messages[0])
+	}
+	if got := restored.Messages[1]; got.Role != "system" || !strings.Contains(got.Content, marker) {
+		t.Fatalf("second message = %+v, want the continuation notice carrying the marker", got)
+	}
+	if n := countSummaryCopies(restored.Messages, marker); n != 1 {
+		t.Fatalf("the marker appears %d time(s) in the resumed transcript, want 1", n)
+	}
+}
+
+// TestRestoreSession_PreRebaseSessionGetsNotice pins the legacy shape: a
+// session compacted before persistence rebased to the notice baseline has
+// the summary row but no carrying message — resume must still surface it,
+// once, after the system prompt.
+func TestRestoreSession_PreRebaseSessionGetsNotice(t *testing.T) {
+	const (
+		summary = "## Goal\n- survived a pre-rebase compaction"
+		prompt  = "SYSTEM PROMPT"
+	)
+	db := newSummaryResumeFixture(t, "sess-legacy", prompt, summary, []memory.Message{
+		{Role: "system", Content: prompt},
+		{Role: "user", Content: "carry on"},
+	})
+
+	restored, err := restoreSession(db, "sess-legacy", "base")
+	if err != nil {
+		t.Fatalf("restoreSession() error: %v", err)
+	}
+	if restored.PreviousSummary != summary {
+		t.Fatalf("PreviousSummary = %q, want the persisted summary", restored.PreviousSummary)
+	}
+	if got := restored.Messages[1]; got.Role != "system" || !strings.Contains(got.Content, summary) {
+		t.Fatalf("second message = %+v, want the continuation notice", got)
+	}
+	if n := countSummaryCopies(restored.Messages, summary); n != 1 {
+		t.Fatalf("the summary appears %d time(s) in the resumed transcript, want 1", n)
 	}
 }
 

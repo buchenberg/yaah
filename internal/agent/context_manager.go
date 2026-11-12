@@ -179,20 +179,6 @@ func (cm *ContextManager) persistAcceptedCompaction(summary string) {
 	cm.persistSessionSummary(summary)
 }
 
-// compactionFallbackMarker is the summary-shaped record for a rollover
-// whose every summarizer attempt failed: the trim fallback dropped the
-// old messages without producing a summary, and an empty
-// compacted_summary row would claim nothing happened. The marker carries
-// no fabricated content — what happened, why, and where the dropped
-// detail still lives — and stays one line, because resume injects it as
-// a system message. The reason is bounded like the warn line's.
-func compactionFallbackMarker(reason string) string {
-	if r := []rune(reason); len(r) > 256 {
-		reason = string(r[:256]) + "..."
-	}
-	return "[context rollover] Earlier messages were compacted by heuristic trim: every summarization attempt failed (" + reason + "). Detail from before the rollover is not in context; the full transcript remains in the session store."
-}
-
 // applyCompactedSummary replaces the message list with the compacted summary
 // plus kept messages. It is called by both the normal and chunked compaction
 // paths so they share the same post-compaction logic.
@@ -203,8 +189,7 @@ func (cm *ContextManager) applyCompactedSummary(summary string, sysMsg types.Mes
 	if cm.SystemPrompt == "" {
 		newMsgs[0] = types.SystemMsg(summary)
 	} else {
-		newMsgs = append(newMsgs, types.SystemMsg(
-			"You are continuing an ongoing conversation. Below is a summary of earlier discussion. Continue naturally — do not greet, reintroduce yourself, or act like the conversation is starting over.\n\nPrevious conversation summary:\n"+summary))
+		newMsgs = append(newMsgs, types.SystemMsg(agentctx.ContinuationNotice(summary)))
 	}
 
 	if lastUser := agentctx.LastUserPrompt(oldMsgs); lastUser != "" {
@@ -433,6 +418,15 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 	}
 	sb.WriteString("Conversation excerpt to summarize:\n\n")
 	for _, m := range oldMsgs {
+		if cm.State.PreviousSummary != "" && m.Role == "system" &&
+			strings.Contains(m.Content, cm.State.PreviousSummary) {
+			// The anchored summary already rides the <previous-summary>
+			// section above; repeating it in the excerpt doubles the
+			// prompt for no new information (yaah-an55). The carrier
+			// holds the summary plus the continuation preamble and
+			// nothing else of substance, so skipping it loses nothing.
+			continue
+		}
 		if m.Content != "" {
 			if m.Role == "tool" {
 				sb.WriteString(agentctx.FormatToolStub(m) + "\n")
@@ -575,7 +569,7 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 		// when none was. The in-memory summary stays empty either way:
 		// trim installs none.
 		if len(cm.State.Messages) < beforeTrim {
-			cm.persistSessionSummary(compactionFallbackMarker(reason))
+			cm.persistSessionSummary(agentctx.FallbackMarker(reason))
 		}
 		if cm.Broker != nil {
 			// Terminal event for the compaction card: the LLM

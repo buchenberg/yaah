@@ -39,6 +39,10 @@ type LoopBuilder struct {
 	SystemPrompt string
 	// Messages is the initial conversation history (for resume).
 	Messages []types.Message
+	// PreviousSummary is the resumed session's persisted anchored summary,
+	// seeded into the loop state so the next compaction updates it instead
+	// of restarting (yaah-an55). Empty means none.
+	PreviousSummary string
 	// SessionID is the session identifier.
 	SessionID string
 	// TraceStore is the session-shared Shepherd trace sink. When set, the
@@ -137,6 +141,7 @@ func (b *LoopBuilder) Build(opts LoopBuildOptions) *Loop {
 		WithSystemPrompt(b.SystemPrompt),
 		WithView(view),
 		WithMessages(b.Messages),
+		WithPreviousSummary(b.PreviousSummary),
 		WithSessionID(b.SessionID),
 		WithTraceSink(b.TraceStore),
 		WithPersister(b.Persister),

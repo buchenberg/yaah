@@ -25,6 +25,39 @@ func BoundedSummaryPrefix(summary string) string {
 
 func isRuneStart(b byte) bool { return b&0xC0 != 0x80 }
 
+// ContinuationNotice renders the head message compaction installs in front
+// of a rolled-over conversation: the anchored summary plus the framing that
+// tells the model the conversation is continuing rather than starting over.
+// Resume injects it too, in the same shape, so a restarted session's live
+// context matches what an in-process compaction would have installed.
+func ContinuationNotice(summary string) string {
+	return "You are continuing an ongoing conversation. Below is a summary of earlier discussion. Continue naturally — do not greet, reintroduce yourself, or act like the conversation is starting over.\n\nPrevious conversation summary:\n" + summary
+}
+
+// FallbackMarkerPrefix begins the summary-shaped record the trim fallback
+// persists (yaah-l12q) when every summarizer attempt failed. The marker is
+// not an anchored summary: it carries no content to update, so the next
+// summarization must start fresh and resume must not hydrate it into the
+// prompt's previous-summary section.
+const FallbackMarkerPrefix = "[context rollover]"
+
+// FallbackMarker renders the trim fallback's record: no fabricated content —
+// what happened, why, and where the dropped detail still lives. The reason
+// is bounded so a provider error cannot bloat the session row or the
+// resume-time system message.
+func FallbackMarker(reason string) string {
+	if r := []rune(reason); len(r) > 256 {
+		reason = string(r[:256]) + "..."
+	}
+	return FallbackMarkerPrefix + " Earlier messages were compacted by heuristic trim: every summarization attempt failed (" + reason + "). Detail from before the rollover is not in context; the full transcript remains in the session store."
+}
+
+// IsFallbackMarker reports whether summary is the trim fallback's marker
+// rather than an anchored summary.
+func IsFallbackMarker(summary string) bool {
+	return strings.HasPrefix(strings.TrimSpace(summary), FallbackMarkerPrefix)
+}
+
 // ValidateSummary reports whether a summarizer response carries usable
 // information, and the reason it fails when it does not.
 //

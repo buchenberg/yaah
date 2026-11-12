@@ -296,6 +296,7 @@ func (s *agentSession) runHeadlessLocked(ctx context.Context, prompt string) (st
 	s.mu.Lock()
 	s.messages = loop.State.Messages
 	s.msgIdx = loop.Persister.MsgIdx()
+	s.previousSummary = loop.State.PreviousSummary
 	s.mu.Unlock()
 
 	return response, loop.State.TotalTokens, err

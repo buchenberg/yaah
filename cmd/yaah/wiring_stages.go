@@ -645,6 +645,11 @@ type loopInfraStage struct {
 	usage        restoredUsage
 	systemPrompt string
 	mainPrompt   string
+	// previousSummary is the resumed session's persisted anchored summary:
+	// the next compaction folds it into its prompt (yaah-an55). Empty for a
+	// fresh session and for a trim-marker rollover, which carries no
+	// anchored summary to update.
+	previousSummary string
 	// identityEnd anchors after-identity injections (see mcpSkillsStage);
 	// it stays valid across the tool-guidance appends, which only extend
 	// the prompt's tail.
@@ -785,6 +790,7 @@ func restoreTranscript(st *loopInfraStage, cfg *config.Config, opts SessionOptio
 		return err
 	}
 	st.messages, st.sessionID, st.msgIdx, st.systemPrompt = restored.Messages, restored.SessionID, restored.MsgIdx, restored.SystemPrompt
+	st.previousSummary = restored.PreviousSummary
 	st.usage = restored.Usage
 	if opts.ResumeSessionID == "" {
 		st.sessionID = fmt.Sprintf("sess-%d", time.Now().UnixNano())
