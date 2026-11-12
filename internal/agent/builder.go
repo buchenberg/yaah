@@ -87,6 +87,9 @@ type LoopBuilder struct {
 	// MCPToolNames carries the names they registered under.
 	MCPApproval  string
 	MCPToolNames map[string]bool
+	// SavedAllow is the persisted-"always" consultant (yaah-x6vi.6),
+	// handed to the evaluator via WithSavedAllow. Nil means no store.
+	SavedAllow func(name, resource string) bool
 	// SubAgentMaxConcurrency caps simultaneous sub-agent dispatches.
 	SubAgentMaxConcurrency int
 	// SubAgentStuckChildTimeout is the per-role stuck-child deadline.
@@ -167,6 +170,9 @@ func (b *LoopBuilder) Build(opts LoopBuildOptions) *Loop {
 	}
 	if b.MCPApproval != "" {
 		optsList = append(optsList, WithMCPApproval(b.MCPApproval, b.MCPToolNames))
+	}
+	if b.SavedAllow != nil {
+		optsList = append(optsList, WithSavedAllow(b.SavedAllow))
 	}
 
 	loop := NewLoop(b.Provider, b.Registry, optsList...)

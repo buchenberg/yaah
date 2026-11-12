@@ -117,6 +117,14 @@ func WithMCPApproval(mode string, names map[string]bool) Option {
 	}
 }
 
+// WithSavedAllow sets the persisted-"always" consultant (yaah-x6vi.6):
+// consulted by the evaluator only to lift an ask — a deny from the ruleset
+// or a posture is terminal and the consultant can never widen it. Nil (the
+// default) means no store is wired and every ask routes to the bridge.
+func WithSavedAllow(fn func(name, resource string) bool) Option {
+	return func(l *Loop) { l.Config.SavedAllow = fn }
+}
+
 // WithPipeline configures the middleware pipeline.
 func WithPipeline(enabled, disabled []string) Option {
 	return func(l *Loop) {
