@@ -30,7 +30,7 @@ func printRecoveryReport(report *recovery.Report) {
 	// this work" and "this work is still running", and the two used to be
 	// conflated all the way into the dispatch cap.
 	if n := len(report.Resumed); n > 0 {
-		fmt.Fprintf(os.Stderr, "shepherd recovery: %d scope(s) resumed from the trace (%s); no loop runs under them, so the reaper retires them and they do not count against the dispatch cap\n", n, recovery.ResumedExecution)
+		fmt.Fprintf(os.Stderr, "shepherd recovery: %d scope(s) resumed from the trace (%s); no loop runs under them and they do not count against the dispatch cap — the reaper retires the ones without a re-adopted worktree\n", n, recovery.ResumedExecution)
 	}
 
 	for _, o := range report.Orphans {

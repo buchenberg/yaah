@@ -10,6 +10,9 @@ import (
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	"github.com/buchenberg/goatherd-runtime"
+	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+
+	"github.com/buchenberg/yaah/internal/sandboxfake"
 )
 
 // newReaperFixture builds a real ScopeManager over a temp SQLite trace
@@ -184,6 +187,71 @@ func TestReapOnceSweepsResumedScopeWithoutGrace(t *testing.T) {
 	}
 }
 
+// newCreatedFakeSandbox returns a created in-memory sandbox: the state a
+// re-adopted worktree sandbox is in when the reaper's sweep runs —
+// recovery attached it live, and no Destroy has touched it.
+func newCreatedFakeSandbox(t *testing.T) *sandboxfake.Sandbox {
+	t.Helper()
+	sb := sandboxfake.New()
+	if err := sb.Create(context.Background(), goatherdsandbox.SandboxSpec{}); err != nil {
+		t.Fatalf("create fake sandbox: %v", err)
+	}
+	return sb
+}
+
+// TestReapOnceSparesResumedScopeWithReadoptedSandbox pins the yaah-dbik
+// failure: startup recovery re-adopts a live worktree onto an ACTIVE
+// child — owned, which is what makes a later Discard a physical
+// rollback — and the reaper's resumed-scope retirement must not become
+// the path that destroys it. A resumed scope that carries a substrate is
+// live work by recovery's own contract; a sandbox-less resumed scope
+// beside it is still retired in the very same pass.
+func TestReapOnceSparesResumedScopeWithReadoptedSandbox(t *testing.T) {
+	r, mgr, _, rootID := newReaperFixture(t)
+
+	adopted, err := mgr.Fork(rootID, "resumed-adopted", nil)
+	if err != nil {
+		t.Fatalf("fork adopted child: %v", err)
+	}
+	// The kernel's recovery attaches a re-adopted worktree OWNED
+	// (WithSandbox(sb, true)); the test must mirror that, because the
+	// ownership is exactly what turns a reaper discard into a teardown.
+	sb := newCreatedFakeSandbox(t)
+	adopted.WithSandbox(sb, true)
+
+	forkChild(t, mgr, rootID, "resumed-dead")
+	// The resumed set is unordered, as the wiring hands it over.
+	r.SetResumed([]string{"scope:resumed-dead", adopted.ID()})
+
+	now := time.Now()
+	reaped, _, _ := r.ReapOnce(now)
+	if reaped != 1 {
+		t.Fatalf("first pass: reaped %d, want 1 — only the sandbox-less resumed scope retires", reaped)
+	}
+	if _, ok := mgr.Get("scope:resumed-dead"); ok {
+		t.Fatal("the sandbox-less resumed scope survived the sweep")
+	}
+	if r.resumed["scope:resumed-dead"] {
+		t.Error("the retired scope left its resumed entry behind")
+	}
+
+	// The spared one stays spared across further passes.
+	for i := range 2 {
+		if reaped, _, _ = r.ReapOnce(now.Add(time.Duration(i+1) * time.Minute)); reaped != 0 {
+			t.Fatalf("pass %d: reaped %d, want 0 — a re-adopted substrate must stay spared", i+2, reaped)
+		}
+	}
+	if _, ok := mgr.Get(adopted.ID()); !ok {
+		t.Fatal("a resumed scope holding a re-adopted substrate was retired")
+	}
+	if sb.Destroyed() {
+		t.Error("the re-adopted sandbox was destroyed — the reaper must not discard through live work")
+	}
+	if !r.resumed[adopted.ID()] {
+		t.Error("the spared scope lost its resumed entry — the exemption must not consume the ledger")
+	}
+}
+
 // TestReapOnceSparesResumedLiveScopes pins the exemptions that still
 // apply to a resumed scope: the session's own root (which a --resume
 // reattaches and keeps working under) and a rehydrated proposal awaiting
@@ -223,6 +291,32 @@ func TestStartSweepsResumedScopesBeforeTheFirstTick(t *testing.T) {
 
 	if _, ok := mgr.Get("scope:resumed-at-startup"); ok {
 		t.Fatal("Start must sweep resumed scopes before the first tick")
+	}
+}
+
+// TestStartSparesResumedScopeWithReadoptedSandbox pins the orch-recovery
+// shape of yaah-dbik: the startup sweep runs seconds after recovery
+// announced "1 worktree(s) re-adopted", and it must not undo that
+// adoption in the same breath — the scenario's verifier reads the
+// worktree's payload and its git registration after the session ends.
+func TestStartSparesResumedScopeWithReadoptedSandbox(t *testing.T) {
+	r, mgr, _, rootID := newReaperFixture(t)
+
+	adopted, err := mgr.Fork(rootID, "resumed-adopted", nil)
+	if err != nil {
+		t.Fatalf("fork adopted child: %v", err)
+	}
+	sb := newCreatedFakeSandbox(t)
+	adopted.WithSandbox(sb, true)
+	r.SetResumed([]string{adopted.ID()})
+
+	r.Start()
+
+	if _, ok := mgr.Get(adopted.ID()); !ok {
+		t.Fatal("the startup sweep retired a scope holding a re-adopted worktree")
+	}
+	if sb.Destroyed() {
+		t.Error("the startup sweep destroyed the re-adopted sandbox")
 	}
 }
 
