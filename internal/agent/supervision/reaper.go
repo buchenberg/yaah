@@ -93,6 +93,11 @@ const DefaultReapInterval = 5 * time.Minute
 // ever bridged them, and their unbridged clock started before the
 // process did, so the grace window that protects a freshly forked scope
 // would only delay the sweep while dead work holds the dispatch cap.
+// A resumed scope that carries a sandbox is the exception (yaah-dbik):
+// the substrate is live work recovery deliberately re-adopted — a
+// worktree child's unmerged changes, or the root's repository — and
+// Discard destroys an owned sandbox, so retiring the scope would
+// physically destroy the very work recovery exists to preserve.
 type Reaper struct {
 	mgr         *goatherd.ScopeManager
 	runs        *Registry
@@ -158,8 +163,10 @@ func (r *Reaper) SetPendingSource(src func() []string) {
 // on its first sweep — nothing of this process ever bridged it, and its
 // unbridged clock began before the process did — so the reaper retires
 // it instead of granting a grace window that would leave the dispatch
-// cap saturated by dead work. Scopes the pending source reports live
-// (a rehydrated proposal awaiting settlement) are still spared.
+// cap saturated by dead work. Two exemptions survive the resumed entry:
+// a scope the pending source reports live (a rehydrated proposal
+// awaiting settlement), and a scope that carries a re-adopted sandbox —
+// live substrate a Discard would physically destroy (yaah-dbik).
 func (r *Reaper) SetResumed(ids []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -282,6 +289,22 @@ func (r *Reaper) ReapOnce(now time.Time) (reaped, stale, pruned int) {
 			continue
 		}
 		resumed := r.resumed[id]
+		if resumed && sc.Sandbox() != nil {
+			// A resumed scope that carries a sandbox carries a substrate
+			// recovery re-adopted minutes ago (yaah-dbik): a worktree
+			// child's live worktree, or the root's repository. Discard
+			// destroys an owned sandbox, so retiring the scope would
+			// physically destroy the work recovery just declared live —
+			// the exact failure that unmade the orch-recovery scenario's
+			// re-adopted worktree seconds after adoption. The skip sits
+			// before the unbridged bookkeeping so no ledger entry
+			// accumulates for a scope the sweep will never reap while it
+			// holds the substrate. The dispatch cap does not count
+			// resumed scopes (yaah-95ri.7), so sparing one holds no
+			// dispatch capacity, and an explicit discard — the proposal
+			// tool's — still lands; only the automatic sweep is gated.
+			continue
+		}
 		first, ok := r.unbridged[id]
 		if !ok {
 			if !resumed {

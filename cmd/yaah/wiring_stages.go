@@ -1223,9 +1223,12 @@ func startScopeReaper(st *loopInfraStage) {
 	// trace, nothing in this process runs under them, and their unbridged
 	// clock predates the process — so the reaper's startup pass retires
 	// them instead of granting a grace window that would leave the
-	// dispatch cap holding dead work. A resumed scope the pending source
-	// reports live (a rehydrated proposal awaiting settlement) is still
-	// spared.
+	// dispatch cap holding dead work. Two exemptions survive the resumed
+	// entry: a scope the pending source reports live (a rehydrated
+	// proposal awaiting settlement), and a scope that carries a
+	// re-adopted sandbox (yaah-dbik) — Discard destroys an owned sandbox,
+	// and a worktree recovery just re-adopted is live work, not dead
+	// weight.
 	if len(st.resumedScopes) > 0 {
 		ids := make([]string, 0, len(st.resumedScopes))
 		for id := range st.resumedScopes {
