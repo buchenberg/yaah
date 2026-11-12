@@ -21,6 +21,14 @@ type compactionRecordingProvider struct {
 	index     int
 
 	emptyAll bool
+	// placeholderAll makes every reply echo the unfilled summary
+	// template — the recorded orch-compact shape (yaah-l12q), where the
+	// compaction model returned placeholder-only content on every call.
+	// The queued responses cannot express it: a request count that
+	// outlives the queue silently falls through to the substantive
+	// default, which is what let a chunked merge "succeed" in a test
+	// that claimed every reply echoed the template.
+	placeholderAll bool
 }
 
 func (p *compactionRecordingProvider) Send(_ context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
@@ -31,6 +39,9 @@ func (p *compactionRecordingProvider) Send(_ context.Context, req types.ChatRequ
 
 	if p.emptyAll {
 		return thoughtOnlyResponse(), nil
+	}
+	if p.placeholderAll {
+		return templateEchoResponse(), nil
 	}
 	if p.index < len(p.responses) {
 		resp := p.responses[p.index]
@@ -294,11 +305,7 @@ func TestCompactContextAcceptsSubstantiveSummary(t *testing.T) {
 // the chunked path — every chunk/merge reply echoing the template must fall
 // through to trim, never install.
 func TestCompactContextRejectsTemplateEchoFromChunkedSummarizer(t *testing.T) {
-	echoes := make([]*types.ChatResponse, 12)
-	for i := range echoes {
-		echoes[i] = templateEchoResponse()
-	}
-	p := &compactionRecordingProvider{responses: echoes}
+	p := &compactionRecordingProvider{placeholderAll: true}
 	cm := compactionTestManager(p)
 
 	before := len(cm.State.Messages)
@@ -312,5 +319,97 @@ func TestCompactContextRejectsTemplateEchoFromChunkedSummarizer(t *testing.T) {
 	}
 	if cm.State.Messages[0].Role != "system" {
 		t.Errorf("system message lost: role=%q", cm.State.Messages[0].Role)
+	}
+}
+
+// TestCompactContextChunkedSummaryPersists pins yaah-l12q's recorded
+// failure: the chunked fallback installed a real summary in the context
+// but recorded nothing, so the session's compacted_summary row stayed
+// empty — the shape the orch-compact verifier caught when the compaction
+// model returned placeholder-only summaries and every rollover rode the
+// fallback. A restart would have resumed without the summary too.
+func TestCompactContextChunkedSummaryPersists(t *testing.T) {
+	// The primary reply echoes the template (rejected); the chunk and
+	// merge replies fall through to the recorder's substantive default.
+	p := &compactionRecordingProvider{responses: []*types.ChatResponse{templateEchoResponse()}}
+	db := newPersistTestDB(t, "sess-chunked-persist")
+	cm := compactionTestManager(p)
+	cm.DB = db
+	cm.SessionID = "sess-chunked-persist"
+
+	cm.compactContext(context.Background(), 0.25)
+
+	if cm.State.LastCompactionMethod != "chunked" {
+		t.Fatalf("method = %q, want chunked — the test presumes the fallback accepted a summary", cm.State.LastCompactionMethod)
+	}
+	session, err := db.GetSession("sess-chunked-persist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(session.CompactedSummary) == "" {
+		t.Fatal("the chunked summary was not persisted — resume and the scenario checkers see an empty rollover (yaah-l12q)")
+	}
+}
+
+// TestCompactContextTrimFallbackPersistsMarker pins the terminal
+// fallback's record (yaah-l12q): when every summarizer attempt fails, the
+// trim path drops the old messages without a summary — and an empty
+// compacted_summary row would claim no rollover happened. The row carries
+// the fallback marker; the in-memory summary stays empty because trim
+// installs nothing.
+func TestCompactContextTrimFallbackPersistsMarker(t *testing.T) {
+	p := &compactionRecordingProvider{placeholderAll: true}
+	db := newPersistTestDB(t, "sess-trim-marker")
+	cm := compactionTestManager(p)
+	cm.DB = db
+	cm.SessionID = "sess-trim-marker"
+
+	before := len(cm.State.Messages)
+	cm.compactContext(context.Background(), 0.25)
+
+	if cm.State.LastCompactionMethod != "trim" {
+		t.Fatalf("method = %q, want trim — the test presumes every summary source failed", cm.State.LastCompactionMethod)
+	}
+	if cm.State.LastCompactionSummary != "" {
+		t.Fatalf("trim installed a summary: %q", cm.State.LastCompactionSummary)
+	}
+	if len(cm.State.Messages) >= before {
+		t.Fatal("expected the trim fallback to drop messages")
+	}
+	session, err := db.GetSession("sess-trim-marker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := session.CompactedSummary
+	if strings.TrimSpace(marker) == "" {
+		t.Fatal("the trim fallback left no record — the rollover is invisible to resume and the scenario checkers (yaah-l12q)")
+	}
+	if !strings.Contains(marker, "heuristic trim") {
+		t.Errorf("marker does not name the fallback: %q", marker)
+	}
+}
+
+// TestCompactContextAcceptedSummaryPersists guards the shared persistence
+// tail: the single-shot path's accepted summary must reach the session
+// row (pre-existing behavior, now through the same helper the chunked
+// path gained in yaah-l12q).
+func TestCompactContextAcceptedSummaryPersists(t *testing.T) {
+	p := &compactionRecordingProvider{}
+	db := newPersistTestDB(t, "sess-single-persist")
+	cm := compactionTestManager(p)
+	cm.DB = db
+	cm.SessionID = "sess-single-persist"
+
+	cm.compactContext(context.Background(), 0.25)
+
+	if cm.State.LastCompactionMethod != "single" {
+		t.Fatalf("method = %q, want single", cm.State.LastCompactionMethod)
+	}
+	session, err := db.GetSession("sess-single-persist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.CompactedSummary != "summary" {
+		t.Fatalf("compacted_summary = %q, want the accepted summary", session.CompactedSummary)
 	}
 }
