@@ -38,6 +38,10 @@ Detail, methodology and caveats: [HISTORY.md](HISTORY.md).
 | 2026-11-04 | yaah | a61eb145 | 2026-11-04__14-06-40 | 4/5 | 470,211 | 19,438 | | 98% | 36 | 156s | $0.0147 |
 | 2026-11-04 | hermes | 0.22.5 | 2026-11-04__14-11-58 | 3/5 | 624,265 | 8,997 | | 48% | 21 | 123s | $0.0577 |
 | 2026-11-04 | opencode | 2.1.3 | 2026-11-04__14-17-01 | 5/5 | 357,799 | 8,891 | | 96% | 44 | 182s | $0.0128 |
+| 2026-11-12 | yaah | 3b24dcd (feat/audit-lowhanging-fruit) | 2026-11-12__11-20-28 | 5/5 | 833,111 | 15,080 | | 96% | 36 | 151s | $0.0161 |
+| 2026-11-12 | hermes | 0.22.5 | 2026-11-12__11-33-01 | 3/5 | 266,812 | 7,805 | | 88% | 17 | 127s | $0.0100 |
+| 2026-11-12 | opencode | 2.2.7 | 2026-11-12__11-49-13 | 5/5 | 279,811 | 6,161 | 3,959 | 93% | 36 | 109s | $0.0099 |
+| 2026-11-12 | hermes | 0.22.5 (fixed tarball) | 2026-11-12__12-02-53 | 5/5 | 927,306 | 22,919 | 12,795 | 97% | 51 | 349s | $0.0205 |
 
 Only rows with the same `Resolved` denominator are comparable: the suite was
 15 tasks, then 6, then 5 from 2026-10-17 on. Model `deepseek-flash` and
@@ -58,3 +62,34 @@ tarball forces 12.3.0 and drops what the installer expected). Only three
 of the hermes five tasks produced accounting; its row's step and time
 totals cover those three. Treat the hermes row as instrumentation noise,
 not a quality datapoint.
+
+The 2026-11-12 three-way reproduces the hermes 2026-11-04 failure, and
+this time it was root-caused: csv-to-parquet and jsonl-aggregator run on
+the ubuntu-24-04 task base (glibc 2.39) while the other three run on
+bookworm (glibc 2.36 — the same glibc the tarball's build base carries).
+The 2026-11-04 pillow-pinch rebuild had swept EVERY ldd output into the
+bundle's libs/ — including the glibc family (libc.so.6, libm.so.6,
+libmvec.so.1, libpthread.so.0, librt.so.1, libdl.so.2, ld-linux-x86-64)
+that the recipe's tar step explicitly excludes — so LD_LIBRARY_PATH made
+the bookworm libm win over the system libc on glibc-2.39 bases and the
+interpreter aborted at bare `python3 -c` with `*** stack smashing
+detected ***: terminated` (`agent_installation_failed`, reproduced
+unchanged in a same-day two-task retry `2026-11-12__11-43-58`). The
+bookworm tasks survived only because the bundled libm happened to match
+their glibc. The fix strips the seven glibc-family members from the
+tarball in place (the recipe's exclusion filter is the spec; the module
+docstring now marks it load-bearing): the fixed tarball verified on
+both bases, and the full re-run `2026-11-12__12-02-53` is the clean
+5/5 row with full usage accounting. Treat the 3/5 hermes row as the
+contaminated artifact kept for the trail, exactly like the 2026-11-04
+one. The 2026-11-12 opencode row is the first on v2.2.7
+(prior rows 2.1.3); its accounting comes from the v2.2.7 session DB
+(the `session_v2` row the extractor prefers — the stream-fallback path
+that fed the 2.1.3 rows was superseded when the DB started flushing
+the final step the CLI can exit before printing). The yaah row is the
+audit branch (`feat/audit-lowhanging-fruit`, 3b24dcd — saved-allow
+carve-out, rolefile schema, permission hot reload, rebased on v0.172.1
+main): 5/5, with the prompt total (833K) running high against the
+0.47-0.60M family of 2026-10-31..11-04 rows — mainline moved v0.145 →
+v0.172 between, so attribute the shape to that gap, not the branch.
+All three 2026-11-12 runs are off-peak.

@@ -24,6 +24,18 @@
 # the build base is the oldest glibc any task image uses, so system
 # glibc always wins). One tarball, no per-minor split.
 #
+# The glibc-family exclusion in the tar command below is LOAD-BEARING,
+# not hygiene: a 2026-11-04 rebuild that swept every ldd output into
+# libs/ (libc.so.6, libm.so.6, libmvec.so.1, libpthread.so.0, librt,
+# libdl, ld-linux) crashed at agent-install on every glibc-2.39 task
+# base (the ubuntu-24-04 family) with `*** stack smashing detected ***`
+# in a bare `python3 -c` — LD_LIBRARY_PATH made the bookworm libm win
+# over the system libc, and glibc permits exactly one runtime. The
+# glibc-2.36 (bookworm) task bases survived only because the bundled
+# libm happened to match theirs; that luck is not a compatibility
+# story. If a new task base ever carries a glibc NEWER than the build
+# base and crashes again, check this exclusion first.
+#
 # Build the package tarball once (host, or any linux container):
 #   git clone --depth 1 --branch v0.22.5 \
 #     https://github.com/NousResearch/hermes-agent /tmp/hermes-repo
