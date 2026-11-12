@@ -15,11 +15,8 @@ type (
 )
 
 var (
-	startRetainedRun      = dispatch.StartRetainedRun
 	pathKey               = dispatch.PathKey
 	newRetainedRunError   = dispatch.NewRetainedRunError
 	noteBudget            = dispatch.NoteBudget
-	retainedNote          = dispatch.RetainedNote
-	foldRetainedPartial   = dispatch.FoldRetainedPartial
 	proposalContentDigest = dispatch.ProposalContentDigest
 )

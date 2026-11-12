@@ -1018,10 +1018,10 @@ func (p *retainedProposal) sessionChangedSinceBasis(ctx context.Context) ([]stri
 // gone (destroyed at seal); the manifest is the proposal. select and apply write
 // the host tree for a host-target proposal, or the session container for a
 // session-target one; release exports the manifest and discard drops it.
-func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retainedProposal, action string) (string, error) {
+func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retainedProposal, action string) (Settlement, error) {
 	verb, ok := settlementVerb(action)
 	if !ok {
-		return "", fmt.Errorf("proposal: unknown action %q (select, apply, release, discard)", action)
+		return Settlement{}, fmt.Errorf("proposal: unknown action %q (select, apply, release, discard)", action)
 	}
 	target := p.target
 	if target == "" {
@@ -1029,7 +1029,7 @@ func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retain
 	}
 	sessionTarget := target == "session"
 	if sessionTarget && p.session == nil {
-		return "", fmt.Errorf("proposal %s: session target has no live session container", p.id)
+		return Settlement{}, fmt.Errorf("proposal %s: session target has no live session container", p.id)
 	}
 	env := proposalEnvelope{
 		Status:     "settled",
@@ -1047,7 +1047,7 @@ func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retain
 		// captures the host state; a new session may not have run the
 		// seal-time exclusion. A session target never captures host git.
 		if err := ensureProposalPathsExcluded(ctx, p.repoPath); err != nil {
-			return "", fmt.Errorf("proposal %s: exclude proposal path: %w", p.id, err)
+			return Settlement{}, fmt.Errorf("proposal %s: exclude proposal path: %w", p.id, err)
 		}
 	}
 	if err := writeProposalMarker(p.artifactDir, proposalApplying, map[string]any{
@@ -1055,7 +1055,7 @@ func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retain
 		"action":          action,
 		"manifest_digest": p.deltaDigest,
 	}); err != nil {
-		return "", fmt.Errorf("proposal %s: cannot record settlement start: %w", p.id, err)
+		return Settlement{}, fmt.Errorf("proposal %s: cannot record settlement start: %w", p.id, err)
 	}
 	applied := false
 	defer func() {
@@ -1076,7 +1076,7 @@ func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retain
 			err = p.requireHostUnmoved(ctx)
 		}
 		if err != nil {
-			return "", err
+			return Settlement{}, err
 		}
 		if sessionTarget {
 			err = applyGitDeltaWorkspace(ctx, p.session.Workspace(), p.delta)
@@ -1084,7 +1084,7 @@ func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retain
 			err = applyGitDelta(ctx, p.repoPath, p.delta)
 		}
 		if err != nil {
-			return "", fmt.Errorf("proposal %s: select: %w", p.id, err)
+			return Settlement{}, fmt.Errorf("proposal %s: select: %w", p.id, err)
 		}
 	case goatherd.SettleApply:
 		// Changes *since the dispatch basis*, not everything dirty: the parent
@@ -1098,10 +1098,10 @@ func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retain
 			changed, err = p.hostChangedSinceBasis(ctx)
 		}
 		if err != nil {
-			return "", fmt.Errorf("proposal %s: apply: cannot determine the parent's changes since the dispatch, refusing to write: %w", p.id, err)
+			return Settlement{}, fmt.Errorf("proposal %s: apply: cannot determine the parent's changes since the dispatch, refusing to write: %w", p.id, err)
 		}
 		if overlap := overlappingPaths(p.delta.Paths(), changed); len(overlap) > 0 {
-			return "", &proposalApplyConflict{
+			return Settlement{}, &proposalApplyConflict{
 				ProposalID: p.id,
 				Paths:      overlap,
 				Strategy:   proposalApplyPathDisjoint,
@@ -1115,12 +1115,12 @@ func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retain
 			err = applyGitDelta(ctx, p.repoPath, p.delta)
 		}
 		if err != nil {
-			return "", fmt.Errorf("proposal %s: apply: %w", p.id, err)
+			return Settlement{}, fmt.Errorf("proposal %s: apply: %w", p.id, err)
 		}
 	case goatherd.SettleRelease:
 		retained, err := exportGitDelta(ctx, p)
 		if err != nil {
-			return "", fmt.Errorf("proposal %s: release could not preserve the manifest: %w", p.id, err)
+			return Settlement{}, fmt.Errorf("proposal %s: release could not preserve the manifest: %w", p.id, err)
 		}
 		env.Retained = retained
 	case goatherd.SettleDiscard:
@@ -1166,8 +1166,9 @@ func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retain
 		}
 	}
 	r.remove(p.id)
-	env.Outcome = gitDeltaSettleOutcome(verb, env).String()
-	return marshalProposalEnvelope(env), nil
+	outcome := gitDeltaSettleOutcome(verb, env)
+	env.Outcome = outcome.String()
+	return newSettlement(env, outcome), nil
 }
 
 // requireHostUnmoved enforces select's precondition: the host's captured

@@ -3,13 +3,13 @@ package tools
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/dispatch"
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/permissions"
 	"github.com/buchenberg/yaah/internal/prompts"
@@ -239,155 +239,67 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 	subParams.Lane = conflictLane
 	runCtx := WithConflictDispatch(ctx, label, conflictLane)
 
-	// Threading: a dispatch may start from a retained proposal's sealed work,
-	// running its own role/prompt/toolset. That is proposal-lane only — a
-	// report or shared dispatch seals nothing to thread into.
-	//
-	// Validate seed_mode independently: a typo that empties seed_from (e.g.
-	// "seed_form") must not leave a stray seed_mode silently ignored.
-	if subParams.SeedMode != "" {
-		switch subParams.SeedMode {
-		case jobs.SeedModeWorkspace, jobs.SeedModeConversation:
-		default:
-			return "", fmt.Errorf("delegate: seed_mode %q must be %q or %q", subParams.SeedMode, jobs.SeedModeWorkspace, jobs.SeedModeConversation)
-		}
-		if subParams.SeedFrom == "" {
-			return "", fmt.Errorf("delegate: seed_mode requires seed_from")
-		}
-	}
-	if subParams.SeedFrom != "" {
-		if t.Retained == nil {
-			return "", fmt.Errorf("delegate: seed_from requires the retained lane")
-		}
-		if lane != LaneProposal {
-			return "", fmt.Errorf("delegate: seed_from needs a proposal-lane role; %q resolves to the %s lane", params.Role, lane)
-		}
-	}
-
-	// A dispatch that never reaches the retained resolver has no world of its
-	// own: it runs on the session's tree. Publish that resolution so the
-	// start event names "shared" instead of falling back to the session-level
-	// summary. A background call has no dispatch writer yet — setupSubAgent
-	// installs one for foreground dispatches only — so carry the value on the
-	// launch context, which the manager seeds its job from.
-	if t.Retained == nil || lane == LaneShared {
-		world := SubAgentWorld{Resolved: "shared"}
-		if params.Background {
-			runCtx = WithSubAgentWorldPtr(runCtx, &world)
-		} else {
-			WriteSubAgentWorld(runCtx, world)
-		}
-	}
-
-	if params.Background {
-		if t.BackgroundJobs == nil {
-			return "", fmt.Errorf("delegate: background mode requested but not available")
-		}
-		// The retained lane covers background dispatches too: a background job
-		// that ran the raw runner would mutate the host tree with no proposal,
-		// which is exactly the guarantee "retained" makes. The job's delivered
-		// result is then a proposal envelope like any other dispatch's — or,
-		// for a report lane, the plain report with the worktree already torn
-		// down. A shared-lane role reaches the raw runner directly: it cannot
-		// mutate the tree, so the retained guarantee is moot.
-		runner := t.Runner
-		if t.Retained != nil && lane != LaneShared {
-			rt := *t.Retained
-			report := lane == LaneReport
-			runner = func(ctx context.Context, prompt string, sp SubAgentParams) (string, error) {
-				return startRetainedRun(ctx, rt, prompt, sp, timeout, report)
-			}
-		}
-		// Background jobs cancel from the session root, not the dispatching
-		// call, so ordinary context values do not flow through. Re-attach
-		// the conflict dispatch (with a fresh id for the job) and the
-		// inherited permission ceiling (parity W5.7) before the runner
-		// starts — a deferred dispatch must not become the loophole that
-		// escapes what the parent denied.
-		runCtx = jobs.WithBackgroundContextSeeder(runCtx, func(jobCtx context.Context) context.Context {
+	// Background jobs cancel from the session root, not the dispatching call,
+	// so ordinary context values do not flow through. Re-attach the conflict
+	// dispatch (with a fresh id for the job) and the inherited permission
+	// ceiling (parity W5.7) before the runner starts — a deferred dispatch must
+	// not become the loophole that escapes what the parent denied.
+	res, err := dispatch.Run(runCtx, dispatch.DispatchRequest{
+		Description:    params.Description,
+		Prompt:         params.Prompt,
+		Lane:           lane,
+		Params:         subParams,
+		Timeout:        timeout,
+		Background:     params.Background,
+		Runner:         t.Runner,
+		Retained:       t.Retained,
+		BackgroundJobs: t.BackgroundJobs,
+		BackgroundContextSeeder: func(jobCtx context.Context) context.Context {
 			jobCtx = WithConflictDispatch(jobCtx, label, conflictLane)
 			return permissions.WithInherited(jobCtx, permissions.Inherited(runCtx))
-		})
-		jobID, err := t.BackgroundJobs.Launch(runCtx, runner, params.Role, params.Description, params.Prompt, subParams, timeout)
-		if err != nil {
-			return "", err
-		}
-		return structuredBackgroundResult(jobID, label), nil
+		},
+	})
+	if err != nil {
+		return "", err
 	}
-
-	// Retained mode (Plan 7 Phase 2): run in an isolated worktree and return a
-	// sealed proposal the orchestrator settles, instead of mutating the host.
-	// The report lane (yaah-7yf) keeps the isolation but skips the sealing:
-	// the result is the sub-agent's report text, and the worktree is torn
-	// down automatically — errors classified exactly like the shared lane's.
-	// A shared-lane role falls through to the direct runner below — it cannot
-	// mutate the tree, so isolation buys nothing.
-	if t.Retained != nil {
-		switch lane {
-		case LaneReport:
-			res, rerr := startRetainedRun(runCtx, *t.Retained, params.Prompt, subParams, timeout, true)
-			return t.classifyRunnerResult(res, rerr, params.Role, timeout, runCtx)
-		case LaneShared:
-		default:
-			return startRetainedRun(runCtx, *t.Retained, params.Prompt, subParams, timeout, false)
-		}
-	}
-
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		runCtx, cancel = context.WithTimeout(runCtx, timeout)
-		defer cancel()
-	}
-
-	// No dispatch world to provision on this lane: the child's run starts
-	// here, so this is when a heartbeat is genuinely expected and the
-	// stuck-child deadline may start counting (yaah-95ri.2).
-	NotifySubAgentReady(runCtx)
-
-	result, err := t.Runner(runCtx, params.Prompt, subParams)
-
-	return t.classifyRunnerResult(result, err, params.Role, timeout, runCtx)
+	return formatDispatchResult(res)
 }
 
 // classifyRunnerResult maps a runner outcome to the orchestrator-facing
 // result. A non-empty result alongside an error is treated as the partial
 // output the sub-agent produced before stopping.
 func (t *DelegateTool) classifyRunnerResult(result string, err error, role string, timeout time.Duration, runCtx context.Context) (string, error) {
-	if err != nil {
-		// A report-lane failure carries its caveat (a stranded worktree, a
-		// provisioning problem) out of band, so it never has to be parsed
-		// back out of model output.
-		cause := err
-		note := ""
-		var runErr *retainedRunError
-		if errors.As(err, &runErr) {
-			cause = runErr.Cause()
-			note = runErr.Note()
+	return formatDispatchResult(dispatch.ClassifyRunnerResult(result, err, role, timeout, runCtx))
+}
+
+// formatDispatchResult renders the typed core's status into the model-facing
+// tool frames. The core owns execution and classification; this adapter owns
+// only the wire shape.
+func formatDispatchResult(res dispatch.DispatchResult) (string, error) {
+	switch res.Status {
+	case dispatch.DispatchCompleted:
+		return res.Result, nil
+	case dispatch.DispatchProposal:
+		if res.Proposal == nil {
+			return "", fmt.Errorf("delegate: proposal result is missing its envelope")
 		}
-		partial := retainedNote(result, note)
-		switch {
-		case errors.Is(err, context.DeadlineExceeded), runCtx.Err() == context.DeadlineExceeded:
-			return structuredTaskResult("timed out", role, timeout, partial), nil
-		case errors.Is(err, jobs.ErrStuckChild):
-			return structuredTaskResult("stuck", role, timeout, partial), nil
-		case errors.Is(err, context.Canceled), runCtx.Err() == context.Canceled:
-			return structuredTaskResult("cancelled", role, timeout, partial), nil
-		default:
-			// A non-nil error makes the agent loop replace the result with
-			// the error text delivered verbatim, so a partial the
-			// orchestrator should see must ride inside the error. The
-			// partial is success-detail content: keep the body's head —
-			// the part that orients — bounded at the tool-result cap, and
-			// re-attach the caveat, itself tail-bounded because teardown
-			// notes end with the worktree path (yaah-atn). The folded error
-			// stays finite; the error's own diagnostic stays untruncated.
-			if strings.TrimSpace(partial) == "" {
-				return "", cause
-			}
-			return "", fmt.Errorf("%w\n%s", cause, foldRetainedPartial(result, note))
+		return dispatch.MarshalProposalEnvelope(*res.Proposal), nil
+	case dispatch.DispatchRunning:
+		return structuredBackgroundResult(res.JobID, res.Label), nil
+	case dispatch.DispatchTimedOut:
+		return structuredTaskResult("timed out", res.Role, res.Timeout, res.Partial), nil
+	case dispatch.DispatchStuck:
+		return structuredTaskResult("stuck", res.Role, res.Timeout, res.Partial), nil
+	case dispatch.DispatchCancelled:
+		return structuredTaskResult("cancelled", res.Role, res.Timeout, res.Partial), nil
+	case dispatch.DispatchFailed:
+		if res.Err != nil {
+			return "", res.Err
 		}
+		return "", fmt.Errorf("delegate: dispatch failed")
+	default:
+		return "", fmt.Errorf("delegate: unknown dispatch status %q", res.Status)
 	}
-	return result, nil
 }
 
 // maxDelegatePromptBytes bounds one dispatch prompt. The prompt is sent as a

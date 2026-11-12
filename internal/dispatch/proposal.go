@@ -3,7 +3,6 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/buchenberg/yaah/internal/agent/subagent"
@@ -172,46 +171,11 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 		if raw.ProposalID == "" {
 			return "", fmt.Errorf("proposal: proposal_id required for %s", raw.Action)
 		}
-		out, err := t.Proposals.settleRetainedProposalWithStrategy(ctx, raw.ProposalID, raw.Action, raw.Strategy)
+		settlement, err := Settle(ctx, t.Proposals, raw.ProposalID, SettleVerb(raw.Action), SettleOpts{Strategy: raw.Strategy})
 		if err != nil {
-			var conflict *proposalApplyConflict
-			if raw.Action == "apply" && errors.As(err, &conflict) {
-				// A refusal is an outcome the orchestrator must act on, not a
-				// failed tool call: return the same JSON frame as a settlement,
-				// with the overlap paths named. The proposal stays open.
-				paths := conflict.Paths
-				if paths == nil {
-					paths = []string{}
-				}
-				strategy := conflict.Strategy
-				if strategy == "" {
-					strategy = proposalApplyPathDisjoint
-				}
-				conflictView := proposalConflict{
-					Kind:      proposalConflictApply,
-					Paths:     paths,
-					Proposals: []string{conflict.ProposalID},
-					Changes:   conflict.Changes,
-				}
-				next := proposalVerbs()
-				if p, perr := t.Proposals.get(conflict.ProposalID); perr == nil {
-					conflictView = attachProposalConflictDetails(ctx, []proposalConflict{conflictView}, []proposalAnalysis{{proposal: p}})[0]
-					next = nextVerbsFor(p)
-				}
-				env := proposalEnvelope{
-					Status:     "conflict",
-					ProposalID: conflict.ProposalID,
-					Action:     raw.Action,
-					Strategy:   strategy,
-					Error:      conflict.Error(),
-					Conflicts:  []proposalConflict{conflictView},
-					Next:       next,
-				}
-				return marshalProposalEnvelope(env), nil
-			}
 			return "", err
 		}
-		return out, nil
+		return marshalProposalEnvelope(settlement.Envelope()), nil
 	case "continue", "fork":
 		if raw.ProposalID == "" {
 			return "", fmt.Errorf("proposal: proposal_id required for %s", raw.Action)

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	goatherd "github.com/buchenberg/goatherd-runtime"
@@ -176,4 +177,20 @@ func sessionTestConfig() config.WorkspaceConfig {
 			Image:     "registry.example/yaah-workspace:latest",
 		},
 	}
+}
+
+// StartRetainedRun and settleRetainedProposal are the test-only string
+// adapters for the typed core. Production code calls startRetainedRun and
+// Settle directly; these preserve the historical test call shape.
+func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, subParams SubAgentParams, timeout time.Duration, report bool) (string, error) {
+	res, err := startRetainedRun(ctx, rt, prompt, subParams, timeout, report)
+	return res.String(), err
+}
+
+func (r *ProposalRegistry) settleRetainedProposal(ctx context.Context, id, action string) (string, error) {
+	settlement, err := r.settleRetainedProposalWithStrategy(ctx, id, action, proposalApplyPathDisjoint)
+	if err != nil {
+		return "", err
+	}
+	return marshalProposalEnvelope(settlement.Envelope()), nil
 }
