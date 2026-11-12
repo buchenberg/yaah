@@ -264,6 +264,15 @@ func (s *Server) requestPermission(
 	case "allow-once":
 		return true
 	case "allow-always":
+		// A credential-shaped target downgrades to allow-once
+		// (yaah-x6vi.7, the kilocode protected-path downgrade): neither
+		// the session's tool-keyed memory nor the project store records
+		// it, so the next sensitive call re-asks. The downgrade scopes to
+		// the one ask's derived resource — an "always" for `read` granted
+		// on an ordinary file keeps its usual meaning.
+		if permissions.SensitiveResource(name, permissions.ResourceFor(name, args)) {
+			return true
+		}
 		s.rememberPermission(sessionID, name, PermAllowAlways)
 		// Persist the decision project-scoped so a later session in the
 		// same workspace does not re-ask (yaah-x6vi.6). The resource is the

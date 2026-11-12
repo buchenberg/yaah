@@ -11,6 +11,7 @@ import (
 	"github.com/buchenberg/yaah/internal/cwdpath"
 	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/buchenberg/yaah/internal/permissions"
 	"github.com/buchenberg/yaah/internal/retention"
 	"github.com/buchenberg/yaah/internal/sessions"
 	"github.com/buchenberg/yaah/internal/skills"
@@ -289,6 +290,15 @@ func runACPServe(cmd *cobra.Command, args []string) error {
 	if db, err := memory.OpenDefault(); err == nil {
 		defer db.Close()
 		srv.SaveApproval = func(cwd, tool, resource string) error {
+			// The durable carve-out (yaah-x6vi.7): a persisted "always" for
+			// a credential-shaped target is refused at the save seam. The
+			// ACP flow logs the error and the live session still behaves
+			// as allow-once (the server skips the session memory too, see
+			// approval.go), so refusing to persist is visible but never
+			// re-fires the ask.
+			if permissions.SensitiveResource(tool, resource) {
+				return fmt.Errorf("not saving always-allow for sensitive resource %q: it stays ask (grant it explicitly with a permissions rule instead)", resource)
+			}
 			return db.SaveSavedPermission(memory.SavedPermission{
 				ProjectID: cwdpath.CanonicalStored(cwd),
 				Action:    tool,
