@@ -53,14 +53,22 @@ package yaah
 // configured MCP server is itself the opt-in, and curation must not
 // silently drop it.
 //
+// The gated feature lanes ride with the core list for a second reason
+// (yaah-6mi9.2): a lane's availability is a runtime fact — store state,
+// workspace shape, session shape — and the belt is built before any of
+// it is known. wait_for and watch belong to interactive sessions only:
+// a one-shot run is a single non-interactive turn, and a watch armed in
+// it has no later turn in this process to wake (the bench history
+// recorded zero wake calls), so their schemas rode one-shot floors as
+// dead weight (~1.5K tokens/call). They are belt-admitted and gated at
+// registration by session shape (wiring_stages.go registerWakeTools) —
+// the memory-tool seams' pattern.
+//
 // Deliberately absent: the specialist file cluster (append, bulk_files,
 // checksum, copy, copy_tree, find, mkdir, move, move_tree, rmdir, tail)
-// and the wake pair (wait_for, watch). The file cluster is the
-// developer role's belt; the wake pair belongs to interactive sessions
-// and gets its own registration-shape gate (yaah-6mi9.2) rather than a
-// belt default. An always-on tool added to this list is an acknowledged
-// floor cost of ~780 tokens/call — cite the usage evidence in the bead
-// when adding.
+// — the developer role's belt, reachable through delegate. An always-on
+// tool added to this list is an acknowledged floor cost of ~780
+// tokens/call — cite the usage evidence in the bead when adding.
 var defaultOrchestratorBelt = []string{
 	"apply_out", // isolated/containerd sessions only; the door changes leave through
 	"background_process",
@@ -102,6 +110,8 @@ var defaultOrchestratorBelt = []string{
 	"subagent_jobs",
 	"supervisor",
 	"todowrite",
+	"wait_for", // wake pair: registration-gated to interactive sessions (registerWakeTools)
+	"watch",    //
 	"webfetch",
 	"write",
 }
@@ -129,10 +139,12 @@ func orchestratorBeltNames(configured []string) []string {
 // refusal), no more and no less. A gap in that equality is how an
 // undeclared drop (proposal, a memory tool, an MCP name) escapes the
 // curation silently; the registry-level test in
-// orchestrator_belt_test.go fails first. Keep in sync with the bead
-// yaah-6mi9.1 evidence header above.
+// orchestrator_belt_test.go fails first. The wake pair is NOT here:
+// wait_for and watch are belt-admitted and dropped by the session-shape
+// gate (registerWakeTools, yaah-6mi9.2), so in an interactive session
+// they register and a belt refusal never happens. Keep in sync with the
+// bead yaah-6mi9.1 evidence header above.
 var removedFromOrchestratorDefault = []string{
 	"append", "bulk_files", "checksum", "copy", "copy_tree",
 	"find", "mkdir", "move", "move_tree", "rmdir", "tail",
-	"wait_for", "watch",
 }
