@@ -61,6 +61,19 @@ func (t *AppendTool) Execute(ctx context.Context, args string) (string, error) {
 	}
 	params.FilePath = resolved
 
+	// append is the log/ledger primitive, so it must not read-modify-write
+	// and must not go through withFileWrite. It holds the per-path lock for
+	// the whole call instead: the substrate's append primitive (O_APPEND on
+	// the local lane) already keeps two concurrent appends from losing each
+	// other — there is no compare-and-swap here for exactly that reason —
+	// and the lock is what serializes an append against a concurrent
+	// in-process rewrite (write/edit under withFileWrite): the rewrite
+	// cannot swap the file out from under an append in flight, and an
+	// append cannot land inside a writer's compare-and-swap window and
+	// make that write look stale.
+	unlock := lockConflictPath(params.FilePath)
+	defer unlock()
+
 	if _, err := ws.Stat(ctx, params.FilePath); err == nil {
 		SetSupervisionMeta(ctx, types.SupervisionKeyFileExisted, true)
 	} else if errors.Is(err, fs.ErrNotExist) {
@@ -72,3 +85,8 @@ func (t *AppendTool) Execute(ctx context.Context, args string) (string, error) {
 	}
 	return fmt.Sprintf("Appended %d bytes to %s", len(params.Content), params.FilePath), nil
 }
+
+// selfGuardsPath marks append as taking the per-path lock inside its own
+// Execute. The recording wrapper (recording.go) must not hold the same lock
+// across it: the lock is not reentrant per goroutine.
+func (*AppendTool) selfGuardsPath() {}

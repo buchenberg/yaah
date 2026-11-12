@@ -59,22 +59,31 @@ func (t *WriteTool) Execute(ctx context.Context, args string) (string, error) {
 	}
 	params.FilePath = resolved
 
-	// Report whether the target already existed so the advisory
-	// destructive_file_guard can tell an overwrite from first-time
-	// creation (yaah-0fn): the rule warns on the former only. Stat
-	// failures other than not-exist leave the field unset — the rule
-	// treats unknown as potentially destructive.
-	if _, err := ws.Stat(ctx, params.FilePath); err == nil {
-		SetSupervisionMeta(ctx, types.SupervisionKeyFileExisted, true)
-	} else if errors.Is(err, fs.ErrNotExist) {
-		SetSupervisionMeta(ctx, types.SupervisionKeyFileExisted, false)
-	}
-
-	if err := ws.WriteFile(ctx, params.FilePath, []byte(params.Content), 0o644); err != nil {
+	// write replaces the file's whole content, so it runs inside the write
+	// guard (fileguard.go): the snapshot, the notice, and the write share one
+	// per-path critical section, and the guard's compare-and-swap refuses the
+	// write when an out-of-band writer changed the file while mutate ran. A
+	// concurrent in-process write to the same path can no longer interleave
+	// with this one.
+	//
+	// The overwrite notice lives inside mutate: cur == nil is the guard's
+	// "path did not exist", so the notice observes the same snapshot the
+	// guard writes against — no second stat, no window between notice and
+	// write. The notice is advisory (yaah-0fn): the destructive_file_guard
+	// warns on an overwrite, it does not refuse one.
+	if _, err := withFileWrite(ctx, ws, params.FilePath, func(cur []byte, _ fs.FileMode) ([]byte, error) {
+		SetSupervisionMeta(ctx, types.SupervisionKeyFileExisted, cur != nil)
+		return []byte(params.Content), nil
+	}); err != nil {
 		return "", fmt.Errorf("write: %w", err)
 	}
 	return fmt.Sprintf("Wrote %d bytes to %s", len(params.Content), params.FilePath), nil
 }
+
+// selfGuardsPath marks write as taking the per-path write guard inside its
+// own Execute. The recording wrapper (recording.go) must not hold the same
+// per-path lock across it: the lock is not reentrant per goroutine.
+func (*WriteTool) selfGuardsPath() {}
 
 // writePathError adds the write-specific remedy to a containment refusal.
 // The PathRefusalError already names both the target and the workspace root;

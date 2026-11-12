@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
-	"sort"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"unicode/utf8"
 )
@@ -127,6 +125,14 @@ func (rt *RecordingTool) workspace() Workspace {
 	return nil
 }
 
+// selfGuardingTool is implemented by single-path tools that take the
+// per-path write guard (withFileWrite / lockConflictPath, fileguard.go)
+// inside their own Execute. RecordingTool must not hold the per-path lock
+// across such a tool: the lock is refcounted but not reentrant per
+// goroutine, so the wrapper's acquisition would block the wrapped tool's
+// own forever.
+type selfGuardingTool interface{ selfGuardsPath() }
+
 func (rt *RecordingTool) Execute(ctx context.Context, args string) (string, error) {
 	dispatch, tracked := conflictDispatchFrom(ctx)
 	if rt.tracker == nil || !tracked {
@@ -226,9 +232,15 @@ func (rt *RecordingTool) Execute(ctx context.Context, args string) (string, erro
 
 	// Serialize evidence collection and the write for one path. Without this,
 	// a concurrent writer's after-image can be attributed to this dispatch and
-	// two divergent writes can look identical.
-	unlock := lockConflictPath(abs)
-	defer unlock()
+	// two divergent writes can look identical. Guard-routed tools
+	// (selfGuardingTool) take the same lock inside their own Execute, so
+	// holding it here would re-enter the non-reentrant lock on this same
+	// goroutine and deadlock; their own critical section provides the
+	// serialization this sequence wants.
+	if _, guarded := rt.inner.(selfGuardingTool); !guarded {
+		unlock := lockConflictPath(abs)
+		defer unlock()
+	}
 
 	before := captureConflictSnapshot(ctx, ws, abs)
 	result, err := rt.inner.Execute(ctx, args)
@@ -325,69 +337,9 @@ func transferPaths(args string) (src, dst string) {
 	return params.Path, params.To
 }
 
-type conflictPathLock struct {
-	mu   sync.Mutex
-	refs int
-}
-
-var (
-	conflictPathLocksMu sync.Mutex
-	conflictPathLocks   = make(map[string]*conflictPathLock)
-)
-
-// lockConflictPath serializes snapshot/write/snapshot for one path. The key is
-// case-folded on case-insensitive hosts, matching the conflict comparison.
-// Entries are refcounted and removed after the last holder releases, so a
-// long-lived session does not retain one mutex per path it ever touched.
-func lockConflictPath(abs string) func() {
-	key := pathKey(normalizeTrackedPath(abs))
-	conflictPathLocksMu.Lock()
-	lock := conflictPathLocks[key]
-	if lock == nil {
-		lock = &conflictPathLock{}
-		conflictPathLocks[key] = lock
-	}
-	lock.refs++
-	conflictPathLocksMu.Unlock()
-
-	lock.mu.Lock()
-	return func() {
-		lock.mu.Unlock()
-		conflictPathLocksMu.Lock()
-		lock.refs--
-		if lock.refs == 0 {
-			delete(conflictPathLocks, key)
-		}
-		conflictPathLocksMu.Unlock()
-	}
-}
-
-// lockConflictPathSet takes the per-path lock for every named path, in sorted
-// key order, and returns one release. Sorted acquisition is what keeps two
-// dispatches that touch the same pair of paths in opposite directions from
-// deadlocking.
-func lockConflictPathSet(paths ...string) func() {
-	keys := make([]string, 0, len(paths))
-	seen := make(map[string]bool, len(paths))
-	for _, p := range paths {
-		key := pathKey(normalizeTrackedPath(p))
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	unlocks := make([]func(), 0, len(keys))
-	for _, key := range keys {
-		unlocks = append(unlocks, lockConflictPath(key))
-	}
-	return func() {
-		for i := len(unlocks) - 1; i >= 0; i-- {
-			unlocks[i]()
-		}
-	}
-}
+// The per-path lock this file's snapshot/write/snapshot sequence depends on
+// (lockConflictPath, lockConflictPathSet) lives in fileguard.go, beside the
+// write guard that shares it.
 
 type conflictSnapshot struct {
 	Exists bool

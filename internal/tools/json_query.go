@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"strconv"
 	"strings"
 
@@ -16,6 +17,11 @@ type JSONQueryTool struct {
 	PV *PathValidator
 	WS Workspace
 }
+
+// selfGuardsPath marks json_query as taking the per-path write guard inside
+// its own Execute (fileguard.go), so the RecordingTool wrapper does not hold
+// the same non-reentrant lock across it.
+func (*JSONQueryTool) selfGuardsPath() {}
 
 var (
 	_ PathValidatorSetter = (*JSONQueryTool)(nil)
@@ -82,7 +88,22 @@ func (t *JSONQueryTool) Execute(ctx context.Context, args string) (string, error
 	}
 	params.File = resolved
 
-	data, err := ws.ReadFile(ctx, params.File)
+	switch params.Action {
+	case "read":
+		// A read writes nothing, so it takes no write guard: the plain read
+		// and its error wording stay exactly as they were.
+		return t.doRead(ctx, ws, params.File, params.Path)
+	case "write":
+		return t.doWrite(ctx, ws, params.File, params.Path, params.Set)
+	case "delete":
+		return t.doDelete(ctx, ws, params.File, params.Path)
+	default:
+		return "", fmt.Errorf("json_query: unsupported action %q", params.Action)
+	}
+}
+
+func (t *JSONQueryTool) doRead(ctx context.Context, ws Workspace, filePath, path string) (string, error) {
+	data, err := ws.ReadFile(ctx, filePath)
 	if err != nil {
 		return "", fmt.Errorf("json_query: %w", err)
 	}
@@ -92,19 +113,6 @@ func (t *JSONQueryTool) Execute(ctx context.Context, args string) (string, error
 		return "", fmt.Errorf("json_query: invalid JSON: %w", err)
 	}
 
-	switch params.Action {
-	case "read":
-		return t.doRead(root, params.Path)
-	case "write":
-		return t.doWrite(ctx, ws, params.File, data, root, params.Path, params.Set)
-	case "delete":
-		return t.doDelete(ctx, ws, params.File, data, root, params.Path)
-	default:
-		return "", fmt.Errorf("json_query: unsupported action %q", params.Action)
-	}
-}
-
-func (t *JSONQueryTool) doRead(root any, path string) (string, error) {
 	target := root
 	if path != "" {
 		val, err := resolveJSONPath(root, path)
@@ -121,61 +129,114 @@ func (t *JSONQueryTool) doRead(root any, path string) (string, error) {
 	return truncateResult(string(result)), nil
 }
 
-func (t *JSONQueryTool) doWrite(ctx context.Context, ws Workspace, filePath string, data []byte, root any, path, setValue string) (string, error) {
+// doWrite runs the whole read → decode → set → reformat → write sequence for
+// one file inside a single write guard call: the per-path lock orders
+// concurrent json_query writes on the same file and the compare-and-swap
+// refuses a write whose base went stale. Every step keeps its original order
+// and error wording; only the read and the write are the guard's.
+func (t *JSONQueryTool) doWrite(ctx context.Context, ws Workspace, filePath, path, setValue string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("json_query: path is required for write")
 	}
 
-	// Parse the set value as JSON so numbers/objects/booleans work.
-	var parsed any
-	if err := json.Unmarshal([]byte(setValue), &parsed); err != nil {
-		return "", fmt.Errorf("json_query: invalid set value (must be valid JSON): %w", err)
-	}
+	var rewrote bool
+	var toolErr error
+	_, err := withFileWrite(ctx, ws, filePath, func(cur []byte, _ fs.FileMode) ([]byte, error) {
+		if cur == nil {
+			toolErr = fmt.Errorf("json_query: %w", guardMissingRead(ctx, ws, filePath))
+			return nil, toolErr
+		}
+		var root any
+		if err := json.Unmarshal(cur, &root); err != nil {
+			toolErr = fmt.Errorf("json_query: invalid JSON: %w", err)
+			return nil, toolErr
+		}
 
-	if err := setJSONPath(root, path, parsed); err != nil {
-		return "", fmt.Errorf("json_query: %w", err)
-	}
+		// Parse the set value as JSON so numbers/objects/booleans work.
+		var parsed any
+		if err := json.Unmarshal([]byte(setValue), &parsed); err != nil {
+			toolErr = fmt.Errorf("json_query: invalid set value (must be valid JSON): %w", err)
+			return nil, toolErr
+		}
 
-	newData, err := json.MarshalIndent(root, "", "  ")
+		if err := setJSONPath(root, path, parsed); err != nil {
+			toolErr = fmt.Errorf("json_query: %w", err)
+			return nil, toolErr
+		}
+
+		newData, err := json.MarshalIndent(root, "", "  ")
+		if err != nil {
+			toolErr = fmt.Errorf("json_query: encode JSON: %w", err)
+			return nil, toolErr
+		}
+		newData = append(newData, '\n')
+		rewrote = string(newData) != string(cur)
+		return newData, nil
+	})
+	if toolErr != nil {
+		// The guard wraps a mutate error with the path; the tool's own wording
+		// is what the caller has always seen, so it wins.
+		return "", toolErr
+	}
 	if err != nil {
-		return "", fmt.Errorf("json_query: encode JSON: %w", err)
-	}
-	newData = append(newData, '\n')
-
-	if err := ws.WriteFile(ctx, filePath, newData, 0o644); err != nil {
-		return "", fmt.Errorf("json_query: write file: %w", err)
+		return "", err
 	}
 
 	var report multiResult
 	report.donef("Set %s to %s", path, setValue)
-	if string(newData) != string(data) {
+	if rewrote {
 		report.donef("note: rewrote the whole file with 2-space indentation and sorted object keys")
 	}
 	return report.Report(fmt.Sprintf("json_query: wrote %s", filePath))
 }
 
-func (t *JSONQueryTool) doDelete(ctx context.Context, ws Workspace, filePath string, data []byte, root any, path string) (string, error) {
+// doDelete runs read → decode → delete → reformat → write inside one write
+// guard call, mirroring doWrite: the delete/splice branch writes too, so it
+// takes the same per-path lock and compare-and-swap.
+func (t *JSONQueryTool) doDelete(ctx context.Context, ws Workspace, filePath, path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("json_query: path is required for delete")
 	}
 
-	newRoot, err := deleteJSONPath(root, path)
-	if err != nil {
-		return "", fmt.Errorf("json_query: %w", err)
-	}
+	var rewrote bool
+	var toolErr error
+	_, err := withFileWrite(ctx, ws, filePath, func(cur []byte, _ fs.FileMode) ([]byte, error) {
+		if cur == nil {
+			toolErr = fmt.Errorf("json_query: %w", guardMissingRead(ctx, ws, filePath))
+			return nil, toolErr
+		}
+		var root any
+		if err := json.Unmarshal(cur, &root); err != nil {
+			toolErr = fmt.Errorf("json_query: invalid JSON: %w", err)
+			return nil, toolErr
+		}
 
-	newData, err := json.MarshalIndent(newRoot, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("json_query: encode JSON: %w", err)
-	}
-	newData = append(newData, '\n')
+		newRoot, err := deleteJSONPath(root, path)
+		if err != nil {
+			toolErr = fmt.Errorf("json_query: %w", err)
+			return nil, toolErr
+		}
 
-	if err := ws.WriteFile(ctx, filePath, newData, 0o644); err != nil {
-		return "", fmt.Errorf("json_query: write file: %w", err)
+		newData, err := json.MarshalIndent(newRoot, "", "  ")
+		if err != nil {
+			toolErr = fmt.Errorf("json_query: encode JSON: %w", err)
+			return nil, toolErr
+		}
+		newData = append(newData, '\n')
+		rewrote = string(newData) != string(cur)
+		return newData, nil
+	})
+	if toolErr != nil {
+		// The guard wraps a mutate error with the path; the tool's own wording
+		// is what the caller has always seen, so it wins.
+		return "", toolErr
+	}
+	if err != nil {
+		return "", err
 	}
 
 	var report multiResult
-	if string(newData) != string(data) {
+	if rewrote {
 		report.donef("note: rewrote the whole file with 2-space indentation and sorted object keys")
 	}
 	return report.Report(fmt.Sprintf("Deleted %s", path))
@@ -422,4 +483,22 @@ func pathPrefix(parts []string, upTo int) string {
 		sb.WriteString(parts[i])
 	}
 	return sb.String()
+}
+
+// abJSONUnguarded is the A/B double for the lost-update regression: the same
+// shape as withFileWrite but a bare read → mutate → write with no lock and no
+// compare-and-swap. TEMPORARY — deleted after the A/B run.
+func abJSONUnguarded(ctx context.Context, ws Workspace, abs string, mutate func(cur []byte, mode fs.FileMode) ([]byte, error)) (FileWriteReceipt, error) {
+	cur, err := ws.ReadFile(ctx, abs)
+	if err != nil {
+		return FileWriteReceipt{}, err
+	}
+	next, err := mutate(cur, 0o644)
+	if err != nil {
+		return FileWriteReceipt{}, err
+	}
+	if err := ws.WriteFile(ctx, abs, next, 0o644); err != nil {
+		return FileWriteReceipt{}, err
+	}
+	return FileWriteReceipt{}, nil
 }
