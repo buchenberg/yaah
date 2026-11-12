@@ -222,6 +222,10 @@ type agentSession struct {
 	messages  []types.Message
 	sessionID string
 	msgIdx    int
+	// previousSummary is the resumed session's persisted anchored summary,
+	// seeded into the loop's state so the next compaction updates it
+	// (yaah-an55). Empty for a fresh session.
+	previousSummary string
 	// turnBudgetExhausted mirrors the last Run's soft tool-turn cap
 	// outcome (tool-stripped final answer or hard iteration limit) so
 	// the ACP server can report max_turn_requests instead of end_turn.

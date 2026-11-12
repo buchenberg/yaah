@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	agentctx "github.com/buchenberg/yaah/internal/agent/context"
 	"github.com/buchenberg/yaah/internal/pubsub"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -441,6 +442,36 @@ func TestCompactContextNoOpTrimRecordsNothing(t *testing.T) {
 	}
 	if got := strings.TrimSpace(session.CompactedSummary); got != "" {
 		t.Fatalf("a no-op trim recorded %q — no rollover happened, so resume must not be told context was lost", got)
+	}
+}
+
+// TestCompactContextExcerptCarriesAnchoredSummaryOnce pins yaah-an55's
+// double-feed: the previous summary rides the prompt as its own
+// <previous-summary> section, so the continuation notice that carries the
+// same text in the transcript must not also be summarized as excerpt
+// content. Live compactions and resumed sessions share this prompt.
+func TestCompactContextExcerptCarriesAnchoredSummaryOnce(t *testing.T) {
+	const summary = "## Goal\n- keep the anchored summary single-copy"
+	p := &compactionRecordingProvider{}
+	cm := compactionTestManager(p)
+	// Insert the notice where compaction installs it — right after the
+	// system prompt — and make it the anchored summary's carrier.
+	carrier := types.SystemMsg(agentctx.ContinuationNotice(summary))
+	cm.State.Messages = append([]types.Message{cm.State.Messages[0], carrier}, cm.State.Messages[1:]...)
+	cm.State.PreviousSummary = summary
+
+	cm.compactContext(context.Background(), 0.25)
+
+	reqs := p.snapshot()
+	if len(reqs) == 0 {
+		t.Fatal("no compaction request was made")
+	}
+	prompt := reqs[0].Messages[0].Content
+	if !strings.Contains(prompt, "<previous-summary>") {
+		t.Fatalf("the summarization prompt lost the anchored-summary section:\n%s", prompt)
+	}
+	if got := strings.Count(prompt, summary); got != 1 {
+		t.Fatalf("the anchored summary appears %d time(s) in the summarization prompt, want 1 (its own section, not also excerpted)", got)
 	}
 }
 

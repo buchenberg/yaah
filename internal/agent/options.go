@@ -48,6 +48,12 @@ func WithMessages(msgs []types.Message) Option {
 	return func(l *Loop) { l.State.Messages = msgs }
 }
 
+// WithPreviousSummary seeds the loop state's anchored summary — the
+// compaction input resume restores from the session row (yaah-an55).
+func WithPreviousSummary(summary string) Option {
+	return func(l *Loop) { l.State.PreviousSummary = summary }
+}
+
 // WithSessionID sets the session identifier.
 func WithSessionID(id string) Option {
 	return func(l *Loop) { l.Config.SessionID = id }

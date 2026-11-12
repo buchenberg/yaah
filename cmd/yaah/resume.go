@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
+	agentctx "github.com/buchenberg/yaah/internal/agent/context"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/types"
@@ -40,6 +42,12 @@ type restoredSession struct {
 	SessionID    string
 	MsgIdx       int
 	SystemPrompt string
+	// PreviousSummary is the session's persisted anchored summary, when it
+	// is one: the next compaction folds it into its prompt so the
+	// summarizer updates the anchored summary instead of restarting from
+	// nothing. The trim fallback's marker is not an anchored summary and
+	// stays out (yaah-an55).
+	PreviousSummary string
 	// Usage is the persisted token accounting, so the resumed session shows
 	// and continues the running totals instead of restarting them at zero.
 	Usage restoredUsage
@@ -90,11 +98,30 @@ func restoreSession(db sessionRestoreStore, resumeSessionID, systemPrompt string
 	if session.SystemPrompt != "" {
 		out.SystemPrompt = session.SystemPrompt
 	}
-	if session.CompactedSummary != "" {
-		messages = append(messages, types.SystemMsg(session.CompactedSummary))
-	}
 	for _, m := range dbMsgs {
 		messages = append(messages, restoreMessage(m))
+	}
+	// The persisted summary is the conversation's anchor (yaah-an55):
+	// hydrate it into the next compaction's prompt, and re-install its
+	// notice in the live transcript only when the transcript does not
+	// already carry it. A normal compaction rebases persistence to the
+	// baseline that includes the notice, so the usual resumed session has
+	// it; a trim-marker rollover (and a session compacted before the
+	// rebase existed) has the row but not the message. In both cases the
+	// notice sits AFTER the system prompt — the head stays the identity
+	// prompt, which is what the next compaction preserves.
+	if summary := session.CompactedSummary; summary != "" {
+		if !agentctx.IsFallbackMarker(summary) {
+			out.PreviousSummary = summary
+		}
+		if !transcriptCarriesSummary(messages, summary) {
+			notice := types.SystemMsg(agentctx.ContinuationNotice(summary))
+			if len(messages) > 0 && messages[0].Role == "system" {
+				messages = slices.Insert(messages, 1, notice)
+			} else {
+				messages = append([]types.Message{notice}, messages...)
+			}
+		}
 	}
 	if len(messages) > 0 {
 		last := messages[len(messages)-1]
@@ -107,6 +134,21 @@ func restoreSession(db sessionRestoreStore, resumeSessionID, systemPrompt string
 	out.SessionID = resumeSessionID
 	out.MsgIdx = len(dbMsgs)
 	return out, nil
+}
+
+// transcriptCarriesSummary reports whether the restored transcript already
+// contains the persisted summary: a compaction rebase writes the
+// continuation notice into the persisted baseline, so the normal resumed
+// session needs no second copy injected. A trim-marker rollover and a
+// pre-rebase session carry the row without the message and do get the
+// notice.
+func transcriptCarriesSummary(msgs []types.Message, summary string) bool {
+	for _, m := range msgs {
+		if m.Role == "system" && strings.Contains(m.Content, summary) {
+			return true
+		}
+	}
+	return false
 }
 
 // restoreMessage maps a persisted message row back into a conversation
