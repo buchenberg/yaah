@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.175.1](https://github.com/buchenberg/yaah/compare/v0.175.0...v0.175.1) (2026-11-12)
+
+
+### Documentation
+
+* **design:** the lazy toolbelt — conformance matrix first (yaah-6mi9.4) ([e593f7b](https://github.com/buchenberg/yaah/commit/e593f7bf7cd19bfaf30301bde275c647431240fa))
+* **design:** the lazy toolbelt — conformance matrix first (yaah-6mi9.4) ([85c534d](https://github.com/buchenberg/yaah/commit/85c534d7c85fc96f3125794540dcdf43a57d07ad))
+
 ## [0.175.0](https://github.com/buchenberg/yaah/compare/v0.174.0...v0.175.0) (2026-11-12)
 
 
