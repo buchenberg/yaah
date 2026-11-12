@@ -157,7 +157,7 @@ func madeProgress(r ToolResult) bool {
 		}
 		if m := delegateStatus.FindStringSubmatch(head); m != nil {
 			switch m[1] {
-			case "proposal", "report":
+			case "proposal", "report", "shared":
 				return true
 			}
 			return false

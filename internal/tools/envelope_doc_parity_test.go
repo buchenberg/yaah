@@ -36,7 +36,6 @@ var resultEnvelopeDocs = []struct {
 	{reflect.TypeOf(cancelEnvelope{}), "subagent_jobs"},
 	{reflect.TypeOf(waitEnvelope{}), "subagent_jobs"},
 	{reflect.TypeOf(backgroundDispatchEnvelope{}), "delegate"},
-	{reflect.TypeOf(dispatchFailureEnvelope{}), "delegate"},
 }
 
 // envelopeExemptions lists production *Envelope types that are not

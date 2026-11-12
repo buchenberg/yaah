@@ -19,6 +19,7 @@ package yaah
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -1252,27 +1253,17 @@ func wireBackgroundJobs(st *loopInfraStage, tr *toolRegistryStage) {
 	// blocks in its own goroutine until the next turn drains the channel
 	// or the session closes.
 	bgDone := st.backgroundJobs.Done()
-	st.backgroundJobs.Deliver = func(role, description, result string, err error) {
-		prefix := "[BACKGROUND"
-		if role != "" {
-			prefix += " " + role
+	st.backgroundJobs.Deliver = func(job jobs.BackgroundJobStatus, result string, err error) {
+		// One completion shape for every lane (yaah-was9.1): the background
+		// result is delivered as the same envelope the foreground lanes
+		// return, so the orchestrator never has to parse a prefixed-prose
+		// follow-up out of model output.
+		data, mErr := json.Marshal(dispatch.BackgroundCompletionEnvelope(job, result, err))
+		if mErr != nil {
+			data = []byte(fmt.Sprintf(`{"status":"error","dispatch_id":%q,"error":%q}`, job.ID, mErr.Error()))
 		}
-		prefix += "]"
-		if description != "" {
-			prefix += " " + description
-		}
-		text := result
-		if err != nil {
-			text = "error: " + err.Error()
-			if strings.TrimSpace(result) != "" {
-				// A timeout mid-completion leaves reviewable text; delivering
-				// only the error threw away everything the sub-agent wrote.
-				text += "\n\npartial output before the failure:\n" + result
-			}
-		}
-		msg := prefix + " completed:\n" + text
 		select {
-		case st.followupCh <- msg:
+		case st.followupCh <- string(data):
 		case <-bgDone:
 		}
 	}

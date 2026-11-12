@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -238,6 +239,11 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 	}
 	subParams.Lane = conflictLane
 	runCtx := WithConflictDispatch(ctx, label, conflictLane)
+	// Name the same dispatch in the result envelope that the conflict evidence
+	// names, so the orchestrator can tie a result to its records (yaah-was9.1).
+	if cd, ok := conflictDispatchFrom(runCtx); ok {
+		runCtx = jobs.WithDispatchID(runCtx, cd.ID)
+	}
 
 	// Background jobs cancel from the session root, not the dispatching call,
 	// so ordinary context values do not flow through. Re-attach the conflict
@@ -272,31 +278,29 @@ func (t *DelegateTool) classifyRunnerResult(result string, err error, role strin
 	return formatDispatchResult(dispatch.ClassifyRunnerResult(result, err, role, timeout, runCtx))
 }
 
-// formatDispatchResult renders the typed core's status into the model-facing
-// tool frames. The core owns execution and classification; this adapter owns
-// only the wire shape.
+// formatDispatchResult renders the typed core's status into the ONE result
+// envelope every lane returns (yaah-was9.1). The core owns execution and
+// classification; this adapter owns only the wire shape.
+//
+// A completed dispatch (proposal, report, or shared) returns its envelope as a
+// successful result. A dispatch that stopped early (timeout, stuck, cancelled)
+// returns status=error with the partial body preserved in `result` — as a
+// successful result, because the dispatch itself ran and the model decides what
+// to do next. A dispatch that failed outright returns the same envelope as a Go
+// error, so the error detail stays untruncated (see internal/tools/result.go).
 func formatDispatchResult(res dispatch.DispatchResult) (string, error) {
 	switch res.Status {
-	case dispatch.DispatchCompleted:
-		return res.Result, nil
-	case dispatch.DispatchProposal:
-		if res.Proposal == nil {
+	case dispatch.DispatchCompleted, dispatch.DispatchProposal,
+		dispatch.DispatchTimedOut, dispatch.DispatchStuck, dispatch.DispatchCancelled:
+		if res.Status == dispatch.DispatchProposal && res.Proposal == nil {
 			return "", fmt.Errorf("delegate: proposal result is missing its envelope")
 		}
-		return dispatch.MarshalProposalEnvelope(*res.Proposal), nil
+		return dispatch.MarshalProposalEnvelope(res.Envelope()), nil
 	case dispatch.DispatchRunning:
+		// The start signal is deliberately not an envelope: the completion is.
 		return structuredBackgroundResult(res.JobID, res.Label), nil
-	case dispatch.DispatchTimedOut:
-		return structuredTaskResult("timed out", res.Role, res.Timeout, res.Partial), nil
-	case dispatch.DispatchStuck:
-		return structuredTaskResult("stuck", res.Role, res.Timeout, res.Partial), nil
-	case dispatch.DispatchCancelled:
-		return structuredTaskResult("cancelled", res.Role, res.Timeout, res.Partial), nil
 	case dispatch.DispatchFailed:
-		if res.Err != nil {
-			return "", res.Err
-		}
-		return "", fmt.Errorf("delegate: dispatch failed")
+		return "", errors.New(dispatch.MarshalProposalEnvelope(res.Envelope()))
 	default:
 		return "", fmt.Errorf("delegate: unknown dispatch status %q", res.Status)
 	}
@@ -402,37 +406,6 @@ func structuredBackgroundResult(jobID, label string) string {
 	data, err := json.Marshal(out)
 	if err != nil {
 		return `{"status":"running"}`
-	}
-	return string(data)
-}
-
-// dispatchFailureEnvelope is the payload returned when a dispatch did not
-// complete normally.
-type dispatchFailureEnvelope struct {
-	Error   string `json:"error"`
-	Role    string `json:"role,omitempty"`
-	Timeout string `json:"timeout,omitempty"`
-	Partial string `json:"partial,omitempty"`
-}
-
-// structuredTaskResult builds the JSON payload returned to the parent
-// agent when a sub-agent did not complete normally. Returning this as a
-// successful tool result (rather than a Go error) lets the model decide
-// whether to retry, continue, or report.
-func structuredTaskResult(reason, role string, timeout time.Duration, partial string) string {
-	timeoutStr := ""
-	if timeout > 0 {
-		timeoutStr = fmt.Sprintf("%.0fs", timeout.Seconds())
-	}
-	out := dispatchFailureEnvelope{
-		Error:   reason,
-		Role:    role,
-		Timeout: timeoutStr,
-		Partial: partial,
-	}
-	data, err := json.Marshal(out)
-	if err != nil {
-		return fmt.Sprintf(`{"error":%q}`, reason)
 	}
 	return string(data)
 }

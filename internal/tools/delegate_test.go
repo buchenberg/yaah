@@ -282,7 +282,7 @@ func TestExecute_BackgroundViaManager(t *testing.T) {
 	var ran atomic.Bool
 	var mu sync.Mutex
 	var delivered string
-	mgr.Deliver = func(role, desc, res string, err error) {
+	mgr.Deliver = func(job jobs.BackgroundJobStatus, res string, err error) {
 		mu.Lock()
 		delivered = res
 		mu.Unlock()
@@ -377,7 +377,7 @@ func TestExecute_BackgroundRetainedReturnsProposal(t *testing.T) {
 
 	var mu sync.Mutex
 	var delivered string
-	mgr.Deliver = func(role, desc, res string, err error) {
+	mgr.Deliver = func(job jobs.BackgroundJobStatus, res string, err error) {
 		mu.Lock()
 		delivered = res
 		mu.Unlock()
@@ -449,21 +449,29 @@ func TestExecute_TimeoutIncludesPartialOutput(t *testing.T) {
 		t.Fatalf("a timeout is a structured result, not a tool error: %v", err)
 	}
 	var got struct {
-		Error   string `json:"error"`
-		Role    string `json:"role"`
-		Partial string `json:"partial"`
+		Status     string `json:"status"`
+		Role       string `json:"role"`
+		Result     string `json:"result"`
+		StopReason string `json:"stop_reason"`
+		Partial    bool   `json:"partial"`
 	}
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("unmarshal %q: %v", out, err)
 	}
-	if got.Error != "timed out" {
-		t.Errorf("error = %q, want timed out", got.Error)
+	if got.Status != "error" {
+		t.Errorf("status = %q, want error", got.Status)
+	}
+	if got.StopReason != "timeout" {
+		t.Errorf("stop_reason = %q, want timeout", got.StopReason)
 	}
 	if got.Role != "analyst" {
 		t.Errorf("role = %q, want analyst (the orchestrator needs the budget that expired)", got.Role)
 	}
-	if got.Partial != "almost done" {
-		t.Errorf("partial = %q, want the sub-agent's output", got.Partial)
+	if !got.Partial {
+		t.Errorf("partial = false, want true (a timeout leaves partial output)")
+	}
+	if got.Result != "almost done" {
+		t.Errorf("result = %q, want the sub-agent's output", got.Result)
 	}
 }
 
@@ -494,8 +502,15 @@ func TestExecute_LaneForRoleRouting(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Execute: %v", err)
 		}
-		if res != "default" {
-			t.Errorf("report lane must return the runner text, got %q", res)
+		var got struct {
+			Status string `json:"status"`
+			Result string `json:"result"`
+		}
+		if err := json.Unmarshal([]byte(res), &got); err != nil {
+			t.Fatalf("report lane must return the completion envelope, got %q: %v", res, err)
+		}
+		if got.Status != "report" || got.Result != "default" {
+			t.Errorf("report lane envelope = status %q result %q, want status report, result default", got.Status, got.Result)
 		}
 		if got := rt.Proposals.Summaries(); got != "No open proposals." {
 			t.Errorf("report lane must not register a proposal, got %q", got)
@@ -518,8 +533,15 @@ func TestExecute_LaneForRoleRouting(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Execute: %v", err)
 		}
-		if res != "shared report" {
-			t.Errorf("shared lane must return the runner text, got %q", res)
+		var got struct {
+			Status string `json:"status"`
+			Result string `json:"result"`
+		}
+		if err := json.Unmarshal([]byte(res), &got); err != nil {
+			t.Fatalf("shared lane must return the completion envelope, got %q: %v", res, err)
+		}
+		if got.Status != "shared" || got.Result != "shared report" {
+			t.Errorf("shared lane envelope = status %q result %q, want status shared, result shared report", got.Status, got.Result)
 		}
 		if wd := runner.workdirFor(t, 0); wd != "" {
 			t.Errorf("shared lane must not provision a worktree, got %q", wd)
@@ -792,11 +814,12 @@ func TestDelegate_ClassifyGenericErrorDoesNotReinterpretBodyNotes(t *testing.T) 
 	if err == nil {
 		t.Fatal("a generic runner error must stay an error")
 	}
-	if !strings.Contains(err.Error(), body) {
-		t.Errorf("the report body was rewritten: %v", err)
+	env := decodeDelegateFailureEnvelope(t, err)
+	if !strings.Contains(env.Error, body) {
+		t.Errorf("the report body was rewritten: %v", env.Error)
 	}
-	if got := strings.Count(err.Error(), "note: "); got != 2 {
-		t.Errorf("note markers = %d, want the body's 2 and no fabricated caveat: %v", got, err)
+	if got := strings.Count(env.Error, "note: "); got != 2 {
+		t.Errorf("note markers = %d, want the body's 2 and no fabricated caveat: %v", got, env.Error)
 	}
 }
 
@@ -813,17 +836,18 @@ func TestDelegate_ClassifyGenericErrorKeepsHeadAndNoteOfOversizedPartial(t *test
 	if err == nil {
 		t.Fatal("a generic runner error must stay an error")
 	}
-	if len(err.Error()) > len("max iterations reached\n")+toolResultMaxBytes+len(truncationMarker)+len(note)+16 {
-		t.Errorf("folded error is unbounded: %d bytes", len(err.Error()))
+	env := decodeDelegateFailureEnvelope(t, err)
+	if len(env.Error) > len("max iterations reached\n")+toolResultMaxBytes+len(truncationMarker)+len(note)+16 {
+		t.Errorf("folded error is unbounded: %d bytes", len(env.Error))
 	}
-	if !strings.Contains(err.Error(), "left the worktree at /tmp/wt/scratch") {
-		t.Errorf("the bounded fold lost the teardown note: %v", err)
+	if !strings.Contains(env.Error, "left the worktree at /tmp/wt/scratch") {
+		t.Errorf("the bounded fold lost the teardown note: %v", env.Error)
 	}
-	if !strings.Contains(err.Error(), "report body") {
-		t.Errorf("the bounded fold lost the head of the partial: %v", err)
+	if !strings.Contains(env.Error, "report body") {
+		t.Errorf("the bounded fold lost the head of the partial: %v", env.Error)
 	}
-	if !strings.Contains(err.Error(), truncationMarker) {
-		t.Errorf("a capped body must carry the canonical truncation marker: %v", err)
+	if !strings.Contains(env.Error, truncationMarker) {
+		t.Errorf("a capped body must carry the canonical truncation marker: %v", env.Error)
 	}
 }
 
@@ -843,15 +867,16 @@ func TestDelegate_ClassifyGenericErrorBoundsAnOversizedNote(t *testing.T) {
 	}
 	// Body is empty here (the whole partial is the caveat), so the error is
 	// the cause, a newline, and "note: " + at most noteBudget tail bytes.
+	env := decodeDelegateFailureEnvelope(t, err)
 	ceiling := len("max iterations reached\n") + len("note: ") + noteBudget + len(tailTruncationMarker) + 16
-	if len(err.Error()) > ceiling {
-		t.Errorf("folded error exceeds the note budget: %d bytes, want <= %d", len(err.Error()), ceiling)
+	if len(env.Error) > ceiling {
+		t.Errorf("folded error exceeds the note budget: %d bytes, want <= %d", len(env.Error), ceiling)
 	}
-	if !strings.Contains(err.Error(), "left the worktree at /tmp/wt/scratch") {
-		t.Errorf("note tail-keeping lost the worktree path: %v", err)
+	if !strings.Contains(env.Error, "left the worktree at /tmp/wt/scratch") {
+		t.Errorf("note tail-keeping lost the worktree path: %v", env.Error)
 	}
-	if !strings.Contains(err.Error(), tailTruncationMarker) {
-		t.Errorf("a cut note must carry the tail truncation marker: %v", err)
+	if !strings.Contains(env.Error, tailTruncationMarker) {
+		t.Errorf("a cut note must carry the tail truncation marker: %v", env.Error)
 	}
 }
 
@@ -860,10 +885,38 @@ func TestDelegate_ClassifyGenericErrorBoundsAnOversizedNote(t *testing.T) {
 func TestDelegate_ClassifyGenericErrorWithoutPartialStaysBare(t *testing.T) {
 	tool := &DelegateTool{}
 	got, err := tool.classifyRunnerResult("", errors.New("boom"), "reviewer", 30*time.Second, context.Background())
-	if err == nil || err.Error() != "boom" {
-		t.Errorf("err = %v, want the bare cause", err)
+	env := decodeDelegateFailureEnvelope(t, err)
+	if env.Status != "error" || env.Error != "boom" {
+		t.Errorf("envelope = %+v, want status=error carrying the bare cause", env)
 	}
 	if got != "" {
-		t.Errorf("result = %q, want empty", got)
+		t.Errorf("result = %q, want empty (the envelope rides on the error)", got)
 	}
+}
+
+// delegateFailureTestEnvelope is the subset of the failure envelope these
+// tests read.
+type delegateFailureTestEnvelope struct {
+	Status string `json:"status"`
+	Error  string `json:"error"`
+	Result string `json:"result"`
+}
+
+// decodeDelegateFailureEnvelope parses the one result envelope the delegate
+// failure lane renders into its Go error (yaah-was9.1). The failure keeps the
+// error channel — the agent loop delivers error text verbatim — while carrying
+// the same envelope shape every other lane returns.
+func decodeDelegateFailureEnvelope(t *testing.T, err error) delegateFailureTestEnvelope {
+	t.Helper()
+	if err == nil {
+		t.Fatal("want a failure envelope, got a nil error")
+	}
+	var env delegateFailureTestEnvelope
+	if jsonErr := json.Unmarshal([]byte(err.Error()), &env); jsonErr != nil {
+		t.Fatalf("failure error is not a result envelope: %v\n%s", jsonErr, err.Error())
+	}
+	if env.Status != "error" {
+		t.Fatalf("failure envelope status = %q, want error", env.Status)
+	}
+	return env
 }

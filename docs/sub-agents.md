@@ -236,6 +236,16 @@ returns a proposal the orchestrator settles.
   direct-to-host opt-out. Without a trace store, or in a containerd/isolated
   session, the retained lane is not available and dispatches use the direct
   lane.
+- **Result envelope.** Every lane — proposal, report, shared, error, and
+  background completion — returns the same typed envelope (yaah-was9.1). Its
+  shared fields are `status`, `dispatch_id`, `role`, `lane`, `world`, `model`,
+  `duration_ms`, `stop_reason`, and `result` (the raw report text). The
+  proposal lane adds `proposal_id`/`files`/`diff`/`next`; a failure adds
+  `error` (untruncated), `partial`, and `recovery` (`retryable` +
+  `recommended`, derived from `stop_reason`). A background completion arrives
+  later as a follow-up carrying the same envelope, and `subagent_jobs
+  status`/`wait` expose a bounded `result` plus `result_available` for
+  terminal jobs.
 - **Turn checkpoints.** A role whose config sets
   `agents.subagent.roles.<role>.turn_checkpoints: true` captures workspace and
   conversation before each turn, so a turn that fails in the tool phase or

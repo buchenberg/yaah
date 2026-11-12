@@ -94,6 +94,11 @@ type DispatchResult struct {
 	Label    string
 	Proposal *ProposalEnvelope
 	Err      error
+
+	// Meta is the dispatch identity and the runner facts the lane could
+	// observe (lane, world, model, duration). Envelope() stamps it onto the
+	// one result shape every lane returns (yaah-was9.1).
+	Meta EnvelopeMeta
 }
 
 // Run executes one sub-agent dispatch through the runtime's only scheduler and
@@ -152,8 +157,18 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 	// summary. A background call has no dispatch writer yet — setupSubAgent
 	// installs one for foreground dispatches only — so carry the value on the
 	// launch context, which the manager seeds its job from.
+	// Envelope identity (yaah-was9.1): every lane returns the same result
+	// envelope, so the identity is resolved once here instead of per branch.
+	// The dispatch id is the conflict tracker's per-dispatch id when the caller
+	// attached one, and the world is filled in by whichever lane resolves it.
+	meta := EnvelopeMeta{
+		DispatchID: jobs.DispatchIDFrom(ctx),
+		Role:       role,
+		Lane:       string(lane),
+	}
 	if req.Retained == nil || lane == LaneShared {
 		world := SubAgentWorld{Resolved: "shared"}
+		meta.World = world.Resolved
 		if req.Background {
 			ctx = WithSubAgentWorldPtr(ctx, &world)
 		} else {
@@ -189,25 +204,40 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 		}, nil
 	}
 
+	// Observe the model and world the runner reports without displacing the
+	// writeback the caller installed: the agent loop's start event reads the
+	// same writeback, so a tap wraps it rather than replacing it. Foreground
+	// only — a background job outlives this call and reports its own facts.
+	ctx = jobs.WithSubAgentModelTap(ctx, func(model string) { meta.Model = model })
+	ctx = jobs.WithSubAgentWorldTap(ctx, func(w SubAgentWorld) { meta.World = w.Resolved })
+	started := time.Now()
+
 	if req.Retained != nil {
 		switch lane {
 		case LaneReport:
 			res, err := startRetainedRun(ctx, *req.Retained, req.Prompt, params, req.Timeout, true)
-			return ClassifyRunnerResult(res.Report, err, role, req.Timeout, ctx), nil
+			return ClassifyRunnerResult(res.Report, err, role, req.Timeout, ctx).
+				withMeta(meta.after(time.Since(started))), nil
 		case LaneShared:
 			// A shared-lane role cannot mutate the tree; isolation buys
 			// nothing, so fall through to the direct runner.
 		default:
 			res, err := startRetainedRun(ctx, *req.Retained, req.Prompt, params, req.Timeout, false)
 			if err != nil {
-				return DispatchResult{}, err
+				// A retained start that fails (no root scope, refused input,
+				// provisioning) must still return the one envelope: route it
+				// through the classifier so the caller renders status=error
+				// with dispatch_id/role/lane/recovery instead of a bare Go
+				// error (yaah-was9.1).
+				return ClassifyRunnerResult("", err, role, req.Timeout, ctx).
+					withMeta(meta.after(time.Since(started))), nil
 			}
 			return DispatchResult{
 				Status:   DispatchProposal,
 				Role:     role,
 				Timeout:  req.Timeout,
 				Proposal: res.Proposal,
-			}, nil
+			}.withMeta(meta.after(time.Since(started))), nil
 		}
 	}
 
@@ -219,7 +249,8 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 	}
 	NotifySubAgentReady(runCtx)
 	result, err := runner(runCtx, req.Prompt, params)
-	return ClassifyRunnerResult(result, err, role, req.Timeout, runCtx), nil
+	return ClassifyRunnerResult(result, err, role, req.Timeout, runCtx).
+		withMeta(meta.after(time.Since(started))), nil
 }
 
 // ClassifyRunnerResult maps a runner outcome to the typed dispatch result. A

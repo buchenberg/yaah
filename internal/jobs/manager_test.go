@@ -33,9 +33,9 @@ func TestBackgroundJobs_LaunchAndDeliver(t *testing.T) {
 
 	var got jobResult
 	var mu sync.Mutex
-	m.Deliver = func(role, desc, res string, err error) {
+	m.Deliver = func(job BackgroundJobStatus, res string, err error) {
 		mu.Lock()
-		got = jobResult{role, desc, res, err}
+		got = jobResult{job.Role, job.Description, res, err}
 		mu.Unlock()
 	}
 
@@ -95,7 +95,7 @@ func TestBackgroundJobs_SurvivesCallContextCancellation(t *testing.T) {
 	defer m.Close()
 
 	var completed atomic.Bool
-	m.Deliver = func(role, desc, res string, err error) {
+	m.Deliver = func(job BackgroundJobStatus, res string, err error) {
 		completed.Store(true)
 	}
 
@@ -147,7 +147,7 @@ func TestBackgroundJobs_TimeoutBounds(t *testing.T) {
 
 	var errMu sync.Mutex
 	var gotErr error
-	m.Deliver = func(role, desc, res string, err error) {
+	m.Deliver = func(job BackgroundJobStatus, res string, err error) {
 		errMu.Lock()
 		gotErr = err
 		errMu.Unlock()
@@ -324,9 +324,9 @@ func TestBackgroundJobs_RunnerError(t *testing.T) {
 	var got jobResult
 	var delivered bool
 	var mu sync.Mutex
-	m.Deliver = func(role, desc, res string, err error) {
+	m.Deliver = func(job BackgroundJobStatus, res string, err error) {
 		mu.Lock()
-		got = jobResult{role, desc, res, err}
+		got = jobResult{job.Role, job.Description, res, err}
 		delivered = true
 		mu.Unlock()
 	}
