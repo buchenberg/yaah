@@ -224,7 +224,13 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 		default:
 			res, err := startRetainedRun(ctx, *req.Retained, req.Prompt, params, req.Timeout, false)
 			if err != nil {
-				return DispatchResult{}, err
+				// A retained start that fails (no root scope, refused input,
+				// provisioning) must still return the one envelope: route it
+				// through the classifier so the caller renders status=error
+				// with dispatch_id/role/lane/recovery instead of a bare Go
+				// error (yaah-was9.1).
+				return ClassifyRunnerResult("", err, role, req.Timeout, ctx).
+					withMeta(meta.after(time.Since(started))), nil
 			}
 			return DispatchResult{
 				Status:   DispatchProposal,

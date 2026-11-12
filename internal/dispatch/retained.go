@@ -162,7 +162,11 @@ type DispatchWorlds struct {
 // dispatch and from a settlement. Status is "proposal" (awaiting a verdict),
 // "settled", or "error".
 type proposalEnvelope struct {
-	Status     string   `json:"status"`
+	Status string `json:"status"`
+	// Label is the dispatch's short description, repeated from the background
+	// start signal so a completion read can be correlated without keeping the
+	// job_id→description mapping in context (yaah-was9.1).
+	Label      string   `json:"label,omitempty"`
 	ProposalID string   `json:"proposal_id,omitempty"`
 	Result     string   `json:"result,omitempty"`
 	Diff       string   `json:"diff,omitempty"`

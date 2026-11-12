@@ -35,6 +35,9 @@ const (
 	// EnvelopeStatusRunning: a background dispatch was accepted; the work
 	// arrives later as its own completion envelope.
 	EnvelopeStatusRunning = "running"
+	// EnvelopeStatusCompleted: a background dispatch finished and its result
+	// is delivered in `result` (yaah-was9.1).
+	EnvelopeStatusCompleted = "completed"
 	// EnvelopeStatusError: the dispatch did not complete. `error` says why,
 	// `stop_reason` names the kind where one is known, and `recovery` says
 	// whether re-dispatching is worth it.
@@ -320,7 +323,9 @@ func (r DispatchResult) Envelope() ProposalEnvelope {
 // ParseEnvelopeResult reparses a lane's already-rendered result as an envelope.
 // The retained lanes render their own envelope to text (the background job
 // contract carries a string), so a delivery that only has the final text must
-// not wrap it a second time.
+// not wrap it a second time. RESERVED for yaah-was9.2 (response-contract
+// validation), which must reparse a delivered envelope to check its fields;
+// there is no production caller yet.
 func ParseEnvelopeResult(text string) (ProposalEnvelope, bool) {
 	trimmed := strings.TrimSpace(text)
 	if !strings.HasPrefix(trimmed, "{") {
@@ -334,9 +339,11 @@ func ParseEnvelopeResult(text string) (ProposalEnvelope, bool) {
 }
 
 // EnvelopeResultText returns the raw result text an envelope carries, or the
-// input unchanged when it is not an envelope. Consumers that read a dispatch's
-// prose (the escalation parser, quality-gate verdicts) use it so the envelope
-// does not hide the model's words behind JSON escaping.
+// input unchanged when it is not an envelope. RESERVED for yaah-was9.2:
+// consumers that must read a dispatch's prose out of an already-rendered
+// envelope (contract validation, quality-gate verdicts) will use it so the
+// envelope does not hide the model's words behind JSON escaping. There is no
+// production caller yet.
 func EnvelopeResultText(text string) string {
 	env, ok := ParseEnvelopeResult(text)
 	if !ok {
@@ -351,8 +358,9 @@ func EnvelopeResultText(text string) string {
 // vocabulary, so the foreground and background lanes agree (yaah-was9.1).
 func BackgroundCompletionEnvelope(st jobs.BackgroundJobStatus, result string, err error) ProposalEnvelope {
 	env := proposalEnvelope{
-		Status:     "completed",
+		Status:     EnvelopeStatusCompleted,
 		DispatchID: st.ID,
+		Label:      st.Description,
 		Role:       st.Role,
 		Result:     result,
 		Model:      st.Model,
