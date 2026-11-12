@@ -81,6 +81,16 @@ func TestAppendGuard_ConcurrentAppendsAllLand(t *testing.T) {
 // stale, because the per-path lock keeps an append out of the writer's
 // compare-and-swap window.
 func TestAppendGuard_RewriteVsAppendNeverTears(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Windows has mandatory file locking: an atomic write is a rename over
+		// the live file, which the OS refuses while any other handle (here the
+		// observing reader, and an in-flight append) has it open — "Access is
+		// denied", not a torn record. The interleaving this test pins is a
+		// POSIX property; the serialization it relies on is covered on every
+		// platform by TestWithFileWrite_SerializesHoldersPerPath and
+		// TestAppendGuard_ConcurrentAppendsAllLand.
+		t.Skip("atomic replace over an open file is refused by Windows, not torn")
+	}
 	ws, dir := realWorkspace(t)
 	path := filepath.Join(dir, "ledger.jsonl")
 	const rewrite = "REWRITE\n"
@@ -138,15 +148,6 @@ func TestAppendGuard_RewriteVsAppendNeverTears(t *testing.T) {
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
-			// Windows has mandatory file locking: a reader that opens the
-			// file while an atomic write renames over it gets a sharing
-			// violation rather than the old or new bytes. That is the
-			// substrate's replacement model, not a torn record, so skip the
-			// sample instead of failing the guarantee being pinned.
-			if runtime.GOOS == "windows" {
-				samples++
-				continue
-			}
 			t.Fatalf("observer read: %v", err)
 		}
 		if !strings.HasPrefix(string(data), rewrite) {

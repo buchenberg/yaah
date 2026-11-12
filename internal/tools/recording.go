@@ -407,9 +407,18 @@ func conflictWorkspaceRel(ws Workspace, abs string) string {
 			rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return normalizeTrackedPath(rel)
 		}
-		// The path may itself have been reached through a symlinked
-		// directory while the root is real.
-		if realAbs, err := filepath.EvalSymlinks(abs); err == nil && realAbs != "" {
+		// The path may itself be spelled differently: the Windows short form,
+		// or macOS's /var reached through /private/var. Resolve it — and, for a
+		// path that does not exist yet (a receipt is built after the write, but
+		// a refusal can name a path that is gone), resolve its directory and
+		// rejoin the base name.
+		realAbs, aerr := filepath.EvalSymlinks(abs)
+		if aerr != nil || realAbs == "" {
+			if realDir, derr := filepath.EvalSymlinks(filepath.Dir(abs)); derr == nil && realDir != "" {
+				realAbs = filepath.Join(realDir, filepath.Base(abs))
+			}
+		}
+		if realAbs != "" {
 			if rel, err := filepath.Rel(realRoot, realAbs); err == nil &&
 				rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 				return normalizeTrackedPath(rel)
