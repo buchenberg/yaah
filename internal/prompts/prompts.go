@@ -602,6 +602,22 @@ type Layers struct {
 	MaxSubAgentConcurrency int    // injected into prompt so the model knows the semaphore limit
 }
 
+// PersonaGuidanceBlock wraps a persona body in explicit delimiters. The
+// body is a committed role file whose text becomes orchestrator prompt
+// content; without delimiters it could emit its own "## Session directives"
+// heading that visually forges the real block injected later. The
+// delimiters make the boundary unambiguous (yaah-21uk.17).
+//
+// A body that spells the closing delimiter cannot close the frame early
+// either: every literal </persona-guidance> gains a zero-width space after
+// the ">" so the only real terminator is the one added here. Without that,
+// a role file could end the frame itself and let a forged heading sit
+// outside it.
+func PersonaGuidanceBlock(body string) string {
+	body = strings.ReplaceAll(body, "</persona-guidance>", "</persona-guidance>\u200b")
+	return "<persona-guidance>\n" + body + "\n</persona-guidance>"
+}
+
 // Build assembles the full system prompt from the given layers by
 // joining non-empty components with double-newline separators. Callers
 // that inject after the identity block use BuildMarked instead, so the
@@ -627,15 +643,6 @@ func Build(l Layers) string {
 // landing between the identity and the persona. An empty persona layer is
 // omitted entirely: the prompt is byte-identical to Layers without the
 // field.
-// PersonaGuidanceBlock wraps a persona body in explicit delimiters. The
-// body is a committed role file whose text becomes orchestrator prompt
-// content; without delimiters it could emit its own "## Session directives"
-// heading that visually forges the real block injected later. The
-// delimiters make the boundary unambiguous (yaah-21uk.17).
-func PersonaGuidanceBlock(body string) string {
-	return "<persona-guidance>\n" + body + "\n</persona-guidance>"
-}
-
 func BuildMarked(l Layers) (string, int) {
 	var parts []string
 	identityEnd := -1

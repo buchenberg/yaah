@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/buchenberg/yaah/internal/permissions"
 	"github.com/buchenberg/yaah/internal/rolefile"
@@ -355,13 +356,23 @@ func (r *RoleRegistry) LoadDir(dir string) error {
 		if err != nil {
 			return fmt.Errorf("role %q: %w", path, err)
 		}
+		truncated := false
 		if len(data) > maxRoleFileBytes {
 			slog.Warn("role file exceeds size cap, truncating",
 				"path", path, "cap_bytes", maxRoleFileBytes, "actual_bytes", len(data))
-			data = data[:maxRoleFileBytes]
+			data = truncateRoleFile(data)
+			truncated = true
 		}
 		def, err := parseRoleFile(data)
 		if err != nil {
+			if truncated {
+				// Name the cap: a cut that lands mid-construct is the
+				// likeliest reason truncated bytes do not parse, and an
+				// error that only says "parse failed" sends the reader
+				// hunting through a 64 KiB body for the cause.
+				return fmt.Errorf("role %q: file exceeds %d KiB and is unparseable when truncated: %w",
+					path, maxRoleFileBytes/1024, err)
+			}
 			return fmt.Errorf("role %q: %w", path, err)
 		}
 		validateHeadlessAsk(roleName, def)
@@ -422,9 +433,23 @@ func (r *RoleRegistry) List() map[SubAgentRole]RoleDef {
 
 // maxRoleFileBytes caps role/persona files read from disk, mirroring the
 // 64 KiB AGENTS.md/CLAUDE.md cap (yaah-21uk.17). A file that exceeds it is
-// truncated at the byte boundary; the frontmatter sits at the top, well
+// truncated on a UTF-8 rune boundary; the frontmatter sits at the top, well
 // under the cap, so truncation only ever cuts the body tail.
 const maxRoleFileBytes = 64 * 1024
+
+// truncateRoleFile cuts data at maxRoleFileBytes on a UTF-8 rune boundary, so
+// a multi-byte rune straddling the cap is dropped whole instead of being split
+// into invalid UTF-8 in the body. Callers only reach it when len(data) exceeds
+// the cap, so the byte under the cut exists.
+func truncateRoleFile(data []byte) []byte {
+	cut := maxRoleFileBytes
+	// A straddling rune leaves at most utf8.UTFMax-1 continuation bytes at
+	// the cut: back up to the last byte that can start a rune.
+	for cut > 0 && !utf8.RuneStart(data[cut]) {
+		cut--
+	}
+	return data[:cut]
+}
 
 // parseRoleFile splits raw markdown content at the first YAML
 // frontmatter block (delimited by "---" lines) and converts the

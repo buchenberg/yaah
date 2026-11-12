@@ -1433,6 +1433,16 @@ func assemble(lc *sessionConfig, opts SessionOptions, ws *workspaceStage, tr *to
 	if len(mainPrompt) > len(bare) {
 		guidance = mainPrompt[len(bare):]
 	}
+	// A session that STARTS under a narrowed persona needs the note a switch
+	// appends (personaBeltNote): the guidance names only the configured
+	// belt's removals, while the persona's allowlist is applied at the
+	// per-run seam, so without it the construction-time prompt would keep
+	// advertising the tools that seam withholds. It sits BEFORE the guidance
+	// — the order rebuildPromptsLocked uses — so the retained suffix stays a
+	// faithful tail of the prompt.
+	if note := personaBeltNote(lc.persona.Persona); note != "" {
+		mainPrompt = bare + note + guidance
+	}
 	recordSessionWorkspace(lc, tr, mcps, loop, beltRemoved)
 	launchEmbeddingBackfill(tr)
 	sess := newSessionFromStages(lc, opts, ws, tr, mcps, loop, mainPrompt, guidance)

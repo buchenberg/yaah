@@ -242,6 +242,19 @@ func (s *agentSession) SetPersona(name string) error {
 	return nil
 }
 
+// personaBeltNote renders a one-line prompt annotation when the persona
+// declares a tool allowlist. The tool guidance names only the configured
+// belt's removals, while the persona's own narrowing is applied at the
+// per-run seam, so construction and every switch must carry the note forward
+// or the prompt would keep advertising a tool set the persona just stripped
+// (yaah-21uk.17).
+func personaBeltNote(p subagent.Persona) string {
+	if len(p.Tools) == 0 {
+		return ""
+	}
+	return "\n\nYour tool set is narrowed to this persona's declared allowlist; tools outside it are withheld this loop."
+}
+
 // rebuildPromptsLocked re-renders the system and main prompts with the
 // given persona bound in (under `system: replace`, the persona body
 // rebinds as the identity layer — see buildMarkedPrompt), from the
@@ -257,22 +270,10 @@ func (s *agentSession) SetPersona(name string) error {
 // rebuilding from them would rewrite environment, project instructions
 // and memory alongside the persona. The recorded prompt stands in that
 // case, and the switch lands everywhere else (budget, tools, gate).
+//
 // promptChanged reports whether the caller should adopt the new bytes
 // and anchor; a session that never captured layers (hand-built tests)
 // cannot rebuild at all.
-// personaBeltNote renders a one-line prompt annotation when the persona
-// declares a tool allowlist. The retained construction-time guidance names
-// only the configured belt's removals; the persona's own narrowing is
-// applied at the per-run seam, so a switch must carry that forward or the
-// prompt would keep advertising a tool set the persona just stripped
-// (yaah-21uk.17).
-func personaBeltNote(p subagent.Persona) string {
-	if len(p.Tools) == 0 {
-		return ""
-	}
-	return "\n\nYour tool set is narrowed to this persona's declared allowlist; tools outside it are withheld this loop."
-}
-
 func (s *agentSession) rebuildPromptsLocked(p subagent.Persona) (system, main string, end int, promptChanged bool) {
 	if s.promptLayers.Identity == "" {
 		return s.systemPrompt, s.mainPrompt, s.identityEnd, false
