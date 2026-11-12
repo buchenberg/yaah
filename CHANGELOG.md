@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.173.1](https://github.com/buchenberg/yaah/compare/v0.173.0...v0.173.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **llm:** fail fast on un-authenticatable requests; one credential predicate ([fe06f8d](https://github.com/buchenberg/yaah/commit/fe06f8dec4dd577e152249fc379a42720d8eb478))
+* **llm:** fail fast on un-authenticatable requests; one credential predicate ([77f9a27](https://github.com/buchenberg/yaah/commit/77f9a2717cf0d8313a65e78cfd161f3bd5303636))
+
 ## [0.173.0](https://github.com/buchenberg/yaah/compare/v0.172.0...v0.173.0) (2026-11-12)
 
 
