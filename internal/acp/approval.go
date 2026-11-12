@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/buchenberg/yaah/internal/permissions"
 )
 
 // clientResponse is the routed outcome of one server-initiated request.
@@ -263,6 +265,18 @@ func (s *Server) requestPermission(
 		return true
 	case "allow-always":
 		s.rememberPermission(sessionID, name, PermAllowAlways)
+		// Persist the decision project-scoped so a later session in the
+		// same workspace does not re-ask (yaah-x6vi.6). The resource is the
+		// ask's own derivation — the same string the consult matches — and
+		// id-less asks (out-of-workspace path decisions) are never savable:
+		// a prompt that did not carry a tool call carries no resource to
+		// save. A failure logs and stays session-scoped; the ask is not
+		// re-fired either way.
+		if callID != "" && s.SaveApproval != nil {
+			if err := s.SaveApproval(st.cwd, name, permissions.ResourceFor(name, args)); err != nil {
+				s.logf("save approval %s/%s: %v", st.cwd, name, err)
+			}
+		}
 		return true
 	case "reject-once":
 		deny("rejected by user")

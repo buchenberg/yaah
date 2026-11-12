@@ -8,7 +8,9 @@ import (
 
 	"github.com/buchenberg/yaah/internal/acp"
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/cwdpath"
 	"github.com/buchenberg/yaah/internal/mcp"
+	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/retention"
 	"github.com/buchenberg/yaah/internal/sessions"
 	"github.com/buchenberg/yaah/internal/skills"
@@ -279,5 +281,22 @@ func runACPServe(cmd *cobra.Command, args []string) error {
 	srv.DeleteSession = acpDeleteSession(reg)
 	srv.AvailableCommands = acpAvailableCommands
 	srv.Logout = acpLogout
+
+	// Saved approvals (yaah-x6vi.6): allow-always answers persist
+	// project-scoped so a later session in the workspace does not re-ask.
+	// The store refines the belt, it never gates it — an open failure
+	// degrades to session-only memory and the server logs every one.
+	if db, err := memory.OpenDefault(); err == nil {
+		defer db.Close()
+		srv.SaveApproval = func(cwd, tool, resource string) error {
+			return db.SaveSavedPermission(memory.SavedPermission{
+				ProjectID: cwdpath.CanonicalStored(cwd),
+				Action:    tool,
+				Resource:  resource,
+			})
+		}
+	} else {
+		logf("warning: saved approvals unavailable (store open failed): %v", err)
+	}
 	return srv.Run(cmd.Context())
 }

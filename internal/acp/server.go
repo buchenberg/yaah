@@ -160,6 +160,13 @@ type Server struct {
 	// internal errors and keep the session listed.
 	DeleteSession func(id string) error
 
+	// SaveApproval, when non-nil, backs `allow-always`: the decision is
+	// persisted project-scoped (cwd, tool, resource) so a later session in
+	// the same workspace does not re-ask. A returned error is logged, never
+	// fatal — the session-scoped remember covers the rest of this session.
+	// Nil (tests, embedders) keeps always decisions session-scoped.
+	SaveApproval func(cwd, tool, resource string) error
+
 	// AvailableCommands, when non-nil, discovers the slash-command palette
 	// for a session cwd. The server sends an available_commands_update after
 	// session/new, session/load, and session/resume.
