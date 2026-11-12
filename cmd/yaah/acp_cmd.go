@@ -291,11 +291,14 @@ func runACPServe(cmd *cobra.Command, args []string) error {
 		defer db.Close()
 		srv.SaveApproval = func(cwd, tool, resource string) error {
 			// The durable carve-out (yaah-x6vi.7): a persisted "always" for
-			// a credential-shaped target is refused at the save seam. The
-			// ACP flow logs the error and the live session still behaves
-			// as allow-once (the server skips the session memory too, see
-			// approval.go), so refusing to persist is visible but never
-			// re-fires the ask.
+			// a credential-shaped target is refused at the save seam.
+			//
+			// This is defence in depth, not the live path: approval.go
+			// decides the carve-out on the call before ever reaching here,
+			// logs it, and leaves the ask asking. The seam exists so a
+			// future writer of SaveApproval cannot reintroduce a persisted
+			// always for one of these targets, so its error names the
+			// resource the caller offered.
 			if permissions.SensitiveResource(tool, resource) {
 				return fmt.Errorf("not saving always-allow for sensitive resource %q: it stays ask (grant it explicitly with a permissions rule instead)", resource)
 			}

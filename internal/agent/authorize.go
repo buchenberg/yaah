@@ -149,7 +149,15 @@ func (l *Loop) authorizeGate(name, args string, d *pipeline.Decision) {
 		// returned long before anything could consult the store. The
 		// origin is left at the stage that asked: the saved row narrows the
 		// verdict, it does not become a new policy the user did not write.
-		if l.Config.SavedAllow != nil && l.Config.SavedAllow(name, d.Resource) {
+		// A credential-shaped target never consults (yaah-x6vi.7). The
+		// consult sees one derived resource, but the row it matches against
+		// may be tool-wide or a glob and the call's real target may sit in
+		// another argument entirely (replace and bulk_files select files
+		// with `pattern`), so the carve-out is decided here, where the
+		// arguments are, not on the resource the consult receives.
+		if l.Config.SavedAllow != nil &&
+			!permissions.SensitiveCall(name, args) &&
+			l.Config.SavedAllow(name, d.Resource) {
 			d.Gate = pipeline.GatePass
 		}
 	default: // permissions.Allow: nothing narrowed the call.

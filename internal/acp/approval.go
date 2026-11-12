@@ -102,7 +102,12 @@ func (s *Server) requestPermission(
 	st := s.sessions[sessionID]
 	var remembered string
 	if st != nil {
-		if st.permAllow[name] {
+		// Session memory is keyed by tool name only, so an "always" granted
+		// for `edit src/main.go` would otherwise lift a later `edit .env`
+		// without ever reaching the ask. The carve-out holds here too
+		// (yaah-x6vi.7): a credential-shaped target is never lifted from
+		// the memory.
+		if st.permAllow[name] && !permissions.SensitiveCall(name, args) {
 			remembered = PermAllowAlways
 		} else if st.permDeny[name] {
 			remembered = PermRejectAlways
@@ -267,10 +272,14 @@ func (s *Server) requestPermission(
 		// A credential-shaped target downgrades to allow-once
 		// (yaah-x6vi.7, the kilocode protected-path downgrade): neither
 		// the session's tool-keyed memory nor the project store records
-		// it, so the next sensitive call re-asks. The downgrade scopes to
-		// the one ask's derived resource — an "always" for `read` granted
-		// on an ordinary file keeps its usual meaning.
-		if permissions.SensitiveResource(name, permissions.ResourceFor(name, args)) {
+		// it, so the next sensitive call re-asks. The test is on the call
+		// rather than on ResourceFor's one derived string, so a tool that
+		// hides its target in another argument (replace/bulk_files select
+		// files with `pattern`; patch may name only a diff body) is
+		// covered too. Say so out loud — the user clicked "always", and
+		// the next call asking again with no explanation reads as a bug.
+		if permissions.SensitiveCall(name, args) {
+			s.logf("permission: %s targets a credential-shaped file; not remembered (allow-once only)", name)
 			return true
 		}
 		s.rememberPermission(sessionID, name, PermAllowAlways)

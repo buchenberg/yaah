@@ -155,6 +155,15 @@ func savedAllowConsult(db *memory.DB, cwd string) func(name, resource string) bo
 		rules = append(rules, permissions.Rule{Tool: r.Action, Resource: r.Resource, Effect: permissions.Allow})
 	}
 	return func(name, resource string) bool {
+		// Defence in depth. The evaluator decides the carve-out on the call
+		// (permissions.SensitiveCall), but this closure must not depend on
+		// that: Rules.Match treats an empty Resource as tool-wide and a
+		// non-empty one as a glob, so a row this filter left in — because
+		// the row's own basename looked innocuous — can still match a
+		// secrets target at consult time.
+		if permissions.SensitiveResource(name, resource) {
+			return false
+		}
 		eff, matched := rules.Match(name, resource)
 		return matched && eff == permissions.Allow
 	}
