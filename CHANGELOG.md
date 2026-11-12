@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.169.0](https://github.com/buchenberg/yaah/compare/v0.168.0...v0.169.0) (2026-11-12)
+
+
+### Features
+
+* **workflow:** spec types, JSON schema, strict decoder, and canonical hash (yaah-0u0v.3) ([25d9455](https://github.com/buchenberg/yaah/commit/25d945599f670a0fdba8525ffcf7c3e866f0f59b))
+* **workflow:** spec types, JSON schema, strict decoder, and canonical hash (yaah-0u0v.3) ([80a98b2](https://github.com/buchenberg/yaah/commit/80a98b280cf38060574700c7e19eea0bb4f74a71))
+
 ## [0.168.0](https://github.com/buchenberg/yaah/compare/v0.167.1...v0.168.0) (2026-11-12)
 
 
