@@ -108,6 +108,36 @@ func TestCall_swapStatePersistsAcrossCredentialRotations(t *testing.T) {
 	}
 }
 
+// TestCall_Auth401FailsFastWithoutFallback pins yaah-gkll.1: with no
+// fallback configured, a 401 must fail the call on the FIRST attempt — the
+// identical request cannot authenticate on replay, so the backoff ladder is
+// pure wall-clock burn (~65s per dispatch in the PR #1573 run).
+func TestCall_Auth401FailsFastWithoutFallback(t *testing.T) {
+	p := &healingProvider{
+		failErr:  statusError{msg: "request failed with status 401: invalid api key", status: 401},
+		maxFails: 1000, // never heals
+	}
+	c := &Client{
+		Provider:     p,
+		Model:        "test-model",
+		MaxRetries:   3,
+		RetryBackoff: time.Millisecond,
+	}
+
+	_, err := c.Call(context.Background(), types.ChatRequest{Model: "test-model"})
+	if err == nil {
+		t.Fatal("expected the 401 to surface")
+	}
+	// healingProvider.stripped counts failed Sends; one failure means the
+	// ladder never ran.
+	if p.stripped != 1 {
+		t.Fatalf("provider called %d times — a 401 must fail on the first attempt, not walk the backoff ladder", p.stripped)
+	}
+	if !strings.Contains(err.Error(), "authentication failed") {
+		t.Fatalf("error must carry the classification guidance, got: %s", err)
+	}
+}
+
 func TestCall_stripReasoningRetryIsBounded(t *testing.T) {
 	p := &stripReasoningProvider{}
 	c := &Client{

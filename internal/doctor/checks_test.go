@@ -82,6 +82,116 @@ func absFifoDir(t *testing.T) string {
 	return dir
 }
 
+// providerCheckConfig builds a minimal config whose default provider is
+// credentialed, so the check reaches the per-provider credential loop.
+func providerCheckConfig() *config.Config {
+	cfg := &config.Config{
+		Providers: map[string]config.Provider{
+			"good": {APIKey: "sk-real", BaseURL: "https://api.good.example/v1"},
+		},
+	}
+	cfg.Agent.Default.Provider = "good"
+	return cfg
+}
+
+// TestCheckProvider_EmptyKeyOnRemoteBaseURL pins the yaah-gkll.1 fix: an
+// empty api_key against a remote base_url used to be skipped with a bare
+// continue — the exact provider shape that dispatched 401s in PR #1573.
+func TestCheckProvider_EmptyKeyOnRemoteBaseURL(t *testing.T) {
+	cfg := providerCheckConfig()
+	cfg.Providers["broken"] = config.Provider{BaseURL: "https://api.deepseek.com/v1"}
+
+	check := CheckProvider(cfg, nil)
+	if check.Status != "WARN" {
+		t.Fatalf("status = %q, want WARN (got detail %q)", check.Status, check.Detail)
+	}
+	if !strings.Contains(check.Detail, "broken") || !strings.Contains(check.Detail, "cannot authenticate") {
+		t.Errorf("detail must name the provider and the failure, got: %q", check.Detail)
+	}
+}
+
+// TestCheckProvider_UnsetEnvVarNamesTheVar keeps the actionable message:
+// when the key is a ${VAR} reference that resolves to nothing, the check
+// names the variable to export.
+func TestCheckProvider_UnsetEnvVarNamesTheVar(t *testing.T) {
+	t.Setenv("YAAH_DOCTOR_UNSET_KEY", "")
+	cfg := providerCheckConfig()
+	cfg.Providers["envref"] = config.Provider{
+		APIKey:  "${YAAH_DOCTOR_UNSET_KEY}",
+		BaseURL: "https://api.deepseek.com/v1",
+	}
+
+	check := CheckProvider(cfg, nil)
+	if check.Status != "WARN" {
+		t.Fatalf("status = %q, want WARN", check.Status)
+	}
+	if !strings.Contains(check.Detail, "YAAH_DOCTOR_UNSET_KEY") {
+		t.Errorf("detail must name the unset env var, got: %q", check.Detail)
+	}
+}
+
+// TestCheckProvider_LocalKeylessAndSetEnvAreClean: the keyless local
+// endpoint, a set env ref, and the OAuth lane all stay OK — the tightened
+// loop must not flag providers that can actually authenticate.
+func TestCheckProvider_LocalKeylessAndSetEnvAreClean(t *testing.T) {
+	t.Setenv("YAAH_DOCTOR_SET_KEY", "sk-from-env")
+	cfg := providerCheckConfig()
+	cfg.Providers["ollama"] = config.Provider{APIKey: "ollama", BaseURL: "http://localhost:11434/v1"}
+	cfg.Providers["envref"] = config.Provider{APIKey: "${YAAH_DOCTOR_SET_KEY}", BaseURL: "https://api.deepseek.com/v1"}
+	cfg.Providers["oauthp"] = config.Provider{Auth: "oauth", BaseURL: "https://oauth.example/v1"}
+
+	check := CheckProvider(cfg, nil)
+	if check.Status != "OK" {
+		t.Errorf("status = %q, want OK (got detail %q)", check.Status, check.Detail)
+	}
+}
+
+// TestCheckSubAgents_CredentialResolved pins the sub-agent-lane fix: a
+// configured sub-agent provider whose credential does not resolve is a WARN
+// — every dispatch would silently inherit the planner's provider — not an
+// OK line that only proves the name exists.
+func TestCheckSubAgents_CredentialResolved(t *testing.T) {
+	cfg := &config.Config{
+		Providers: map[string]config.Provider{
+			"planner": {APIKey: "sk-real", BaseURL: "https://api.good.example/v1"},
+			"sub":     {BaseURL: "https://api.deepseek.com/v1"}, // no resolvable key
+		},
+	}
+	cfg.Agent.Default.Provider = "planner"
+	cfg.Agent.Default.Model = "main-model"
+	cfg.Agent.SubAgent.Provider = "sub"
+
+	check := CheckSubAgents(cfg, nil)
+	if check.Status != "WARN" {
+		t.Fatalf("status = %q, want WARN (got detail %q)", check.Status, check.Detail)
+	}
+	if !strings.Contains(check.Detail, "no usable credential") || !strings.Contains(check.Detail, "planner") {
+		t.Errorf("detail must state the inheritance fallback, got: %q", check.Detail)
+	}
+}
+
+// TestCheckSubAgents_CredentialedProviderStaysOK: a sub-agent provider with
+// a real key (and the OAuth lane, whose token lives in the store) reports
+// the pre-existing OK shape.
+func TestCheckSubAgents_CredentialedProviderStaysOK(t *testing.T) {
+	cfg := &config.Config{
+		Providers: map[string]config.Provider{
+			"sub":   {APIKey: "sk-real", BaseURL: "https://api.good.example/v1"},
+			"oauth": {Auth: "oauth", BaseURL: "https://oauth.example/v1"},
+		},
+	}
+	cfg.Agent.Default.Provider = "sub"
+	cfg.Agent.Default.Model = "main-model"
+
+	for name := range cfg.Providers {
+		cfg.Agent.SubAgent.Provider = name
+		check := CheckSubAgents(cfg, nil)
+		if check.Status != "OK" {
+			t.Errorf("%s: status = %q, want OK (got detail %q)", name, check.Status, check.Detail)
+		}
+	}
+}
+
 // TestCheckWorkspace_LocalMode: no workspace stanza means the local
 // substrate, byte-for-byte the legacy behaviour.
 func TestCheckWorkspace_LocalMode(t *testing.T) {
