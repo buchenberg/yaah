@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.174.1](https://github.com/buchenberg/yaah/compare/v0.174.0...v0.174.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **roles:** make counter and checker work in bash-denied sandboxes ([df7f737](https://github.com/buchenberg/yaah/commit/df7f7372136f74eb8326be18386a6af946c210c0))
+* **roles:** make counter and checker work in bash-denied sandboxes ([ecb6210](https://github.com/buchenberg/yaah/commit/ecb6210e08b1c232d5f26b116e2d2ea2e9590c3a))
+
 ## [0.174.0](https://github.com/buchenberg/yaah/compare/v0.173.1...v0.174.0) (2026-11-12)
 
 
