@@ -1032,3 +1032,30 @@ tasks: yaah and Hermes via the agent timeout (their `image.c` still
 passed every test), OpenCode inside the budget. The two-task scoreboard
 is in [LONG-SUITE.md](LONG-SUITE.md); the five-task main suite remains in
 [RESULTS.md](RESULTS.md).
+
+## The per-call floor: curve and tripwire (2026-11-12, yaah-6mi9.3)
+
+The fixed per-CALL prompt floor — identity plus every admitted tool's
+schema, multiplied by turns — now has a pinned tripwire:
+[`floor-tripwire.sh`](floor-tripwire.sh) builds the tree fresh, runs the
+hello-world instrument (3 calls, ~1 min, flash-tier pennies), and fails
+closed when the measured floor exceeds 15,500 prompt-in tokens/call —
+the post-curation baseline plus ~15%. A failure names the budget, the
+measured floor, and the choice: justify the new floor or trim what
+grew.
+
+The curve the instrument recorded (per-call floor, hello-world,
+deepseek-flash, harness pin d28711d):
+
+| Era | Floor/call | Cause |
+|---|---:|---|
+| pre-gating (2026-10-31 and earlier) | ~13.4K | full uncurated belt as shipped |
+| tool-gating trim (2026-10-31) | ~10.5K | `728b016+tool-gating` bench config belt, 27 tools |
+| file-tools era (2026-11-04 to 2026-11-12) | ~20.7K | belt 27→40: file cluster + wake pair on every call |
+| curation (yaah-6mi9.1/.2, 2026-11-12) | ~13.5K | curated default belt, gated lanes admitted at registration (run 2026-11-12__14-34-03 measured 13,506/call) |
+
+The 20.7K era is the lesson the tripwire exists for: it doubled the
+floor between recorded runs with no signal until the three-way
+comparison. Per-call bounds are the bench-shape pins;
+`agents.default.tools: ["*"]` deliberately restores the full surface
+and its floor.

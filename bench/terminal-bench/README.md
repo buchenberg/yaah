@@ -235,6 +235,25 @@ in `../orchestration-tasks/RESULTS.md`.
    active** — if the SDK fails with FileNotFoundError, restart it:
    `systemctl --user restart podman.socket`.
 
+## Floor tripwire
+
+[`floor-tripwire.sh`](floor-tripwire.sh) pins the per-call prompt floor
+(yaah-6mi9.3): build fresh, run the hello-world instrument once, assert
+the measured floor at or under 15,500 prompt-in tokens per call (the
+post-curation baseline ~13.5K plus 15%). Failure output names the
+budget, the measurement, and the choice — justify the new floor (update
+the budget here and the floor-curve table in HISTORY.md, with the cause
+recorded on the bead) or trim what grew. Same prerequisites as a normal
+run (`DEEPSEEK_API_KEY` exported, podman socket up):
+
+```sh
+bench/terminal-bench/floor-tripwire.sh
+```
+
+Run it whenever a change touches the belt, the system prompt, or the
+registry — the floor is exactly where those changes compound on every
+call and on every turn.
+
 ## Recording results
 
 Two documents, one job each:
