@@ -70,7 +70,13 @@ func (d *DB) SavedPermissions(projectID string) ([]SavedPermission, error) {
 		}
 		out = append(out, p)
 	}
-	return out, rows.Err()
+	// A scan that died mid-loop must not read as a shorter but complete
+	// list: surface the iteration error so a partial read is a failure,
+	// not a silently narrowed belt.
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list saved permissions: %w", err)
+	}
+	return out, nil
 }
 
 // ErrSavedPermissionNotFound is the sentinel wrapped (with the offending

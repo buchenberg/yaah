@@ -10,8 +10,10 @@ package yaah
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
+	"github.com/buchenberg/yaah/internal/cwdpath"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/permissions"
 )
@@ -117,14 +119,23 @@ func mergePermissions(global, persona permissions.Rules) permissions.Rules {
 
 // mergeSavedPermissions prepends the workspace's saved "always" allows to the
 // resolved ruleset, so a configured rule (evaluated later, last-match-wins)
-// always has the final say on overlap. A store-open failure degrades to the
-// unmerged ruleset: a saved allow widens nothing the config ruleset denies.
+// always has the final say on overlap.
+//
+// The cwd is canonicalized exactly like the rows that were written
+// (cwdpath.CanonicalStored), so a session started from a symlinked path still
+// reads the rows it wrote. A query error warns and degrades to the unmerged
+// ruleset rather than failing the build: the store refines the belt, it never
+// gates it.
 func mergeSavedPermissions(db *memory.DB, cwd string, merged permissions.Rules) permissions.Rules {
 	if db == nil {
 		return merged
 	}
-	rows, err := db.SavedPermissions(cwd)
-	if err != nil || len(rows) == 0 {
+	rows, err := db.SavedPermissions(cwdpath.CanonicalStored(cwd))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: saved approvals unavailable, continuing with config ruleset: %v\n", err)
+		return merged
+	}
+	if len(rows) == 0 {
 		return merged
 	}
 	out := make(permissions.Rules, 0, len(rows)+len(merged))
