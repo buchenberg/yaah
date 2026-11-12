@@ -303,3 +303,44 @@ func (m *mountFactRecorder) AppendFact(ctx context.Context, schemaRef, kindLabel
 	m.payloads = append(m.payloads, payload)
 	return kernel.AppendReceipt{}, nil
 }
+
+// TestToolbeltListPartialState pins review #4557526042: a family with
+// some members on the belt reports "partially mounted" with counts,
+// never a bare "not mounted" over a mount that succeeded.
+func TestToolbeltListPartialState(t *testing.T) {
+	tt, reg, _ := newToolbeltTestRegistry(t)
+	tt.Admits = func(name string) (bool, string) {
+		if name == "json_query" || name == "bisect" {
+			return false, "mode_floor"
+		}
+		return true, ""
+	}
+	if _, err := tt.Execute(context.Background(), `{"action":"mount","family":"analysis"}`); err != nil {
+		t.Fatalf("partial mount: %v", err)
+	}
+	out, err := tt.Execute(context.Background(), `{"action":"list"}`)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if !strings.Contains(out, "partially mounted: 3 of 5") {
+		t.Errorf("list after partial mount = %q, want the counted partial state", out)
+	}
+	if reg.Get("calculate") == nil {
+		t.Error("partial mount's surviving member missing")
+	}
+}
+
+// TestToolbeltMountRequiresFamily pins review #4557526053's runtime
+// half: a mount action without a family names the requirement and the
+// known families instead of landing in the generic unknown-family
+// error.
+func TestToolbeltMountRequiresFamily(t *testing.T) {
+	tt, _, _ := newToolbeltTestRegistry(t)
+	_, err := tt.Execute(context.Background(), `{"action":"mount"}`)
+	if err == nil {
+		t.Fatal("mount without family succeeded")
+	}
+	if !strings.Contains(err.Error(), "family is required for mount") || !strings.Contains(err.Error(), "file_ops") {
+		t.Errorf("err = %q, want the requirement and the family catalog", err)
+	}
+}

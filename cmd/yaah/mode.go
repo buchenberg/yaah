@@ -43,6 +43,17 @@ func (s *agentSession) IsReadOnly() bool {
 	return s.readOnly
 }
 
+// PersonaTools returns the session persona's current tools list under
+// the session lock — the live counterpart of IsReadOnly, for the
+// toolbelt's mount-time admission (yaah-6mi9.5): a mid-session role
+// switch must change what a later mount is allowed to register, not
+// only what the per-loop seam advertises. Empty means no narrowing.
+func (s *agentSession) PersonaTools() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.persona.Tools
+}
+
 // SetReadOnly switches the session's mode axis mid-session (ACP
 // session/set_mode and the mode config option). Effective at the NEXT loop
 // build, like every other axis switch: an in-flight run keeps the mode it

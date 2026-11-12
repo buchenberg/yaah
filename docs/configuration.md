@@ -443,7 +443,11 @@ the loader for that surface:
   withhold the mutating members (a family every member of which is
   withheld fails the mount citing `mode_floor`), and every mounted
   call still passes the per-call permission and approval gates. A
-  mount adds schemas, never permission.
+  mount adds schemas, never permission. The mount-time check consults
+  the session's *live* mode and persona — a mid-session `session/set_mode`
+  flip or role switch changes what a later mount admits — and the
+  per-loop advertise-time narrowing remains the floor above it either
+  way.
 - A mount appends a `yaah.tool.mounted.v1` fact on the session's root
   scope, naming the family, the tools, and any per-member refusals.
 - Belt admission of `toolbelt` is the opt-in: the curated default names

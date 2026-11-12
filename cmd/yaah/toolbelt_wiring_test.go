@@ -150,3 +150,48 @@ func TestToolbeltStubBlockInGuidance(t *testing.T) {
 		t.Error("guidance advertises mountable families without the loader registered")
 	}
 }
+
+// TestBindToolbeltLiveAdmits pins the review fix: after assemble()
+// rebinds it, the mount-time admission answer consults the session's
+// LIVE axes — a read-only session flipped to full admits a mutating
+// member, a persona switch's tools list is what "persona" refusals
+// name — not the construction-time snapshot the startup closure
+// carried (yaah-6mi9.5 review).
+func TestBindToolbeltLiveAdmits(t *testing.T) {
+	tr, _ := toolbeltWiring(t /* startup: full mode, no persona */, false, nil)
+	sess := &agentSession{
+		// The allowlist names every family member the assertions care
+		// about except json_query, so each refusal names its own axis
+		// rather than collapsing onto persona.
+		persona:  subagent.Persona{Name: "narrow", Tools: []string{"bash", "read", "diff", "mkdir"}},
+		readOnly: true,
+	}
+	bindToolbeltLiveAdmits(sess, tr)
+
+	if ok, origin := tr.toolbeltTool.Admits("diff"); !ok || origin != "" {
+		t.Errorf("read-only Admits(diff) = %v/%q, want true (persona names it, inspection set admits it)", ok, origin)
+	}
+	if ok, origin := tr.toolbeltTool.Admits("mkdir"); ok || origin != "mode_floor" {
+		t.Errorf("read-only Admits(mkdir) = %v/%q, want false/mode_floor", ok, origin)
+	}
+	if ok, origin := tr.toolbeltTool.Admits("json_query"); ok || origin != "persona" {
+		t.Errorf("persona-narrowed Admits(json_query) = %v/%q, want false/persona", ok, origin)
+	}
+
+	// The flip the WARNING was about: read-only -> full must admit a
+	// mutating member on the very next mount, the live answer changing
+	// with the axis and not staying pinned to the booted mode.
+	sess.SetReadOnly(false)
+	if ok, origin := tr.toolbeltTool.Admits("mkdir"); !ok || origin != "" {
+		t.Errorf("post-flip Admits(mkdir) = %v/%q, want true — the live answer must follow session/set_mode", ok, origin)
+	}
+
+	// And the persona axis widens the same way: a persona switch that
+	// drops the allowlist lifts the persona refusal.
+	sess.mu.Lock()
+	sess.persona = subagent.Persona{Name: "narrow", Tools: nil}
+	sess.mu.Unlock()
+	if ok, origin := tr.toolbeltTool.Admits("json_query"); !ok || origin != "" {
+		t.Errorf("post-switch Admits(json_query) = %v/%q, want true — the live answer must follow the persona", ok, origin)
+	}
+}

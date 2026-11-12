@@ -129,7 +129,7 @@ type ToolNotMountedError struct {
 }
 
 func (e ToolNotMountedError) Error() string {
-	return fmt.Sprintf("not mounted: %s is in the %s family — mount it with the toolbelt tool (action: mount, family: %s)", e.Name, e.Family, e.Family)
+	return fmt.Sprintf("not mounted: %s is in the %s family — mount it with the toolbelt tool (action: mount, family: %s), or use toolbelt action: list for the family catalog", e.Name, e.Family, e.Family)
 }
 
 func (e ToolNotMountedError) Is(target error) bool {

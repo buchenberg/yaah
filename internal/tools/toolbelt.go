@@ -198,30 +198,42 @@ func (t *ToolbeltTool) Execute(ctx context.Context, args string) (string, error)
 
 // list renders the family table with each family's live state, so a
 // model that lost the stub block (compaction) can still find the
-// mountable surface.
+// mountable surface. A partially mounted family says so with members
+// counted: read-only or persona-refused members can leave a family
+// half-mounted, and "not mounted" would misreport a mount that
+// succeeded (yaah-6mi9.5 review #4557526042).
 func (t *ToolbeltTool) list() string {
 	var b strings.Builder
 	b.WriteString("Mountable tool families (mount is sticky for the session; already-mounted members stay mounted):\n")
 	for _, f := range toolFamilies {
+		total := len(f.Tools)
+		mounted := 0
+		if t.Reg != nil {
+			mounted = familyMountedCount(t.Reg, f)
+		}
 		state := "not mounted"
-		if t.Reg != nil && familyMounted(t.Reg, f) {
+		switch {
+		case mounted == total:
 			state = "mounted"
+		case mounted > 0:
+			state = fmt.Sprintf("partially mounted: %d of %d members on the belt", mounted, total)
 		}
 		fmt.Fprintf(&b, "- %s (%s) — %s: %s\n", f.Name, f.Description, state, strings.Join(f.Tools, ", "))
 	}
 	return b.String()
 }
 
-// familyMounted reports whether every member of a family registers —
-// the "mounted" state the list action reports. Partially mounted
-// families still read not mounted; the missing members can mount.
-func familyMounted(reg *Registry, f ToolFamily) bool {
+// familyMountedCount returns how many members of a family registers.
+// Zero means not mounted, all means mounted, in between is the partial
+// state a refused member leaves behind.
+func familyMountedCount(reg *Registry, f ToolFamily) int {
+	mounted := 0
 	for _, name := range f.Tools {
-		if reg.Get(name) == nil {
-			return false
+		if reg.Get(name) != nil {
+			mounted++
 		}
 	}
-	return true
+	return mounted
 }
 
 // mount registers a family's members through the belt and the
@@ -235,6 +247,13 @@ func familyMounted(reg *Registry, f ToolFamily) bool {
 func (t *ToolbeltTool) mount(ctx context.Context, family string) (string, error) {
 	if t.Reg == nil {
 		return "", fmt.Errorf("%s: no tool registry in this session", t.Name())
+	}
+	if strings.TrimSpace(family) == "" {
+		names := make([]string, len(toolFamilies))
+		for i, f := range toolFamilies {
+			names[i] = f.Name
+		}
+		return "", fmt.Errorf("%s: family is required for mount (known families: %s; action: list shows the catalog)", t.Name(), strings.Join(names, ", "))
 	}
 	var fam *ToolFamily
 	for i := range toolFamilies {
@@ -292,7 +311,7 @@ func (t *ToolbeltTool) mount(ctx context.Context, family string) (string, error)
 			details = append(details, fmt.Sprintf("%s (%s)", name, origin))
 		}
 		sort.Strings(details)
-		return "", fmt.Errorf("%s: mount refused — no member of the %s family is callable in this session: %s",
+		return "", fmt.Errorf("%s: mount refused — no member of the %s family is callable in this session: %s. Nothing was mounted",
 			t.Name(), fam.Name, strings.Join(details, ", "))
 	}
 

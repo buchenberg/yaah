@@ -657,6 +657,17 @@ func buildMCPSkills(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 // mode flips outrank this snapshot), and per-call gates evaluate
 // every mounted call as they would a startup-registered one.
 func registerLazyToolbelt(lc *sessionConfig, tr *toolRegistryStage) {
+	// Startup validation (yaah-6mi9.5 review): the family map is pinned
+	// by tests against the curation and the leaf factory, but a name
+	// that drifts should say so at startup rather than surface first
+	// as a mount-time refusal with origin "unknown".
+	for _, f := range tools.ToolFamilies() {
+		for _, name := range f.Tools {
+			if tools.NewLeafTool(name) == nil {
+				fmt.Fprintf(os.Stderr, "warning: toolbelt family %s names %q, but no such leaf tool exists\n", f.Name, name)
+			}
+		}
+	}
 	inspectSet := agent.InspectionSetNames()
 	tr.toolbeltTool = &tools.ToolbeltTool{
 		Reg: tr.reg,
@@ -671,6 +682,34 @@ func registerLazyToolbelt(lc *sessionConfig, tr *toolRegistryStage) {
 		},
 	}
 	tr.reg.Register(tr.toolbeltTool)
+}
+
+// bindToolbeltLiveAdmits re-points the toolbelt's mount-time admission
+// answer at the session's live axes (yaah-6mi9.5 review: the startup
+// closure consulted the construction-time snapshot, so a session that
+// flipped read-only→full over ACP was falsely refused a mutating
+// mount, and a mid-session role switch left the old persona's answer
+// in place). Called from assemble() once the agentSession exists; the
+// startup closure remains the pre-construction standby. Both accessors
+// take the session lock briefly — the mount executes on the loop,
+// where the session lock is not held, so there is no deadlock path.
+// Advertise-time narrowing and the per-call gates remain the
+// enforcement floors either way; this answers the mount's atomicity.
+func bindToolbeltLiveAdmits(sess *agentSession, tr *toolRegistryStage) {
+	if tr.toolbeltTool == nil {
+		return
+	}
+	inspectSet := agent.InspectionSetNames()
+	tr.toolbeltTool.Admits = func(name string) (bool, string) {
+		if personaTools := normalizeToolNames(sess.PersonaTools()); len(personaTools) > 0 &&
+			!slices.Contains(personaTools, name) {
+			return false, "persona"
+		}
+		if sess.IsReadOnly() && !slices.Contains(inspectSet, name) {
+			return false, "mode_floor"
+		}
+		return true, ""
+	}
 }
 
 // loopInfraStage is what buildLoopInfra produces: the restored transcript, the
@@ -1530,6 +1569,7 @@ func assemble(lc *sessionConfig, opts SessionOptions, ws *workspaceStage, tr *to
 	recordSessionWorkspace(lc, tr, mcps, loop, beltRemoved)
 	launchEmbeddingBackfill(tr)
 	sess := newSessionFromStages(lc, opts, ws, tr, mcps, loop, mainPrompt, guidance)
+	bindToolbeltLiveAdmits(sess, tr)
 	wireSessionHooks(lc, opts, ws, loop, sess)
 	return sess, nil
 }
