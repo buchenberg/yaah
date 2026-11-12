@@ -126,6 +126,7 @@ var toolPolicies = map[string]Policy{
 
 	// Read-only metadata and waiting.
 	"list_subagents": {Effects: EffectRead},
+	"toolbelt":       {Effects: EffectRead, Danger: DangerPolicySafe, Reason: "registration only: a mount adds schemas, never permission; every mounted call passes its own per-call gates"},
 	"wait_for":       {Effects: EffectRead, Danger: DangerPolicyClassifier},
 	"watch":          {Effects: EffectRead, Danger: DangerPolicyClassifier},
 

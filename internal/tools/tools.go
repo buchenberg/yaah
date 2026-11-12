@@ -115,6 +115,31 @@ func (e ToolNotFoundError) Is(target error) bool {
 	return ok
 }
 
+// ToolNotMountedError is the instructive refusal for a direct call to a
+// mountable family's member that this session has not mounted
+// (yaah-6mi9.5). The stub block taught the model the name, so the
+// unknown-tool refusal would waste that recognition: this error names
+// the one-turn recovery instead. It still matches
+// errors.Is(err, ToolNotFoundError{}) — the name is unregistered,
+// and consumers that branch on the sentinel keep working; only the
+// message changed, and it changed for the model reading it.
+type ToolNotMountedError struct {
+	Name   string
+	Family string
+}
+
+func (e ToolNotMountedError) Error() string {
+	return fmt.Sprintf("not mounted: %s is in the %s family — mount it with the toolbelt tool (action: mount, family: %s)", e.Name, e.Family, e.Family)
+}
+
+func (e ToolNotMountedError) Is(target error) bool {
+	if _, ok := target.(ToolNotMountedError); ok {
+		return true
+	}
+	_, ok := target.(ToolNotFoundError)
+	return ok
+}
+
 // Tool is the interface that all tools (built-in and MCP) must satisfy.
 type Tool interface {
 	// Name returns the tool name as it appears in the function call.
@@ -393,14 +418,28 @@ func (r *Registry) Register(t Tool) {
 
 // Admit widens the session's belt to a tool name about to register, so
 // a registration the belt would otherwise refuse can proceed
-// (substrate.Belt.Admit). Its only use is the MCP seam: a configured
+// (substrate.Belt.Admit). Its uses are the MCP seam — a configured
 // server's tools were not in the belt when it was built, and the
-// configuration itself is the opt-in. Callers must call it before
-// Register — a belt refusal that already happened is retracted, but the
-// honest order is admit-then-register.
+// configuration itself is the opt-in — and the lazy toolbelt's mount
+// (yaah-6mi9.5), the model's runtime ask for the same widening. Callers
+// must call it before Register — a belt refusal that already happened
+// is retracted, but the honest order is admit-then-register.
 func (r *Registry) Admit(name string) {
 	if r.belt != nil {
 		r.belt.Admit(name)
+	}
+}
+
+// Withdraw re-refuses a name an Admit widened, without touching any
+// registration under it (a registered name stays callable; the belt is
+// a registration gate, not a removal pass). The lazy toolbelt
+// (yaah-6mi9.5) uses it to revert an atomic mount failure: a family
+// whose every member was refused must leave the belt's refusal set
+// exactly as it found it — the folded startup state — so a failed
+// mount widens nothing.
+func (r *Registry) Withdraw(name string) {
+	if r.belt != nil {
+		r.belt.Refuse(name)
 	}
 }
 
@@ -584,6 +623,14 @@ func (r *Registry) Execute(ctx context.Context, name, args string) (string, erro
 	ctx = WithToolName(ctx, name)
 	t := r.Get(name)
 	if t == nil {
+		// A mountable family member the session can still load
+		// answers instructively — the stub block taught the model
+		// the name, so "unknown tool" would strand it. Only when
+		// this session carries the mount tool at all: without one
+		// the name really is not a tool this harness speaks of.
+		if family, ok := FamilyOf(name); ok && r.Get("toolbelt") != nil {
+			return "", ToolNotMountedError{Name: name, Family: family}
+		}
 		return "", ToolNotFoundError{Name: name}
 	}
 	return t.Execute(ctx, args)

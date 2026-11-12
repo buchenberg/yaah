@@ -1039,8 +1039,8 @@ The fixed per-CALL prompt floor — identity plus every admitted tool's
 schema, multiplied by turns — now has a pinned tripwire:
 [`floor-tripwire.sh`](floor-tripwire.sh) builds the tree fresh, runs the
 hello-world instrument (3 calls, ~1 min, flash-tier pennies), and fails
-closed when the measured floor exceeds 15,500 prompt-in tokens/call —
-the post-curation baseline plus ~15%. A failure names the budget, the
+closed when the measured floor exceeds 13,500 prompt-in tokens/call —
+the post-fold baseline plus ~15%. A failure names the budget, the
 measured floor, and the choice: justify the new floor or trim what
 grew.
 
@@ -1053,6 +1053,7 @@ deepseek-flash, harness pin d28711d):
 | tool-gating trim (2026-10-31) | ~10.5K | `728b016+tool-gating` bench config belt, 27 tools |
 | file-tools era (2026-11-04 to 2026-11-12) | ~20.7K | belt 27→40: file cluster + wake pair on every call |
 | curation (yaah-6mi9.1/.2, 2026-11-12) | ~13.5K | curated default belt, gated lanes admitted at registration (run 2026-11-12__14-34-03 measured 13,506/call) |
+| lazy toolbelt fold (yaah-6mi9.5, 2026-11-12) | ~11.7K | analysis + net families fold behind the toolbelt loader (27→21 schemas on the wire; run 2026-11-12__15-53-24 measured 11,712/call) |
 
 The 20.7K era is the lesson the tripwire exists for: it doubled the
 floor between recorded runs with no signal until the three-way

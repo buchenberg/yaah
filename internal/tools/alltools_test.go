@@ -25,6 +25,7 @@ func allBuiltinTools() []Tool {
 		&SkillTool{},
 		&SubAgentJobsTool{},
 		&SupervisorTool{},
+		&ToolbeltTool{},
 		&WaitForTool{},
 		&WatchTool{},
 	}

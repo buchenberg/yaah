@@ -296,6 +296,7 @@ type toolRegistryStage struct {
 	belt             *tools.Belt
 	omittedTools     []string
 	applyOutTool     *tools.ApplyOutTool
+	toolbeltTool     *tools.ToolbeltTool
 	db               *memory.DB
 	embedderAttached bool
 
@@ -632,7 +633,44 @@ func buildMCPSkills(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 		tr.belt.Know("background_process")
 	}
 
+	registerLazyToolbelt(lc, tr)
+
 	return st, nil
+}
+
+// registerLazyToolbelt registers the toolbelt's loader (yaah-6mi9.5,
+// docs/lazy-toolbelt-design.md). Belt admission of "toolbelt" is the
+// opt-in, exactly the MCP precedent: the curated default names it, an
+// explicit agents.default.tools list that omits it keeps the session
+// exactly as configured, and one that names it sanctions the widening
+// the loader exists for.
+//
+// Admits answers the mount-time nameAdmission check: the persona's
+// tools list (tr.personaTools — the same normalization the per-loop
+// seam narrows with; a persona allowlist cannot be widened by a
+// mount, per the design's matrix) and the configured read-only
+// default (the inspection set, agent.InspectionSetNames). The answers
+// are for the mount's atomicity only — a family that could surface no
+// member fails citing the refusing origin. The enforcement floors are
+// unchanged and stay authoritative: advertise-time narrowing
+// re-narrows every loop build (mid-session role switches and ACP
+// mode flips outrank this snapshot), and per-call gates evaluate
+// every mounted call as they would a startup-registered one.
+func registerLazyToolbelt(lc *sessionConfig, tr *toolRegistryStage) {
+	inspectSet := agent.InspectionSetNames()
+	tr.toolbeltTool = &tools.ToolbeltTool{
+		Reg: tr.reg,
+		Admits: func(name string) (bool, string) {
+			if len(tr.personaTools) > 0 && !slices.Contains(tr.personaTools, name) {
+				return false, "persona"
+			}
+			if lc.readOnly && !slices.Contains(inspectSet, name) {
+				return false, "mode_floor"
+			}
+			return true, ""
+		},
+	}
+	tr.reg.Register(tr.toolbeltTool)
 }
 
 // loopInfraStage is what buildLoopInfra produces: the restored transcript, the
@@ -1035,6 +1073,19 @@ func buildShepherdInfra(st *loopInfraStage, cfg *config.Config, ws *workspaceSta
 					tr.applyOutTool.SetEffects(&tools.EffectSink{
 						Appender: root,
 						Bus:      bus,
+						OpID:     st.rootScopeID,
+					})
+				}
+
+				// Same late binding for the toolbelt's mount fact
+				// (yaah-6mi9.5): a mount appends yaah.tool.mounted.v1
+				// on the session's own owner path. Nil sink without a
+				// root scope makes recording a silent no-op — the
+				// per-turn session.context records still carry the
+				// effective belt as the diff trail.
+				if tr.toolbeltTool != nil {
+					tr.toolbeltTool.SetSink(&tools.MountSink{
+						Appender: root,
 						OpID:     st.rootScopeID,
 					})
 				}

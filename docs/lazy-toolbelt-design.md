@@ -7,9 +7,11 @@ from it. The #1587 review's four open questions resolved in
 
 ## The problem, in floor units
 
-Every admitted tool ships its schema on every call. The measured per-schema
-cost is ~780 tokens; the curated default belt (yaah-6mi9.1) carries 29
-always-on names plus the gate-admitted lanes, and the floor sits at
+Every admitted tool ships its schema on every call. The per-schema cost
+averages ~780 tokens across the whole registry (the chunky schemas
+dominate; the compact leaf tools average ~270), and the curated default
+belt (yaah-6mi9.1) carries 29
+always-on names plus the gate-admitted lanes, with the floor at
 ~13.5K prompt-in tokens per call. Yet across every recorded bench family
 the orchestrator's actual usage concentrates brutally: the 2026-11-12
 five-task run called exactly four tools (bash 64, write 4, read 4, ls 2),
@@ -70,25 +72,30 @@ turn and widens every later call.
 - net: http, webfetch
 ```
 
-A line costs ~25–50 tokens against ~780 per schema, and every stub
-names its full membership — an ellipsis on a five- or six-member
+A line costs ~25–50 tokens against the schema it folds, and every
+stub names its full membership — an ellipsis on a five- or six-member
 family buys nothing and hides names the model needs for recognition.
 `toolbelt action: list` still exists as the authoritative membership
-surface, but recognition must not depend on a second call. At the
-decided .5 cut the arithmetic pins exactly: seven schemas fold
-(analysis five, net two), ~5.5K off the floor, against three stub
-lines (~0.1K) and the toolbelt schema (~0.8K) — net ~4.6K per call.
-The file_ops line is pure stub cost: the cluster is already withheld
-from the default (yaah-6mi9.1), so the line buys the restore path at
-~0.05K and folds nothing. The stub names the family, its purpose, and
-enough member names for the model to recognize the need — the same
-economy `list_subagents` practices.
+surface, but recognition must not depend on a second call. The
+arithmetic, measured (yaah-6mi9.5, hello-world tripwire instrument,
+2026-11-12): the seven folded schemas total ~1.9K tokens — small leaf
+tools average ~270 each, and the ~780 figure used while designing was
+a belt-wide average dominated by the chunky schemas (we estimated
+~5.5K saved; the wire measured ~1.8K). The toolbelt schema adds
+~0.2K and the three stub lines ~0.15K: net ~−1.7K/call. The file_ops
+line is pure stub cost: the cluster is already withheld from the
+default (yaah-6mi9.1), so the line buys the restore path and folds
+nothing. Per-family savings scale with the family's schemas, so fold
+choices should weigh measured schema size, not the historical
+average. The stub names the family, its purpose, and full membership
+for the model to recognize the need — the same economy
+`list_subagents` practices.
 
 ## Mount semantics
 
 - One new tool, `toolbelt`, mirroring `skill`'s shape:
   `action: list | mount`, `family: <name>`. Registered always (with the
-  spine), cost ~780 tokens as a single schema.
+  spine), cost ~0.2K tokens as a single schema.
 - Mount is `registry.Admit(name)` + `Register` per member — `Admit`
   takes one name (the variadic widening primitive is
   `substrate.Belt.Admit`). This is the seam yaah-6mi9 built for MCP
@@ -130,12 +137,13 @@ economy `list_subagents` practices.
 ## Cost model
 
 - Floor: seven schemas fold at the decided cut (analysis five, net
-  two), ~780 tokens each — ~5.5K per call — against three stub lines
-  (~0.1K) and the toolbelt schema (~0.8K): net ~4.6K, projecting
-  ~13.5K → ~8.9K/call. The .5 measurement pins it against the
-  tripwire (yaah-6mi9.3) rather than trusting the projection.
+  two), which on the wire measure ~1.9K per call (see Stub format);
+  the toolbelt schema (~0.2K) and the stub lines (~0.15K) ride the
+  floor back up: net ~−1.7K, so the measured floor is
+  ~13.5K → ~11.7K/call (hello-world tripwire instrument, 2026-11-12).
+  The tripwire (yaah-6mi9.3) carries the new budget.
 - First use: one extra turn (the mount call) — one floor's worth of
-  prompt-in, ~8.9K at the projected floor, plus the one prefix
+  prompt-in, ~11.7K at the measured floor, plus the one prefix
   destabilization the cache item below makes exact.
 - Cache: the tools array is part of the cached prefix. A mount rewrites
   it once; every later call re-caches against the wider belt. The cost

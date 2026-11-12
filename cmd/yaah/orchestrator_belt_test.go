@@ -16,6 +16,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/tools"
 )
 
 func TestOrchestratorBeltNamesDefault(t *testing.T) {
@@ -62,11 +63,14 @@ func TestDefaultOrchestratorBeltDeclaration(t *testing.T) {
 		"bash", "write", "read", "ls",
 		// The dispatch and supervision surface:
 		"delegate", "list_subagents", "subagent_jobs", "supervisor",
-		// Belts the 2026-11-02 comparable run carried:
-		"background_process", "bisect", "calculate", "delete", "diff",
-		"edit", "file_info", "git", "glob", "grep", "http",
-		"json_query", "patch", "plan", "question", "replace", "role",
-		"skill", "todowrite", "webfetch",
+		// Belts the 2026-11-02 comparable run carried and the .5 fold
+		// (yaah-6mi9.5) kept always-on:
+		"background_process", "delete", "edit", "git", "glob", "grep",
+		"patch", "plan", "question", "replace", "role",
+		"skill", "todowrite",
+		// The loader itself rides the spine — belt admission of
+		// "toolbelt" is the mount surface's opt-in:
+		"toolbelt",
 		// The platform shell pair (platform rule resolves one):
 		"powershell",
 		// The gated lanes — belt-admitted, registration-gated:
@@ -87,6 +91,11 @@ func TestDefaultOrchestratorBeltDeclaration(t *testing.T) {
 			t.Errorf("curated default still names withheld tool %q", held)
 		}
 	}
+	for _, folded := range foldedFromOrchestratorDefault {
+		if slices.Contains(defaultOrchestratorBelt, folded) {
+			t.Errorf("curated default still names folded tool %q — the fold is the whole point", folded)
+		}
+	}
 	// The withheld list is itself pinned: a name moving from withheld to
 	// default (or the tool being deleted outright) must edit this file.
 	wantHeld := []string{
@@ -95,6 +104,47 @@ func TestDefaultOrchestratorBeltDeclaration(t *testing.T) {
 	}
 	if !reflect.DeepEqual(removedFromOrchestratorDefault, wantHeld) {
 		t.Errorf("removedFromOrchestratorDefault = %v, want %v", removedFromOrchestratorDefault, wantHeld)
+	}
+	// The folded list is pinned the same way, and the two sets are
+	// disjoint (a name in both is a contradiction — withheld-forever
+	// and mountable are different rows of the design's matrix).
+	wantFolded := []string{
+		"bisect", "calculate", "diff", "file_info", "http",
+		"json_query", "webfetch",
+	}
+	if !reflect.DeepEqual(foldedFromOrchestratorDefault, wantFolded) {
+		t.Errorf("foldedFromOrchestratorDefault = %v, want %v", foldedFromOrchestratorDefault, wantFolded)
+	}
+	for _, held := range removedFromOrchestratorDefault {
+		if slices.Contains(foldedFromOrchestratorDefault, held) {
+			t.Errorf("%q is both withheld and folded — pick a row of the matrix", held)
+		}
+	}
+	// The family map (internal/tools toolFamilies, what the toolbelt
+	// mounts) cannot drift from the curation: file_ops is exactly the
+	// withheld file cluster (the mountable restore path), and the other
+	// families' members cover exactly the folded set. A name in a
+	// family that neither list declares mounts a tool the curation
+	// never released.
+	familyMembers := make(map[string]bool)
+	for _, f := range tools.ToolFamilies() {
+		if f.Name == "file_ops" {
+			if !reflect.DeepEqual(f.Tools, wantHeld) {
+				t.Errorf("family file_ops = %v, want exactly the withheld cluster %v", f.Tools, wantHeld)
+			}
+			continue
+		}
+		for _, name := range f.Tools {
+			familyMembers[name] = true
+		}
+	}
+	gotFolded := make([]string, 0, len(familyMembers))
+	for name := range familyMembers {
+		gotFolded = append(gotFolded, name)
+	}
+	slices.Sort(gotFolded)
+	if !reflect.DeepEqual(gotFolded, wantFolded) {
+		t.Errorf("non-file_ops family members = %v, want exactly %v (curation is the family map's authority)", gotFolded, wantFolded)
 	}
 	// No duplicates, no blanks in the default.
 	seen := make(map[string]bool, len(defaultOrchestratorBelt))
@@ -128,13 +178,14 @@ func TestOrchestratorBeltRegistryBoundary(t *testing.T) {
 	}
 	registerWakeTools(&loopInfraStage{}, st, false)
 
-	// Refused: the declared withholdings, plus the shell the platform
-	// rule refuses on this OS.
+	// Refused: the declared withholdings plus the folds, plus the shell
+	// the platform rule refuses on this OS.
 	offPlatform := "powershell"
 	if runtime.GOOS == "windows" {
 		offPlatform = "bash"
 	}
 	want := slices.Clone(removedFromOrchestratorDefault)
+	want = append(want, foldedFromOrchestratorDefault...)
 	want = append(want, offPlatform)
 	slices.Sort(want)
 	if got := st.belt.Refused(); !reflect.DeepEqual(got, want) {
