@@ -1,0 +1,35 @@
+{
+  "apiVersion": "yaah.workflow/v1",
+  "kind": "Workflow",
+  "metadata": {
+    "name": "feature-kickoff",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "params": {
+      "task": {
+        "type": "string",
+        "required": true
+      }
+    },
+    "budgets": {
+      "max_dispatches": 8,
+      "max_wall_clock_seconds": 900
+    },
+    "steps": [
+      {
+        "id": "plan",
+        "kind": "delegate",
+        "role": "planner",
+        "lane": "report",
+        "output": "Plan",
+        "prompt": "Break \"{{ params.task }}\" into independent workstreams.\nReturn JSON: {\"workstreams\":[{\"id\",\"brief\"}]}.\n"
+      },
+      {
+        "id": "announce",
+        "kind": "emit",
+        "value": "Planning complete for {{ params.task }}.\n"
+      }
+    ]
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "apiVersion": "yaah.workflow/v1",
+  "kind": "Workflow",
+  "metadata": { "name": "unknown-field-root" },
+  "spec": {
+    "steps": [{ "id": "a", "kind": "emit", "value": "x" }],
+    "stepz": []
+  }
+}
