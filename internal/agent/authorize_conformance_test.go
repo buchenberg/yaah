@@ -103,7 +103,7 @@ func authorizeCases() []authorizeCase {
 			name: "inspection/full/rule-deny-resource-match", tools: FullTools,
 			rules: permissions.Rules{{Tool: "read", Resource: "*.md", Effect: permissions.Deny}},
 			tool:  "read", args: readArgs,
-			want: authorizeWant{gate: pipeline.GateDeny, origin: pipeline.OriginRuleset, admitted: true, ruleMatched: true, resource: "x.md", dispatch: false, refusal: "denied by a permission rule"},
+			want: authorizeWant{gate: pipeline.GateDeny, origin: pipeline.OriginRuleset, admitted: true, ruleMatched: true, resource: "x.md", dispatch: false, refusal: "denied for \"x.md\" by a permission rule"},
 		},
 		{
 			// A resource-scoped rule that does not match is no rule at all.
@@ -209,7 +209,7 @@ func authorizeCases() []authorizeCase {
 			name: "bash/full/rule-deny-resource-match", tools: FullTools,
 			rules: permissions.Rules{{Tool: "bash", Resource: "rm*", Effect: permissions.Deny}},
 			tool:  "bash", args: bashArgs,
-			want: authorizeWant{gate: pipeline.GateDeny, origin: pipeline.OriginRuleset, admitted: true, ruleMatched: true, resource: "rm -rf /", dispatch: false, refusal: "denied by a permission rule"},
+			want: authorizeWant{gate: pipeline.GateDeny, origin: pipeline.OriginRuleset, admitted: true, ruleMatched: true, resource: "rm -rf /", dispatch: false, refusal: "denied for \"rm -rf /\" by a permission rule"},
 		},
 		{
 			name: "bash/full/rule-ask-resource-miss", tools: FullTools,
@@ -341,7 +341,7 @@ func authorizeCases() []authorizeCase {
 			name: "bash/sub/rule-deny", tools: FullTools, sub: true,
 			rules: permissions.Rules{{Tool: "bash", Effect: permissions.Deny}},
 			tool:  "bash", args: bashArgs,
-			want: authorizeWant{gate: pipeline.GateDeny, origin: pipeline.OriginRuleset, admitted: true, ruleMatched: true, resource: "rm -rf /", dispatch: false, refusal: "denied by a permission rule"},
+			want: authorizeWant{gate: pipeline.GateDeny, origin: pipeline.OriginRuleset, admitted: true, ruleMatched: true, resource: "rm -rf /", dispatch: false, refusal: "denied for \"rm -rf /\" by a permission rule"},
 		},
 	}
 }

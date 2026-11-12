@@ -226,7 +226,7 @@ func (l *Loop) admitTool(name, args string) (bool, error) {
 	// reason that names the rule and the missing prompt.
 	switch {
 	case d.RuleDenies():
-		return false, fmt.Errorf("%s", pipeline.RuleDenyReason(name))
+		return false, fmt.Errorf("%s", pipeline.RuleDenyReason(name, d.Resource))
 	case d.RuleAsks() && l.Config.IsSubAgent:
 		return false, fmt.Errorf("%s", pipeline.SubAgentAskReason(name, d.Resource))
 	}

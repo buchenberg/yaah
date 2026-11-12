@@ -151,7 +151,7 @@ func (d Decision) StripReason(tool string) string {
 		if d.Origin == OriginMCPPosture {
 			return MCPDenyReason(tool)
 		}
-		return RuleDenyReason(tool)
+		return RuleDenyReason(tool, d.Resource)
 	case GateWithheld:
 		return WithheldReason(tool)
 	default:
@@ -161,9 +161,14 @@ func (d Decision) StripReason(tool string) string {
 
 // RuleDenyReason explains a denial caused by a user permission rule. Shared
 // by the approval middleware and the dispatch gate so one rule reads the same
-// whichever layer enforced it.
-func RuleDenyReason(tool string) string {
-	return fmt.Sprintf("tool %q is denied by a permission rule", tool)
+// whichever layer enforced it. A resource-scoped rule names the matched
+// resource, mirroring SubAgentAskReason: the denial tells the user what
+// matched, not just which tool was blocked.
+func RuleDenyReason(tool, resource string) string {
+	if resource == "" {
+		return fmt.Sprintf("tool %q is denied by a permission rule", tool)
+	}
+	return fmt.Sprintf("tool %q is denied for %q by a permission rule", tool, resource)
 }
 
 // MCPDenyReason explains a denial caused by the mcp_approval posture. It is
