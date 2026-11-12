@@ -275,6 +275,15 @@ func buildContainment(cfg *config.Config, opts SessionOptions, ws *workspaceStag
 	if ws.sessionSandbox != nil {
 		tr.applyOutTool = &tools.ApplyOutTool{Sandbox: ws.sessionSandbox, HostDir: ws.cwd, Harness: ws.harness}
 		tr.reg.Register(tr.applyOutTool)
+	} else {
+		// Local mode has no accept seam, so nothing registers under the
+		// name — and since the curated default belt admits apply_out
+		// (yaah-6mi9.1), an unknown entry would read as a typo in the
+		// config warning at startup. Name it on the belt for the same
+		// reason the memory gates do (couldn't, not didn't): the tool
+		// exists; this session shape just has no door for it.
+		tr.belt.Know("apply_out")
+		tr.omittedTools = append(tr.omittedTools, "apply_out")
 	}
 	return nil
 }
@@ -680,7 +689,8 @@ type loopInfraStage struct {
 // The body is the focused constructors below, in the order a session needs
 // them: loadProviderCatalog, restoreTranscript, buildBackgroundLoop,
 // buildShepherdInfra, wireDispatchPosture, buildDelegateTool, startScopeReaper,
-// wireLaneRouting, wireBackgroundJobs, registerSubAgentTools.
+// wireLaneRouting, wireBackgroundJobs, registerWakeTools,
+// registerSubAgentTools.
 func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, ws *workspaceStage, tr *toolRegistryStage, mcps *mcpSkillsStage) (*loopInfraStage, error) {
 	st := &loopInfraStage{}
 
@@ -715,6 +725,7 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 	startScopeReaper(st)
 	wireLaneRouting(st)
 	wireBackgroundJobs(st, tr)
+	registerWakeTools(st, tr, opts.OneShot)
 	registerSubAgentTools(st, cfg, tr)
 	startRoleWatcher(st)
 
@@ -1279,6 +1290,26 @@ func wireBackgroundJobs(st *loopInfraStage, tr *toolRegistryStage) {
 	tr.reg.Register(st.taskTool)
 
 	tr.reg.Register(&tools.SubAgentJobsTool{Jobs: st.backgroundJobs})
+}
+
+// registerWakeTools gates the wake pair to sessions that can service a
+// wake (yaah-6mi9.2). A one-shot run is a single non-interactive turn:
+// a watch armed in it has no later turn in this process to wake, and
+// the recorded bench history shows zero wake calls — so the two
+// schemas (~1.5K tokens of floor) bought a failed call at best. The
+// gate is the memory-tool seams' pattern: refused-by-shape tools are
+// named on the belt (an allowlist naming one is not a typo) and
+// recorded in omittedTools (the prompt delta says "couldn't", not
+// "didn't"). Interactive sessions — REPL, TUI, ACP, serve — keep full
+// function: serve has no idle turn of its own, but its Start re-arms
+// durable watches and delivers fires as follow-ups on the next
+// prompt, so a wake there is serviceable.
+func registerWakeTools(st *loopInfraStage, tr *toolRegistryStage, oneShot bool) {
+	if oneShot {
+		tr.belt.Know("wait_for", "watch")
+		tr.omittedTools = append(tr.omittedTools, "wait_for", "watch")
+		return
+	}
 	// Event-driven waiting: wait_for blocks inside the turn; watch arms a
 	// predicate that outlives it and delivers a wake follow-up on fire.
 	tr.reg.Register(&tools.WaitForTool{Manager: st.wakeMgr})

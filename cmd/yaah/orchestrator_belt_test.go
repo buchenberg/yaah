@@ -16,7 +16,6 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/tools"
 )
 
 func TestOrchestratorBeltNamesDefault(t *testing.T) {
@@ -75,6 +74,9 @@ func TestDefaultOrchestratorBeltDeclaration(t *testing.T) {
 		"memory_search", "memory_search_sessions",
 		"memory_add", "memory_update", "memory_delete", "memory_promote",
 		"go_test", "go_mod", "go_outline", "go_refactor", "staticcheck",
+		// The wake pair — gated to interactive sessions by
+		// registerWakeTools (yaah-6mi9.2):
+		"wait_for", "watch",
 	} {
 		if !slices.Contains(defaultOrchestratorBelt, core) {
 			t.Errorf("curated default missing core tool %q", core)
@@ -90,7 +92,6 @@ func TestDefaultOrchestratorBeltDeclaration(t *testing.T) {
 	wantHeld := []string{
 		"append", "bulk_files", "checksum", "copy", "copy_tree",
 		"find", "mkdir", "move", "move_tree", "rmdir", "tail",
-		"wait_for", "watch",
 	}
 	if !reflect.DeepEqual(removedFromOrchestratorDefault, wantHeld) {
 		t.Errorf("removedFromOrchestratorDefault = %v, want %v", removedFromOrchestratorDefault, wantHeld)
@@ -114,20 +115,18 @@ func TestDefaultOrchestratorBeltDeclaration(t *testing.T) {
 // off-platform shell (the platform rule's own refusal) — no more, no
 // less. A new leaf tool nobody curated shows up here as an undeclared
 // refusal; so would a gated lane the belt refused instead of deferring
-// to its own gate. That is the equality the declaration-level test
-// cannot see, and the one that would have caught proposal, the memory
-// cluster, the Go quintet and every MCP name in the first cut.
+// to its own gate. The wake pair is of the second kind (yaah-6mi9.2):
+// it registers in interactive sessions and is omitted by the gate in
+// one-shot ones, in neither case refused by the belt.
 func TestOrchestratorBeltRegistryBoundary(t *testing.T) {
+	// Interactive shape: the wake pair registers; nothing else that the
+	// belt admits is missing from the registry for shape reasons except
+	// question (this construction is not one-shot, so question lives).
 	st, err := buildToolRegistry(&config.Config{}, SessionOptions{}, &workspaceStage{cwd: t.TempDir()}, subagent.Persona{}, nil)
 	if err != nil {
 		t.Fatalf("buildToolRegistry: %v", err)
 	}
-
-	// The wake pair registers unconditionally after this stage
-	// (wiring_stages.go buildWakeEngine); replay those exact
-	// registrations so the refusal set reflects a built session.
-	st.reg.Register(&tools.WaitForTool{})
-	st.reg.Register(&tools.WatchTool{})
+	registerWakeTools(&loopInfraStage{}, st, false)
 
 	// Refused: the declared withholdings, plus the shell the platform
 	// rule refuses on this OS.
@@ -139,7 +138,7 @@ func TestOrchestratorBeltRegistryBoundary(t *testing.T) {
 	want = append(want, offPlatform)
 	slices.Sort(want)
 	if got := st.belt.Refused(); !reflect.DeepEqual(got, want) {
-		t.Errorf("default-config belt.Refused() = %v\nwant exactly %v\n(every difference is an undeclared drop or an unrecorded withholding)", got, want)
+		t.Errorf("default-config interactive belt.Refused() = %v\nwant exactly %v\n(every difference is an undeclared drop or an unrecorded withholding)", got, want)
 	}
 
 	// Nothing withheld is held by the registry.
@@ -147,6 +146,39 @@ func TestOrchestratorBeltRegistryBoundary(t *testing.T) {
 		if st.reg.Get(held) != nil {
 			t.Errorf("registry holds withheld tool %q", held)
 		}
+	}
+
+	// The wake pair is belt-admitted and registered in the interactive
+	// shape — the gate, not the belt, owns its availability.
+	for _, wake := range []string{"wait_for", "watch"} {
+		if !st.belt.Allows(wake) {
+			t.Errorf("default belt refuses wake tool %q; session shape decides availability", wake)
+		}
+		if st.reg.Get(wake) == nil {
+			t.Errorf("interactive session does not hold wake tool %q", wake)
+		}
+	}
+
+	// One-shot shape: the gate omits the pair instead of the belt
+	// refusing it — same refusal set, different omissions.
+	sto, err := buildToolRegistry(&config.Config{}, SessionOptions{OneShot: true}, &workspaceStage{cwd: t.TempDir()}, subagent.Persona{}, nil)
+	if err != nil {
+		t.Fatalf("buildToolRegistry (one-shot): %v", err)
+	}
+	registerWakeTools(&loopInfraStage{}, sto, true)
+	if got := sto.belt.Refused(); !reflect.DeepEqual(got, want) {
+		t.Errorf("default-config one-shot belt.Refused() = %v, want %v (the gate must omit, not refuse)", got, want)
+	}
+	for _, wake := range []string{"wait_for", "watch"} {
+		if sto.reg.Get(wake) != nil {
+			t.Errorf("one-shot session holds wake tool %q; the gate must omit it", wake)
+		}
+		if !sto.belt.Knows(wake) {
+			t.Errorf("one-shot gate must name %q on the belt so a persona naming it is not a typo", wake)
+		}
+	}
+	if !slices.Contains(sto.omittedTools, "wait_for") || !slices.Contains(sto.omittedTools, "watch") {
+		t.Errorf("one-shot gate must record the wake pair in omittedTools so the prompt can say couldn't, not didn't; got %v", sto.omittedTools)
 	}
 
 	// The gated lanes are belt-admitted: their own registration gates —
@@ -171,6 +203,37 @@ func TestOrchestratorBeltRegistryBoundary(t *testing.T) {
 	// construction, on the platform that admits it.
 	if runtime.GOOS != "windows" && st.reg.Get("bash") == nil {
 		t.Error("registry does not hold bash on a non-Windows platform")
+	}
+}
+
+// TestApplyOutLocalShapeKnowsTheName pins the fix for the bogus startup
+// warning the smoke run surfaced: the curated belt admits apply_out
+// (yaah-6mi9.1), and a local session (no containerd sandbox) has no
+// accept seam, so nothing registers under the name. Unless the gate
+// marks it known, every default-config local session warned "config
+// agents.default.tools names unknown tool apply_out" — a misattribution:
+// the user configured nothing.
+func TestApplyOutLocalShapeKnowsTheName(t *testing.T) {
+	cfg := &config.Config{}
+	ws := &workspaceStage{cwd: t.TempDir()}
+	st, err := buildToolRegistry(cfg, SessionOptions{}, ws, subagent.Persona{}, nil)
+	if err != nil {
+		t.Fatalf("buildToolRegistry: %v", err)
+	}
+	if err := buildContainment(cfg, SessionOptions{}, ws, st); err != nil {
+		t.Fatalf("buildContainment: %v", err)
+	}
+	if st.reg.Get("apply_out") != nil {
+		t.Error("a local session must not hold apply_out; only isolated mode has the accept seam")
+	}
+	if !st.belt.Knows("apply_out") {
+		t.Error("the admitted-but-unregistered apply_out must be known, or every local startup warns it as a config typo")
+	}
+	if slices.Contains(st.belt.Unknown(), "apply_out") {
+		t.Errorf("apply_out must not read as a config typo, got Unknown() = %v", st.belt.Unknown())
+	}
+	if !slices.Contains(st.omittedTools, "apply_out") {
+		t.Errorf("the gate must record the omission so the prompt can say couldn't, not didn't; got %v", st.omittedTools)
 	}
 }
 
