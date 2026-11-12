@@ -239,6 +239,13 @@ type LoopConfig struct {
 	// approval bridge, deny refuses them outright, and allow suppresses that
 	// veto without ever pre-approving a call.
 	ApprovalMode string
+	// SavedAllow reports one persisted "always" approval for (name,
+	// resource): an answer the user gave at an earlier prompt, saved
+	// project-scoped (yaah-x6vi.6). The evaluator consults it only to lift
+	// an Ask — a Deny from the configured ruleset or a posture is terminal
+	// and a saved row can never widen it. Nil means no store is wired and
+	// every ask routes to the approval bridge.
+	SavedAllow func(name, resource string) bool
 	// MCPApproval gates tools served by MCP servers. Remote tools
 	// cannot implement tools.DangerClassifier, so the evaluator applies
 	// this policy to them instead: "ask" (default), "allow", "deny". It
