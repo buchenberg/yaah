@@ -34,16 +34,17 @@ type PipelineConfig struct {
 
 	ApprovalMode string
 
-	// Approval callbacks injected by the composition site. classify
-	// returns a GateDecision (pass / ask / deny / defer to global mode)
-	// so origin-specific policies like mcp_approval apply even when the
-	// global ApprovalMode would not gate them; approve prompts the
-	// user; emitDeny fires hook events for stripped calls. When
-	// classify is nil the approval middleware is inert regardless of
-	// mode.
-	ApprovalClassify func(name, args string) GateDecision
-	ApprovalApprove  func(ctx context.Context, callID, name, args string) bool
-	ApprovalEmitDeny func(name, args, errMsg string)
+	// Approval callbacks injected by the composition site. authorize
+	// returns the one authorization decision for a call (the same value
+	// the always-on dispatch gate consumes in package agent), so
+	// origin-specific policies like mcp_approval apply even when the
+	// global ApprovalMode would not gate them and a denial can name the
+	// stage that decided; approve prompts the user; emitDeny fires hook
+	// events for stripped calls. When authorize is nil the approval
+	// middleware is inert regardless of mode.
+	ApprovalAuthorize func(name, args string) Decision
+	ApprovalApprove   func(ctx context.Context, callID, name, args string) bool
+	ApprovalEmitDeny  func(name, args, errMsg string)
 
 	LoopDetectCount  int
 	LoopDetectWindow int
@@ -201,10 +202,10 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 	},
 	"approval": func(cfg PipelineConfig) Middleware {
 		return &ApprovalMiddleware{
-			mode:     resolveApprovalMode(cfg.ApprovalMode),
-			classify: cfg.ApprovalClassify,
-			approve:  cfg.ApprovalApprove,
-			emitDeny: cfg.ApprovalEmitDeny,
+			mode:      resolveApprovalMode(cfg.ApprovalMode),
+			authorize: cfg.ApprovalAuthorize,
+			approve:   cfg.ApprovalApprove,
+			emitDeny:  cfg.ApprovalEmitDeny,
 		}
 	},
 	"inline_limit": func(cfg PipelineConfig) Middleware {

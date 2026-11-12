@@ -103,15 +103,22 @@ func resolveApprovalMode(raw string) approvalMode {
 // functions by the composition site (Loop.toPipelineConfig), keeping
 // the pipeline→agent dependency direction clean.
 //
+// The classification is the agent's one authorization decision
+// (agent.Loop.Authorize), the same value the always-on dispatch gate
+// consumes. This middleware reads its gate axis and nothing else: it does not
+// consult the tool level, because it classifies the model's batch before
+// dispatch and plan mode's withholding has to arrive as the gate decision
+// (GateWithheld) rather than as a tool-level refusal.
+//
 // Dangerous calls are stripped from msg.ToolCalls and replaced by
 // synthesized error tool-results on step.SynthesizedResults, preserving
 // the provider invariant that every tool_call_id on an assistant message
 // receives a result.
 type ApprovalMiddleware struct {
 	mode approvalMode
-	// classify reports the gate decision for a call. When nil the
+	// authorize reports the authorization decision for a call. When nil the
 	// middleware is inert regardless of mode.
-	classify func(name, args string) GateDecision
+	authorize func(name, args string) Decision
 	// approve asks the user (or ApproveFn); consulted for GateAsk and
 	// GateGlobal under "ask" mode.
 	approve func(ctx context.Context, callID, name, args string) bool
@@ -126,7 +133,7 @@ func (m *ApprovalMiddleware) PrepareStep(ctx context.Context, step *Step) (*Step
 }
 
 func (m *ApprovalMiddleware) PostModel(ctx context.Context, msg *types.Message, step *Step) (*Step, error) {
-	if m.classify == nil {
+	if m.authorize == nil {
 		return step, nil
 	}
 	if len(msg.ToolCalls) == 0 {
@@ -136,19 +143,18 @@ func (m *ApprovalMiddleware) PostModel(ctx context.Context, msg *types.Message, 
 	filtered := make([]types.ToolCall, 0, len(msg.ToolCalls))
 	for _, tc := range msg.ToolCalls {
 		name, args := tc.Function.Name, tc.Function.Arguments
+		decision := m.authorize(name, args)
 		var errMsg string
-		switch m.classify(name, args) {
+		switch decision.Gate {
 		case GatePass:
 			filtered = append(filtered, tc)
 			continue
-		case GateDeny:
-			// Origin policy denies independent of the global mode —
-			// the user cannot approve past it.
-			errMsg = fmt.Sprintf("error: tool %q is denied by mcp_approval 'deny'", name)
-		case GateWithheld:
-			// The current mode withholds the call outright: a mode
-			// decision, not an origin policy, and not approvable.
-			errMsg = "error: " + WithheldReason(name)
+		case GateDeny, GateWithheld:
+			// Terminal: an origin policy denies, the ruleset denies, or
+			// the mode withholds — none of it approvable. The wording
+			// comes from the decision's origin, so a user's own deny rule
+			// is not reported as an mcp_approval denial.
+			errMsg = "error: " + decision.StripReason(name)
 		case GateAsk:
 			// Origin policy asks independent of the global mode.
 			if m.approve != nil && m.approve(ctx, tc.ID, name, args) {

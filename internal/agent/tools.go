@@ -69,7 +69,7 @@ func personaToolAllows(personaTools []string, name string) bool {
 //     only, so a mutating subcommand (add, commit, push, pull, `branch -D`)
 //     would slip past a name check; the approval gate closes that hole by
 //     hard-denying any call the git tool classifies dangerous while
-//     ToolsLevel is ReadOnlyTools (see classifyGate). Mutating git is denied
+//     ToolsLevel is ReadOnlyTools (see Authorize). Mutating git is denied
 //     in plan mode, never offered for approval.
 var readOnlyToolNames = map[string]bool{
 	"read":        true,
@@ -97,28 +97,6 @@ func InspectionSetNames() []string {
 	}
 	slices.Sort(names)
 	return names
-}
-
-// allowsTool enforces the advertised tool level at execution time. Hiding a
-// tool definition is not enough: dialect recovery can synthesize calls the
-// model never saw in the tool array.
-//
-// It gates on the name alone. A tool whose danger depends on its arguments
-// (git) is let through here and refused per call by classifyGate, which sees
-// the arguments.
-func (l *Loop) allowsTool(name string) bool {
-	// The persona's narrowing is an execution-time gate too: dialect
-	// recovery can synthesize calls for tools the advertised array never
-	// carried, so the intersection applies to names, not just defs.
-	if len(l.Config.PersonaTools) > 0 && !personaToolAllows(l.Config.PersonaTools, name) {
-		return false
-	}
-	switch l.Config.ToolsLevel {
-	case ReadOnlyTools:
-		return readOnlyToolNames[name]
-	default:
-		return true
-	}
 }
 
 func (l *Loop) readOnlyTools() []types.ToolDef {

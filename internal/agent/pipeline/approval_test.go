@@ -11,11 +11,11 @@ func TestApprovalMiddleware_DenyModeStripsDangerousCalls(t *testing.T) {
 	var deniedArgs string
 	m := &ApprovalMiddleware{
 		mode: modeDeny,
-		classify: func(name, args string) GateDecision {
+		authorize: func(name, args string) Decision {
 			if name == "bash" {
-				return GateGlobal
+				return Decision{Gate: GateGlobal, Origin: OriginDanger}
 			}
-			return GatePass
+			return Decision{Gate: GatePass, Admitted: true}
 		},
 		approve: func(_ context.Context, _ string, name, args string) bool {
 			t.Fatal("approve must not run in deny mode")
@@ -52,10 +52,10 @@ func TestApprovalMiddleware_DenyModeStripsDangerousCalls(t *testing.T) {
 func TestApprovalMiddleware_AskModeHonoursApprove(t *testing.T) {
 	calls := 0
 	m := &ApprovalMiddleware{
-		mode:     modeAsk,
-		classify: func(name, args string) GateDecision { return GateGlobal },
-		approve:  func(_ context.Context, _ string, name, args string) bool { calls++; return true },
-		emitDeny: func(name, args, errMsg string) {},
+		mode:      modeAsk,
+		authorize: func(name, args string) Decision { return Decision{Gate: GateGlobal} },
+		approve:   func(_ context.Context, _ string, name, args string) bool { calls++; return true },
+		emitDeny:  func(name, args, errMsg string) {},
 	}
 	msg := &types.Message{ToolCalls: []types.ToolCall{
 		{ID: "1", Function: types.ToolCallFn{Name: "write", Arguments: "{}"}},
@@ -78,10 +78,10 @@ func TestApprovalMiddleware_AskModeHonoursApprove(t *testing.T) {
 func TestApprovalMiddleware_AskModeUserDenial(t *testing.T) {
 	var emittedErr string
 	m := &ApprovalMiddleware{
-		mode:     modeAsk,
-		classify: func(name, args string) GateDecision { return GateGlobal },
-		approve:  func(_ context.Context, _ string, name, args string) bool { return false },
-		emitDeny: func(name, args, errMsg string) { emittedErr = errMsg },
+		mode:      modeAsk,
+		authorize: func(name, args string) Decision { return Decision{Gate: GateGlobal} },
+		approve:   func(_ context.Context, _ string, name, args string) bool { return false },
+		emitDeny:  func(name, args, errMsg string) { emittedErr = errMsg },
 	}
 	msg := &types.Message{ToolCalls: []types.ToolCall{
 		{ID: "1", Function: types.ToolCallFn{Name: "bash", Arguments: "{}"}},
@@ -109,8 +109,8 @@ func TestApprovalMiddleware_AskModeUserDenial(t *testing.T) {
 // the historical behaviour now expressed via the gate decision.
 func TestApprovalMiddleware_GlobalAllowPassesGateGlobal(t *testing.T) {
 	m := &ApprovalMiddleware{
-		mode:     modeAllow,
-		classify: func(name, args string) GateDecision { return GateGlobal },
+		mode:      modeAllow,
+		authorize: func(name, args string) Decision { return Decision{Gate: GateGlobal} },
 		approve: func(_ context.Context, _ string, name, args string) bool {
 			t.Fatal("approve must not run in allow mode")
 			return false
@@ -132,8 +132,10 @@ func TestApprovalMiddleware_GlobalAllowPassesGateGlobal(t *testing.T) {
 // downgraded by the global mode.
 func TestApprovalMiddleware_MCPDenyIndependentOfGlobalMode(t *testing.T) {
 	m := &ApprovalMiddleware{
-		mode:     modeAllow,
-		classify: func(name, args string) GateDecision { return GateDeny },
+		mode: modeAllow,
+		authorize: func(name, args string) Decision {
+			return Decision{Gate: GateDeny, Origin: OriginMCPPosture}
+		},
 		approve: func(_ context.Context, _ string, name, args string) bool {
 			t.Fatal("GateDeny must not consult the user")
 			return false
@@ -159,10 +161,10 @@ func TestApprovalMiddleware_MCPDenyIndependentOfGlobalMode(t *testing.T) {
 func TestApprovalMiddleware_MCPAskIndependentOfGlobalMode(t *testing.T) {
 	asked := 0
 	m := &ApprovalMiddleware{
-		mode:     modeAllow,
-		classify: func(name, args string) GateDecision { return GateAsk },
-		approve:  func(_ context.Context, _ string, name, args string) bool { asked++; return asked == 1 },
-		emitDeny: func(name, args, errMsg string) {},
+		mode:      modeAllow,
+		authorize: func(name, args string) Decision { return Decision{Gate: GateAsk} },
+		approve:   func(_ context.Context, _ string, name, args string) bool { asked++; return asked == 1 },
+		emitDeny:  func(name, args, errMsg string) {},
 	}
 	msg := &types.Message{ToolCalls: []types.ToolCall{
 		{ID: "1", Function: types.ToolCallFn{Name: "mcp_one"}},
@@ -183,7 +185,7 @@ func TestApprovalMiddleware_MCPAskIndependentOfGlobalMode(t *testing.T) {
 	}
 }
 
-func TestApprovalMiddleware_NilClassifyIsInert(t *testing.T) {
+func TestApprovalMiddleware_NilAuthorizeIsInert(t *testing.T) {
 	m := &ApprovalMiddleware{mode: modeDeny}
 	msg := &types.Message{ToolCalls: []types.ToolCall{{ID: "1"}}}
 	if _, err := m.PostModel(context.Background(), msg, &Step{}); err != nil {
@@ -200,8 +202,10 @@ func TestApprovalMiddleware_NilClassifyIsInert(t *testing.T) {
 // control (review finding).
 func TestApprovalMiddleware_ModeWithheldNamesTheMode(t *testing.T) {
 	m := &ApprovalMiddleware{
-		mode:     modeAllow,
-		classify: func(name, args string) GateDecision { return GateWithheld },
+		mode: modeAllow,
+		authorize: func(name, args string) Decision {
+			return Decision{Gate: GateWithheld, Origin: OriginModeFloor}
+		},
 		approve: func(_ context.Context, _ string, name, args string) bool {
 			t.Fatal("GateWithheld must not consult the user")
 			return false
@@ -225,6 +229,43 @@ func TestApprovalMiddleware_ModeWithheldNamesTheMode(t *testing.T) {
 	}
 	if contains(got, "mcp_approval") {
 		t.Errorf("denial blames an MCP origin policy: %q", got)
+	}
+}
+
+// TestApprovalMiddleware_RuleDenyNamesTheRule pins the reporting half of the
+// single-decision refactor: GateDeny used to carry no origin, so every deny —
+// including one the user wrote in `permissions:` — was reported as
+// "denied by mcp_approval 'deny'", naming a config scalar the user may never
+// have set. The middleware now takes the wording from the decision's origin.
+func TestApprovalMiddleware_RuleDenyNamesTheRule(t *testing.T) {
+	m := &ApprovalMiddleware{
+		mode: modeAllow,
+		authorize: func(name, args string) Decision {
+			return Decision{Gate: GateDeny, Origin: OriginRuleset, Reason: "permission rule: deny"}
+		},
+		approve: func(_ context.Context, _ string, name, args string) bool {
+			t.Fatal("GateDeny must not consult the user")
+			return false
+		},
+		emitDeny: func(name, args, errMsg string) {},
+	}
+	msg := &types.Message{ToolCalls: []types.ToolCall{{ID: "1", Function: types.ToolCallFn{Name: "webfetch"}}}}
+	step := &Step{}
+	if _, err := m.PostModel(context.Background(), msg, step); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.ToolCalls) != 0 {
+		t.Error("ruleset-denied call survived")
+	}
+	if len(step.SynthesizedResults) != 1 {
+		t.Fatalf("expected 1 synthesized result, got %d", len(step.SynthesizedResults))
+	}
+	got := step.SynthesizedResults[0].Content
+	if !contains(got, `denied by a permission rule`) {
+		t.Errorf("denial does not name the rule: %q", got)
+	}
+	if contains(got, "mcp_approval") {
+		t.Errorf("denial blames the mcp_approval posture for a user rule: %q", got)
 	}
 }
 

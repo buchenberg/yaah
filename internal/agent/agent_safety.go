@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/permissions"
 	"github.com/buchenberg/yaah/internal/tools"
 )
@@ -65,104 +64,12 @@ var alwaysDangerous = map[string]bool{
 	"powershell": true,
 }
 
-// classifyGate returns the approval gate decision for a tool call.
-//
-// The resolver runs in the order the parity plan (W5.3) pins, each stage
-// able to narrow but none able to widen the one before it:
-//
-//  1. MCP-served tools FIRST: they are registered as *mcp.MCPTool wrappers
-//     that cannot implement tools.DangerClassifier (they are remote), so
-//     the registry path below would return GatePass for them and fail
-//     open. The mcp_approval policy applies regardless of registry
-//     presence and independently of the global approval mode (review
-//     finding S3). The ruleset still narrows an MCP decision afterward —
-//     a deny rule naming an MCP tool fires — but it can never widen one:
-//     the policy's GateDeny is final and its GateAsk stands even under an
-//     allow rule, so the per-origin policy cannot be downgraded.
-//  2. The mode-axis floor NEXT: in read-only mode a dangerous call is
-//     GateWithheld no matter what any ruleset says — an allow rule can
-//     never re-enable a withheld tool (plan non-goal).
-//  3. The permission ruleset (parity W5): the last matching rule's
-//     verdict wins. deny strips (GateDeny, not approvable), ask routes
-//     through the approval pipeline (GateAsk), and allow only falls
-//     through — it suppresses nothing and never bypasses the danger
-//     classification below, so "allow" cannot sneak a dangerous call
-//     past the global approval posture.
-//  4. The danger classification LAST: registered tools with a
-//     DangerClassifier defer to it; alwaysDangerous names gate even when
-//     not registered on this platform. Both resolve through
-//     dangerousGate, which is where the tool level is honoured.
-func (l *Loop) classifyGate(name, args string) pipeline.GateDecision {
-	if l.Config.MCPToolNames[name] {
-		return l.mcpGate(name, args)
-	}
-	if l.dangerousCall(name, args) && l.Config.ToolsLevel == ReadOnlyTools {
-		// The mode-axis floor: withheld before any ruleset is consulted.
-		return pipeline.GateWithheld
-	}
-	if decision, resolved := l.rulesetGate(name, args); resolved {
-		return decision
-	}
-	if l.dangerousCall(name, args) {
-		return l.dangerousGate()
-	}
-	return pipeline.GatePass
-}
-
-// mcpGate resolves a policy-gated MCP call. The mcp_approval posture is the
-// ceiling for what the ruleset below may narrow to: an allow posture falls
-// through to the shared narrowing unchanged, a deny posture is final (no
-// later rule can widen it), and the ask posture stands unless the ruleset
-// tightens it. The shared narrowing is the same ruleset walk the
-// non-MCP path uses, so the two paths cannot disagree about what a matching
-// rule means.
-func (l *Loop) mcpGate(name, args string) pipeline.GateDecision {
-	p := l.posture()
-	if p.mcpDeny {
-		// The per-origin policy denies; no rule can widen it.
-		return pipeline.GateDeny
-	}
-	if decision, resolved := l.rulesetGate(name, args); resolved {
-		return decision
-	}
-	return p.mcpDefault()
-}
-
-// posture derives the session's approval posture. Derived per call from
-// the settled Config: the loop's Config is written only during wiring
-// (options, builder), so the value is stable for the loop's lifetime
-// while Loop literals in tests — which bypass the builder — still see a
-// correct derivation.
-func (l *Loop) posture() approvalPosture {
-	return deriveApprovalPosture(l.Config)
-}
-
-// rulesetGate is the shared ruleset walk: the last matching permission
-// rule's effect resolves the call. deny strips (GateDeny, not approvable),
-// ask routes through the approval pipeline (GateAsk), and allow falls
-// through — it suppresses the ruleset's own veto, never the stage below it
-// (the mode floor ran earlier; the danger classification runs later).
-func (l *Loop) rulesetGate(name, args string) (pipeline.GateDecision, bool) {
-	effect, matched := l.Config.Permissions.Match(name, permissions.ResourceFor(name, args))
-	if !matched {
-		return pipeline.GatePass, false
-	}
-	switch effect {
-	case permissions.Deny:
-		return pipeline.GateDeny, true
-	case permissions.Ask:
-		return pipeline.GateAsk, true
-	default: // Allow: fall through to the next stage.
-		return pipeline.GatePass, false
-	}
-}
-
 // dangerousCall reports whether a call would mutate refs, files, or processes,
 // using the registry's DangerClassifier when the tool has one and the
-// alwaysDangerous table for shell names no platform registry carries. The
-// approval middleware and the always-on dispatch gate share this one
-// classification, so the optional layer and the required one cannot disagree
-// about what is dangerous.
+// alwaysDangerous table for shell names no platform registry carries. It is
+// the danger vocabulary the Authorize gate stages classify with, so the
+// optional approval layer and the required dispatch gate cannot disagree about
+// what is dangerous.
 func (l *Loop) dangerousCall(name, args string) bool {
 	if l.Registry != nil {
 		if t := l.Registry.Get(name); t != nil {
@@ -171,88 +78,6 @@ func (l *Loop) dangerousCall(name, args string) bool {
 		}
 	}
 	return alwaysDangerous[name]
-}
-
-// dangerousGate resolves a call that has been classified as dangerous.
-//
-// Outside plan mode it is GateGlobal: the global ApprovalMode decides what
-// "dangerous" means (ask prompts, deny strips, allow passes).
-//
-// In plan mode it is GateWithheld. Plan mode's promise is that mutating tools
-// are withheld, and GateGlobal would break that promise — its default is
-// "ask", so the user could approve a mutation the mode said was unavailable.
-// Withholding also covers names that plan mode never advertises but that the
-// gate still sees: allowsTool runs at dispatch, after this classification, so
-// argument-carrying tools admitted by name (git) and alwaysDangerous names
-// synthesized by dialect recovery reach here first. A withheld call has no
-// override, which is what "withheld" has to mean, and its denial names the
-// mode rather than an MCP origin policy (GateDeny).
-func (l *Loop) dangerousGate() pipeline.GateDecision {
-	if l.Config.ToolsLevel == ReadOnlyTools {
-		return pipeline.GateWithheld
-	}
-	return pipeline.GateGlobal
-}
-
-// planModeWithholds reports whether plan mode denies this call outright,
-// independent of the approval mode and of whether the approval middleware is
-// installed at all.
-func (l *Loop) planModeWithholds(name, args string) bool {
-	return l.dangerousGate() == pipeline.GateWithheld && l.dangerousCall(name, args)
-}
-
-// admitTool is the always-on dispatch gate: the advertised tool level plus plan
-// mode's per-call danger check, plus the ruleset's deny (and, for a sub-agent
-// loop, its ask — see the body). The approval middleware runs the danger
-// classification through classifyGate, but that middleware is optional
-// (middleware.disabled: [approval]) and a mode whose promise is "mutating
-// actions are withheld" must not be switchable off by configuration. The two
-// layers share the danger classification, while the gate adds the tool level
-// and plan-mode withholding on top, so nothing it withholds is ever admitted
-// while a gate-passed call can still be refused on the tool level.
-//
-// The verdict is shared; the wording is not. This gate runs the tool-level
-// check first, so in plan mode a name the level excludes is refused as "not
-// available at the current tool level" even when planModeWithholds would deny
-// the same call — alwaysDangerous makes `bash` that case. classifyGate never
-// runs allowsTool, so for that call it reports GateWithheld with the
-// withholding as the reason. Allow/deny agrees either way; only the message a
-// user sees differs, which is why reordering these checks to align them would
-// change what every excluded tool reports for no security gain.
-func (l *Loop) admitTool(name, args string) (bool, error) {
-	if !l.allowsTool(name) {
-		return false, fmt.Errorf("tool %q is not available at the current tool level", name)
-	}
-	if l.planModeWithholds(name, args) {
-		return false, fmt.Errorf("%s", pipeline.WithheldReason(name))
-	}
-	// Ruleset deny is enforced here as well as in the approval middleware
-	// because that middleware is optional (middleware.disabled): a rule
-	// that says deny must hold even when nothing can ask.
-	//
-	// Ruleset ask is deliberately NOT enforced here for an orchestrator
-	// loop — dispatch has no way to prompt, and an ask that silently denied
-	// would break the contract that asking is the user's choice; it
-	// requires the approval pipeline (on by default). A SUB-AGENT loop is
-	// the opposite case, and the reason is structural rather than a
-	// preference: its pipeline never installs the approval middleware (see
-	// pipeline.subAgentPipelineNames) and nobody is attached to the run, so
-	// an ask rule has no enforcement point. Passing the call through turned
-	// a declared "ask" boundary into a silent allow — the user's security
-	// intent, dropped without a trace. Deny it instead, with the distinct
-	// reason that names the rule and the missing prompt.
-	resource := permissions.ResourceFor(name, args)
-	if effect, ok := l.Config.Permissions.Match(name, resource); ok {
-		switch effect {
-		case permissions.Deny:
-			return false, fmt.Errorf("tool %q is denied by a permission rule", name)
-		case permissions.Ask:
-			if l.Config.IsSubAgent {
-				return false, fmt.Errorf("%s", pipeline.SubAgentAskReason(name, resource))
-			}
-		}
-	}
-	return true, nil
 }
 
 // approveTool prompts the user on stderr/stdin to approve a tool call.

@@ -56,7 +56,7 @@ func TestPostureConformanceMatrix(t *testing.T) {
 			if tc.call == "mcp" {
 				name = "mcp_remote"
 			}
-			got := l.classifyGate(name, "{}")
+			got := l.Authorize(name, "{}").Gate
 			if got != tc.want {
 				t.Errorf("mcp=%q perms=%v call=%q: got %v, want %v", tc.mcp, tc.perms, tc.call, got, tc.want)
 			}
