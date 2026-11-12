@@ -1,0 +1,9 @@
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: unknown-kind
+spec:
+  steps:
+    - id: a
+      kind: banana
+      prompt: peel me

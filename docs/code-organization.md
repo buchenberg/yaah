@@ -67,6 +67,7 @@ yaah/
 │   ├── types/                  # message and chat request types
 │   ├── update/                 # release checking and self-update
 │   ├── wake/                   # wait_for/watch predicate engine + armed watches
+│   ├── workflow/               # declarative workflow DSL: spec, validate, run
 │   └── worldinfo/              # resolved dispatch-world reporting
 │
 ├── docs/                       # user and developer documentation

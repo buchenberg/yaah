@@ -1,0 +1,96 @@
+{
+  "apiVersion": "yaah.workflow/v1",
+  "kind": "Workflow",
+  "metadata": {
+    "name": "feature-review",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "params": {
+      "task": {
+        "type": "string",
+        "required": true
+      },
+      "max_workstreams": {
+        "type": "integer",
+        "default": 4
+      }
+    },
+    "defaults": {
+      "lane": "proposal",
+      "network": "deny_all",
+      "grants": [
+        { "path": "src", "access": "readwrite" },
+        { "path": "docs", "access": "readonly" }
+      ]
+    },
+    "budgets": {
+      "max_dispatches": 24,
+      "max_wall_clock_seconds": 3600,
+      "max_concurrent_dispatches": 4
+    },
+    "steps": [
+      {
+        "id": "plan",
+        "kind": "delegate",
+        "role": "planner",
+        "lane": "report",
+        "output": "Plan",
+        "retry": {
+          "max_attempts": 2,
+          "backoff_seconds": 1.5
+        },
+        "prompt": "Break \"{{ params.task }}\" into at most {{ params.max_workstreams }}\nindependent workstreams that touch disjoint paths.\nReturn JSON: {\"workstreams\":[{\"id\",\"brief\",\"paths\"}]}.\n"
+      },
+      {
+        "id": "build",
+        "kind": "fanout",
+        "over": { "from": "steps.plan.output.workstreams" },
+        "as": "ws",
+        "max_parallel": 4,
+        "join": "all",
+        "on_item_failure": "continue",
+        "body": {
+          "kind": "delegate",
+          "role": "developer",
+          "prompt": "Implement this workstream: {{ ws.brief }}\nOnly touch these paths: {{ ws.paths }}.\n",
+          "output": "proposal"
+        },
+        "collect": "proposals"
+      },
+      {
+        "id": "review",
+        "kind": "fanout",
+        "over": { "from": "steps.build.collect" },
+        "as": "proposal",
+        "max_parallel": 4,
+        "join": "all",
+        "on_item_failure": "continue",
+        "body": {
+          "kind": "delegate",
+          "role": "reviewer",
+          "lane": "report",
+          "prompt": "Review this proposal for correctness. Proposal id: {{ proposal.id }}\nDiff: {{ proposal.diff }}\nReturn JSON: {\"verdict\":\"pass\"|\"fail\",\"reasons\":[]}.\n",
+          "output": "Verdict"
+        },
+        "collect": "reviews"
+      },
+      {
+        "id": "land",
+        "kind": "settle",
+        "proposals": { "from": "steps.build.collect" },
+        "where": { "from": "steps.review.collect", "field": "verdict", "equals": "pass" },
+        "action": "apply",
+        "policy": "path_disjoint",
+        "order": "smallest_diff_first",
+        "on_conflict": "stop",
+        "on_empty": "skip"
+      },
+      {
+        "id": "report",
+        "kind": "emit",
+        "value": "Landed {{ steps.land.output.settled }} proposal(s).\n"
+      }
+    ]
+  }
+}

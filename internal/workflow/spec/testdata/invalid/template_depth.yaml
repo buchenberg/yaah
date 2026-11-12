@@ -1,0 +1,10 @@
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: template-depth
+spec:
+  steps:
+    - id: a
+      kind: delegate
+      role: worker
+      prompt: "{{{{{{{{{{{{{{{{{{a}}}}}}}}}}}}}}}}}}"

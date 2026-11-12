@@ -1,0 +1,55 @@
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: speculative-styles
+spec:
+  params:
+    task:
+      type: string
+      required: true
+  steps:
+    - id: candidates
+      kind: fanout
+      over: [conservative, idiomatic, minimal]
+      as: style
+      max_parallel: 3
+      join: all
+      on_item_failure: collect_failures
+      body:
+        kind: delegate
+        role: developer
+        prompt: |
+          Implement the task in a {{ style }} style: {{ params.task }}
+        output: proposal
+      collect: candidates
+    - id: quality
+      kind: gate
+      assert:
+        name: diff_within_limit
+        args:
+          max_files: 50
+      on_pass: pick
+      on_fail: fallback
+    - id: pick
+      kind: select
+      candidates: { from: steps.candidates.collect }
+      policy: judge
+      judge:
+        role: reviewer
+        prompt: |
+          Pick the best proposal. Consider correctness first, then diff size.
+          Candidates: {{ steps.candidates.collect }}
+      output: winner
+    - id: fallback
+      kind: settle
+      proposals: { from: steps.candidates.collect, as_list: false }
+      action: discard
+      policy: path_disjoint
+      on_empty: pass
+    - id: land_one
+      kind: settle
+      proposals: { from: steps.pick.output.winner, as_list: true }
+      action: apply
+      policy: path_disjoint
+      on_conflict: skip
+      on_empty: fail
