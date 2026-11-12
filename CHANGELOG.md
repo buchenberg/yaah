@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.167.1](https://github.com/buchenberg/yaah/compare/v0.167.0...v0.167.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **tools:** drop unused retainedRunError alias ([f35f916](https://github.com/buchenberg/yaah/commit/f35f916b41a19a7c088422b93c66ccfececf7794))
+
+
+### Code Refactoring
+
+* **dispatch:** extract typed Run and Settle core ([391b9cb](https://github.com/buchenberg/yaah/commit/391b9cbafeccd3ed28fdb2ba6ff649301bf939d7))
+* **dispatch:** extract typed Run and Settle core (yaah-0u0v.2) ([e981534](https://github.com/buchenberg/yaah/commit/e981534f65f89c18480378149e11f5d7ccf35b8d))
+
 ## [0.167.0](https://github.com/buchenberg/yaah/compare/v0.166.4...v0.167.0) (2026-11-12)
 
 
