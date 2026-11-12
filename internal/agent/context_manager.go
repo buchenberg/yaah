@@ -148,6 +148,51 @@ func (cm *ContextManager) persisterDB() *memory.DB {
 	return cm.DB
 }
 
+// persistSessionSummary records the session row's compacted_summary. Both
+// accepted paths — single-shot and chunked — record their summary here
+// (yaah-l12q): a summary good enough to install is good enough to resume
+// from, whichever path produced it. The trim fallback records a fallback
+// marker instead — the rollover happened, and an empty row would hide it
+// from resume (which injects the row verbatim) and from the scenario
+// checkers.
+func (cm *ContextManager) persistSessionSummary(summary string) {
+	if db := cm.persisterDB(); cm.SessionID != "" && db != nil {
+		db.UpdateSessionSummary(cm.SessionID, summary)
+	}
+}
+
+// persistAcceptedCompaction is the shared tail of the two accepted
+// compaction paths: the anti-thrash cooldown from the post-apply
+// ineffective count, plus the summary record. Before yaah-l12q the
+// chunked path skipped this tail entirely — it installed a real summary
+// in the context but recorded nothing, so a restart resumed without it
+// and the session row stayed empty while every rollover rode the
+// fallback.
+func (cm *ContextManager) persistAcceptedCompaction(summary string) {
+	if db := cm.persisterDB(); cm.SessionID != "" && db != nil {
+		cooldown := int64(0)
+		if cm.State.IneffectiveCompactions >= 2 {
+			cooldown = time.Now().Unix() + 600
+		}
+		db.SetCompactionCooldown(cm.SessionID, cooldown, cm.State.IneffectiveCompactions)
+	}
+	cm.persistSessionSummary(summary)
+}
+
+// compactionFallbackMarker is the summary-shaped record for a rollover
+// whose every summarizer attempt failed: the trim fallback dropped the
+// old messages without producing a summary, and an empty
+// compacted_summary row would claim nothing happened. The marker carries
+// no fabricated content — what happened, why, and where the dropped
+// detail still lives — and stays one line, because resume injects it as
+// a system message. The reason is bounded like the warn line's.
+func compactionFallbackMarker(reason string) string {
+	if r := []rune(reason); len(r) > 256 {
+		reason = string(r[:256]) + "..."
+	}
+	return "[context rollover] Earlier messages were compacted by heuristic trim: every summarization attempt failed (" + reason + "). Detail from before the rollover is not in context; the full transcript remains in the session store."
+}
+
 // applyCompactedSummary replaces the message list with the compacted summary
 // plus kept messages. It is called by both the normal and chunked compaction
 // paths so they share the same post-compaction logic.
@@ -484,6 +529,11 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 					cm.applyCompactedSummary(chunkSummary, sysMsg, oldMsgs, keepMsgs, effectiveTokens)
 					cm.State.LastCompactionMethod = "chunked"
 					cm.State.LastCompactionSummary = chunkSummary
+					// The summary was accepted, so record it like the
+					// single path does (yaah-l12q): the orch-compact run's
+					// every rollover rode this path while the session row
+					// stayed empty.
+					cm.persistAcceptedCompaction(chunkSummary)
 					afterEstimate := cm.estimatedTokens()
 					savingsPct := 0.0
 					if beforeEstimate > 0 {
@@ -513,9 +563,20 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 				}
 			}
 		}
+		beforeTrim := len(cm.State.Messages)
 		cm.trimContext()
 		cm.State.LastCompactionMethod = "trim"
 		cm.State.LastCompactionSummary = ""
+		// Record the rollover only when trim actually dropped messages
+		// (yaah-l12q): the message-count trigger fires with the
+		// conversation still inside trimContext's 80% window, where the
+		// trim is a no-op — a marker there would tell resume (which
+		// injects the row as a system message) that context was lost
+		// when none was. The in-memory summary stays empty either way:
+		// trim installs none.
+		if len(cm.State.Messages) < beforeTrim {
+			cm.persistSessionSummary(compactionFallbackMarker(reason))
+		}
 		if cm.Broker != nil {
 			// Terminal event for the compaction card: the LLM
 			// summarization fell back to plain old-message trimming,
@@ -616,14 +677,7 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 
 	observability.RecordCompaction(ctx, compactReason, time.Since(startTime), beforeEstimate, afterEstimate, savingsPct)
 
-	if db := cm.persisterDB(); cm.SessionID != "" && db != nil {
-		cooldown := int64(0)
-		if cm.State.IneffectiveCompactions >= 2 {
-			cooldown = time.Now().Unix() + 600
-		}
-		db.SetCompactionCooldown(cm.SessionID, cooldown, cm.State.IneffectiveCompactions)
-		db.UpdateSessionSummary(cm.SessionID, summary)
-	}
+	cm.persistAcceptedCompaction(summary)
 }
 
 // trimContext removes old messages when the estimated token count exceeds
