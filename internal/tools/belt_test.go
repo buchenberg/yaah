@@ -121,13 +121,22 @@ func TestRegistry_AdmitWidensTheBelt(t *testing.T) {
 	if reg.Get("write") == nil {
 		t.Error("an admitted registration must install the tool")
 	}
+
+	// Admit marks the name known the moment it admits it — like Refuse
+	// does — so an admitted name whose registration never arrives (the
+	// record says the warning is exactly this hazard) reads as expected-
+	// but-missing, not as an allowlist typo.
+	reg.Admit("mcp_list_files")
+	if slices.Contains(belt.Unknown(), "mcp_list_files") {
+		t.Errorf("an admitted-but-unregistered name must not read as a typo, got Unknown() = %v", belt.Unknown())
+	}
 }
 
 // TestRegistry_AdmitOnAllowAll: an allow-all belt ignores Admit —
 // everything is admitted already, and the accounting stays untouched.
 func TestRegistry_AdmitOnAllowAll(t *testing.T) {
 	belt := NewBelt(nil)
-	reg := NewRegistry()
+	reg := NewRegistryWithBelt(belt)
 	reg.Admit("anything")
 	if belt.Refused() != nil {
 		t.Errorf("Admit on an allow-all belt must not record anything, got %v", belt.Refused())

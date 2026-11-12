@@ -88,6 +88,13 @@ func (b *Belt) Admit(names ...string) {
 			b.refused = slices.Delete(b.refused, i, i+1)
 		}
 	}
+	// The admitted name is known from the moment it is admitted, like
+	// a refused one is known from the moment it is refused: if the
+	// registration never follows (a server that died between Admit and
+	// Register, a future caller breaking the contract), the name must
+	// not read as a typo in Unknown() — it is a real tool this session
+	// expected and did not get.
+	b.Know(names...)
 }
 
 // Know records a tool name the session knows about, whether or not it was

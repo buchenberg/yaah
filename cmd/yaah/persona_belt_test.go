@@ -214,7 +214,7 @@ func TestUnknownToolWarnings(t *testing.T) {
 			knownOnly:    []string{"memory_add"},
 			personaName:  "recaller",
 			personaTools: []string{"read", "memory_add"},
-			want:         []string{"warning: persona \"recaller\" names tool \"memory_add\" that is not available in this session (withheld from the default belt, or its lane is gated off here); narrowed away"},
+			want:         []string{"warning: persona \"recaller\" names tool \"memory_add\" that is registered only when its feature gate opens (closed in this session); narrowed away"},
 		},
 		{
 			name:       "persona naming a tool withheld by the default belt warns, not silences",
@@ -226,7 +226,7 @@ func TestUnknownToolWarnings(t *testing.T) {
 			refused:      []string{"copy"},
 			personaName:  "mover",
 			personaTools: []string{"read", "copy"},
-			want:         []string{"warning: persona \"mover\" names tool \"copy\" that is not available in this session (withheld from the default belt, or its lane is gated off here); narrowed away"},
+			want:         []string{"warning: persona \"mover\" names tool \"copy\" withheld by the session's tool belt (name it in agents.default.tools to get it back); narrowed away"},
 		},
 		{
 			name:       "golden: no persona tools warns exactly as today",

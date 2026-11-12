@@ -11,6 +11,7 @@ package yaah
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/cwdpath"
@@ -92,6 +93,7 @@ func unknownToolWarnings(tr *toolRegistryStage) []string {
 	}
 	var out []string
 	warned := make(map[string]bool)
+	refused := tr.belt.Refused()
 	for _, name := range tr.belt.Unknown() {
 		warned[name] = true
 		out = append(out, fmt.Sprintf("warning: config `agents.default.tools` names unknown tool %q; ignored", name))
@@ -108,9 +110,18 @@ func unknownToolWarnings(tr *toolRegistryStage) []string {
 		// The tool exists but this session does not hold it: a real
 		// name, unavailable here. The narrowing drops it either way —
 		// the warning is so a role file does not lose a tool it names
-		// in silence.
+		// in silence. The belt distinguishes the two reasons: a name
+		// it refused is a belt withholding the fix is config for (the
+		// curated default or an explicit list), while a name it merely
+		// knows is a lane whose registration gate — store, Go module,
+		// session shape — is closed in this session, and no belt entry
+		// would change that.
 		warned[name] = true
-		out = append(out, fmt.Sprintf("warning: persona %q names tool %q that is not available in this session (withheld from the default belt, or its lane is gated off here); narrowed away", tr.personaName, name))
+		if slices.Contains(refused, name) {
+			out = append(out, fmt.Sprintf("warning: persona %q names tool %q withheld by the session's tool belt (name it in agents.default.tools to get it back); narrowed away", tr.personaName, name))
+			continue
+		}
+		out = append(out, fmt.Sprintf("warning: persona %q names tool %q that is registered only when its feature gate opens (closed in this session); narrowed away", tr.personaName, name))
 	}
 	return out
 }
