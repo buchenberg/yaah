@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.167.0](https://github.com/buchenberg/yaah/compare/v0.166.4...v0.167.0) (2026-11-12)
+
+
+### Features
+
+* **permissions:** durable project-scoped saved approvals (yaah-x6vi.6) ([f2abe27](https://github.com/buchenberg/yaah/commit/f2abe275ff1d5e6df289575b16cd79855536dc91))
+
+
+### Bug Fixes
+
+* **permissions:** drop unused saved-permission DDL const (staticcheck U1000) ([db5aa88](https://github.com/buchenberg/yaah/commit/db5aa88ec5c4fd0bc2da2ceb46eaa70a15eeddd3))
+* **permissions:** review fixes for saved approvals — canonical read key, surfaced store errors, no partial reads ([5decd0a](https://github.com/buchenberg/yaah/commit/5decd0ab96995ed49f694d540db8aa71b69a36f5))
+
 ## [0.166.4](https://github.com/buchenberg/yaah/compare/v0.166.3...v0.166.4) (2026-11-12)
 
 
