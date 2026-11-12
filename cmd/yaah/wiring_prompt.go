@@ -200,15 +200,17 @@ func subAgentDispatchLine(cfg *config.Config) string {
 }
 
 // providerUsable mirrors makeProvider's cheap gate: a provider entry can
-// actually be constructed when it has OAuth, a real API key, or a base URL.
-// This keeps the dispatch line from advertising a dangling or keyless entry.
+// actually be constructed when it has OAuth, a real API key, or a keyless
+// local endpoint. This keeps the dispatch line from advertising a dangling
+// entry, and shares the credential predicate with makeProvider and doctor
+// (config.Provider.HasCredential) so the three cannot drift.
 func providerUsable(cfg *config.Config, name string) bool {
 	p, ok := cfg.Providers[name]
 	if !ok {
 		return false
 	}
 	r := config.Resolve(p)
-	return r.Auth == "oauth" || isRealKey(r.APIKey) || r.BaseURL != ""
+	return r.Auth == "oauth" || p.HasCredential()
 }
 
 // buildMainPrompt derives the top-level agent prompt from the system prompt

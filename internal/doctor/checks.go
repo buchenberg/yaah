@@ -137,15 +137,23 @@ func CheckProvider(cfg *config.Config, cfgErr error) Check {
 
 	var issues []string
 	for name, p := range cfg.Providers {
-		if p.APIKey == "" || p.APIKey == "ollama" {
+		r := config.Resolve(p)
+		// OAuth credentials live in the token store (yaah login), not
+		// in the config — nothing to resolve here.
+		if r.Auth == "oauth" {
 			continue
 		}
+		if p.HasCredential() {
+			continue
+		}
+		// Name the referenced env var when one was: that is the
+		// actionable form of the message.
 		if strings.HasPrefix(p.APIKey, "${") && strings.HasSuffix(p.APIKey, "}") {
 			envVar := p.APIKey[2 : len(p.APIKey)-1]
-			if os.Getenv(envVar) == "" {
-				issues = append(issues, fmt.Sprintf("%s: env var %s is empty or unset", name, envVar))
-			}
+			issues = append(issues, fmt.Sprintf("%s: env var %s is empty or unset", name, envVar))
+			continue
 		}
+		issues = append(issues, fmt.Sprintf("%s: no api_key resolves and the base URL is not a keyless local endpoint — this provider cannot authenticate", name))
 	}
 
 	if len(issues) > 0 {
@@ -194,6 +202,17 @@ func CheckSubAgents(cfg *config.Config, cfgErr error) Check {
 			Label:  "Sub-agents",
 			Status: "WARN",
 			Detail: fmt.Sprintf("provider %q not found for sub-agents — falling back to planner (%s / %s)", sc.Provider, providerName, model),
+		}
+	}
+	// The provider name existing is not enough: an unresolved credential
+	// silently re-routes every sub-agent dispatch onto the planner's
+	// provider (resolveSubAgent warns at startup). Say it here too, before
+	// a wave of dispatches discovers it.
+	if p := cfg.Providers[providerName]; config.Resolve(p).Auth != "oauth" && !p.HasCredential() {
+		return Check{
+			Label:  "Sub-agents",
+			Status: "WARN",
+			Detail: fmt.Sprintf("provider %q has no usable credential — sub-agent dispatches will inherit the planner provider (%s / %s)", sc.Provider, resolveProviderName(cfg), model),
 		}
 	}
 	return Check{

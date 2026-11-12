@@ -378,12 +378,69 @@ func TestClassify_typedStatusBeatsStringParsing(t *testing.T) {
 	if !c.ShouldRotateCred {
 		t.Error("expected ShouldRotateCred for typed 401")
 	}
+	if c.Retryable {
+		t.Error("a 401 must not be retried — the identical request cannot authenticate")
+	}
+	if !c.ShouldAbort {
+		t.Error("expected ShouldAbort for typed 401 so the diagnosis surfaces when no fallback fires")
+	}
 
 	// Wrapped typed errors must be found through errors.As.
 	wrapped := fmt.Errorf("call failed: %w", &fakeAPIError{status: 429})
 	c = Classify(wrapped, ErrorMeta{})
 	if c.Reason != ReasonRateLimit {
 		t.Errorf("Reason = %v, want rate_limit", c.Reason)
+	}
+}
+
+// TestClassify_authErrorsFailFast pins yaah-gkll.1: an auth-classified
+// status (401, 403) is never retryable — the request carries the same
+// credential on every replay, so the backoff ladder only burns wall clock —
+// but rotation (fallback) stays armed for the one recovery that can work.
+func TestClassify_authErrorsFailFast(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		meta ErrorMeta
+	}{
+		{"status-driven 401", errors.New("request failed"), ErrorMeta{StatusCode: 401}},
+		{"status-driven 403 access denied", errors.New("access denied"), ErrorMeta{StatusCode: 403}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := Classify(tt.err, tt.meta)
+			if c.Reason != ReasonAuth {
+				t.Fatalf("Reason = %v, want auth", c.Reason)
+			}
+			if c.Retryable {
+				t.Error("Retryable must be false — no replay can fix the credential")
+			}
+			if !c.ShouldAbort {
+				t.Error("ShouldAbort must be true — surface the diagnosis instead of backing off")
+			}
+			if !c.ShouldRotateCred {
+				t.Error("ShouldRotateCred must stay true — a configured fallback fires before the abort")
+			}
+		})
+	}
+}
+
+// The 403 billing variant keeps the pre-existing posture: quota and credit
+// exhaustion can clear on its own (top-up, window reset), so backoff stays
+// armed there. Only the auth class fails fast.
+func TestClassify_403BillingStaysBackable(t *testing.T) {
+	c := Classify(errors.New("spending limit exceeded"), ErrorMeta{StatusCode: 403})
+	if c.Reason != ReasonBilling {
+		t.Fatalf("Reason = %v, want billing", c.Reason)
+	}
+	if !c.Retryable {
+		t.Error("billing exhaustion stays retryable — it can clear without a config change")
+	}
+	if c.ShouldAbort {
+		t.Error("billing exhaustion must not abort — backoff then rotate")
+	}
+	if !c.ShouldRotateCred {
+		t.Error("billing exhaustion should rotate")
 	}
 }
 

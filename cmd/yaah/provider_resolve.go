@@ -190,7 +190,12 @@ func makeProvider(name string, p config.Provider) (agent.Provider, bool) {
 		return makeOAuthProvider(name, r)
 	}
 
-	if !isRealKey(r.APIKey) && r.BaseURL == "" {
+	// A provider that cannot authenticate is rejected here, not at first
+	// request: an empty or unresolved api_key against a remote base URL
+	// fails 401 no matter how often it is replayed, and dispatching on it
+	// only burns wall clock. Local inference endpoints (Ollama and friends)
+	// authenticate nothing and stay usable with an empty key.
+	if !p.HasCredential() {
 		return nil, false
 	}
 	switch r.API {
@@ -387,6 +392,15 @@ func resolveSubAgent(cfg *config.Config) (agent.Provider, string) {
 		if prov, ok2 := makeProvider(providerName, p); ok2 {
 			return prov, model
 		}
+		// Loud, not silent: without this line a configured sub-agent
+		// provider with an unresolved credential quietly degrades every
+		// dispatch onto the planner's provider, and the mismatch only
+		// surfaces as per-dispatch 401s or surprise model routing.
+		slog.Warn("sub-agent provider has no usable credential; sub-agents will inherit the planner provider",
+			"provider", providerName)
+	} else {
+		slog.Warn("sub-agent provider is not configured; sub-agents will inherit the planner provider",
+			"provider", providerName)
 	}
 	return nil, ""
 }
@@ -444,18 +458,6 @@ func makeModelLister(name string, p config.Provider) (providers.ModelLister, boo
 		return nil, false
 	}
 	return ml, true
-}
-
-// isRealKey returns true if the API key looks like a real key (not empty,
-// not a placeholder, not an unsubstituted env var).
-func isRealKey(key string) bool {
-	if key == "" || key == "(not set)" || key == "(too short)" {
-		return false
-	}
-	if strings.Contains(key, "${") {
-		return false
-	}
-	return true
 }
 
 // buildStuckChildTimeouts converts per-role StuckChildTimeout seconds from

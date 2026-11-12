@@ -144,8 +144,17 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 	// ── 1. Status-code-driven classification ──────────────────────
 	switch meta.StatusCode {
 	case http.StatusUnauthorized: // 401
+		// A request that cannot authenticate can never authenticate on
+		// retry — the client holds the key immutably, so the ladder
+		// replays the identical doomed request (yaah-gkll.1: ~65s of
+		// backoff per 401 in the PR #1573 run). Fail the attempt
+		// immediately; ShouldRotateCred stays set so a configured
+		// fallback still fires before the abort (the client checks
+		// rotation first).
 		c.Reason = ReasonAuth
 		c.ShouldRotateCred = true
+		c.Retryable = false
+		c.ShouldAbort = true
 		c.Message = "authentication failed — rotate credentials"
 		return c
 	case http.StatusForbidden: // 403
@@ -159,8 +168,12 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 			c.Message = "billing exhausted (403 variant) — rotate"
 			return c
 		}
+		// Same fail-fast rationale as 401: access denied for this
+		// credential is not a transient condition.
 		c.Reason = ReasonAuth
 		c.ShouldRotateCred = true
+		c.Retryable = false
+		c.ShouldAbort = true
 		c.Message = "access forbidden — rotate credentials"
 		return c
 	case http.StatusPaymentRequired: // 402
