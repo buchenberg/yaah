@@ -100,7 +100,7 @@ unsafe patterns. Report findings with file paths, line numbers, and severity.
 Do NOT modify files.
 ```
 
-`mode:` (optional, default `subagent`) selects the capability: `subagent`
+`mode:` (optional, default `all`) selects the capability: `subagent`
 is delegate-only, `primary` makes the file an orchestrator persona that is
 excluded from `delegate`, and `all` is both. Persona behavior (prompt body,
 tool narrowing, budget, switching) is covered in

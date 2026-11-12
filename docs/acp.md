@@ -351,11 +351,15 @@ produced the request.
   timeout or a rejection denies the call and, when a row was announced,
   closes it as `failed`. An `allow_always` answer persists the decision
   project-scoped (the canonical workspace root), so a later session in
-  the same workspace does not re-ask — with one carve-out: a
-  credential-shaped target (dotenv family file, OpenSSH private key —
-  see [configuration.md](./configuration.md#permission-rulesets)) is
-  never persisted and never remembered, so `allow_always` behaves as
-  `allow_once` and the next sensitive call asks again.
+  the same workspace does not re-ask. Two exceptions. A call with no
+  tool-call id is never persisted — there is nothing to key the row to —
+  so `allow_always` on one behaves as `allow_once`. And a
+  credential-shaped target (dotenv family file, `.envrc`, OpenSSH private
+  key — see
+  [configuration.md](./configuration.md#permission-rulesets)) is never
+  persisted and never remembered, so `allow_always` on one behaves as
+  `allow_once`, the server logs the downgrade, and the next sensitive
+  call asks again.
 - **Question-tool prompts** route through `elicitation/create` (form
   mode) when the client advertised the `elicitation.form` capability
   (`internal/acp/elicitation.go`): each question becomes a form whose

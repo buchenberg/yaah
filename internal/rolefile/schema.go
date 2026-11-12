@@ -74,12 +74,12 @@ const SchemaJSON = `{
     },
     "output": {
       "type": "string",
-      "enum": ["report", "proposal"],
+      "enum": ["report", "proposal", ""],
       "description": "Dispatch output contract: report returns text (isolated-report or shared lane), proposal seals an isolated worktree delta for the orchestrator to settle. Empty means proposal."
     },
     "mode": {
       "type": "string",
-      "enum": ["primary", "subagent", "all"],
+      "enum": ["primary", "subagent", "all", ""],
       "description": "Agent capability axis: primary is orchestrator-eligible, subagent is delegate-only, all is both. Empty means all; an unknown value fails closed to subagent at load."
     },
     "max_iterations": {
@@ -113,7 +113,7 @@ const SchemaJSON = `{
     },
     "system": {
       "type": "string",
-      "enum": ["replace"],
+      "enum": ["replace", ""],
       "description": "How the body enters the session system prompt: empty layers it after the embedded identity; replace swaps it in for the identity (environment, project instructions, memory, skills, and session directives still layer after). Anything but replace warns at load."
     },
     "provider": {
@@ -139,7 +139,7 @@ const SchemaJSON = `{
     },
     "headless": {
       "type": "string",
-      "enum": ["deny"],
+      "enum": ["deny", ""],
       "description": "Declares what a headless run does with this role's ask rules: a sub-agent dispatch denies them (nobody is attached to prompt). Declaring it silences the load-time warning a subagent-capable role with ask rules raises. Empty is the historical default."
     },
     "temperature": {

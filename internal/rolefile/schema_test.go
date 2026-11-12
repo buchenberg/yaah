@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+
+	"github.com/buchenberg/yaah/internal/permissions"
 )
 
 // TestSchemaJSONValid parses the published schema as JSON — a malformed
@@ -68,7 +70,11 @@ func TestSchemaPermissionsVocabulary(t *testing.T) {
 	}
 	got := append([]string(nil), doc.Defs.Effect.Enum...)
 	sort.Strings(got)
-	want := []string{"allow", "ask", "deny"}
+	// Derived from the permissions package rather than hand-listed: a
+	// fourth effect added there must reach this schema, not silently leave
+	// it describing a rule language the engine no longer accepts.
+	want := []string{string(permissions.Allow), string(permissions.Ask), string(permissions.Deny)}
+	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("SchemaJSON effect enum = %v, want %v", got, want)
 	}
@@ -88,5 +94,24 @@ func TestSchemaDocsInSync(t *testing.T) {
 	}
 	if string(data) != SchemaJSON {
 		t.Errorf("%s is out of sync with rolefile.SchemaJSON; regenerate the published copy", path)
+	}
+}
+
+// TestFrontmatterFieldsAreTagged closes the one hole in the drift
+// guarantee: knownFrontmatterKeys is built from yaml tags, so an exported
+// field added without one is decoded by yaml.v3 (under its lower-cased
+// name) while staying invisible to both the parser's unknown-key
+// preservation and this schema. Fail loudly here rather than let a real
+// field silently escape the published contract.
+func TestFrontmatterFieldsAreTagged(t *testing.T) {
+	rt := reflect.TypeOf(Frontmatter{})
+	for i := 0; i < rt.NumField(); i++ {
+		f := rt.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		if f.Tag.Get("yaml") == "" {
+			t.Errorf("Frontmatter field %s has no yaml tag: knownFrontmatterKeys cannot see it, so the schema will silently omit it", f.Name)
+		}
 	}
 }
