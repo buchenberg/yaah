@@ -55,7 +55,7 @@ sub-agents, and prompts all resolve against it.
 | `session/set_agent` | supported | switches the ADDRESSED session's persona: validates against the persona registry (a miss is invalid params) and answers the session's effective persona plus its read-only posture; effective at the next loop build |
 | `session/set_config_option` | supported | the three session axes — `configId: "agent"` (persona), `"mode"` (read-only/full), `"approval"` (`allow`/`ask`/`deny`) — and the model picker (`configId: "model"`); validates the value, applies it to subsequent turns, emits `config_option_update`, and echoes the recomputed `configOptions` set. A model pick persists with the session row, so a resume re-routes to it (parity W4); a persona switch supersedes the pick with the persona file's routing, after which a new pick can be made |
 | `session/update` | supported | variants below |
-| `session/request_permission` | supported | tool approvals delegated to the client; all four option kinds (`allow_once`/`allow_always`/`reject_once`/`reject_always`) are offered, and an always-decision is remembered for the rest of the session |
+| `session/request_permission` | supported | tool approvals delegated to the client; all four option kinds (`allow_once`/`allow_always`/`reject_once`/`reject_always`) are offered, and an always-decision is remembered for the rest of the session — an `allow_always` also persists project-scoped for later sessions, except for credential-shaped targets (see [Approvals and questions](#approvals-and-questions)) |
 
 `session/update` variants: `agent_message_chunk`, `agent_thought_chunk`,
 `tool_call`, `tool_call_update`, `plan`, `usage_update`,
@@ -349,7 +349,13 @@ produced the request.
   updates that row instead of creating a second one. Models that omit the
   call id prompt under a synthetic id and produce no `tool_call` row. A
   timeout or a rejection denies the call and, when a row was announced,
-  closes it as `failed`.
+  closes it as `failed`. An `allow_always` answer persists the decision
+  project-scoped (the canonical workspace root), so a later session in
+  the same workspace does not re-ask — with one carve-out: a
+  credential-shaped target (dotenv family file, OpenSSH private key —
+  see [configuration.md](./configuration.md#permission-rulesets)) is
+  never persisted and never remembered, so `allow_always` behaves as
+  `allow_once` and the next sensitive call asks again.
 - **Question-tool prompts** route through `elicitation/create` (form
   mode) when the client advertised the `elicitation.form` capability
   (`internal/acp/elicitation.go`): each question becomes a form whose

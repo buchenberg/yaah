@@ -58,7 +58,15 @@ are additive.
 ## Custom roles
 
 A role is a markdown file with YAML frontmatter. The filename (minus `.md`)
-is the role name; `name:` is the display persona.
+is the role name; `name:` is the display persona. The frontmatter has a
+published JSON schema,
+[`docs/schemas/rolefile-frontmatter.schema.json`](./schemas/rolefile-frontmatter.schema.json)
+(the same document lives in the code as `rolefile.SchemaJSON`) — tests
+pin its property set to the parser's frontmatter fields, so it cannot
+drift from what yaah actually reads. Editors and second implementations
+should validate against that file; note that key order inside
+`permissions:` is policy (last-match-wins) and JSON tooling will not
+preserve it.
 
 ```markdown
 ---
