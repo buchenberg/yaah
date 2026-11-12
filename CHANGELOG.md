@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.171.1](https://github.com/buchenberg/yaah/compare/v0.171.0...v0.171.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **personas:** address review — construction belt note, frame hardening, rune-safe truncation ([70130e5](https://github.com/buchenberg/yaah/commit/70130e5c5c0999b5ca44e6da567f3159f9ef7b5b))
+* **personas:** security hardening follow-ups from the agent-files epic (yaah-21uk.17) ([d9b2c16](https://github.com/buchenberg/yaah/commit/d9b2c1608e2a055d8fa78c3aef92aa60203e0787))
+* **personas:** security hardening follow-ups from the agent-files epic (yaah-21uk.17) ([daa04c9](https://github.com/buchenberg/yaah/commit/daa04c94a0607842f908997db84a7729abf2b1fd))
+* **personas:** strip pre-frame body layer, rebind belt note on bail-outs ([847dbc7](https://github.com/buchenberg/yaah/commit/847dbc7731cc55720ef73f715e892de365810d79))
+
 ## [0.171.0](https://github.com/buchenberg/yaah/compare/v0.170.0...v0.171.0) (2026-11-12)
 
 
