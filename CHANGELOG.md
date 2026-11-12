@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.170.0](https://github.com/buchenberg/yaah/compare/v0.169.0...v0.170.0) (2026-11-12)
+
+
+### Features
+
+* **workflow:** resolved IR, structured selectors, and template binding (yaah-0u0v.4) ([ed53833](https://github.com/buchenberg/yaah/commit/ed53833dd738eb30ea1a701092f187130fd452f5))
+* **workflow:** resolved IR, structured selectors, and template binding (yaah-0u0v.4) ([6b78dd0](https://github.com/buchenberg/yaah/commit/6b78dd0ffe7f92044d7519d42f5c2a99c90d0533))
+
 ## [0.169.0](https://github.com/buchenberg/yaah/compare/v0.168.0...v0.169.0) (2026-11-12)
 
 
