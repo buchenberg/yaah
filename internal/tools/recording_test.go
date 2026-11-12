@@ -431,13 +431,28 @@ func TestConflictWorkspaceRel_ResolvesThroughAnAliasedRoot(t *testing.T) {
 	if err := os.Symlink(dir, link); err != nil {
 		t.Skipf("symlinks unavailable on this platform: %v", err)
 	}
+	target := filepath.Join(dir, "internal", "x.go")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("package internal\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	// A workspace whose root is the alias: filepath.Rel cannot relate it to
 	// the real path, so only canonicalizing both sides recovers the relative
 	// form.
 	ws := newGuardWorkspace(link)
 
-	got := conflictWorkspaceRel(ws, filepath.Join(dir, "internal", "x.go"))
-	if want := "internal/x.go"; got != want {
+	if got, want := conflictWorkspaceRel(ws, target), "internal/x.go"; got != want {
 		t.Errorf("conflictWorkspaceRel = %q, want %q", got, want)
+	}
+
+	// A refusal can name a path the out-of-band writer already deleted, so the
+	// path itself no longer resolves — its directory still does.
+	if err := os.Remove(target); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := conflictWorkspaceRel(ws, target), "internal/x.go"; got != want {
+		t.Errorf("conflictWorkspaceRel for a removed file = %q, want %q", got, want)
 	}
 }
