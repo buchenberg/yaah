@@ -296,14 +296,14 @@ func TestResumeSessionSwitchToReplaceSplicesIdentity(t *testing.T) {
 	}
 	const grumpLayer = "GRUMP STORED BODY LAYER"
 	const storedTail = "## Environment\nstored environment bytes\n\n## Memory\nstored memory snapshot"
-	stored := strings.TrimSpace(prompts.IdentityPrompt) + "\n\n" + grumpLayer + "\n\n" + storedTail
+	stored := strings.TrimSpace(prompts.IdentityPrompt) + "\n\n" + prompts.PersonaGuidanceBlock(grumpLayer) + "\n\n" + storedTail
 
 	s := &agentSession{cfg: &config.Config{}}
 	s.opts = SessionOptions{ResumeSessionID: "sess-resumed", DirectiveOverrides: []string{"always run tests"}}
 	s.promptLayers = prompts.Layers{Identity: prompts.IdentityPrompt} // retained layers describe TODAY, not the stored prompt
 	s.promptMemory = prompts.MemoryGuidance{}                         // resumed sessions get no fresh guidance block
 	s.systemPrompt = stored
-	s.identityEnd = len(strings.TrimSpace(prompts.IdentityPrompt)) + 2 + len(grumpLayer)
+	s.identityEnd = len(strings.TrimSpace(prompts.IdentityPrompt)) + 2 + len(prompts.PersonaGuidanceBlock(grumpLayer))
 	s.persona = grump
 	s.SetView(&safeCaptureView{})
 	s.mainPrompt = buildMainPrompt(s.cfg, s.opts, stored, s.identityEnd)
@@ -328,4 +328,131 @@ func TestResumeSessionSwitchToReplaceSplicesIdentity(t *testing.T) {
 	if head := strings.Index(s.mainPrompt, "## Session directives"); head < 0 || head != s.identityEnd+2 {
 		t.Fatalf("directives must land at the spliced anchor: head=%d anchor=%d", head, s.identityEnd)
 	}
+}
+
+// TestResumeSwitchStripsLegacyBareBodyLayer pins the resume-across-upgrade
+// half of the persona-body frame (yaah-21uk.17): a session row persisted by a
+// build that rendered the persona layer BARE (pre-PersonaGuidanceBlock) must
+// still have that layer removed by the splice. Matching only the framed form
+// left the old body in the tail, and SetPersona then persisted a prompt
+// carrying both the old and the new persona bodies.
+func TestResumeSwitchStripsLegacyBareBodyLayer(t *testing.T) {
+	reg := subagent.NewRoleRegistry()
+	if err := reg.LoadBytes(map[string][]byte{
+		"grump.md":   []byte("---\nname: Harold\ndescription: layer persona\ntools: []\n---\nGRUMP STORED BODY LAYER\n"),
+		"planner.md": []byte("---\nname: Pat\ndescription: plans changes\ntools: []\n---\nPLANNER NEW BODY LAYER\n"),
+	}); err != nil {
+		t.Fatalf("LoadBytes: %v", err)
+	}
+	saved := subagent.DefaultRegistry()
+	subagent.SetDefaultRoleRegistry(reg)
+	t.Cleanup(func() { subagent.SetDefaultRoleRegistry(saved) })
+
+	grump, ok := subagent.ResolvePersona("grump")
+	if !ok {
+		t.Fatal("the layer persona must resolve")
+	}
+	const legacyBody = "GRUMP STORED BODY LAYER"
+	const storedTail = "## Environment\nstored environment bytes\n\n## Memory\nstored memory snapshot"
+	// The pre-frame render: the body layer sits bare after the anchor.
+	stored := strings.TrimSpace(prompts.IdentityPrompt) + "\n\n" + legacyBody + "\n\n" + storedTail
+
+	s := &agentSession{cfg: &config.Config{}}
+	s.opts = SessionOptions{ResumeSessionID: "sess-legacy"}
+	s.promptLayers = prompts.Layers{Identity: prompts.IdentityPrompt}
+	s.promptMemory = prompts.MemoryGuidance{}
+	s.systemPrompt = stored
+	s.identityEnd = len(strings.TrimSpace(prompts.IdentityPrompt))
+	s.persona = grump
+	s.SetView(&safeCaptureView{})
+	s.mainPrompt = buildMainPrompt(s.cfg, s.opts, stored, s.identityEnd)
+
+	if err := s.SetPersona("planner"); err != nil {
+		t.Fatalf("SetPersona(planner): %v", err)
+	}
+
+	if strings.Contains(s.systemPrompt, legacyBody) {
+		t.Fatalf("the legacy bare body layer must be stripped, not carried over:\n%q",
+			s.systemPrompt[:min(len(s.systemPrompt), 400)])
+	}
+	if !strings.Contains(s.systemPrompt, prompts.PersonaGuidanceBlock("PLANNER NEW BODY LAYER")) {
+		t.Fatalf("the new persona's framed body layer must be bound:\n%q",
+			s.systemPrompt[:min(len(s.systemPrompt), 400)])
+	}
+	if !strings.Contains(s.systemPrompt, storedTail) {
+		t.Fatal("the splice must keep the stored tail byte-for-byte")
+	}
+	if strings.Count(s.systemPrompt, "PLANNER NEW BODY LAYER") != 1 {
+		t.Fatalf("the new body layer must bind exactly once:\n%q",
+			s.systemPrompt[:min(len(s.systemPrompt), 400)])
+	}
+}
+
+// TestBailOutSwitchReseatsBeltNote pins the annotation half of the switch on
+// a session the rebuild cannot touch (no layers captured, so
+// rebuildPromptsLocked bails): the belt still lands at the per-run seam, so
+// the persona belt note must track the addressed persona even though the
+// system prompt stands — otherwise the prompt keeps describing the tool set
+// the session just left, or stays silent about a narrowing it did apply.
+func TestBailOutSwitchReseatsBeltNote(t *testing.T) {
+	personaBudgetTestRegistry(t)
+	planner, ok := subagent.ResolvePersona("planner")
+	if !ok {
+		t.Fatal("planner must resolve")
+	}
+	full, ok := subagent.ResolvePersona("build")
+	if !ok {
+		t.Fatal("build must resolve")
+	}
+	if personaBeltNote(planner) == "" {
+		t.Fatal("fixture: planner must carry a belt note")
+	}
+	if personaBeltNote(full) != "" {
+		t.Fatal("fixture: build is the full belt and carries no note")
+	}
+	const (
+		base     = "BASE PROMPT BODY"
+		guidance = "\n\nTOOL GUIDANCE SUFFIX"
+		stored   = "STORED SYSTEM BYTES"
+	)
+
+	// bailOutSession builds a session with no captured layers, which is the
+	// state rebuildPromptsLocked refuses to rebuild from.
+	bailOutSession := func(current subagent.Persona) *agentSession {
+		s := &agentSession{
+			cfg:            &config.Config{},
+			promptGuidance: guidance,
+			persona:        current,
+			systemPrompt:   stored,
+			mainPrompt:     base + personaBeltNote(current) + guidance,
+		}
+		s.SetView(&safeCaptureView{})
+		return s
+	}
+
+	t.Run("narrowed to full belt drops the note", func(t *testing.T) {
+		s := bailOutSession(planner)
+		if err := s.SetPersona("build"); err != nil {
+			t.Fatalf("SetPersona(build): %v", err)
+		}
+		if s.systemPrompt != stored {
+			t.Errorf("the unspliceable system prompt must stand: %q", s.systemPrompt)
+		}
+		if want := base + guidance; s.mainPrompt != want {
+			t.Errorf("main prompt = %q; want %q", s.mainPrompt, want)
+		}
+	})
+
+	t.Run("full belt to narrowed adds the note", func(t *testing.T) {
+		s := bailOutSession(full)
+		if err := s.SetPersona("planner"); err != nil {
+			t.Fatalf("SetPersona(planner): %v", err)
+		}
+		if want := base + personaBeltNote(planner) + guidance; s.mainPrompt != want {
+			t.Errorf("main prompt = %q; want %q", s.mainPrompt, want)
+		}
+		if !strings.HasSuffix(s.mainPrompt, guidance) {
+			t.Errorf("guidance must remain the prompt's tail: %q", s.mainPrompt)
+		}
+	})
 }

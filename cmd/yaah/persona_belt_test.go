@@ -291,7 +291,7 @@ func TestPersonaNarrowing_PerRunLoopSeam(t *testing.T) {
 		// A write-capable persona gets the full level — the read-only
 		// strip belongs to read-only personas (the plan-persona subtest
 		// pins it); this one only narrows the advertised set.
-		if got := s.effectiveToolsLevel(); got != agent.FullTools {
+		if got := sessionToolsLevel(s.readOnly); got != agent.FullTools {
 			t.Fatalf("effectiveToolsLevel() = %v; want agent.FullTools", got)
 		}
 	})
@@ -328,11 +328,11 @@ func TestPersonaNarrowing_PerRunLoopSeam(t *testing.T) {
 		// persona gets the full level; read-only is the session's mode
 		// axis (decouple-persona-mode-approval).
 		s := &agentSession{cfg: &config.Config{}, persona: sp.Persona}
-		if got := s.effectiveToolsLevel(); got != agent.FullTools {
+		if got := sessionToolsLevel(s.readOnly); got != agent.FullTools {
 			t.Errorf("effectiveToolsLevel() on the plan persona in a full session = %v; want agent.FullTools", got)
 		}
 		s.readOnly = true
-		if got := s.effectiveToolsLevel(); got != agent.ReadOnlyTools {
+		if got := sessionToolsLevel(s.readOnly); got != agent.ReadOnlyTools {
 			t.Errorf("effectiveToolsLevel() in a read-only session = %v; want agent.ReadOnlyTools", got)
 		}
 		if slices.Contains(agent.InspectionSetNames(), "bash") {

@@ -77,12 +77,15 @@ func resolveOrchestratorBudget(cfg *config.Config, persona subagent.Persona) bud
 	if cfg.ExplicitDefaultBudget.MaxTurnsSet && cfg.ExplicitDefaultBudget.MaxTurns == 0 {
 		b.Turns = 0
 	}
+	// Trust boundary (yaah-21uk.17): a committed persona file can narrow
+	// the orchestrator loop budget but never widen it past the loaded
+	// agents.default ceiling. A third-party file that declares an outsized
+	// max_iterations is clamped to the configured default (50 shipped)
+	// rather than driving a near-unbounded loop. Turns need no ceiling:
+	// the loaded default is "off" (0), so a persona turn cap only narrows.
+	if b.IterationsSource == budget.SourceRoleFile && cfg.Agent.Default.MaxLoopCycles > 0 &&
+		b.Iterations > cfg.Agent.Default.MaxLoopCycles {
+		b.Iterations = cfg.Agent.Default.MaxLoopCycles
+	}
 	return b
-}
-
-// orchestratorBudget is the session seam: every loop the session
-// builds — interactive (runPrompt), serve (runHeadless), compact —
-// takes this budget through loopBuilder.
-func (s *agentSession) orchestratorBudget() budget.Budget {
-	return resolveOrchestratorBudget(s.cfg, s.persona)
 }

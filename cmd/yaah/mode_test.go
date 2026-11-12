@@ -35,7 +35,7 @@ func TestSessionToolsLevel_ModeMatrix(t *testing.T) {
 				t.Fatalf("sessionToolsLevel(%v) = %v; want %v", tc.readOnly, got, tc.want)
 			}
 			s := &agentSession{persona: tc.persona, readOnly: tc.readOnly}
-			if got := s.effectiveToolsLevel(); got != tc.want {
+			if got := sessionToolsLevel(s.readOnly); got != tc.want {
 				t.Fatalf("effectiveToolsLevel() = %v; want %v", got, tc.want)
 			}
 		})

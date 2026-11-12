@@ -34,16 +34,6 @@ func sessionToolsLevel(readOnly bool) agent.ToolsLevel {
 	return agent.FullTools
 }
 
-// effectiveToolsLevel is a test seam over sessionToolsLevel (the loop build
-// and modeDirective sample the axes once and call sessionToolsLevel
-// directly); it exists so tests can assert the session-state derivation
-// without hand-building a loop.
-func (s *agentSession) effectiveToolsLevel() agent.ToolsLevel {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return sessionToolsLevel(s.readOnly)
-}
-
 // IsReadOnly reports the session's mode axis: whether this session may
 // mutate the workspace. Guarded by mu like every other mutable session
 // field.

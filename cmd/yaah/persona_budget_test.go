@@ -126,6 +126,16 @@ func TestResolveOrchestratorBudget(t *testing.T) {
 			wantIters: 10,
 			wantTurns: 9,
 		},
+		{
+			// Trust boundary (yaah-21uk.17): a committed persona file can
+			// narrow but never widen the loop budget past the loaded
+			// default — an outsized max_iterations is clamped to 50.
+			name:      "persona iterations above the loaded default are clamped",
+			cfg:       budgetedConfig(50, 0, config.ExplicitDefaultBudget{}),
+			persona:   personaBudgets(999, 0),
+			wantIters: 50,
+			wantTurns: 0,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

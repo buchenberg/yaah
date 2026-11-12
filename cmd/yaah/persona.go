@@ -206,29 +206,20 @@ func (s *agentSession) SetPersona(name string) error {
 	// switch — the warning names the real consequence instead (the next
 	// resume falls back to the creation-time persona and prompt).
 	if db != nil && sessionID != "" {
-		if err := db.SetSessionPersona(sessionID, persona.Name); err != nil {
-			slog.Warn("session: persisting persona failed", "persona", persona.Name, "err", err)
-		}
-		if promptChanged {
-			if err := db.SetSessionSystemPrompt(sessionID, system); err != nil {
-				slog.Warn("session: persisting the rebuilt system prompt failed", "persona", persona.Name, "err", err)
-			}
-		}
-		// The routing the switch just landed persists too (parity W4): the
-		// stored pick must never outlive the switch that superseded it — a
-		// resume applies persona routing AND the stored pick, so a stale
-		// pre-switch pick would silently override the fresh route.
-		// Nothing routable (no model resolved anywhere) stays out of the
-		// way: SetSessionModel rejects a pick missing either half (that is
-		// the full extent of its validation — provider usability is the
-		// caller's posture, checked in applyPersonaRouting and
-		// applyStoredModelPick), and the resume chain deciding is exactly
-		// what an unpickable session means.
+		// Persist the switch's three side effects atomically (yaah-21uk.17):
+		// the persona column, the rebuilt system prompt (when it changed),
+		// and the resolved routing pick. The routing pick persists so a
+		// resume applies persona routing AND the stored pick together — a
+		// stale pre-switch pick must never outlive the switch that
+		// superseded it. An empty prompt/pick skips the corresponding
+		// write inside SetSessionPersonaState.
 		providerName, modelName := s.Model()
-		if providerName != "" && modelName != "" {
-			if err := db.SetSessionModel(sessionID, providerName, modelName); err != nil {
-				slog.Warn("session: persisting the switched routing failed", "provider", providerName, "model", modelName, "err", err)
-			}
+		sysPrompt := ""
+		if promptChanged {
+			sysPrompt = system
+		}
+		if err := db.SetSessionPersonaState(sessionID, persona.Name, sysPrompt, providerName, modelName); err != nil {
+			slog.Warn("session: persisting persona switch failed", "persona", persona.Name, "err", err)
 		}
 	}
 	// The new persona's tools list applies at the next loop build; if it
@@ -251,6 +242,40 @@ func (s *agentSession) SetPersona(name string) error {
 	return nil
 }
 
+// personaBeltNote renders a one-line prompt annotation when the persona
+// declares a tool allowlist. The tool guidance names only the configured
+// belt's removals, while the persona's own narrowing is applied at the
+// per-run seam, so construction and every switch must carry the note forward
+// or the prompt would keep advertising a tool set the persona just stripped
+// (yaah-21uk.17).
+func personaBeltNote(p subagent.Persona) string {
+	if len(p.Tools) == 0 {
+		return ""
+	}
+	return "\n\nYour tool set is narrowed to this persona's declared allowlist; tools outside it are withheld this loop."
+}
+
+// rebindBeltNote re-seats the persona belt note in a main prompt the switch
+// could not rebuild (the bail-outs in rebuildPromptsLocked and
+// spliceIdentityLocked). The belt itself still lands at the per-run seam, so
+// the note has to travel even when the identity cannot be spliced: leaving
+// the previous persona's note in place would describe a tool set the session
+// no longer runs, and a switch INTO a narrowed persona would advertise no
+// narrowing at all. Construction and the rebuilt path both render main as
+// base + personaBeltNote + the retained guidance suffix, so the rewrite cuts
+// the guidance, cuts the note now seated before it, and re-seats the
+// addressed persona's note (yaah-21uk.17).
+func (s *agentSession) rebindBeltNote(main string, p subagent.Persona) string {
+	base := main
+	if trimmed, ok := strings.CutSuffix(base, s.promptGuidance); ok {
+		base = trimmed
+	}
+	if prev := personaBeltNote(s.persona); prev != "" {
+		base = strings.TrimSuffix(base, prev)
+	}
+	return base + personaBeltNote(p) + s.promptGuidance
+}
+
 // rebuildPromptsLocked re-renders the system and main prompts with the
 // given persona bound in (under `system: replace`, the persona body
 // rebinds as the identity layer — see buildMarkedPrompt), from the
@@ -266,12 +291,13 @@ func (s *agentSession) SetPersona(name string) error {
 // rebuilding from them would rewrite environment, project instructions
 // and memory alongside the persona. The recorded prompt stands in that
 // case, and the switch lands everywhere else (budget, tools, gate).
+//
 // promptChanged reports whether the caller should adopt the new bytes
 // and anchor; a session that never captured layers (hand-built tests)
 // cannot rebuild at all.
 func (s *agentSession) rebuildPromptsLocked(p subagent.Persona) (system, main string, end int, promptChanged bool) {
 	if s.promptLayers.Identity == "" {
-		return s.systemPrompt, s.mainPrompt, s.identityEnd, false
+		return s.systemPrompt, s.rebindBeltNote(s.mainPrompt, p), s.identityEnd, false
 	}
 	// Verify the retained layers still derive the session's CURRENT
 	// prompt — rebuild with the CURRENT persona must reproduce
@@ -305,7 +331,7 @@ func (s *agentSession) rebuildPromptsLocked(p subagent.Persona) (system, main st
 	// carries the guidance blocks appendToolGuidance added — without
 	// this, a switch would silently drop the delegate/retained/belt/
 	// isolated/one-shot guidance from every subsequent loop.
-	main = buildMainPrompt(s.cfg, s.opts, system, end) + s.promptGuidance
+	main = buildMainPrompt(s.cfg, s.opts, system, end) + personaBeltNote(p) + s.promptGuidance
 	return system, main, end, true
 }
 
@@ -337,7 +363,7 @@ func (s *agentSession) spliceIdentityLocked(p subagent.Persona) (system, main st
 		newBodyLayer = strings.TrimSpace(p.Body)
 	}
 	if newIdentity == "" {
-		return s.systemPrompt, s.mainPrompt, s.identityEnd, false
+		return s.systemPrompt, s.rebindBeltNote(s.mainPrompt, p), s.identityEnd, false
 	}
 	// BuildMarked renders the identity as parts[0], so the identity leads
 	// the prompt by construction; anything else is not spliceable.
@@ -347,22 +373,31 @@ func (s *agentSession) spliceIdentityLocked(p subagent.Persona) (system, main st
 	}
 	old := identityAnchorFor(s.systemPrompt, s.persona)
 	if old < 0 || oldStart != 0 {
-		return s.systemPrompt, s.mainPrompt, s.identityEnd, false
+		return s.systemPrompt, s.rebindBeltNote(s.mainPrompt, p), s.identityEnd, false
 	}
 	tail := s.systemPrompt[old:]
 	if !s.persona.SystemReplace {
-		// Layer mode renders the persona body as its own layer directly
-		// after the anchor; the splice must not leave that body behind.
+		// Layer mode renders the persona body as its own delimited layer
+		// directly after the anchor; the splice must not leave that body
+		// (or its delimiters) behind. A row persisted by a build older than
+		// PersonaGuidanceBlock stores that layer BARE, so the undelimited
+		// form is the fallback: matching only the framed form would leave the
+		// old body in tail and the switch would carry — and persist — both
+		// bodies at once (yaah-21uk.17).
 		if body := strings.TrimSpace(s.persona.Body); body != "" {
-			tail = strings.TrimPrefix(tail, sep+body)
+			if framed := sep + prompts.PersonaGuidanceBlock(body); strings.HasPrefix(tail, framed) {
+				tail = strings.TrimPrefix(tail, framed)
+			} else {
+				tail = strings.TrimPrefix(tail, sep+body)
+			}
 		}
 	}
 	if newBodyLayer != "" {
-		system = newIdentity + sep + newBodyLayer + tail
+		system = newIdentity + sep + prompts.PersonaGuidanceBlock(newBodyLayer) + tail
 	} else {
 		system = newIdentity + tail
 	}
 	end = len(newIdentity)
-	main = buildMainPrompt(s.cfg, s.opts, system, end) + s.promptGuidance
+	main = buildMainPrompt(s.cfg, s.opts, system, end) + personaBeltNote(p) + s.promptGuidance
 	return system, main, end, true
 }
