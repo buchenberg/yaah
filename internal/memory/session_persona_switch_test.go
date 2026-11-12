@@ -2,6 +2,7 @@ package memory
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -85,4 +86,102 @@ func TestSetSessionSystemPromptReplacesStoredPrompt(t *testing.T) {
 	if row.SystemPrompt != "REBUILT PROMPT BYTES" {
 		t.Fatalf("stored SystemPrompt = %q; want the rebuilt bytes", row.SystemPrompt)
 	}
+}
+
+// TestSetSessionPersonaState pins the atomic three-column write a live
+// persona switch uses (yaah-21uk.17): the persona, the rebuilt system prompt
+// and the resolved routing pick land together, and an empty prompt or
+// incomplete pick leaves those columns exactly as they were so the call
+// cannot erase state the switch did not change.
+func TestSetSessionPersonaState(t *testing.T) {
+	t.Run("records persona, prompt and pick", func(t *testing.T) {
+		db := openPersonaSwitchStore(t, "ses-state-all")
+		if err := db.SetSessionSystemPrompt("ses-state-all", "OLD PROMPT"); err != nil {
+			t.Fatalf("SetSessionSystemPrompt() error: %v", err)
+		}
+		if err := db.SetSessionModel("ses-state-all", "oldprov", "oldmodel"); err != nil {
+			t.Fatalf("SetSessionModel() error: %v", err)
+		}
+		// The model half carries slashes of its own: the column joins the two
+		// halves with "/" and the resume path splits on the FIRST one, so a
+		// slash-bearing model must survive the round trip.
+		if err := db.SetSessionPersonaState("ses-state-all", "plan", "REBUILT PROMPT", "prov", "gpt/x"); err != nil {
+			t.Fatalf("SetSessionPersonaState() error: %v", err)
+		}
+		row, err := db.GetSession("ses-state-all")
+		if err != nil {
+			t.Fatalf("GetSession() error: %v", err)
+		}
+		if row.Persona != "plan" {
+			t.Errorf("Persona = %q; want plan", row.Persona)
+		}
+		if row.SystemPrompt != "REBUILT PROMPT" {
+			t.Errorf("SystemPrompt = %q; want the rebuilt bytes", row.SystemPrompt)
+		}
+		if row.Model != "prov/gpt/x" {
+			t.Errorf("Model = %q; want prov/gpt/x", row.Model)
+		}
+	})
+
+	t.Run("empty prompt and pick leave their columns untouched", func(t *testing.T) {
+		db := openPersonaSwitchStore(t, "ses-state-skip")
+		if err := db.SetSessionSystemPrompt("ses-state-skip", "KEPT PROMPT"); err != nil {
+			t.Fatalf("SetSessionSystemPrompt() error: %v", err)
+		}
+		if err := db.SetSessionModel("ses-state-skip", "keptprov", "keptmodel"); err != nil {
+			t.Fatalf("SetSessionModel() error: %v", err)
+		}
+		if err := db.SetSessionPersonaState("ses-state-skip", "plan", "", "", ""); err != nil {
+			t.Fatalf("SetSessionPersonaState() error: %v", err)
+		}
+		row, err := db.GetSession("ses-state-skip")
+		if err != nil {
+			t.Fatalf("GetSession() error: %v", err)
+		}
+		if row.Persona != "plan" {
+			t.Errorf("Persona = %q; want the switch recorded", row.Persona)
+		}
+		if row.SystemPrompt != "KEPT PROMPT" {
+			t.Errorf("SystemPrompt = %q; an empty prompt must not clear the column", row.SystemPrompt)
+		}
+		if row.Model != "keptprov/keptmodel" {
+			t.Errorf("Model = %q; an empty pick must not clear the column", row.Model)
+		}
+	})
+
+	t.Run("a half-set pick does not overwrite the model", func(t *testing.T) {
+		db := openPersonaSwitchStore(t, "ses-state-half")
+		if err := db.SetSessionModel("ses-state-half", "keptprov", "keptmodel"); err != nil {
+			t.Fatalf("SetSessionModel() error: %v", err)
+		}
+		if err := db.SetSessionPersonaState("ses-state-half", "plan", "", "newprov", ""); err != nil {
+			t.Fatalf("SetSessionPersonaState() error: %v", err)
+		}
+		row, err := db.GetSession("ses-state-half")
+		if err != nil {
+			t.Fatalf("GetSession() error: %v", err)
+		}
+		if row.Model != "keptprov/keptmodel" {
+			t.Errorf("Model = %q; a provider without a model is not routable", row.Model)
+		}
+	})
+
+	t.Run("unknown session names the id and writes nothing", func(t *testing.T) {
+		db := openPersonaSwitchStore(t, "ses-state-real")
+		err := db.SetSessionPersonaState("ses-state-missing", "plan", "PROMPT", "prov", "m")
+		if err == nil {
+			t.Fatal("SetSessionPersonaState() on a missing session must fail")
+		}
+		if !strings.Contains(err.Error(), "no session") || !strings.Contains(err.Error(), "ses-state-missing") {
+			t.Errorf("error = %v; want it to name the missing session", err)
+		}
+		row, err := db.GetSession("ses-state-real")
+		if err != nil {
+			t.Fatalf("GetSession() error: %v", err)
+		}
+		if row.Persona != "planner" || row.SystemPrompt != "" || row.Model != "" {
+			t.Errorf("a refused write must leave the row alone: persona=%q prompt=%q model=%q",
+				row.Persona, row.SystemPrompt, row.Model)
+		}
+	})
 }

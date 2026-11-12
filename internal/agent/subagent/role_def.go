@@ -433,8 +433,10 @@ func (r *RoleRegistry) List() map[SubAgentRole]RoleDef {
 
 // maxRoleFileBytes caps role/persona files read from disk, mirroring the
 // 64 KiB AGENTS.md/CLAUDE.md cap (yaah-21uk.17). A file that exceeds it is
-// truncated on a UTF-8 rune boundary; the frontmatter sits at the top, well
-// under the cap, so truncation only ever cuts the body tail.
+// truncated on a UTF-8 rune boundary; the frontmatter normally sits well
+// under the cap, so truncation usually cuts only the body tail. A frontmatter
+// that alone exceeds the cap IS cut mid-YAML — LoadDir reports the resulting
+// parse failure with the cap named rather than as a bare parse error.
 const maxRoleFileBytes = 64 * 1024
 
 // truncateRoleFile cuts data at maxRoleFileBytes on a UTF-8 rune boundary, so

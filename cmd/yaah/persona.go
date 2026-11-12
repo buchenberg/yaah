@@ -255,6 +255,27 @@ func personaBeltNote(p subagent.Persona) string {
 	return "\n\nYour tool set is narrowed to this persona's declared allowlist; tools outside it are withheld this loop."
 }
 
+// rebindBeltNote re-seats the persona belt note in a main prompt the switch
+// could not rebuild (the bail-outs in rebuildPromptsLocked and
+// spliceIdentityLocked). The belt itself still lands at the per-run seam, so
+// the note has to travel even when the identity cannot be spliced: leaving
+// the previous persona's note in place would describe a tool set the session
+// no longer runs, and a switch INTO a narrowed persona would advertise no
+// narrowing at all. Construction and the rebuilt path both render main as
+// base + personaBeltNote + the retained guidance suffix, so the rewrite cuts
+// the guidance, cuts the note now seated before it, and re-seats the
+// addressed persona's note (yaah-21uk.17).
+func (s *agentSession) rebindBeltNote(main string, p subagent.Persona) string {
+	base := main
+	if trimmed, ok := strings.CutSuffix(base, s.promptGuidance); ok {
+		base = trimmed
+	}
+	if prev := personaBeltNote(s.persona); prev != "" {
+		base = strings.TrimSuffix(base, prev)
+	}
+	return base + personaBeltNote(p) + s.promptGuidance
+}
+
 // rebuildPromptsLocked re-renders the system and main prompts with the
 // given persona bound in (under `system: replace`, the persona body
 // rebinds as the identity layer — see buildMarkedPrompt), from the
@@ -276,7 +297,7 @@ func personaBeltNote(p subagent.Persona) string {
 // cannot rebuild at all.
 func (s *agentSession) rebuildPromptsLocked(p subagent.Persona) (system, main string, end int, promptChanged bool) {
 	if s.promptLayers.Identity == "" {
-		return s.systemPrompt, s.mainPrompt, s.identityEnd, false
+		return s.systemPrompt, s.rebindBeltNote(s.mainPrompt, p), s.identityEnd, false
 	}
 	// Verify the retained layers still derive the session's CURRENT
 	// prompt — rebuild with the CURRENT persona must reproduce
@@ -342,7 +363,7 @@ func (s *agentSession) spliceIdentityLocked(p subagent.Persona) (system, main st
 		newBodyLayer = strings.TrimSpace(p.Body)
 	}
 	if newIdentity == "" {
-		return s.systemPrompt, s.mainPrompt, s.identityEnd, false
+		return s.systemPrompt, s.rebindBeltNote(s.mainPrompt, p), s.identityEnd, false
 	}
 	// BuildMarked renders the identity as parts[0], so the identity leads
 	// the prompt by construction; anything else is not spliceable.
@@ -352,15 +373,23 @@ func (s *agentSession) spliceIdentityLocked(p subagent.Persona) (system, main st
 	}
 	old := identityAnchorFor(s.systemPrompt, s.persona)
 	if old < 0 || oldStart != 0 {
-		return s.systemPrompt, s.mainPrompt, s.identityEnd, false
+		return s.systemPrompt, s.rebindBeltNote(s.mainPrompt, p), s.identityEnd, false
 	}
 	tail := s.systemPrompt[old:]
 	if !s.persona.SystemReplace {
 		// Layer mode renders the persona body as its own delimited layer
 		// directly after the anchor; the splice must not leave that body
-		// (or its delimiters) behind.
+		// (or its delimiters) behind. A row persisted by a build older than
+		// PersonaGuidanceBlock stores that layer BARE, so the undelimited
+		// form is the fallback: matching only the framed form would leave the
+		// old body in tail and the switch would carry — and persist — both
+		// bodies at once (yaah-21uk.17).
 		if body := strings.TrimSpace(s.persona.Body); body != "" {
-			tail = strings.TrimPrefix(tail, sep+prompts.PersonaGuidanceBlock(body))
+			if framed := sep + prompts.PersonaGuidanceBlock(body); strings.HasPrefix(tail, framed) {
+				tail = strings.TrimPrefix(tail, framed)
+			} else {
+				tail = strings.TrimPrefix(tail, sep+body)
+			}
 		}
 	}
 	if newBodyLayer != "" {
