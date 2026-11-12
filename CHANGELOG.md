@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.175.3](https://github.com/buchenberg/yaah/compare/v0.175.2...v0.175.3) (2026-11-12)
+
+
+### Bug Fixes
+
+* **compaction:** persist the fallback's summary record (yaah-l12q) ([e588701](https://github.com/buchenberg/yaah/commit/e588701ca24345692c0980db7291662f11106e88))
+* **compaction:** record the trim marker only when trim dropped messages (yaah-l12q) ([f8a0cc9](https://github.com/buchenberg/yaah/commit/f8a0cc9efb705141a15e8586ae8ff62e4f9d73f7))
+
 ## [0.175.2](https://github.com/buchenberg/yaah/compare/v0.175.1...v0.175.2) (2026-11-12)
 
 
