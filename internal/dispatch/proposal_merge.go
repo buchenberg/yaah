@@ -30,23 +30,23 @@ type proposalMergeWrite struct {
 	modeSet bool
 }
 
-func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retainedProposal) (string, error) {
+func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retainedProposal) (Settlement, error) {
 	if p.output == nil {
-		return "", fmt.Errorf("proposal %s: three_way has no sealed worktree output", p.id)
+		return Settlement{}, fmt.Errorf("proposal %s: three_way has no sealed worktree output", p.id)
 	}
 	if p.repoPath == "" {
-		return "", fmt.Errorf("proposal %s: three_way has no repository path", p.id)
+		return Settlement{}, fmt.Errorf("proposal %s: three_way has no repository path", p.id)
 	}
 	if state := p.output.State(); state != goatherd.OutputUnconsumed {
-		return "", fmt.Errorf("proposal %s: three_way: sealed output is %s, not unconsumed", p.id, state)
+		return Settlement{}, fmt.Errorf("proposal %s: three_way: sealed output is %s, not unconsumed", p.id, state)
 	}
 	changes, err := p.proposalChanges(ctx)
 	if err != nil {
-		return "", fmt.Errorf("proposal %s: three_way: %w", p.id, err)
+		return Settlement{}, fmt.Errorf("proposal %s: three_way: %w", p.id, err)
 	}
 	drift, err := p.parentDrift(ctx)
 	if err != nil {
-		return "", fmt.Errorf("proposal %s: three_way: cannot inspect parent drift: %w", p.id, err)
+		return Settlement{}, fmt.Errorf("proposal %s: three_way: cannot inspect parent drift: %w", p.id, err)
 	}
 	driftSet := make(map[string]bool, len(drift))
 	for _, path := range drift {
@@ -65,11 +65,11 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 	for _, change := range changes {
 		current, currentExists, err := p.parentContentFull(ctx, change.Path)
 		if err != nil {
-			return "", fmt.Errorf("proposal %s: three_way: read current %s: %w", p.id, change.Path, err)
+			return Settlement{}, fmt.Errorf("proposal %s: three_way: read current %s: %w", p.id, change.Path, err)
 		}
 		proposed, proposedExists, err := p.proposedContentFull(ctx, change.Path)
 		if err != nil {
-			return "", fmt.Errorf("proposal %s: three_way: read proposed %s: %w", p.id, change.Path, err)
+			return Settlement{}, fmt.Errorf("proposal %s: three_way: read proposed %s: %w", p.id, change.Path, err)
 		}
 		base, baseExists, err := p.baseContentFull(ctx, change.Path)
 		if err != nil {
@@ -123,7 +123,7 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 		}
 		merged, ok, err := gitMergeFile(ctx, base, current, proposed)
 		if err != nil {
-			return "", fmt.Errorf("proposal %s: three_way: merge %s: %w", p.id, change.Path, err)
+			return Settlement{}, fmt.Errorf("proposal %s: three_way: merge %s: %w", p.id, change.Path, err)
 		}
 		if !ok {
 			conflicted = append(conflicted, change.Path)
@@ -139,7 +139,7 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 		if len(unbasisable) > 0 {
 			message = fmt.Sprintf("%s; no merge basis for %s", message, strings.Join(unbasisable, "; "))
 		}
-		return "", &proposalApplyConflict{
+		return Settlement{}, &proposalApplyConflict{
 			ProposalID: p.id,
 			Paths:      conflicted,
 			Strategy:   proposalApplyThreeWay,
@@ -153,11 +153,11 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 	for _, write := range writes {
 		abs, err := ws.ResolvePath(filepath.FromSlash(write.path))
 		if err != nil {
-			return "", fmt.Errorf("proposal %s: three_way: resolve %s: %w", p.id, write.path, err)
+			return Settlement{}, fmt.Errorf("proposal %s: three_way: resolve %s: %w", p.id, write.path, err)
 		}
 		if write.del {
 			if err := ws.Remove(ctx, abs); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return "", fmt.Errorf("proposal %s: three_way: delete %s: %w", p.id, write.path, err)
+				return Settlement{}, fmt.Errorf("proposal %s: three_way: delete %s: %w", p.id, write.path, err)
 			}
 			continue
 		}
@@ -169,7 +169,7 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 			mode = info.Mode().Perm()
 		}
 		if err := ws.WriteFile(ctx, abs, write.data, mode); err != nil {
-			return "", fmt.Errorf("proposal %s: three_way: write %s: %w", p.id, write.path, err)
+			return Settlement{}, fmt.Errorf("proposal %s: three_way: write %s: %w", p.id, write.path, err)
 		}
 	}
 
@@ -214,8 +214,9 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 			Error:      message,
 			Notes:      notes,
 		}
-		env.Outcome = settleOutcome(goatherd.SettleApply, p, env).String()
-		return marshalProposalEnvelope(env), nil
+		outcome := settleOutcome(goatherd.SettleApply, p, env)
+		env.Outcome = outcome.String()
+		return newSettlement(env, outcome), nil
 	}
 	r.remove(p.id)
 
@@ -227,8 +228,9 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 		Files:      files,
 		Notes:      notes,
 	}
-	env.Outcome = settleOutcome(goatherd.SettleApply, p, env).String()
-	return marshalProposalEnvelope(env), nil
+	outcome := settleOutcome(goatherd.SettleApply, p, env)
+	env.Outcome = outcome.String()
+	return newSettlement(env, outcome), nil
 }
 
 // proposalPathDrifted reports whether the parent moved off the dispatch basis

@@ -553,7 +553,7 @@ func sessionContainerFallback(
 	timeout time.Duration,
 	requested subagent.WorldKind,
 	reason string,
-) (string, error) {
+) (retainedRunResult, error) {
 	if requested == "" {
 		requested = subagent.WorldAuto
 	}
@@ -583,13 +583,30 @@ func sessionContainerFallback(
 	NotifySubAgentReady(runCtx)
 	result, err := rt.Runner(runCtx, prompt, subParams)
 	if err != nil {
-		return "", err
+		return retainedRunResult{}, err
 	}
-	return retainedNote(result, "dispatch world degraded: "+reason), nil
+	return retainedRunResult{Report: retainedNote(result, "dispatch world degraded: "+reason)}, nil
 }
 
-// StartRetainedRun dispatches one sub-agent into an isolated worktree and seals
-// its delta into a proposal, returning the proposal envelope. A body error still
+// retainedRunResult is the typed result of one retained dispatch. Exactly one
+// of Report and Proposal is set: a report lane carries plain result text, and a
+// proposal lane carries the sealed envelope.
+type retainedRunResult struct {
+	Report   string
+	Proposal *proposalEnvelope
+}
+
+// String renders the result in the model-facing shape for callers that still
+// need a single string (the background job contract and the legacy wrapper).
+func (r retainedRunResult) String() string {
+	if r.Proposal != nil {
+		return marshalProposalEnvelope(*r.Proposal)
+	}
+	return r.Report
+}
+
+// startRetainedRun dispatches one sub-agent into an isolated worktree and seals
+// its delta into a proposal, returning the typed result. A body error still
 // yields a sealed (partial) proposal, exactly as the review fork does; only a
 // provisioning or sealing failure has no output.
 //
@@ -597,26 +614,26 @@ func sessionContainerFallback(
 // skipped: the result is the sub-agent's report text, the world is torn down
 // before returning, and no proposal is registered — a report-role dispatch
 // carries no delta to settle.
-func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, subParams jobs.SubAgentParams, timeout time.Duration, report bool) (string, error) {
+func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, subParams jobs.SubAgentParams, timeout time.Duration, report bool) (retainedRunResult, error) {
 	if rt.Runner == nil {
-		return "", fmt.Errorf("delegate: sub-agent runner not configured")
+		return retainedRunResult{}, fmt.Errorf("delegate: sub-agent runner not configured")
 	}
 	mgr := rt.ScopeManager
 	if mgr == nil {
-		return "", fmt.Errorf("delegate: retained mode needs the goatherd scope manager (trace store unavailable)")
+		return retainedRunResult{}, fmt.Errorf("delegate: retained mode needs the goatherd scope manager (trace store unavailable)")
 	}
 	if rt.RootScopeID == "" {
-		return "", fmt.Errorf("delegate: retained mode needs a goatherd root scope to fork from")
+		return retainedRunResult{}, fmt.Errorf("delegate: retained mode needs a goatherd root scope to fork from")
 	}
 	// The registry is required, not defaulted: a process-wide fallback would
 	// let one session list, show, or settle another's proposal. The runtime is
 	// built by runner.NewDelegateTool, which mints one per session (yaah-yox).
 	if rt.Proposals == nil {
-		return "", fmt.Errorf("delegate: retained mode needs a proposal registry — runner.NewDelegateTool creates one per session")
+		return retainedRunResult{}, fmt.Errorf("delegate: retained mode needs a proposal registry — runner.NewDelegateTool creates one per session")
 	}
 	parent, ok := mgr.Get(rt.RootScopeID)
 	if !ok {
-		return "", fmt.Errorf("delegate: root scope %s not found", rt.RootScopeID)
+		return retainedRunResult{}, fmt.Errorf("delegate: root scope %s not found", rt.RootScopeID)
 	}
 
 	// A repo path defaults to the process working directory, as root-scope
@@ -625,7 +642,7 @@ func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	if rt.RepoPath == "" {
 		wd, werr := os.Getwd()
 		if werr != nil {
-			return "", fmt.Errorf("delegate: resolve repo path: %w", werr)
+			return retainedRunResult{}, fmt.Errorf("delegate: resolve repo path: %w", werr)
 		}
 		rt.RepoPath = wd
 	}
@@ -654,13 +671,13 @@ func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		// configuration error and must surface.
 		if containerSession && report && !explicitWorld && errors.Is(werr, subagent.ErrWorldUnavailable) {
 			if !sessionContainerFallbackAllowed(rt, subParams.Role) {
-				return "", fmt.Errorf("delegate: container world unavailable, and the session container cannot preserve the dispatch authority: %w", werr)
+				return retainedRunResult{}, fmt.Errorf("delegate: container world unavailable, and the session container cannot preserve the dispatch authority: %w", werr)
 			}
 			// The session container is the predecessor world in the ladder;
 			// a report seals nothing, so it can run there unretained.
 			return sessionContainerFallback(ctx, rt, prompt, subParams, timeout, requestedKind, werr.Error())
 		}
-		return "", fmt.Errorf("delegate: %w", werr)
+		return retainedRunResult{}, fmt.Errorf("delegate: %w", werr)
 	}
 	recordDispatchWorld(ctx, worldRes)
 
@@ -669,10 +686,10 @@ func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	// live world to seed a new dispatch from.
 	if subParams.SeedFrom != "" {
 		if report {
-			return "", fmt.Errorf("delegate: seed_from cannot seed a report dispatch")
+			return retainedRunResult{}, fmt.Errorf("delegate: seed_from cannot seed a report dispatch")
 		}
 		if worldRes.Resolved == subagent.WorldContainer {
-			return "", fmt.Errorf("delegate: seed_from is worktree-lane only; the container lane ends its world at seal")
+			return retainedRunResult{}, fmt.Errorf("delegate: seed_from is worktree-lane only; the container lane ends its world at seal")
 		}
 	}
 
@@ -690,16 +707,16 @@ func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 			// the basis capture would otherwise move the very state select
 			// compares against.
 			if err := ensureProposalPathsExcluded(ctx, rt.RepoPath); err != nil {
-				return "", fmt.Errorf("delegate: container proposal: exclude proposal path: %w", err)
+				return retainedRunResult{}, fmt.Errorf("delegate: container proposal: exclude proposal path: %w", err)
 			}
 			var cerr error
 			basis, cerr = parent.CaptureWorkspace(ctx)
 			if cerr != nil {
-				return "", fmt.Errorf("delegate: container proposal: capture host basis: %w", cerr)
+				return retainedRunResult{}, fmt.Errorf("delegate: container proposal: capture host basis: %w", cerr)
 			}
 			digest, derr := basis.Digest()
 			if derr != nil {
-				return "", fmt.Errorf("delegate: container proposal: digest host basis: %w", derr)
+				return retainedRunResult{}, fmt.Errorf("delegate: container proposal: digest host basis: %w", derr)
 			}
 			basisDigest = digest
 		}
@@ -707,11 +724,11 @@ func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		// provisioned — openDispatchWorld below is the expensive, stateful
 		// step, and a cap refusal after it would leave a world to tear down.
 		if capErr := dispatchScopeCapExceeded(rt); capErr != nil {
-			return "", capErr
+			return retainedRunResult{}, capErr
 		}
 		authority, aerr := resolveDispatchAuthority(rt, subParams.Role)
 		if aerr != nil {
-			return "", fmt.Errorf("delegate: %w", aerr)
+			return retainedRunResult{}, fmt.Errorf("delegate: %w", aerr)
 		}
 		ss, seedBasis, seedDigest, perr := openDispatchWorld(ctx, rt, authority)
 		if perr == nil {
@@ -731,19 +748,19 @@ func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		// closed. Nothing was provisioned, so the world can still change.
 		worldRes, werr = dispatchWorldPreflightFailure(worldRes, perr)
 		if werr != nil {
-			return "", werr
+			return retainedRunResult{}, werr
 		}
 		if containerSession {
 			if !report {
-				return "", fmt.Errorf("delegate: sibling container unavailable in a container session: %w", perr)
+				return retainedRunResult{}, fmt.Errorf("delegate: sibling container unavailable in a container session: %w", perr)
 			}
 			if !sessionContainerFallbackAllowed(rt, subParams.Role) {
-				return "", fmt.Errorf("delegate: sibling container unavailable, and the session container cannot preserve the dispatch authority: %w", perr)
+				return retainedRunResult{}, fmt.Errorf("delegate: sibling container unavailable, and the session container cannot preserve the dispatch authority: %w", perr)
 			}
 			return sessionContainerFallback(ctx, rt, prompt, subParams, timeout, worldRes.Requested, worldRes.Reason)
 		}
 		if worldRes.Resolved == subagent.WorldWorktree && !worktreeFallbackAllowed(rt, subParams.Role, report) {
-			return "", fmt.Errorf("delegate: container world unavailable, and the worktree cannot preserve the dispatch authority: %w", perr)
+			return retainedRunResult{}, fmt.Errorf("delegate: container world unavailable, and the worktree cannot preserve the dispatch authority: %w", perr)
 		}
 		// The world changed (a preflight failure stepped auto down): the
 		// event must carry the world the dispatch actually runs in.
@@ -762,13 +779,13 @@ func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	if subParams.SeedFrom != "" {
 		fs, serr := resolveThreadSeed(rt, subParams.SeedFrom, subParams.SeedMode, subParams.Role)
 		if serr != nil {
-			return "", fmt.Errorf("delegate: %w", serr)
+			return retainedRunResult{}, fmt.Errorf("delegate: %w", serr)
 		}
 		forkSeed, seedMessages = fs, fs.messages
 	} else {
 		state, cerr := parent.CaptureWorkspace(ctx)
 		if cerr != nil {
-			return "", fmt.Errorf("delegate: capture basis: %w", cerr)
+			return retainedRunResult{}, fmt.Errorf("delegate: capture basis: %w", cerr)
 		}
 		forkSeed = threadSeed{baseline: state, seed: state}
 	}
@@ -791,7 +808,7 @@ func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		// Nothing ran and nothing was sealed: report, register nothing.
 		env.Status = "error"
 		env.Error = provErr.Error()
-		return marshalProposalEnvelope(env), nil
+		return retainedRunResult{Proposal: &env}, nil
 	}
 	recordWorldFact(ctx, mgr, scopeID, worldRes)
 
@@ -870,9 +887,9 @@ func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 			// legitimately contain "note: " lines, so re-parsing the result to
 			// find the caveat would misattribute one of them. The caller folds
 			// both halves back together with the right bounds.
-			return result, &RetainedRunError{cause: bodyErr, note: caveat}
+			return retainedRunResult{Report: result}, &RetainedRunError{cause: bodyErr, note: caveat}
 		}
-		return retainedNote(result, caveat), nil
+		return retainedRunResult{Report: retainedNote(result, caveat)}, nil
 	}
 
 	// Scrub the confinement scratch before sealing: the env redirect keeps the
@@ -959,7 +976,7 @@ func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		if len(notes) > 0 {
 			env.Error = trimResult(strings.Join(notes, "; "))
 		}
-		return marshalProposalEnvelope(env), nil
+		return retainedRunResult{Proposal: &env}, nil
 	}
 
 	proposal := &retainedProposal{
@@ -987,7 +1004,7 @@ func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	env.Result = trimResult(result)
 	env.Diff = clipDiff(output.Diff())
 	env.Files = changesPaths(output.Changes())
-	return marshalProposalEnvelope(env), nil
+	return retainedRunResult{Proposal: &env}, nil
 }
 
 // threadSeed is a resolved source proposal plus the two states a threaded
@@ -1526,51 +1543,45 @@ func teardownReportScratch(ctx context.Context, rt RetainedRuntime, wt string, d
 	return fmt.Sprintf("worktree teardown reported an error (%v) but the worktree at %s is gone", err, wt)
 }
 
-// settleRetainedProposal settles one proposal with the default path-disjoint
-// strategy.
-func (r *ProposalRegistry) settleRetainedProposal(ctx context.Context, id, action string) (string, error) {
-	return r.settleRetainedProposalWithStrategy(ctx, id, action, proposalApplyPathDisjoint)
-}
-
 // settleRetainedProposalWithStrategy settles one proposal once. Three-way is
 // accepted only for an explicit worktree apply; every other verb and every
 // container proposal uses the path-disjoint lane.
-func (r *ProposalRegistry) settleRetainedProposalWithStrategy(ctx context.Context, id, action, strategy string) (string, error) {
+func (r *ProposalRegistry) settleRetainedProposalWithStrategy(ctx context.Context, id, action, strategy string) (Settlement, error) {
 	if strategy == "" {
 		strategy = proposalApplyPathDisjoint
 	}
 	if strategy != proposalApplyPathDisjoint && strategy != proposalApplyThreeWay {
-		return "", fmt.Errorf("proposal: unknown apply strategy %q (path_disjoint, three_way)", strategy)
+		return Settlement{}, fmt.Errorf("proposal: unknown apply strategy %q (path_disjoint, three_way)", strategy)
 	}
 	if strategy == proposalApplyThreeWay {
 		if action != "apply" {
-			return "", fmt.Errorf("proposal: strategy three_way is only valid with apply")
+			return Settlement{}, fmt.Errorf("proposal: strategy three_way is only valid with apply")
 		}
 		p, err := r.get(id)
 		if err != nil {
-			return "", err
+			return Settlement{}, err
 		}
 		if p.delta != nil {
-			return "", fmt.Errorf("proposal %s: three_way apply is worktree-lane only; the container lane writes whole-path post-images", id)
+			return Settlement{}, fmt.Errorf("proposal %s: three_way apply is worktree-lane only; the container lane writes whole-path post-images", id)
 		}
 		return r.settleWorktreeThreeWay(ctx, p)
 	}
 	return r.settleRetainedProposalDefault(ctx, id, action)
 }
 
-func (r *ProposalRegistry) settleRetainedProposalDefault(ctx context.Context, id, action string) (string, error) {
+func (r *ProposalRegistry) settleRetainedProposalDefault(ctx context.Context, id, action string) (Settlement, error) {
 	p, err := r.get(id)
 	if err != nil {
-		return "", err
+		return Settlement{}, err
 	}
 	if _, ok := settlementVerb(action); !ok {
-		return "", fmt.Errorf("proposal: unknown action %q (select, apply, release, discard)", action)
+		return Settlement{}, fmt.Errorf("proposal: unknown action %q (select, apply, release, discard)", action)
 	}
 	if p.delta != nil {
 		return r.settleGitDeltaProposal(ctx, p, action)
 	}
 	if p.output == nil {
-		return "", fmt.Errorf("proposal %s has no sealed output to settle", id)
+		return Settlement{}, fmt.Errorf("proposal %s has no sealed output to settle", id)
 	}
 	verb, _ := settlementVerb(action)
 
@@ -1594,7 +1605,7 @@ func (r *ProposalRegistry) settleRetainedProposalDefault(ctx context.Context, id
 		if err != nil {
 			// Do NOT tear down on an export failure: the worktree still holds
 			// the delta, so leaving it in place is safer than destroying it.
-			return "", fmt.Errorf("proposal %s: release could not preserve the delta: %w", id, err)
+			return Settlement{}, fmt.Errorf("proposal %s: release could not preserve the delta: %w", id, err)
 		}
 		env.Retained = retained
 	}
@@ -1603,7 +1614,7 @@ func (r *ProposalRegistry) settleRetainedProposalDefault(ctx context.Context, id
 	if settleErr != nil {
 		switch {
 		case errors.Is(settleErr, goatherd.ErrOutputConsumed):
-			return "", fmt.Errorf("proposal %s was already settled — a sealed output is consumed once", id)
+			return Settlement{}, fmt.Errorf("proposal %s was already settled — a sealed output is consumed once", id)
 		case errors.Is(settleErr, goatherd.ErrApplyConflict):
 			// The kernel refuses an overlap but does not expose the paths in a
 			// typed form. Re-read the parent drift so the refusal carries the
@@ -1614,7 +1625,7 @@ func (r *ProposalRegistry) settleRetainedProposalDefault(ctx context.Context, id
 			if drift, derr := p.parentDrift(ctx); derr == nil {
 				overlap = overlappingPaths(p.changedFiles(), drift)
 			}
-			return "", &proposalApplyConflict{
+			return Settlement{}, &proposalApplyConflict{
 				ProposalID: id,
 				Paths:      overlap,
 				Strategy:   proposalApplyPathDisjoint,
@@ -1627,7 +1638,7 @@ func (r *ProposalRegistry) settleRetainedProposalDefault(ctx context.Context, id
 			// an effect that already happened.
 			env.Error = settleErr.Error()
 		default:
-			return "", fmt.Errorf("proposal %s: %w", id, settleErr)
+			return Settlement{}, fmt.Errorf("proposal %s: %w", id, settleErr)
 		}
 	}
 	if reviewErr := p.recordReviewDecision(ctx, verb, settleErr); reviewErr != nil {
@@ -1642,12 +1653,13 @@ func (r *ProposalRegistry) settleRetainedProposalDefault(ctx context.Context, id
 		}
 	}
 
-	env.Outcome = settleOutcome(verb, p, env).String()
+	outcome := settleOutcome(verb, p, env)
+	env.Outcome = outcome.String()
 
 	// Consume-once: a settled proposal leaves the registry. Its durable
 	// record is the sealed output, which settlement just consumed.
 	r.remove(id)
-	return marshalProposalEnvelope(env), nil
+	return newSettlement(env, outcome), nil
 }
 
 // teardownReleasedProposal discards the isolated child scope a released

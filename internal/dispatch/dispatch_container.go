@@ -256,7 +256,7 @@ func runDispatchContainer(
 	timeout time.Duration,
 	res subagent.WorldResolution,
 	sandbox *substrate.SessionSandbox,
-) (result string, runErr error) {
+) (out retainedRunResult, runErr error) {
 	recordDispatchWorld(ctx, res)
 	id := fmt.Sprintf("proposal:%d:%d", time.Now().UnixNano(), proposalSeq.Add(1))
 	rt.BeginDispatchScope(id)
@@ -267,7 +267,7 @@ func runDispatchContainer(
 		if note := teardownDispatchWorld(ctx, rt, nil, nil, sandbox); note != "" {
 			ferr = fmt.Errorf("%w; %s", ferr, note)
 		}
-		return "", ferr
+		return retainedRunResult{}, ferr
 	}
 	recordWorldFact(ctx, rt.ScopeManager, scope.ID(), res)
 
@@ -284,7 +284,7 @@ func runDispatchContainer(
 			runErr = &RetainedRunError{cause: runErr, note: note}
 			return
 		}
-		result = retainedNote(result, note)
+		out.Report = retainedNote(out.Report, note)
 	}()
 
 	sp := subParams
@@ -298,7 +298,8 @@ func runDispatchContainer(
 	}
 	runCtx = substrate.WithDispatchWorkspace(runCtx, sandbox.Workspace())
 
-	return rt.Runner(runCtx, prompt, sp)
+	report, err := rt.Runner(runCtx, prompt, sp)
+	return retainedRunResult{Report: report}, err
 }
 
 // runDispatchContainerProposal runs one proposal dispatch inside its own
@@ -321,7 +322,7 @@ func runDispatchContainerProposal(
 	sandbox *substrate.SessionSandbox,
 	basisState shepherdtrace.WorkspaceState,
 	basisDigest string,
-) (out string, runErr error) {
+) (out retainedRunResult, runErr error) {
 	recordDispatchWorld(ctx, res)
 	target := "host"
 	var session *substrate.SessionSandbox
@@ -344,7 +345,7 @@ func runDispatchContainerProposal(
 		if note := teardownDispatchWorld(ctx, rt, parent, scope, sandbox); note != "" {
 			env.Notes = appendSettleNote(env.Notes, note)
 		}
-		out = marshalProposalEnvelope(env)
+		out.Proposal = &env
 	}()
 
 	scope, err := rt.ScopeManager.Fork(rt.RootScopeID, id, nil)
@@ -352,7 +353,7 @@ func runDispatchContainerProposal(
 		rt.EndDispatchScope(id)
 		env.Status = "error"
 		env.Error = "fork container dispatch scope: " + err.Error()
-		return "", nil
+		return retainedRunResult{}, nil
 	}
 	recordWorldFact(ctx, rt.ScopeManager, scope.ID(), res)
 
@@ -394,7 +395,7 @@ func runDispatchContainerProposal(
 		env.Status = "error"
 		env.Result = trimResult(result)
 		env.Error = trimResult(strings.Join(notes, "; "))
-		return "", nil
+		return retainedRunResult{}, nil
 	}
 	dir, manifestDigest, perr := persistGitDelta(ctx, rt.RepoPath, id, delta, review, result, bodyFailure, rt.SessionID, rt.RootScopeID, target, basisState, basisDigest)
 	if perr != nil {
@@ -402,7 +403,7 @@ func runDispatchContainerProposal(
 		env.Status = "error"
 		env.Result = trimResult(result)
 		env.Error = trimResult(strings.Join(notes, "; "))
-		return "", nil
+		return retainedRunResult{}, nil
 	}
 	if _, ferr := parent.AppendFact(ctx, SchemaProposalSealed, "proposal", map[string]any{
 		"proposal_id":     id,
@@ -449,7 +450,7 @@ func runDispatchContainerProposal(
 	if len(notes) > 0 {
 		env.Error = trimResult(strings.Join(notes, "; "))
 	}
-	return "", nil
+	return retainedRunResult{}, nil
 }
 
 // dispatchScopeCapExceeded reports whether the runtime's scope tree is at
