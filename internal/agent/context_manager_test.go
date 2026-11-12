@@ -370,8 +370,11 @@ func TestCompactContextTrimFallbackPersistsMarker(t *testing.T) {
 	if cm.State.LastCompactionMethod != "trim" {
 		t.Fatalf("method = %q, want trim — the test presumes every summary source failed", cm.State.LastCompactionMethod)
 	}
+	// The in-memory summary contract is its own check: trim installs no
+	// summary, so a future change writing the marker there must fail
+	// here regardless of what the row holds.
 	if cm.State.LastCompactionSummary != "" {
-		t.Fatalf("trim installed a summary: %q", cm.State.LastCompactionSummary)
+		t.Fatalf("trim installed an in-memory summary: %q", cm.State.LastCompactionSummary)
 	}
 	if len(cm.State.Messages) >= before {
 		t.Fatal("expected the trim fallback to drop messages")
@@ -384,8 +387,60 @@ func TestCompactContextTrimFallbackPersistsMarker(t *testing.T) {
 	if strings.TrimSpace(marker) == "" {
 		t.Fatal("the trim fallback left no record — the rollover is invisible to resume and the scenario checkers (yaah-l12q)")
 	}
+	if !strings.Contains(marker, "[context rollover]") {
+		t.Errorf("marker does not identify itself as a fallback: %q", marker)
+	}
 	if !strings.Contains(marker, "heuristic trim") {
 		t.Errorf("marker does not name the fallback: %q", marker)
+	}
+}
+
+// TestCompactContextNoOpTrimRecordsNothing pins the boundary review found:
+// the message-count trigger fires with the conversation still inside
+// trimContext's 80% window, so trim installs and drops nothing — and a
+// marker there would tell resume that context was lost when none was.
+func TestCompactContextNoOpTrimRecordsNothing(t *testing.T) {
+	p := &compactionRecordingProvider{placeholderAll: true}
+	db := newPersistTestDB(t, "sess-trim-noop")
+	cm := &ContextManager{
+		ContextWindow:      6000,
+		EstimateFactor:     1.3,
+		Provider:           p,
+		CompactProvider:    p,
+		CompactModel:       "test-small-model",
+		CompactMaxMessages: 10,
+		DB:                 db,
+		SessionID:          "sess-trim-noop",
+		State: &LoopState{
+			// Below both token gates, so the message-count trigger is
+			// what fires — the shape this test needs.
+			LastPromptTokens:           100,
+			CompactionBudgetMultiplier: 1.0,
+		},
+	}
+	cm.State.Messages = append(cm.State.Messages, types.SystemMsg("sys"))
+	// ~500 chars each: the whole conversation fits trim's 80% window
+	// (4800 tokens) but exceeds the 2000-token preserve budget, so the
+	// split leaves old messages for the (failing) summarizer.
+	for range 32 {
+		cm.State.Messages = append(cm.State.Messages, types.UserMsg(strings.Repeat("x", 500)))
+	}
+
+	before := len(cm.State.Messages)
+	cm.compactContext(context.Background(), 0.25)
+
+	if cm.State.LastCompactionMethod != "trim" {
+		t.Fatalf("method = %q, want trim — the test presumes every summary source failed", cm.State.LastCompactionMethod)
+	}
+	if len(cm.State.Messages) != before {
+		t.Fatalf("messages dropped (%d -> %d): the test presumes a no-op trim", before, len(cm.State.Messages))
+	}
+	session, err := db.GetSession("sess-trim-noop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(session.CompactedSummary); got != "" {
+		t.Fatalf("a no-op trim recorded %q — no rollover happened, so resume must not be told context was lost", got)
 	}
 }
 

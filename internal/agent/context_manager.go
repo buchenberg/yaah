@@ -563,14 +563,20 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 				}
 			}
 		}
+		beforeTrim := len(cm.State.Messages)
 		cm.trimContext()
 		cm.State.LastCompactionMethod = "trim"
 		cm.State.LastCompactionSummary = ""
-		// The rollover still happened — record it (yaah-l12q). The
-		// in-memory summary stays empty (trim installs none); the row
-		// carries the fallback marker so resume and the scenario
-		// checkers see the rollover instead of an empty column.
-		cm.persistSessionSummary(compactionFallbackMarker(reason))
+		// Record the rollover only when trim actually dropped messages
+		// (yaah-l12q): the message-count trigger fires with the
+		// conversation still inside trimContext's 80% window, where the
+		// trim is a no-op — a marker there would tell resume (which
+		// injects the row as a system message) that context was lost
+		// when none was. The in-memory summary stays empty either way:
+		// trim installs none.
+		if len(cm.State.Messages) < beforeTrim {
+			cm.persistSessionSummary(compactionFallbackMarker(reason))
+		}
 		if cm.Broker != nil {
 			// Terminal event for the compaction card: the LLM
 			// summarization fell back to plain old-message trimming,
