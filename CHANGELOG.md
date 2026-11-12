@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.174.0](https://github.com/buchenberg/yaah/compare/v0.173.1...v0.174.0) (2026-11-12)
+
+
+### Features
+
+* **belt:** curated default orchestrator belt (yaah-6mi9.1) ([7b21e32](https://github.com/buchenberg/yaah/commit/7b21e323c07473f6d78208c95e6adaf9f83e3122))
+* **belt:** curated default orchestrator belt (yaah-6mi9.1) ([5674f17](https://github.com/buchenberg/yaah/commit/5674f17a182eb58e983b8f179b8f51a1fab3e261))
+
+
+### Bug Fixes
+
+* **belt:** Admit knows the trimmed name it allowed (yaah-6mi9.1 review) ([38679de](https://github.com/buchenberg/yaah/commit/38679deb5b1808d3fbcaaf4f4dd06dff745a8f72))
+* **belt:** Admit marks names known; split the persona warning by cause (yaah-6mi9.1 review, round 2) ([9739b9d](https://github.com/buchenberg/yaah/commit/9739b9dd239b97865fbe6a6af56e50598427e858))
+* **belt:** admit the gated feature lanes and MCP; pin the registry boundary (yaah-6mi9.1 review) ([1efc34d](https://github.com/buchenberg/yaah/commit/1efc34de61ad299e34e22ba8584d276489833d88))
+
 ## [0.173.1](https://github.com/buchenberg/yaah/compare/v0.173.0...v0.173.1) (2026-11-12)
 
 
