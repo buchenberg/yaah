@@ -508,6 +508,50 @@ move-family tools that carry both a source and a destination: a resource
 rule matches the **source** path, so `move: { "docs/*": deny }` blocks
 moves *out of* `docs/`, not into it.
 
+**Hot reload.** `agents.default.permissions` is re-read when `config.yaml`
+changes: every run boundary (each prompt turn) checks the file's content
+hash, and a changed file's rules apply from the next turn on — the same
+contract role files have (new work picks up the change; an in-flight run
+finishes with the rules it started with). Exactly this one stanza reloads;
+everything else in the config (model routing, budgets, postures, mode)
+stays frozen at session start, and mode and approval keep their own
+mid-session switches. A config that fails to re-load — a broken file, a
+stanza the validator rejects, or a file that disappears after having been
+read — keeps the last-known rules and warns on stderr. Deleting the file
+mid-session is not how a rule is revoked: it takes the running rules with
+it, and they return when the file does. Only a config that has never
+existed is the empty ruleset a fresh session would see.
+
+**Persisted "always" approvals.** An `allow-always` answer on the ACP
+approval bridge persists project-scoped (the canonical workspace root):
+a later session in the same workspace consults the saved row instead of
+re-asking. The consult is a rule like any other — a config `deny` or
+`allow` naming the same tool and resource still wins, and the consult is
+only read in the ask branch, so it can never override a `deny`. A config
+`ask`, by contrast, is exactly what a saved row is there to lift.
+
+Credential-shaped targets are carved out on both sides: a persisted
+"always" never lifts an ask for a dotenv family file (`.env`,
+`.env.local`, `prod.env`, …), direnv's `.envrc`, or an OpenSSH private key
+(`id_rsa`, `id_ed25519`, …) on a file tool — the write family, and the
+content readers (`read`, `tail`, `grep`, `json_query`, `diff`,
+`go_outline`). `allow-always` on one behaves as `allow-once`: the live call
+proceeds, nothing is written to the store, and the next sensitive call asks
+again — including when the same tool was already always-allowed for an
+ordinary file earlier in the session. `.env.example` is exempt (a published
+template, not a secret).
+
+To grant a sensitive file for real, write an explicit permission rule —
+that is a decision made in config, reviewable in config, and revocable in
+config; a button click is none of those. Note what the rule achieves: it
+settles the **read** family outright, but a mutating call answers to the
+approval posture as well, and the verdict is the stricter of the two
+(`permissions.Stricter`). With `approval: ask` — the default —
+`write: { ".env": allow }` still asks on every write, and the carve-out
+means that ask can never be remembered. Silencing it for the write family
+takes a non-asking posture, which is a session-wide decision rather than a
+per-file one.
+
 ### Harness path protection
 
 Role files, skills, plans, and yaah's own configuration decide what an agent

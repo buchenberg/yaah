@@ -127,6 +127,14 @@ var _ Session = (*agentSession)(nil)
 // re-spawning MCP servers, and re-discovering skills on every turn.
 type agentSession struct {
 	cfg *config.Config
+	// permRules is the session's live view of the global permission
+	// ruleset (agents.default.permissions): seeded from cfg at
+	// construction and refreshed from ConfigPath() at each run boundary
+	// when the file changed — the RoleWatcher contract applied to the
+	// permissions stanza. Nil on hand-built test sessions, whose builders
+	// fall back to the frozen cfg value. Exactly one stanza reloads;
+	// everything else in cfg stays construction-frozen.
+	permRules *permissionRulesCache
 	// opts snapshots the CLI-flag inputs used at construction time so
 	// later per-turn helpers (approval resolution) never read globals.
 	opts         SessionOptions

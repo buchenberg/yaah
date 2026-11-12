@@ -153,6 +153,7 @@ func newSessionFromStages(lc *sessionConfig, opts SessionOptions, ws *workspaceS
 		wakeCtx:        wakeCtx,
 		wakeCancel:     wakeCancel,
 		cfg:            lc.cfg,
+		permRules:      newPermissionRulesCache(lc.cfg),
 		opts:           opts,
 		provider:       provider,
 		providerName:   lc.providerName,

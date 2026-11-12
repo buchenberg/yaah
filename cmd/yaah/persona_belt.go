@@ -123,6 +123,13 @@ func mergePermissions(global, persona permissions.Rules) permissions.Rules {
 // the evaluator's Ask branch, so a deny from the ruleset or a posture stays
 // terminal whatever the store says.
 //
+// Credential-shaped targets never consult (yaah-x6vi.7): rows naming a
+// secrets file are skipped when the ruleset is built, so an "always" for
+// `.env` — saved before the carve-out or by a future writer that missed the
+// check — stays an ask forever. The resource this filters is the ask's own
+// derivation, the same string the ACP save site refused, so the two sides
+// cannot disagree about what counts.
+//
 // The cwd is canonicalized exactly like the rows that were written
 // (cwdpath.CanonicalStored), so a session started from a symlinked path
 // still reads the rows it wrote. A query failure is not its caller's deny:
@@ -142,9 +149,21 @@ func savedAllowConsult(db *memory.DB, cwd string) func(name, resource string) bo
 	}
 	rules := make(permissions.Rules, 0, len(rows))
 	for _, r := range rows {
+		if permissions.SensitiveResource(r.Action, r.Resource) {
+			continue
+		}
 		rules = append(rules, permissions.Rule{Tool: r.Action, Resource: r.Resource, Effect: permissions.Allow})
 	}
 	return func(name, resource string) bool {
+		// Defence in depth. The evaluator decides the carve-out on the call
+		// (permissions.SensitiveCall), but this closure must not depend on
+		// that: Rules.Match treats an empty Resource as tool-wide and a
+		// non-empty one as a glob, so a row this filter left in — because
+		// the row's own basename looked innocuous — can still match a
+		// secrets target at consult time.
+		if permissions.SensitiveResource(name, resource) {
+			return false
+		}
 		eff, matched := rules.Match(name, resource)
 		return matched && eff == permissions.Allow
 	}

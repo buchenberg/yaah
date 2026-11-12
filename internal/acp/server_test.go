@@ -1847,8 +1847,133 @@ func TestServer_permissionAlwaysRemembers(t *testing.T) {
 	t.Fatal("prompt never completed")
 }
 
-// TestServer_permissionRejectAlwaysDenies checks that reject_always
-// auto-denies the next call for that tool without a second request,
+// TestServer_permissionAlwaysDowngradesSensitiveResource checks the
+// credential carve-out (yaah-x6vi.7): an allow-always for a secrets
+// target behaves as allow-once — the session memory does not remember
+// it, the SaveApproval seam is never offered the row, and the next
+// read of the same file re-asks.
+func TestServer_permissionAlwaysDowngradesSensitiveResource(t *testing.T) {
+	sess := &fakeSession{id: "sess-test"}
+	sess.mu.Lock()
+	sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
+		g1 := sess.approveCall("read", `{"filePath":"deploy/.env"}`)
+		g2 := sess.approveCall("read", `{"filePath":"deploy/.env"}`)
+		if !g1 || !g2 {
+			t.Errorf("both calls must be granted, got %v/%v", g1, g2)
+		}
+		return "done", false, nil
+	}
+	sess.mu.Unlock()
+	h := newACPHarness(t, sess)
+
+	var saves int
+	savesMu := sync.Mutex{}
+	h.server.SaveApproval = func(cwd, tool, resource string) error {
+		savesMu.Lock()
+		saves++
+		savesMu.Unlock()
+		return nil
+	}
+
+	initialize(t, h)
+	sid := newSession(t, h)
+
+	if err := h.send("session/prompt", 3, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"read twice"}]}`, sid)); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recvRequest(t, "session/request_permission")
+	if err := h.reply(msg.ID, map[string]any{
+		"outcome": map[string]any{"outcome": "selected", "optionId": "allow-always"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The second read must re-ask: the carve-out downgraded the first
+	// answer to allow-once, so no memory and no saved row apply.
+	msg = h.recvRequest(t, "session/request_permission")
+	if err := h.reply(msg.ID, map[string]any{
+		"outcome": map[string]any{"outcome": "selected", "optionId": "allow-once"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 8; i++ {
+		msg = h.recv(t)
+		if msg.Method == "session/request_permission" {
+			t.Fatal("a sensitive resource must never stop asking after allow-always")
+		}
+		if msg.Method == "" && msg.Error == nil {
+			var result PromptResult
+			if err := json.Unmarshal(msg.Result, &result); err == nil && result.StopReason == StopEndTurn {
+				savesMu.Lock()
+				n := saves
+				savesMu.Unlock()
+				if n != 0 {
+					t.Fatalf("SaveApproval called %d times for a sensitive resource, want 0", n)
+				}
+				return
+			}
+		}
+	}
+	t.Fatal("prompt never completed")
+}
+
+// TestServer_permissionSessionMemoryDoesNotLiftSensitiveResource checks the
+// other half of the carve-out (yaah-x6vi.7): the session's allow-always
+// memory is keyed by tool name only, so an "always" granted for an ordinary
+// file must not lift a later ask for a secrets file taken through the same
+// tool.
+func TestServer_permissionSessionMemoryDoesNotLiftSensitiveResource(t *testing.T) {
+	sess := &fakeSession{id: "sess-test"}
+	sess.mu.Lock()
+	sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
+		// The first call is an ordinary file: allow-always is remembered
+		// for "edit". The second names a secrets file with the same tool
+		// and must still ask.
+		g1 := sess.approveCall("edit", `{"filePath":"/repo/a.go"}`)
+		g2 := sess.approveCall("edit", `{"filePath":"/repo/.env"}`)
+		if !g1 || !g2 {
+			t.Errorf("both calls must be granted, got %v/%v", g1, g2)
+		}
+		return "done", false, nil
+	}
+	sess.mu.Unlock()
+	h := newACPHarness(t, sess)
+
+	initialize(t, h)
+	sid := newSession(t, h)
+
+	if err := h.send("session/prompt", 3, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"edit twice"}]}`, sid)); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recvRequest(t, "session/request_permission")
+	if err := h.reply(msg.ID, map[string]any{
+		"outcome": map[string]any{"outcome": "selected", "optionId": "allow-always"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The sensitive call must ask again despite the "always" above.
+	msg = h.recvRequest(t, "session/request_permission")
+	if err := h.reply(msg.ID, map[string]any{
+		"outcome": map[string]any{"outcome": "selected", "optionId": "allow-once"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 8; i++ {
+		msg = h.recv(t)
+		if msg.Method == "session/request_permission" {
+			t.Fatal("a sensitive resource must not be lifted by session memory")
+		}
+		if msg.Method == "" && msg.Error == nil {
+			var result PromptResult
+			if err := json.Unmarshal(msg.Result, &result); err == nil && result.StopReason == StopEndTurn {
+				return
+			}
+		}
+	}
+	t.Fatal("prompt never completed")
+}
+
+// TestServer_permissionRejectAlwaysDenies checks that allow-always on a
+// reject auto-denies the next call for that tool without a second request,
 // and a different tool still gets asked.
 func TestServer_permissionRejectAlwaysDenies(t *testing.T) {
 	sess := &fakeSession{id: "sess-test"}
