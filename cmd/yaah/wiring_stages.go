@@ -337,7 +337,12 @@ func buildToolRegistry(cfg *config.Config, opts SessionOptions, ws *workspaceSta
 	pTools := normalizeToolNames(persona.Tools)
 	st.personaName = persona.Name
 	st.personaTools = pTools
-	belt := tools.NewBelt(effectiveBeltNames(cfg.Agent.Default.Tools, nil))
+	// The configured belt resolves through the curated default
+	// (yaah-6mi9.1): empty config takes defaultOrchestratorBelt, an
+	// explicit list wins verbatim, and "*" alone restores the full
+	// surface. The persona intersection below is unchanged and remains
+	// narrow-only.
+	belt := tools.NewBelt(effectiveBeltNames(orchestratorBeltNames(cfg.Agent.Default.Tools), nil))
 	st.belt = belt
 	if isolated {
 		st.reg = tools.NewIsolatedRegistryWithBelt(belt)

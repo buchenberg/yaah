@@ -65,7 +65,12 @@ agents:
     # Tool belt: the tools this session may call. Every tool the model
     # does not use still ships its schema on every request, so a lane
     # that needs only a few tools names them and the rest never reach
-    # the wire. Omit the key (or leave it empty) for the full belt.
+    # the wire. Naming tools is narrow-only: the list is intersected
+    # with the registry, and a name the registry refuses (platform
+    # rules, unknown tool) is skipped with a warning, not added.
+    # Omit the key (or leave it empty) for the curated orchestrator
+    # default — the general-purpose belt. Use ["*"] or ["all"] for the
+    # full registry surface.
     # The belt covers the main session; a sub-agent's tools come from
     # its role file. A tool the belt excludes is never registered, and
     # the session is told which ones are missing. MCP-served tools are
@@ -291,6 +296,7 @@ rather than retrying a request that cannot succeed.
 | `mcp_approval` | `ask` | `allow`, `ask`, or `deny` for MCP-served tools |
 | `permissions` | — | Permission ruleset applied to every agent: ordered per-tool `allow`/`deny`/`ask` rules over a glob, evaluated last-match-wins. See [Permission rulesets](#permission-rulesets) |
 | `mode` | `full` | The session mode axis default: `full` allows mutation, `read-only` withholds the mutating tools (the inspection set only). Independent of the persona — any agent can run in either mode — and switchable mid-session over ACP |
+| `tools` | curated orchestrator default | The main session's tool belt. Explicit list is narrow-only (intersected with the registry; refused entries are warned and skipped). Empty/omitted = curated general-purpose belt; `["*"]` or `["all"]` = full registry surface |
 | `workspace_ask` | `false` | With `--workspace`: prompt before denying out-of-bounds access |
 | `workspace_deny_patterns` | nil (built-in secret defaults) | Globs denied even inside the workspace. `nil` applies `.env`, `*.pem`, `*.key`, SSH keys; `[]` disables the built-ins |
 | `idle_wake_turns` | `true` | Allow a watch that fires while an interactive session is idle to start a turn. `false` queues the digest as a follow-up instead; the tool belt still controls whether `wait_for`/`watch` exist |
