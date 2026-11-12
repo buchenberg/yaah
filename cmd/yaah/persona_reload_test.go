@@ -142,7 +142,7 @@ plan body
 	built := resolveSessionPersona("agents.default.agent", "planner")
 	s := &agentSession{cfg: &config.Config{}, persona: built.Persona}
 	personaBefore := s.persona
-	budgetBefore := s.orchestratorBudget()
+	budgetBefore := resolveOrchestratorBudget(s.cfg, s.persona)
 	beltBefore := effectiveBeltNames(nil, s.persona.Tools)
 
 	// The role changes underneath the session: smaller budgets and a
@@ -172,7 +172,7 @@ plan body
 	if belt := effectiveBeltNames(nil, s.persona.Tools); !slices.Equal(belt, beltBefore) {
 		t.Errorf("existing session belt = %v, want the captured %v", belt, beltBefore)
 	}
-	if got := s.orchestratorBudget(); got.Iterations != budgetBefore.Iterations || got.Turns != budgetBefore.Turns {
+	if got := resolveOrchestratorBudget(s.cfg, s.persona); got.Iterations != budgetBefore.Iterations || got.Turns != budgetBefore.Turns {
 		t.Errorf("existing session budget = %d/%d, want the captured %d/%d", got.Iterations, got.Turns, budgetBefore.Iterations, budgetBefore.Turns)
 	}
 

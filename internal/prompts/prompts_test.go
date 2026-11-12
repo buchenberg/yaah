@@ -376,7 +376,7 @@ func TestBuildMarked_EmptyPersonaGoldenGate(t *testing.T) {
 		withPersona := layers
 		withPersona.Persona = "ORCHESTRATOR PERSONA BODY"
 		full, _ := BuildMarked(withPersona)
-		want := strings.Replace(full, "ORCHESTRATOR PERSONA BODY\n\n", "", 1)
+		want := strings.Replace(full, PersonaGuidanceBlock("ORCHESTRATOR PERSONA BODY")+"\n\n", "", 1)
 		if empty != want {
 			t.Fatalf("an empty persona layer changed the bytes:\n got  %q\n want %q", empty, want)
 		}
@@ -440,13 +440,28 @@ func TestBuildMarked_PersonaLayerOrdering(t *testing.T) {
 // directives injected at the anchor land immediately after the identity —
 // before the persona body. A synthetic identity keeps the expected bytes
 // independent of the embedded identity's trailing whitespace.
+func TestInjectAfterIdentityAt_RejectsMidLineAnchor(t *testing.T) {
+	// yaah-21uk.17: a foreign prompt's identityEnd offset that points into
+	// the middle of a line is not a valid identity anchor and must fall
+	// back to InjectAfterIdentity (substring search / end-of-prompt), not
+	// inject at the trusted-but-wrong offset.
+	prompt := "A foreign prompt\nwith no embedded identity"
+	dirs := []string{"always run tests"}
+
+	got := InjectAfterIdentityAt(prompt, 10, dirs) // 10 is mid-line
+	want := InjectAfterIdentity(prompt, dirs)      // fallback: append at end
+	if got != want {
+		t.Fatalf("mid-line anchor must fall back to InjectAfterIdentity:\n got  %q\n want %q", got, want)
+	}
+}
+
 func TestInjectAfterIdentityAt_PersonaSitsAfterInjections(t *testing.T) {
 	const persona = "ORCHESTRATOR PERSONA BODY"
 	env := "## Environment\nOS: test"
 	dirs := []string{"always run tests"}
 
 	prompt, end := BuildMarked(Layers{Identity: "SYNTH ORCHESTRATOR", Persona: persona, Environment: env})
-	if want := "SYNTH ORCHESTRATOR\n\n" + persona + "\n\n" + env; prompt != want {
+	if want := "SYNTH ORCHESTRATOR\n\n" + PersonaGuidanceBlock(persona) + "\n\n" + env; prompt != want {
 		t.Fatalf("persona must be its own layer between identity and environment:\n got  %q\n want %q", prompt, want)
 	}
 	if end != len("SYNTH ORCHESTRATOR") {
@@ -454,7 +469,7 @@ func TestInjectAfterIdentityAt_PersonaSitsAfterInjections(t *testing.T) {
 	}
 
 	got := InjectAfterIdentityAt(prompt, end, dirs)
-	want := "SYNTH ORCHESTRATOR\n\n" + FormatDirectives(dirs) + "\n\n" + persona + "\n\n" + env
+	want := "SYNTH ORCHESTRATOR\n\n" + FormatDirectives(dirs) + "\n\n" + PersonaGuidanceBlock(persona) + "\n\n" + env
 	if got != want {
 		t.Fatalf("directives must land immediately after the identity, before the persona:\n got  %q\n want %q", got, want)
 	}

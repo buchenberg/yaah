@@ -296,14 +296,14 @@ func TestResumeSessionSwitchToReplaceSplicesIdentity(t *testing.T) {
 	}
 	const grumpLayer = "GRUMP STORED BODY LAYER"
 	const storedTail = "## Environment\nstored environment bytes\n\n## Memory\nstored memory snapshot"
-	stored := strings.TrimSpace(prompts.IdentityPrompt) + "\n\n" + grumpLayer + "\n\n" + storedTail
+	stored := strings.TrimSpace(prompts.IdentityPrompt) + "\n\n" + prompts.PersonaGuidanceBlock(grumpLayer) + "\n\n" + storedTail
 
 	s := &agentSession{cfg: &config.Config{}}
 	s.opts = SessionOptions{ResumeSessionID: "sess-resumed", DirectiveOverrides: []string{"always run tests"}}
 	s.promptLayers = prompts.Layers{Identity: prompts.IdentityPrompt} // retained layers describe TODAY, not the stored prompt
 	s.promptMemory = prompts.MemoryGuidance{}                         // resumed sessions get no fresh guidance block
 	s.systemPrompt = stored
-	s.identityEnd = len(strings.TrimSpace(prompts.IdentityPrompt)) + 2 + len(grumpLayer)
+	s.identityEnd = len(strings.TrimSpace(prompts.IdentityPrompt)) + 2 + len(prompts.PersonaGuidanceBlock(grumpLayer))
 	s.persona = grump
 	s.SetView(&safeCaptureView{})
 	s.mainPrompt = buildMainPrompt(s.cfg, s.opts, stored, s.identityEnd)

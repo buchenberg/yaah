@@ -486,3 +486,37 @@ func (d *DB) SetSessionSystemPrompt(id, prompt string) error {
 		truncateWithMarker(prompt, maxSessionPromptBytes), id)
 	return err
 }
+
+// SetSessionPersonaState atomically records a persona switch's three side
+// effects — the persona column, the rebuilt system prompt (when it
+// changed), and the resolved routing pick (when routable) — in one
+// transaction so a crash between the writes cannot leave the row
+// half-switched (yaah-21uk.17). An empty systemPrompt or pick leaves the
+// corresponding column untouched, matching the conditional writes the
+// caller made before.
+func (d *DB) SetSessionPersonaState(id, persona, systemPrompt, provider, model string) error {
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(`UPDATE sessions SET persona = ? WHERE id = ?`, persona, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("SetSessionPersonaState: no session %q", id)
+	}
+	if systemPrompt != "" {
+		if _, err := tx.Exec(`UPDATE sessions SET system_prompt = ? WHERE id = ?`,
+			truncateWithMarker(systemPrompt, maxSessionPromptBytes), id); err != nil {
+			return err
+		}
+	}
+	if provider != "" && model != "" {
+		if _, err := tx.Exec(`UPDATE sessions SET model = ? WHERE id = ?`, provider+"/"+model, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}

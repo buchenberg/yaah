@@ -355,6 +355,11 @@ func (r *RoleRegistry) LoadDir(dir string) error {
 		if err != nil {
 			return fmt.Errorf("role %q: %w", path, err)
 		}
+		if len(data) > maxRoleFileBytes {
+			slog.Warn("role file exceeds size cap, truncating",
+				"path", path, "cap_bytes", maxRoleFileBytes, "actual_bytes", len(data))
+			data = data[:maxRoleFileBytes]
+		}
 		def, err := parseRoleFile(data)
 		if err != nil {
 			return fmt.Errorf("role %q: %w", path, err)
@@ -414,6 +419,12 @@ func (r *RoleRegistry) List() map[SubAgentRole]RoleDef {
 	}
 	return out
 }
+
+// maxRoleFileBytes caps role/persona files read from disk, mirroring the
+// 64 KiB AGENTS.md/CLAUDE.md cap (yaah-21uk.17). A file that exceeds it is
+// truncated at the byte boundary; the frontmatter sits at the top, well
+// under the cap, so truncation only ever cuts the body tail.
+const maxRoleFileBytes = 64 * 1024
 
 // parseRoleFile splits raw markdown content at the first YAML
 // frontmatter block (delimited by "---" lines) and converts the

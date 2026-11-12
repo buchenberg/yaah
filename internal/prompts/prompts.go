@@ -538,7 +538,13 @@ func InjectAfterIdentityAt(prompt string, identityEnd int, directives []string) 
 		}
 	}
 	if anchor < 0 && identityEnd > 0 && identityEnd <= len(prompt) {
-		anchor = identityEnd
+		// Provenance check (yaah-21uk.17): trust the BuildMarked anchor
+		// only when it lands on a line boundary (start of a line or EOF).
+		// A foreign prompt's offset pointing mid-line is not a valid
+		// identity anchor; fall back to InjectAfterIdentity instead.
+		if identityEnd == len(prompt) || prompt[identityEnd] == '\n' {
+			anchor = identityEnd
+		}
 	}
 	if anchor < 0 {
 		return InjectAfterIdentity(prompt, directives)
@@ -621,6 +627,15 @@ func Build(l Layers) string {
 // landing between the identity and the persona. An empty persona layer is
 // omitted entirely: the prompt is byte-identical to Layers without the
 // field.
+// PersonaGuidanceBlock wraps a persona body in explicit delimiters. The
+// body is a committed role file whose text becomes orchestrator prompt
+// content; without delimiters it could emit its own "## Session directives"
+// heading that visually forges the real block injected later. The
+// delimiters make the boundary unambiguous (yaah-21uk.17).
+func PersonaGuidanceBlock(body string) string {
+	return "<persona-guidance>\n" + body + "\n</persona-guidance>"
+}
+
 func BuildMarked(l Layers) (string, int) {
 	var parts []string
 	identityEnd := -1
@@ -637,7 +652,10 @@ func BuildMarked(l Layers) (string, int) {
 		// Renders after the anchor position computed above, so directives
 		// and mode directives injected at identityEnd keep landing
 		// immediately after the identity block, before this layer.
-		parts = append(parts, persona)
+		// Delimited so a committed role file cannot emit its own "## Session
+		// directives" heading that visually forges the real block injected
+		// later (yaah-21uk.17).
+		parts = append(parts, PersonaGuidanceBlock(persona))
 	}
 
 	if l.MaxSubAgentConcurrency > 0 {
