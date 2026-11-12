@@ -3,7 +3,9 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"strconv"
 	"strings"
 	"unicode/utf16"
@@ -18,12 +20,45 @@ type editEntry struct {
 	NewString string `json:"newString"`
 }
 
+// errEditDecided is the sentinel the edit closures hand back to withFileWrite
+// once the edit logic has reached its own verdict — new content, or a refusal
+// stashed in the captured decision variable. The guard then performs no write
+// and wraps this sentinel with the display path; the caller discards that
+// wrap and returns the stashed verdict verbatim, so every tool-authored
+// message keeps its exact pre-guard wording (the "edit: " prefixes, the
+// multi-edit failure lines).
+var errEditDecided = errors.New("edit decided")
+
+// currentEditBytes turns the write guard's snapshot into the bytes the edit
+// logic reads. cur is nil only when the path did not exist at the guard's
+// Lstat; a missing file must keep failing exactly the way the tool's own
+// read failed it — "edit: " around the workspace read error, fs.ErrNotExist
+// intact — rather than as a misleading "oldString not found", so the error
+// is re-read through the workspace. A file that appeared in between simply
+// reads as it now is; the guard's compare-and-swap still refuses to write
+// against it.
+func currentEditBytes(ctx context.Context, ws Workspace, filePath string, cur []byte) ([]byte, error) {
+	if cur != nil {
+		return cur, nil
+	}
+	data, err := ws.ReadFile(ctx, filePath)
+	if err != nil {
+		return nil, fmt.Errorf("edit: %w", err)
+	}
+	return data, nil
+}
+
 // EditTool performs exact string replacements in a file, with fuzzy fallback
 // when exact match fails. Supports multi-edit via an edits[] array.
 type EditTool struct {
 	PV *PathValidator
 	WS Workspace
 }
+
+// selfGuardsPath marks edit as taking the per-path write guard inside its own
+// Execute (fileguard.go), so the RecordingTool wrapper does not hold the same
+// non-reentrant lock across it.
+func (*EditTool) selfGuardsPath() {}
 
 var (
 	_ PathValidatorSetter = (*EditTool)(nil)
@@ -98,158 +133,202 @@ func (t *EditTool) Execute(ctx context.Context, args string) (string, error) {
 }
 
 func (t *EditTool) executeSingleEdit(ctx context.Context, ws Workspace, filePath, oldStr, newStr string, replaceAll bool) (string, error) {
-	data, err := ws.ReadFile(ctx, filePath)
-	if err != nil {
-		return "", fmt.Errorf("edit: %w", err)
-	}
-
-	crlf := strings.Contains(string(data), "\r\n")
-	content := strings.ReplaceAll(string(data), "\r\n", "\n")
-	oldStr = strings.ReplaceAll(oldStr, "\r\n", "\n")
-	newStr = strings.ReplaceAll(newStr, "\r\n", "\n")
-
-	origLines := countLines(content)
-
-	matched, count, usedFuzzy, decoded := matchEdit(content, oldStr)
-	if count == 0 {
-		hint := ""
-		if d, ok := decodeLiteralEscapes(oldStr); ok && d != oldStr {
-			hint = " (also tried decoding literal escape sequences in oldString)"
+	// The whole read → match → replace → write sequence runs inside the
+	// per-path write guard: the guard's snapshot is the read the tool used to
+	// perform itself, and the guard performs the write, so two edits racing
+	// in one tool batch can no longer interleave read-modify-write cycles
+	// and silently discard the loser's result.
+	var result string
+	var decision error
+	receipt, err := withFileWrite(ctx, ws, filePath, func(cur []byte, _ fs.FileMode) ([]byte, error) {
+		data, rerr := currentEditBytes(ctx, ws, filePath, cur)
+		if rerr != nil {
+			decision = rerr
+			return nil, errEditDecided
 		}
-		return "", fmt.Errorf("edit: oldString not found in %s%s", filePath, hint)
-	}
 
-	// newString is never decoded. When oldString had to be decoded, the model
-	// may well have double-escaped the replacement too — but it may equally
-	// have sent a literal backslash that is meant to survive (a Windows path, a
-	// regex, source containing "\n"), and decoding would silently corrupt it.
-	// Write it verbatim and say so, so the caller can re-issue if needed.
-	newHasEscapes := false
-	if decoded {
-		if _, ok := decodeLiteralEscapes(newStr); ok {
-			newHasEscapes = true
-		}
-	}
+		crlf := strings.Contains(string(data), "\r\n")
+		content := strings.ReplaceAll(string(data), "\r\n", "\n")
+		oldStr = strings.ReplaceAll(oldStr, "\r\n", "\n")
+		newStr = strings.ReplaceAll(newStr, "\r\n", "\n")
 
-	// Fuzzy matching picks a candidate by similarity; the mapped-back
-	// string is what would actually be replaced. When several candidates
-	// exist, tryFuzzyMatch returns the original oldStr as a sentinel even
-	// though it may never occur verbatim — the count refresh below turns
-	// that into the zero case, and the generic uniqueness check
-	// (count > 1) is the real guard against editing the wrong spot.
-	if usedFuzzy {
-		count = strings.Count(content, matched)
+		origLines := countLines(content)
+
+		matched, count, usedFuzzy, decoded := matchEdit(content, oldStr)
 		if count == 0 {
-			return "", fmt.Errorf("edit: fuzzy match found normalized candidates but none match the file verbatim; provide more context or exact text (oldString: %q)", oldStr)
-		}
-	}
-
-	if !replaceAll {
-		if count > 1 {
-			return "", fmt.Errorf("edit: found %d matches for oldString in %s; use replaceAll or provide more context", count, filePath)
-		}
-		content = strings.Replace(content, matched, newStr, 1)
-	} else {
-		content = strings.ReplaceAll(content, matched, newStr)
-	}
-
-	if crlf {
-		content = strings.ReplaceAll(content, "\n", "\r\n")
-	}
-	if err := ws.WriteFile(ctx, filePath, []byte(content), 0o644); err != nil {
-		return "", fmt.Errorf("edit: %w", err)
-	}
-
-	replaced := count
-	if !replaceAll {
-		replaced = 1
-	}
-	newLines := countLines(content)
-	msg := formatEditResult(filePath, replaced, origLines, newLines)
-	msg += decodeNote(decoded, newHasEscapes)
-	return msg, nil
-}
-
-func (t *EditTool) executeMultiEdit(ctx context.Context, ws Workspace, filePath string, edits []editEntry) (string, error) {
-	data, err := ws.ReadFile(ctx, filePath)
-	if err != nil {
-		return "", fmt.Errorf("edit: %w", err)
-	}
-
-	crlf := strings.Contains(string(data), "\r\n")
-	content := strings.ReplaceAll(string(data), "\r\n", "\n")
-	for i := range edits {
-		edits[i].OldString = strings.ReplaceAll(edits[i].OldString, "\r\n", "\n")
-		edits[i].NewString = strings.ReplaceAll(edits[i].NewString, "\r\n", "\n")
-	}
-
-	origLines := countLines(content)
-	totalReplaced := 0
-	decodedAny := false
-	newHasEscapes := false
-	var failures []string
-
-	for i, e := range edits {
-		if e.OldString == e.NewString {
-			failures = append(failures, fmt.Sprintf("edit #%d: oldString and newString must differ", i))
-			continue
-		}
-
-		matched, count, usedFuzzy, decoded := matchEdit(content, e.OldString)
-		if count == 0 {
-			failures = append(failures, fmt.Sprintf("edit #%d: oldString not found", i))
-			continue
-		}
-		// If fuzzy matching was used, verify the mapped-back match actually
-		// exists in the original content the expected number of times.
-		if usedFuzzy {
-			actualCount := strings.Count(content, matched)
-			if actualCount == 0 {
-				failures = append(failures, fmt.Sprintf("edit #%d: fuzzy match found candidate but it does not exist in original file", i))
-				continue
+			hint := ""
+			if d, ok := decodeLiteralEscapes(oldStr); ok && d != oldStr {
+				hint = " (also tried decoding literal escape sequences in oldString)"
 			}
-			if actualCount > 1 {
-				failures = append(failures, fmt.Sprintf("edit #%d: fuzzy match produced %d matches — use more context for disambiguation", i, actualCount))
-				continue
-			}
-			count = actualCount
+			decision = fmt.Errorf("edit: oldString not found in %s%s", filePath, hint)
+			return nil, errEditDecided
 		}
 
-		if count > 1 {
-			failures = append(failures, fmt.Sprintf("edit #%d: found %d matches — use more context for disambiguation", i, count))
-			continue
-		}
-
-		content = strings.Replace(content, matched, e.NewString, 1)
-		totalReplaced++
+		// newString is never decoded. When oldString had to be decoded, the model
+		// may well have double-escaped the replacement too — but it may equally
+		// have sent a literal backslash that is meant to survive (a Windows path, a
+		// regex, source containing "\n"), and decoding would silently corrupt it.
+		// Write it verbatim and say so, so the caller can re-issue if needed.
+		newHasEscapes := false
 		if decoded {
-			// Only an applied edit whose match needed decoding is worth noting;
-			// an entry that failed verification never reaches this point.
-			decodedAny = true
-			if _, ok := decodeLiteralEscapes(e.NewString); ok {
+			if _, ok := decodeLiteralEscapes(newStr); ok {
 				newHasEscapes = true
 			}
 		}
-	}
 
-	if totalReplaced == 0 && len(failures) > 0 {
-		return "", fmt.Errorf("edit: all %d edits failed:\n%s", len(edits), strings.Join(failures, "\n"))
-	}
+		// Fuzzy matching picks a candidate by similarity; the mapped-back
+		// string is what would actually be replaced. When several candidates
+		// exist, tryFuzzyMatch returns the original oldStr as a sentinel even
+		// though it may never occur verbatim — the count refresh below turns
+		// that into the zero case, and the generic uniqueness check
+		// (count > 1) is the real guard against editing the wrong spot.
+		if usedFuzzy {
+			count = strings.Count(content, matched)
+			if count == 0 {
+				decision = fmt.Errorf("edit: fuzzy match found normalized candidates but none match the file verbatim; provide more context or exact text (oldString: %q)", oldStr)
+				return nil, errEditDecided
+			}
+		}
 
-	if crlf {
-		content = strings.ReplaceAll(content, "\n", "\r\n")
+		if !replaceAll {
+			if count > 1 {
+				decision = fmt.Errorf("edit: found %d matches for oldString in %s; use replaceAll or provide more context", count, filePath)
+				return nil, errEditDecided
+			}
+			content = strings.Replace(content, matched, newStr, 1)
+		} else {
+			content = strings.ReplaceAll(content, matched, newStr)
+		}
+
+		if crlf {
+			content = strings.ReplaceAll(content, "\n", "\r\n")
+		}
+
+		replaced := count
+		if !replaceAll {
+			replaced = 1
+		}
+		newLines := countLines(content)
+		msg := formatEditResult(filePath, replaced, origLines, newLines)
+		msg += decodeNote(decoded, newHasEscapes)
+		result = msg
+		return []byte(content), nil
+	})
+	if decision != nil {
+		return "", decision
 	}
-	if err := ws.WriteFile(ctx, filePath, []byte(content), 0o644); err != nil {
+	if err != nil {
 		return "", fmt.Errorf("edit: %w", err)
 	}
+	return appendEditReceipt(result, receipt), nil
+}
 
-	newLines := countLines(content)
-	msg := formatEditResult(filePath, totalReplaced, origLines, newLines)
-	msg += decodeNote(decodedAny, newHasEscapes)
-	if len(failures) > 0 {
-		msg += fmt.Sprintf("\n%d edit(s) failed:\n%s", len(failures), strings.Join(failures, "\n"))
+func (t *EditTool) executeMultiEdit(ctx context.Context, ws Workspace, filePath string, edits []editEntry) (string, error) {
+	// Same guard shape as executeSingleEdit: one critical section around the
+	// whole read → apply → write sequence, so a single edit and a multi-edit
+	// racing on the same file in one batch serialize instead of clobbering.
+	var result string
+	var decision error
+	receipt, err := withFileWrite(ctx, ws, filePath, func(cur []byte, _ fs.FileMode) ([]byte, error) {
+		data, rerr := currentEditBytes(ctx, ws, filePath, cur)
+		if rerr != nil {
+			decision = rerr
+			return nil, errEditDecided
+		}
+
+		crlf := strings.Contains(string(data), "\r\n")
+		content := strings.ReplaceAll(string(data), "\r\n", "\n")
+		for i := range edits {
+			edits[i].OldString = strings.ReplaceAll(edits[i].OldString, "\r\n", "\n")
+			edits[i].NewString = strings.ReplaceAll(edits[i].NewString, "\r\n", "\n")
+		}
+
+		origLines := countLines(content)
+		totalReplaced := 0
+		decodedAny := false
+		newHasEscapes := false
+		var failures []string
+
+		for i, e := range edits {
+			if e.OldString == e.NewString {
+				failures = append(failures, fmt.Sprintf("edit #%d: oldString and newString must differ", i))
+				continue
+			}
+
+			matched, count, usedFuzzy, decoded := matchEdit(content, e.OldString)
+			if count == 0 {
+				failures = append(failures, fmt.Sprintf("edit #%d: oldString not found", i))
+				continue
+			}
+			// If fuzzy matching was used, verify the mapped-back match actually
+			// exists in the original content the expected number of times.
+			if usedFuzzy {
+				actualCount := strings.Count(content, matched)
+				if actualCount == 0 {
+					failures = append(failures, fmt.Sprintf("edit #%d: fuzzy match found candidate but it does not exist in original file", i))
+					continue
+				}
+				if actualCount > 1 {
+					failures = append(failures, fmt.Sprintf("edit #%d: fuzzy match produced %d matches — use more context for disambiguation", i, actualCount))
+					continue
+				}
+				count = actualCount
+			}
+
+			if count > 1 {
+				failures = append(failures, fmt.Sprintf("edit #%d: found %d matches — use more context for disambiguation", i, count))
+				continue
+			}
+
+			content = strings.Replace(content, matched, e.NewString, 1)
+			totalReplaced++
+			if decoded {
+				// Only an applied edit whose match needed decoding is worth noting;
+				// an entry that failed verification never reaches this point.
+				decodedAny = true
+				if _, ok := decodeLiteralEscapes(e.NewString); ok {
+					newHasEscapes = true
+				}
+			}
+		}
+
+		if totalReplaced == 0 && len(failures) > 0 {
+			decision = fmt.Errorf("edit: all %d edits failed:\n%s", len(edits), strings.Join(failures, "\n"))
+			return nil, errEditDecided
+		}
+
+		if crlf {
+			content = strings.ReplaceAll(content, "\n", "\r\n")
+		}
+
+		newLines := countLines(content)
+		msg := formatEditResult(filePath, totalReplaced, origLines, newLines)
+		msg += decodeNote(decodedAny, newHasEscapes)
+		if len(failures) > 0 {
+			msg += fmt.Sprintf("\n%d edit(s) failed:\n%s", len(failures), strings.Join(failures, "\n"))
+		}
+		result = msg
+		return []byte(content), nil
+	})
+	if decision != nil {
+		return "", decision
 	}
-	return msg, nil
+	if err != nil {
+		return "", fmt.Errorf("edit: %w", err)
+	}
+	return appendEditReceipt(result, receipt), nil
+}
+
+// appendEditReceipt closes a successful edit result with the write guard's
+// receipt as its final line: the path, the byte delta, and the post-write
+// digest. That line is what makes a lost update legible in the result
+// itself — "375 -> 383" immediately after "375 -> 396" is visibly
+// impossible, where a bare "edited" is not. Trailing newlines on the
+// message are collapsed so the receipt is always the last line, separated
+// by exactly one newline: never glued to the message, never floated by a
+// blank line, never duplicated.
+func appendEditReceipt(msg string, r FileWriteReceipt) string {
+	return strings.TrimRight(msg, "\n") + "\n" + r.String()
 }
 
 // matchEdit locates oldStr in content, preferring an exact match, then the

@@ -418,3 +418,41 @@ func TestRecordingTool_RetainedLaneIsSpeculative(t *testing.T) {
 		t.Errorf("render = %q, want speculative warning", got)
 	}
 }
+
+// TestConflictWorkspaceRel_ResolvesThroughAnAliasedRoot pins the fallback that
+// keeps receipts and refusals path-relative when the root and the resolved
+// path reach the same directory by different spellings. Windows hits this on
+// every write (EvalSymlinks yields the 8.3 short form while the root keeps the
+// long one); a symlinked root reproduces it anywhere. Without the fallback the
+// receipt says "wrote C:/Users/RUNNER~1/AppData/…/x.go" instead of "x.go".
+func TestConflictWorkspaceRel_ResolvesThroughAnAliasedRoot(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(dir, "alias")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Skipf("symlinks unavailable on this platform: %v", err)
+	}
+	target := filepath.Join(dir, "internal", "x.go")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("package internal\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A workspace whose root is the alias: filepath.Rel cannot relate it to
+	// the real path, so only canonicalizing both sides recovers the relative
+	// form.
+	ws := newGuardWorkspace(link)
+
+	if got, want := conflictWorkspaceRel(ws, target), "internal/x.go"; got != want {
+		t.Errorf("conflictWorkspaceRel = %q, want %q", got, want)
+	}
+
+	// A refusal can name a path the out-of-band writer already deleted, so the
+	// path itself no longer resolves — its directory still does.
+	if err := os.Remove(target); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := conflictWorkspaceRel(ws, target), "internal/x.go"; got != want {
+		t.Errorf("conflictWorkspaceRel for a removed file = %q, want %q", got, want)
+	}
+}

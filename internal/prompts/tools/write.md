@@ -1,3 +1,5 @@
 `write(content, filePath)` — Creates or overwrites a file. Use `edit` for partial changes to an existing file.
 
 Writes are confined to the workspace root. Paths outside it (including the system temp directory) are refused with the rejected path and the allowed root; use `.scratch/` inside the workspace for disposable files.
+
+Writes to the same file are serialized in-process, so a same-file pair in one batch is ordered rather than lost — the later call simply wins, and its receipt's before-bytes show what it replaced. `write` never reads the file to decide anything, so the compare-and-swap only refuses an out-of-band change that lands inside the call itself: if that happens the write is refused with both digests (`file changed by another writer ...; re-read and retry`) and the file is left untouched. A successful write ends with a receipt line — the path, the byte delta, and the digest of what is now on disk; `created` rather than `wrote` marks a file that did not exist before the call.

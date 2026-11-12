@@ -2,10 +2,12 @@ package tools
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"regexp"
 
@@ -19,6 +21,11 @@ type ReplaceTool struct {
 	PV *PathValidator
 	WS Workspace
 }
+
+// selfGuardsPath marks replace as taking an in-process write guard inside its
+// own Execute (withFileWriteSet, fileguard.go), so the RecordingTool wrapper
+// does not hold the same non-reentrant lock across it.
+func (*ReplaceTool) selfGuardsPath() {}
 
 var (
 	_ PathValidatorSetter = (*ReplaceTool)(nil)
@@ -92,6 +99,11 @@ func (t *ReplaceTool) Execute(ctx context.Context, args string) (string, error) 
 	totalMatches := 0
 	totalChanged := 0
 
+	// Phase 1 walks the tree applying the per-file skip rules. A dry run is
+	// read-only and completes here; a mutating run only collects candidate
+	// paths and defers all reading and writing to phase 2, so every path this
+	// call can write is covered by one set-lock acquisition.
+	var candidates []string
 	root := params.Path
 	walkErr := walkWorkspace(ctx, ws, root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -119,42 +131,25 @@ func (t *ReplaceTool) Execute(ctx context.Context, args string) (string, error) 
 			return ctx.Err()
 		}
 
-		data, readErr := ws.ReadFile(ctx, p)
-		if readErr != nil {
-			report.failf("%s: read: %v", p, readErr)
-			return nil
-		}
-
-		content := string(data)
-		newContent := re.ReplaceAllString(content, params.Replacement)
-		if newContent == content {
-			return nil
-		}
-
-		matchCount := countMatches(re, content)
-
 		if params.DryRun {
+			data, readErr := ws.ReadFile(ctx, p)
+			if readErr != nil {
+				report.failf("%s: read: %v", p, readErr)
+				return nil
+			}
+			content := string(data)
+			newContent := re.ReplaceAllString(content, params.Replacement)
+			if newContent == content {
+				return nil
+			}
+			matchCount := countMatches(re, content)
 			report.donef("%s: %d match(es)", p, matchCount)
 			totalFiles++
 			totalMatches += matchCount
 			return nil
 		}
 
-		mode := os.FileMode(0o644)
-		if fi, err := d.Info(); err == nil {
-			mode = fi.Mode()
-		} else if st, err := ws.Stat(ctx, p); err == nil {
-			mode = st.Mode()
-		}
-		if err := ws.WriteFile(ctx, p, []byte(newContent), mode); err != nil {
-			report.failf("%s: write: %v", p, err)
-			return nil
-		}
-
-		report.donef("%s: %d match(es)", p, matchCount)
-		totalFiles++
-		totalMatches += matchCount
-		totalChanged++
+		candidates = append(candidates, p)
 		return nil
 	})
 
@@ -170,10 +165,153 @@ func (t *ReplaceTool) Execute(ctx context.Context, args string) (string, error) 
 		headline := fmt.Sprintf("DRY RUN — %d file(s) with %d match(es):", totalFiles, totalMatches)
 		return report.Report(headline)
 	}
+	// Phase 2: one set acquisition over every candidate — the walk's
+	// deterministic order feeds it, and the guard's sorted acquisition keeps
+	// two overlapping replace calls from deadlocking — then each file's
+	// read → substitute → verify → write runs under it. A dry run never gets
+	// here; it wrote nothing in phase 1 and returned above.
+	var staleErr *StaleWriteError
+	withFileWriteSet(candidates, func() error {
+		for _, p := range candidates {
+			if ctx.Err() != nil {
+				return nil
+			}
+			outcome, matchCount, receipt, ferr := replaceFileLocked(ctx, ws, p, re, params.Replacement)
+			switch outcome {
+			case replaceUnchanged:
+				// The pattern did not change this file; stay silent, as the
+				// walk always has.
+			case replaceWritten:
+				report.donef("%s: %d match(es), %s", p, matchCount, replaceReceiptTail(receipt))
+				totalFiles++
+				totalMatches += matchCount
+				totalChanged++
+			case replaceReadFailed:
+				report.failf("%s: read: %v", p, ferr)
+			case replaceWriteFailed:
+				report.failf("%s: write: %v", p, ferr)
+			case replaceStale:
+				var stale *StaleWriteError
+				if errors.As(ferr, &stale) {
+					report.failf("%v", stale)
+					if staleErr == nil {
+						staleErr = stale
+					}
+				}
+			}
+		}
+		return nil
+	})
+	if ctx.Err() != nil {
+		return "", fmt.Errorf("replace: %w", ctx.Err())
+	}
+
 	headline := fmt.Sprintf("Replaced %d match(es) across %d file(s):", totalMatches, totalChanged)
-	return report.Report(headline)
+	out, rerr := report.Report(headline)
+	if staleErr != nil {
+		// The report text already carries each refusal line; joining keeps
+		// the typed error reachable through errors.As without rewriting the
+		// report's shape.
+		rerr = errors.Join(rerr, staleErr)
+	}
+	return out, rerr
 }
 
 func countMatches(re *regexp.Regexp, content string) int {
 	return len(re.FindAllStringIndex(content, -1))
+}
+
+// replaceOutcome classifies one per-file result of a mutating replace run.
+type replaceOutcome int
+
+const (
+	replaceUnchanged   replaceOutcome = iota // the pattern did not change the file
+	replaceWritten                           // substituted and written
+	replaceReadFailed                        // the read or the verify-read failed
+	replaceWriteFailed                       // the write itself failed
+	replaceStale                             // another writer changed the file mid-run
+)
+
+// replaceFileLocked applies the substitution to one file with the guard's
+// compare-and-swap discipline: read the bytes and their digest, transform,
+// re-read the digest, refuse with *StaleWriteError if an out-of-band writer
+// changed the file in between, else write the new bytes with the file's
+// existing permission bits (0o644 for a vanished path is unreachable — a
+// missing file reports replaceReadFailed first). A written file also
+// returns its receipt, built from the bytes this call already read and
+// wrote — never from a third read of the file.
+//
+// It takes no lock of its own: the per-path lock is refcounted but not
+// reentrant per goroutine, so this must only be called with the caller's
+// withFileWriteSet already held over abs and its siblings — acquiring again
+// here would deadlock the goroutine on itself. Calls to ws inside must not
+// reach back into the guard (withFileWrite is fine only for paths outside
+// the held set).
+func replaceFileLocked(ctx context.Context, ws Workspace, abs string, re *regexp.Regexp, replacement string) (replaceOutcome, int, FileWriteReceipt, error) {
+	before, cur, err := fileGuardSnapshot(ctx, ws, abs)
+	if err != nil {
+		return replaceReadFailed, 0, FileWriteReceipt{}, err
+	}
+	if !before.Exists {
+		// The walk listed this file but it is gone by the read; surface it
+		// the way a read failure always has.
+		return replaceReadFailed, 0, FileWriteReceipt{}, fs.ErrNotExist
+	}
+	content := string(cur)
+	newContent := re.ReplaceAllString(content, replacement)
+	if newContent == content {
+		return replaceUnchanged, 0, FileWriteReceipt{}, nil
+	}
+	matchCount := countMatches(re, content)
+
+	// Compare-and-swap: the set lock only orders goroutines in this process,
+	// so anything that raced past it — another process, an editor — is caught
+	// here, before a byte is written.
+	after, _, err := fileGuardSnapshot(ctx, ws, abs)
+	if err != nil {
+		return replaceReadFailed, matchCount, FileWriteReceipt{}, err
+	}
+	if after.Exists != before.Exists || after.Digest != before.Digest {
+		return replaceStale, matchCount, FileWriteReceipt{}, &StaleWriteError{
+			Path:     conflictWorkspaceRel(ws, abs),
+			Expected: before.Digest,
+			Found:    after.Digest,
+		}
+	}
+
+	mode := before.Mode
+	if mode == 0 {
+		mode = 0o644
+	}
+	if err := ws.WriteFile(ctx, abs, []byte(newContent), mode); err != nil {
+		return replaceWriteFailed, matchCount, FileWriteReceipt{}, err
+	}
+	// The receipt is built entirely from what this call already knows: the
+	// bytes it read (verified by the compare-and-swap above) and the bytes
+	// it just wrote, so the digest comes off the written content rather
+	// than a third read of the file.
+	sum := sha256.Sum256([]byte(newContent))
+	return replaceWritten, matchCount, FileWriteReceipt{
+		Path:        abs,
+		BeforeBytes: len(cur),
+		AfterBytes:  len(newContent),
+		Digest:      hex.EncodeToString(sum[:]),
+	}, nil
+}
+
+// replaceReceiptTail folds a written file's receipt into its per-file report
+// line — byte delta plus a short digest — rather than adding a second line
+// per file. The digest keeps the receipt's 12-hex prefix. A replace never
+// creates files (a path missing at the read reports a failure before any
+// write happens), so the created branch exists only to keep the shape
+// honest.
+func replaceReceiptTail(r FileWriteReceipt) string {
+	digest := r.Digest
+	if len(digest) > 12 {
+		digest = digest[:12]
+	}
+	if r.Created || r.BeforeBytes < 0 {
+		return fmt.Sprintf("created, %d bytes, sha256:%s", r.AfterBytes, digest)
+	}
+	return fmt.Sprintf("%d -> %d bytes, sha256:%s", r.BeforeBytes, r.AfterBytes, digest)
 }

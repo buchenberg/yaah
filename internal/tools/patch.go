@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"strconv"
 	"strings"
 
@@ -16,6 +17,11 @@ type PatchTool struct {
 	PV *PathValidator
 	WS Workspace
 }
+
+// selfGuardsPath marks patch as taking the per-path write guard inside its own
+// Execute (fileguard.go), so the RecordingTool wrapper does not hold the same
+// non-reentrant lock across it.
+func (*PatchTool) selfGuardsPath() {}
 
 var (
 	_ PathValidatorSetter = (*PatchTool)(nil)
@@ -78,24 +84,53 @@ func (t *PatchTool) Execute(ctx context.Context, args string) (string, error) {
 	}
 	target = resolved
 
-	data, err := ws.ReadFile(ctx, target)
+	// The whole read → verify hunks → write sequence runs inside one write
+	// guard call on the resolved target: the per-path lock orders concurrent
+	// dispatches on this file, and the compare-and-swap refuses a write whose
+	// base changed under it. The tool's own WriteFile is gone — the guard
+	// writes the bytes mutate returns.
+	var beforeLines, afterLines int
+	var receipt FileWriteReceipt
+	var toolErr error
+	receipt, err = withFileWrite(ctx, ws, target, func(cur []byte, _ fs.FileMode) ([]byte, error) {
+		if cur == nil {
+			toolErr = fmt.Errorf("patch: %w", guardMissingRead(ctx, ws, target))
+			return nil, toolErr
+		}
+		content := string(cur)
+		applied, report := applyUnifiedDiff(content, patch)
+		if report.failedCount() > 0 {
+			// The target is left byte-identical: a patch is all-or-nothing.
+			_, toolErr = report.Report(fmt.Sprintf("patch: %d hunk(s) failed; %s left unchanged:", report.failedCount(), target))
+			return nil, toolErr
+		}
+		beforeLines, afterLines = countLines(content), countLines(applied)
+		return []byte(applied), nil
+	})
+	if toolErr != nil {
+		// The guard wraps a mutate error with the path; the tool's own wording
+		// is what the caller has always seen, so it wins.
+		return "", toolErr
+	}
 	if err != nil {
-		return "", fmt.Errorf("patch: %w", err)
-	}
-	content := string(data)
-
-	applied, report := applyUnifiedDiff(content, patch)
-	if report.failedCount() > 0 {
-		// The target is left byte-identical: a patch is all-or-nothing.
-		_, reportErr := report.Report(fmt.Sprintf("patch: %d hunk(s) failed; %s left unchanged:", report.failedCount(), target))
-		return "", reportErr
+		return "", err
 	}
 
-	if err := ws.WriteFile(ctx, target, []byte(applied), 0o644); err != nil {
-		return "", fmt.Errorf("patch: %w", err)
-	}
+	return fmt.Sprintf("Patch applied to %s (%d → %d lines)\n%s", target, beforeLines, afterLines, receipt.String()), nil
+}
 
-	return fmt.Sprintf("Patch applied to %s (%d → %d lines)", target, countLines(content), countLines(applied)), nil
+// guardMissingRead derives the missing-file error for a path the write guard
+// reported absent (a nil cur). The guard's snapshot deliberately collapses a
+// missing file into nil bytes, so the tool re-reads once — on this error path
+// only, where no write will happen — to return the same workspace read error
+// it produced before the guard conversion, instead of a new message.
+// json_query's write and delete paths share this helper.
+func guardMissingRead(ctx context.Context, ws Workspace, path string) error {
+	_, err := ws.ReadFile(ctx, path)
+	if err == nil {
+		err = fs.ErrNotExist
+	}
+	return err
 }
 
 // patchTargets returns the distinct target paths named by the patch's

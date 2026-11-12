@@ -106,7 +106,8 @@ type transferRequest struct {
 //
 // The no-clobber rule is check-then-act: a writer that creates dst between the
 // Lstat here and the substrate primitive below can still be overwritten.
-// In-process dispatches are serialized by the ConflictTracker locks; an
+// The ConflictTracker locks serialize sub-agent dispatches only; the
+// orchestrator tier has no such serialization for this window, and an
 // external writer racing a dispatch is a documented limitation — no portable
 // no-replace rename exists on every supported OS.
 //

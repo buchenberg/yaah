@@ -9,6 +9,9 @@ Always batch independent tool calls in a single response:
 - Fire all reads, greps, globs, and file_info calls together.
 - Plan ALL files before reading any. Do not read one, think, read another,
   repeat. Five 1-read turns cost 5× the time and context of one 5-read turn.
+- Two mutating calls on the SAME path are not independent: concurrent writes
+  to one file are serialized, not order-free. Put a same-file pair in one
+  call (`edit` with an `edits[]` array) or in separate turns, never batched.
 
 ### Reason before reading
 
