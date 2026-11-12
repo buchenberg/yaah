@@ -77,7 +77,13 @@ agents:
     # the session is told which ones are missing. MCP-served tools are
     # admitted at registration: a configured mcp_servers entry is
     # itself the opt-in, so this list cannot silently drop a server's
-    # tools (name them to narrow them back out on purpose).
+    # tools (name them to narrow them back out on purpose). The
+    # curated default folds the file cluster and the analysis/net
+    # families behind the toolbelt loader (one stub line each,
+    # mountable mid-session); an explicit list that names folded tools
+    # keeps them always on, one that names toolbelt mounts them on
+    # demand, and one that omits toolbelt keeps the session as
+    # configured.
     tools: [read, write, edit, bash, grep, glob, ls, file_info]
 
     compaction_threshold: 0.5          # fraction of context_window
@@ -298,7 +304,7 @@ rather than retrying a request that cannot succeed.
 | `mcp_approval` | `ask` | `allow`, `ask`, or `deny` for MCP-served tools |
 | `permissions` | — | Permission ruleset applied to every agent: ordered per-tool `allow`/`deny`/`ask` rules over a glob, evaluated last-match-wins. See [Permission rulesets](#permission-rulesets) |
 | `mode` | `full` | The session mode axis default: `full` allows mutation, `read-only` withholds the mutating tools (the inspection set only). Independent of the persona — any agent can run in either mode — and switchable mid-session over ACP |
-| `tools` | curated orchestrator default | The main session's tool belt. Explicit list is narrow-only (intersected with the registry; refused entries are warned and skipped). Empty/omitted = curated general-purpose belt; `["*"]` or `["all"]` = full registry surface. Withheld by the curated default, so name them to get them back: the file cluster `append`, `bulk_files`, `checksum`, `copy`, `copy_tree`, `find`, `mkdir`, `move`, `move_tree`, `rmdir`, `tail` (the developer role carries them — reach them through `delegate`); see `cmd/yaah/orchestrator_belt.go`. Gated feature lanes (`proposal` settlement, the `memory_*` cluster, the Go quintet `go_test`/`go_mod`/`go_outline`/`go_refactor`/`staticcheck`, `apply_out`, the wake pair `wait_for`/`watch`) are belt-admitted and register when their own gate opens — a session that opens the lane keeps its tools; `wait_for`/`watch` register only in interactive sessions (REPL, TUI, ACP, serve) and never reach a one-shot/headless floor. MCP-served tools are admitted at registration: a configured `mcp_servers` entry is itself the opt-in |
+| `tools` | curated orchestrator default | The main session's tool belt. Explicit list is narrow-only (intersected with the registry; refused entries are warned and skipped). Empty/omitted = curated general-purpose belt; `["*"]` or `["all"]` = full registry surface. The curated default carries the working core plus the spine directly, and the `toolbelt` loader for the rest: the file cluster and two rarely-used families are folded to mountable stubs (see [the lazy toolbelt](#the-lazy-toolbelt-toolbelt) below). Withheld outright by the curated default, mountable as the `file_ops` family, and also carried by the developer role (so `delegate` reaches them too): `append`, `bulk_files`, `checksum`, `copy`, `copy_tree`, `find`, `mkdir`, `move`, `move_tree`, `rmdir`, `tail`. Folded by the curated default, mountable as the `analysis` family (`calculate`, `json_query`, `file_info`, `diff`, `bisect`) and the `net` family (`http`, `webfetch`): name them in this list to keep them always on. See `cmd/yaah/orchestrator_belt.go`. Gated feature lanes (`proposal` settlement, the `memory_*` cluster, the Go quintet `go_test`/`go_mod`/`go_outline`/`go_refactor`/`staticcheck`, `apply_out`, the wake pair `wait_for`/`watch`) are belt-admitted and register when their own gate opens — a session that opens the lane keeps its tools; `wait_for`/`watch` register only in interactive sessions (REPL, TUI, ACP, serve) and never reach a one-shot/headless floor. MCP-served tools are admitted at registration: a configured `mcp_servers` entry is itself the opt-in |
 | `workspace_ask` | `false` | With `--workspace`: prompt before denying out-of-bounds access |
 | `workspace_deny_patterns` | nil (built-in secret defaults) | Globs denied even inside the workspace. `nil` applies `.env`, `*.pem`, `*.key`, SSH keys; `[]` disables the built-ins |
 | `idle_wake_turns` | `true` | Allow a watch that fires while an interactive session is idle to start a turn. `false` queues the digest as a follow-up instead; the session-shape gate controls whether `wait_for`/`watch` exist (since yaah-6mi9.2 they register in interactive sessions and never in a one-shot run, belt or no belt) |
@@ -413,6 +419,44 @@ sub-agent spans (`subagent.budget.*`), in `list_subagents`, and in
 |---|---|---|
 | `provider` | — | Fallback provider name |
 | `model` | — | Fallback model name |
+
+### The lazy toolbelt (`toolbelt`)
+
+The curated default belt folds rarely-called tools out of the always-on
+floor and advertises them as one-line stubs in the prompt
+(`docs/lazy-toolbelt-design.md`): each folded schema would cost ~780
+prompt tokens on every call that never uses it. The `toolbelt` tool is
+the loader for that surface:
+
+| Family | Members | Notes |
+|---|---|---|
+| `file_ops` | `append`, `bulk_files`, `checksum`, `copy`, `copy_tree`, `find`, `mkdir`, `move`, `move_tree`, `rmdir`, `tail` | The restore path yaah-6mi9.1 withheld; the developer role still carries them, so `delegate` reaches them too |
+| `analysis` | `calculate`, `json_query`, `file_info`, `diff`, `bisect` | Folded from always-on by the curated default (yaah-6mi9.5); name them in `agents.default.tools` to keep them always on |
+| `net` | `http`, `webfetch` | Same fold as `analysis` |
+
+- `action: list` shows each family, its mount state, and full
+  membership; `action: mount` registers a family for the rest of the
+  session.
+- Mount is sticky: there is no unmount, and remounting is a no-op.
+- Mounts flow through the same admission as startup registration: a
+  persona allowlist cannot be widened by a mount, read-only sessions
+  withhold the mutating members (a family every member of which is
+  withheld fails the mount citing `mode_floor`), and every mounted
+  call still passes the per-call permission and approval gates. A
+  mount adds schemas, never permission. The mount-time check consults
+  the session's *live* mode and persona — a mid-session `session/set_mode`
+  flip or role switch changes what a later mount admits — and the
+  per-loop advertise-time narrowing remains the floor above it either
+  way.
+- A mount appends a `yaah.tool.mounted.v1` fact on the session's root
+  scope, naming the family, the tools, and any per-member refusals.
+- Belt admission of `toolbelt` is the opt-in: the curated default names
+  it, an explicit `agents.default.tools` list that omits it keeps the
+  session exactly as configured (no stubs, no mounts), and one that
+  names it sanctions the widening.
+- Sub-agents do not carry the loader: their surface is their role
+  profile. A dispatch pattern that needs a family is a role-file
+  change.
 
 ### Middleware
 

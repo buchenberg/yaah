@@ -10,9 +10,9 @@
 # builds the tree fresh, runs exactly that instrument, and fails
 # closed when the measured per-call floor exceeds FLOOR_BUDGET.
 #
-# The budget is the post-curation baseline (yaah-6mi9.1/6mi9.2:
-# 13,482-13,506 tokens/call over three measurements) plus ~15% for
-# prompt-text noise: 15,500 tokens/call. A failure is not a flake —
+# The budget is the post-fold baseline (yaah-6mi9.5: 11,712 tokens/call
+# measured 2026-11-12) plus ~15% for prompt-text noise: 13,500
+# tokens/call. A failure is not a flake —
 # something changed the shape of every call (a belt growth, a prompt
 # reorganization, a provider cache shift). Name the cause in the bead
 # evidence, then either justify the new floor by updating the budget
@@ -30,7 +30,7 @@ REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 
 # The pinned per-call budget, in prompt-in tokens (cache reads
 # included — they are prompt-in cost even when billed at a discount).
-FLOOR_BUDGET_PER_CALL=15500
+FLOOR_BUDGET_PER_CALL=13500
 
 export DOCKER_HOST="${DOCKER_HOST:-unix:///run/user/$(id -u)/podman/podman.sock}"
 

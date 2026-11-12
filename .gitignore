@@ -95,3 +95,6 @@ pours/
 *.gate.lock*
 
 .agents
+
+# Terminal-bench run artifacts (OUTPUT_PATH landings — evidence cites run-ids, not files)
+terminal-bench/runs-*/

@@ -297,6 +297,38 @@ func ToolBeltGuidance(excluded int) string {
 	return b.String()
 }
 
+// MountableFamily is the prompt-side shape of a mountable tool family
+// (yaah-6mi9.5). A local type, not tools.ToolFamily: the tools package
+// imports this one for its descriptions, and the family's authority
+// (the map the toolbelt mounts from) lives there; the wiring converts
+// at the single call site.
+type MountableFamily struct {
+	Name        string
+	Description string
+	Tools       []string
+}
+
+// MountableToolFamilies renders the lazy toolbelt's stub block: the
+// recognition surface for folded tools (yaah-6mi9.5, designed in
+// docs/lazy-toolbelt-design.md). One line per family, full membership,
+// no ellipses — a hidden member is a tool the model cannot ask for,
+// and a line costs ~25–50 tokens against ~780 per schema. This block
+// is why the ToolBeltGuidance sentence stays true in a folded
+// session: "do not attempt any other tool" — the named families are
+// the instructed exception, one mount away.
+func MountableToolFamilies(families []MountableFamily) string {
+	if len(families) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## Mountable tool families\n\n")
+	b.WriteString("These tools are not loaded. Mount a family with the `toolbelt` tool (action: mount) to load it for the rest of the session; mounting costs a turn and widens every later call.\n")
+	for _, f := range families {
+		fmt.Fprintf(&b, "- %s: %s (%s)\n", f.Name, f.Description, strings.Join(f.Tools, ", "))
+	}
+	return b.String()
+}
+
 // SubAgentUnavailableTools names the tools a role asked for that this
 // environment cannot offer — a shell the machine does not have, Go
 // toolchain machinery in a workspace that is not a Go module (yaah-9n0).

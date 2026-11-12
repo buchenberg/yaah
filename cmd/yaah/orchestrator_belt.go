@@ -66,20 +66,23 @@ package yaah
 //
 // Deliberately absent: the specialist file cluster (append, bulk_files,
 // checksum, copy, copy_tree, find, mkdir, move, move_tree, rmdir, tail)
-// — the developer role's belt, reachable through delegate. An always-on
-// tool added to this list is an acknowledged floor cost of ~780
-// tokens/call — cite the usage evidence in the bead when adding.
+// — until yaah-6mi9.5 reachable only through delegate; now mountable
+// through the toolbelt as the file_ops family. The analysis and net
+// families (calculate, json_query, file_info, diff, bisect, http,
+// webfetch) were folded FROM this always-on core by yaah-6mi9.5: every
+// recorded bench family shows near-zero usage of the seven, each paid
+// ~780 tokens/call for the privilege, and the same usage evidence —
+// the 2026-11-12 run called four tools in 36 steps — stands behind
+// them as behind the file cluster. An always-on tool added to this
+// list is an acknowledged floor cost of ~780 tokens/call — cite the
+// usage evidence in the bead when adding.
 var defaultOrchestratorBelt = []string{
 	"apply_out", // isolated/containerd sessions only; the door changes leave through
 	"background_process",
 	"bash",
-	"bisect",
-	"calculate",
 	"delegate",
 	"delete",
-	"diff",
 	"edit",
-	"file_info",
 	"git",
 	"go_mod",      // Go-module workspaces only (GoToolAvailable unregister)
 	"go_outline",  //
@@ -87,8 +90,6 @@ var defaultOrchestratorBelt = []string{
 	"go_test",     //
 	"glob",
 	"grep",
-	"http",
-	"json_query",
 	"list_subagents",
 	"ls",
 	"memory_add",             // memory lane: readers/writers gate at registration
@@ -110,9 +111,9 @@ var defaultOrchestratorBelt = []string{
 	"subagent_jobs",
 	"supervisor",
 	"todowrite",
+	"toolbelt", // the lazy toolbelt's loader (yaah-6mi9.5); rides the spine
 	"wait_for", // wake pair: registration-gated to interactive sessions (registerWakeTools)
 	"watch",    //
-	"webfetch",
 	"write",
 }
 
@@ -135,16 +136,36 @@ func orchestratorBeltNames(configured []string) []string {
 // removedFromOrchestratorDefault names the registered-but-ungated tools
 // the curated default withholds, so a test can pin the boundary at the
 // registry — under default config the belt's refusal set must equal
-// this list (plus the off-platform shell, the platform rule's own
-// refusal), no more and no less. A gap in that equality is how an
-// undeclared drop (proposal, a memory tool, an MCP name) escapes the
-// curation silently; the registry-level test in
-// orchestrator_belt_test.go fails first. The wake pair is NOT here:
-// wait_for and watch are belt-admitted and dropped by the session-shape
-// gate (registerWakeTools, yaah-6mi9.2), so in an interactive session
-// they register and a belt refusal never happens. Keep in sync with the
-// bead yaah-6mi9.1 evidence header above.
+// this list plus foldedFromOrchestratorDefault (plus the off-platform
+// shell, the platform rule's own refusal), no more and no less. A gap
+// in that equality is how an undeclared drop (proposal, a memory tool,
+// an MCP name) escapes the curation silently; the registry-level test
+// in orchestrator_belt_test.go fails first. The difference between the
+// withheld names here and the folded set below is the toolbelt: a
+// folded family mounts on the model's ask, a withheld one never
+// surmounts the default (delegate remains its path). The wake pair is
+// in neither list: wait_for and watch are belt-admitted and dropped by
+// the session-shape gate (registerWakeTools, yaah-6mi9.2), so in an
+// interactive session they register and a belt refusal never happens.
+// Keep in sync with the bead yaah-6mi9.1 evidence header above.
 var removedFromOrchestratorDefault = []string{
 	"append", "bulk_files", "checksum", "copy", "copy_tree",
 	"find", "mkdir", "move", "move_tree", "rmdir", "tail",
+}
+
+// foldedFromOrchestratorDefault names the always-on names yaah-6mi9.5
+// folded into lazily-mounted families (internal/tools toolFamilies):
+// the belt refuses them at registration exactly like the withholdings
+// above, so at startup their schemas are off the floor — but the
+// session's toolbelt tool can mount each family (per-member Admit +
+// Register through the same belt), which makes them mountable rather
+// than withheld. The registry boundary test pins both sets together:
+// the startup refusal set is removed ∪ folded, and neither is a typo.
+// Pin test: every member of the analysis and net families is here, and
+// every member of the file_ops family is in
+// removedFromOrchestratorDefault — the family map cannot drift from
+// the curation without one of the two tests failing.
+var foldedFromOrchestratorDefault = []string{
+	"bisect", "calculate", "diff", "file_info", "http",
+	"json_query", "webfetch",
 }

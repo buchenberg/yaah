@@ -239,8 +239,8 @@ in `../orchestration-tasks/RESULTS.md`.
 
 [`floor-tripwire.sh`](floor-tripwire.sh) pins the per-call prompt floor
 (yaah-6mi9.3): build fresh, run the hello-world instrument once, assert
-the measured floor at or under 15,500 prompt-in tokens per call (the
-post-curation baseline ~13.5K plus 15%). Failure output names the
+the measured floor at or under 13,500 prompt-in tokens per call (the
+post-fold baseline ~11.7K plus 15%). Failure output names the
 budget, the measurement, and the choice — justify the new floor (update
 the budget here and the floor-curve table in HISTORY.md, with the cause
 recorded on the bead) or trim what grew. Same prerequisites as a normal

@@ -20,6 +20,7 @@ import (
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -76,6 +77,25 @@ func appendToolGuidance(opts SessionOptions, ws *workspaceStage, tr *toolRegistr
 		if len(beltRemoved) > 0 {
 			mainPrompt += "\n\n" + prompts.ToolBeltGuidance(len(beltRemoved))
 		}
+	}
+	// The lazy toolbelt's stub block (yaah-6mi9.5): the recognition
+	// surface for the folded families, one line each with full
+	// membership. Both branches — an isolated session can mount its
+	// workspace-contained families too. Keyed on the loader actually
+	// registering, so an explicit agents.default.tools list that omits
+	// toolbelt never advertises mounts it cannot make (the belt refused
+	// the loader, and the session keeps its configured shape).
+	if tr.reg.Get("toolbelt") != nil {
+		families := tools.ToolFamilies()
+		mf := make([]prompts.MountableFamily, 0, len(families))
+		for _, f := range families {
+			mf = append(mf, prompts.MountableFamily{
+				Name:        f.Name,
+				Description: f.Description,
+				Tools:       f.Tools,
+			})
+		}
+		mainPrompt += "\n\n" + prompts.MountableToolFamilies(mf)
 	}
 	if opts.OneShot {
 		mainPrompt += "\n\n" + prompts.OneShotGuidance()
