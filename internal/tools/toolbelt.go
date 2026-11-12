@@ -216,7 +216,7 @@ func (t *ToolbeltTool) list() string {
 		case mounted == total:
 			state = "mounted"
 		case mounted > 0:
-			state = fmt.Sprintf("partially mounted: %d of %d members on the belt", mounted, total)
+			state = fmt.Sprintf("partially mounted: %d of %d members mounted", mounted, total)
 		}
 		fmt.Fprintf(&b, "- %s (%s) — %s: %s\n", f.Name, f.Description, state, strings.Join(f.Tools, ", "))
 	}
@@ -318,13 +318,23 @@ func (t *ToolbeltTool) mount(ctx context.Context, family string) (string, error)
 	t.recordMount(ctx, fam.Name, registered, refused)
 
 	var b strings.Builder
-	if len(registered) == 0 {
+	switch {
+	case len(registered) == 0 && len(refused) == 0:
+		// The clean idempotent remount: every member registered,
+		// nothing refused, nothing new.
 		fmt.Fprintf(&b, "%s family already fully mounted: %s\n", fam.Name, strings.Join(already, ", "))
 		return b.String(), nil
-	}
-	fmt.Fprintf(&b, "mounted %s family: %s\n", fam.Name, strings.Join(registered, ", "))
-	if len(already) > 0 {
-		fmt.Fprintf(&b, "already mounted: %s\n", strings.Join(already, ", "))
+	case len(registered) == 0:
+		// A remount against a session that still refuses members:
+		// "fully mounted" would claim a completeness the refusals
+		// deny — the already list and the withheld list both stand
+		// (yaah-6mi9.5 review).
+		fmt.Fprintf(&b, "%s family: %s already mounted\n", fam.Name, strings.Join(already, ", "))
+	default:
+		fmt.Fprintf(&b, "mounted %s family: %s\n", fam.Name, strings.Join(registered, ", "))
+		if len(already) > 0 {
+			fmt.Fprintf(&b, "already mounted: %s\n", strings.Join(already, ", "))
+		}
 	}
 	if len(refused) > 0 {
 		details := make([]string, 0, len(refused))

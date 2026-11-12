@@ -344,3 +344,29 @@ func TestToolbeltMountRequiresFamily(t *testing.T) {
 		t.Errorf("err = %q, want the requirement and the family catalog", err)
 	}
 }
+
+// TestToolbeltRemountStillNamesWithheld pins the review bug: a remount
+// of a partially refused family must keep the refusal line instead of
+// answering "already fully mounted" over members the session withheld.
+func TestToolbeltRemountStillNamesWithheld(t *testing.T) {
+	tt, _, _ := newToolbeltTestRegistry(t)
+	tt.Admits = func(name string) (bool, string) {
+		if name == "json_query" {
+			return false, "mode_floor"
+		}
+		return true, ""
+	}
+	if _, err := tt.Execute(context.Background(), `{"action":"mount","family":"analysis"}`); err != nil {
+		t.Fatalf("first mount: %v", err)
+	}
+	out, err := tt.Execute(context.Background(), `{"action":"mount","family":"analysis"}`)
+	if err != nil {
+		t.Fatalf("remount: %v", err)
+	}
+	if strings.Contains(out, "already fully mounted") {
+		t.Errorf("remount answer claims full mount over a withheld member: %q", out)
+	}
+	if !strings.Contains(out, "json_query") || !strings.Contains(out, "mode_floor") {
+		t.Errorf("remount answer = %q, want the withheld member named with its origin", out)
+	}
+}
