@@ -50,8 +50,10 @@ func NewBrokerView(broker *pubsub.Broker[Event], target View) *BrokerView {
 // preserving their order relative to live broker events.
 //
 // The subscription is taken through SubscribeHandle so the view holds its own
-// cancel handle instead of relying on a shared "view" id. Close still closes
-// the whole broker; which side owns teardown is yaah-8jou.7.
+// cancel handle instead of relying on a shared "view" id. The handle is not a
+// teardown boundary: Close detaches this view's subscription and then retires
+// the whole broker generation it belongs to, which is the loop's to retire —
+// see Close for the ownership decision.
 func NewBrokerViewWithSync(broker *pubsub.Broker[Event], target View, syncFn func()) *BrokerView {
 	sub, unsub := broker.SubscribeHandle(4096)
 	bv := &BrokerView{
@@ -79,10 +81,42 @@ func (bv *BrokerView) forward(target View) {
 }
 
 // Close detaches the view's own subscription, closes the underlying
-// broker, and waits for the forwarder goroutine to exit. The unsub call
-// is what closes this view's channel; broker.Close still runs so the
-// lifecycle re-arm gate (brokerClosed) keeps its meaning until yaah-8jou.7
-// decides teardown ownership. Safe to call multiple times.
+// broker, and waits for the forwarder goroutine to exit. The unsub call is
+// what closes this view's channel; broker.Close is what ends the Run's event
+// generation. Safe to call multiple times.
+//
+// Teardown ownership is settled (yaah-8jou.7): the LOOP owns the broker's
+// lifetime, and closing the whole broker here rather than only this view's
+// subscription is the intended contract, not an oversight left behind by the
+// days when the view subscribed under a shared id. Three things rest on it:
+//
+//   - One broker per Run. applyDefaults re-arms a fresh broker whenever a Run
+//     starts with no broker or with l.brokerClosed set, so each Run gets its
+//     own event generation. That is what stops one Run's events, or a whole
+//     buffered backlog, from surfacing in the next.
+//   - The re-arm gate is built on these semantics. At the end of every Run,
+//     publishDone delivers the DoneEvent with PublishMustDeliver, calls this
+//     Close, and marks l.brokerClosed. The broker's own closed flag is then
+//     what makes every later Publish/PublishMustDeliver on that generation a
+//     no-op, what makes TryPublishMustDeliver report false so callers fall
+//     back to another path, and what makes a late Subscribe hand back an
+//     already-closed channel instead of registering a consumer nothing will
+//     ever drain.
+//   - Production has exactly one view per broker — the loop's brokerView, made
+//     with it in applyDefaults — so detaching the view and retiring the
+//     generation are the same event today. There is no second subscriber a
+//     broker-wide close could disturb.
+//
+// Decoupling Close into unsubscribe-only would therefore be a redesign, not a
+// one-line change: it needs a way of saying "this generation is finished" that
+// is not itself a view action — a subscriber refcount, or an explicit retire
+// call owned by publishDone — plus a decision about who sets the broker's
+// closed flag. Left as "unsubscribe only", the retired broker would stay
+// open with no consumers: events published into it would be silently
+// dropped rather than refused, a later Subscribe could register a fresh
+// consumer that stale publishers then feed with a retired Run's events,
+// and applyDefaults would need a different signal to re-arm. Revisit if
+// several concurrent views on one broker ever become real.
 func (bv *BrokerView) Close() {
 	if bv.unsub != nil {
 		bv.unsub()
