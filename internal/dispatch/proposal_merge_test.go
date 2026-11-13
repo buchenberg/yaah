@@ -463,3 +463,231 @@ func TestThreeWayApplyRecordsStrategyFact(t *testing.T) {
 		t.Fatalf("no settled fact recorded apply/three_way: %+v", facts)
 	}
 }
+
+// TestProposalTool_PathDisjointApplyRefusesParentEdit pins yaah-gkll.2: an
+// uncommitted parent edit to a proposal-owned path must never be silently
+// overwritten by a path_disjoint apply. Pre-fix, the worktree lane trusted
+// the kernel's drift capture — documented unreliable for working-tree
+// rewrites (yaah-610z) — and the no-conflict path wrote whole-path
+// post-images over the parent's edit, reporting a clean settle.
+func TestProposalTool_PathDisjointApplyRefusesParentEdit(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	writeTestFile(t, repo, "README.md", "line1\nline2\nline3\n")
+	writeTestFile(t, repo, "OTHER.txt", "other base\n")
+	mustRunGit(t, repo, "add", "-A")
+	mustRunGit(t, repo, "commit", "-m", "base")
+
+	runner := &sessionRunner{}
+	runner.sideEffect = func(call int, _ string) {
+		writeTestFile(t, runner.workdirFor(t, call), "README.md", "proposal1\nline2\nline3\n")
+	}
+	rt := RetainedRuntime{
+		Runner:       runner.run(),
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+		Proposals:    NewProposalRegistry(),
+	}
+	res, err := StartRetainedRun(context.Background(), rt, "change the first line", SubAgentParams{Role: "worker"}, 0, false)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	env := decodeProposalEnvelope(t, res)
+
+	// The parent edits the proposal-owned path AFTER the dispatch.
+	writeTestFile(t, repo, "README.md", "parent-edit\nline2\nline3\n")
+
+	out, err := (&ProposalTool{Proposals: rt.Proposals}).Execute(context.Background(),
+		`{"action":"apply","proposal_id":`+jsonString(env.ProposalID)+`}`)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	var got proposalEnvelope
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("apply result is not JSON: %v\n%s", err, out)
+	}
+	if got.Status != "conflict" || got.Action != "apply" || got.Strategy != proposalApplyPathDisjoint {
+		t.Fatalf("apply envelope = %+v, want a conflict apply/path_disjoint", got)
+	}
+	var named []string
+	for _, c := range got.Conflicts {
+		named = append(named, c.Paths...)
+	}
+	if !containsPath(named, "README.md") {
+		t.Errorf("conflict does not name the drifted proposal path; paths: %v", named)
+	}
+	// The parent's edit must still be on disk — the refusal happened
+	// pre-write.
+	data, err := os.ReadFile(filepath.Join(repo, "README.md"))
+	if err != nil {
+		t.Fatalf("read README: %v", err)
+	}
+	if !strings.Contains(string(data), "parent-edit") {
+		t.Errorf("the parent's edit was overwritten despite the refusal:\n%s", data)
+	}
+}
+
+// TestProposalTool_PathDisjointApplyWritesOnUnrelatedParentEdit pins the
+// other side of the guard: a parent edit to a path the proposal does NOT
+// own is a move onto a moved tree, exactly what path_disjoint apply is for.
+func TestProposalTool_PathDisjointApplyWritesOnUnrelatedParentEdit(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	writeTestFile(t, repo, "README.md", "line1\nline2\nline3\n")
+	writeTestFile(t, repo, "OTHER.txt", "other base\n")
+	mustRunGit(t, repo, "add", "-A")
+	mustRunGit(t, repo, "commit", "-m", "base")
+
+	runner := &sessionRunner{}
+	runner.sideEffect = func(call int, _ string) {
+		writeTestFile(t, runner.workdirFor(t, call), "README.md", "proposal1\nline2\nline3\n")
+	}
+	rt := RetainedRuntime{
+		Runner:       runner.run(),
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+		Proposals:    NewProposalRegistry(),
+	}
+	res, err := StartRetainedRun(context.Background(), rt, "change the first line", SubAgentParams{Role: "worker"}, 0, false)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	env := decodeProposalEnvelope(t, res)
+
+	// Parent edits an UNOWNED path after the dispatch.
+	writeTestFile(t, repo, "OTHER.txt", "parent moved elsewhere\n")
+
+	out, err := (&ProposalTool{Proposals: rt.Proposals}).Execute(context.Background(),
+		`{"action":"apply","proposal_id":`+jsonString(env.ProposalID)+`}`)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	var got proposalEnvelope
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("apply result is not JSON: %v\n%s", err, out)
+	}
+	if got.Status != "settled" {
+		t.Fatalf("apply envelope = %+v, want settled: an unrelated parent edit must not trip the guard", got)
+	}
+	readme, _ := os.ReadFile(filepath.Join(repo, "README.md"))
+	if !strings.Contains(string(readme), "proposal1") {
+		t.Errorf("proposal content missing after apply:\n%s", readme)
+	}
+	other, _ := os.ReadFile(filepath.Join(repo, "OTHER.txt"))
+	if !strings.Contains(string(other), "parent moved elsewhere") {
+		t.Errorf("parent's unrelated edit lost:\n%s", other)
+	}
+}
+
+// TestProposalTool_PathDisjointApplyIgnoresPreExistingDirt pins the basis
+// semantics: the dispatch basis captures the dirty working tree, so a
+// pre-dispatch parent edit to a proposal-owned path is part of what the
+// proposal built on — not drift, not a refusal.
+func TestProposalTool_PathDisjointApplyIgnoresPreExistingDirt(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	writeTestFile(t, repo, "README.md", "line1\nline2\nline3\n")
+	mustRunGit(t, repo, "add", "-A")
+	mustRunGit(t, repo, "commit", "-m", "base")
+	// Pre-dispatch dirt on the path the proposal will own.
+	writeTestFile(t, repo, "README.md", "dirty base\nline2\nline3\n")
+
+	runner := &sessionRunner{}
+	runner.sideEffect = func(call int, _ string) {
+		writeTestFile(t, runner.workdirFor(t, call), "README.md", "proposal1\nline2\nline3\n")
+	}
+	rt := RetainedRuntime{
+		Runner:       runner.run(),
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+		Proposals:    NewProposalRegistry(),
+	}
+	res, err := StartRetainedRun(context.Background(), rt, "change the first line", SubAgentParams{Role: "worker"}, 0, false)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	env := decodeProposalEnvelope(t, res)
+
+	out, err := (&ProposalTool{Proposals: rt.Proposals}).Execute(context.Background(),
+		`{"action":"apply","proposal_id":`+jsonString(env.ProposalID)+`}`)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	var got proposalEnvelope
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("apply result is not JSON: %v\n%s", err, out)
+	}
+	if got.Status != "settled" {
+		t.Fatalf("apply envelope = %+v, want settled: pre-dispatch dirt is part of the basis, not drift", got)
+	}
+}
+
+func containsPath(paths []string, want string) bool {
+	for _, p := range paths {
+		if p == want || strings.HasSuffix(strings.TrimPrefix(p, "./"), want) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestDriftedApplyPathsDecidesOnContent pins the guard's authority: the
+// parentDrift hint (kernel-side capture) can only widen the drifted set,
+// never narrow it. With the hint machinery unavailable altogether, a
+// same-size parent rewrite of a proposal-owned path is still detected —
+// the guard cannot be blinded by the unreliable capture (yaah-610z,
+// yaah-gkll.2).
+func TestDriftedApplyPathsDecidesOnContent(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	writeTestFile(t, repo, "README.md", "line1\nline2\nline3\n")
+	mustRunGit(t, repo, "add", "-A")
+	mustRunGit(t, repo, "commit", "-m", "base")
+
+	runner := &sessionRunner{}
+	runner.sideEffect = func(call int, _ string) {
+		writeTestFile(t, runner.workdirFor(t, call), "README.md", "proposal1\nline2\nline3\n")
+	}
+	rt := RetainedRuntime{
+		Runner:       runner.run(),
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+		Proposals:    NewProposalRegistry(),
+	}
+	res, err := StartRetainedRun(context.Background(), rt, "change the first line", SubAgentParams{Role: "worker"}, 0, false)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	env := decodeProposalEnvelope(t, res)
+	p, err := rt.Proposals.get(env.ProposalID)
+	if err != nil {
+		t.Fatalf("get proposal: %v", err)
+	}
+
+	// No parent movement: nothing drifted.
+	drifted, err := p.driftedApplyPaths(context.Background())
+	if err != nil || len(drifted) != 0 {
+		t.Fatalf("clean parent: drifted=%v err=%v, want none", drifted, err)
+	}
+
+	// Same-size parent rewrite of the owned path...
+	writeTestFile(t, repo, "README.md", "hostx\nline2\nline3\n")
+	// ...with the hint machinery taken away entirely.
+	savedMgr := p.mgr
+	p.mgr = nil
+	defer func() { p.mgr = savedMgr }()
+	if _, err := p.parentDrift(context.Background()); err == nil {
+		t.Fatal("fixture expected parentDrift to be unavailable with a nil scope manager")
+	}
+	drifted, err = p.driftedApplyPaths(context.Background())
+	if err != nil {
+		t.Fatalf("guard errored: %v", err)
+	}
+	if !containsPath(drifted, "README.md") {
+		t.Fatalf("guard missed a content drift with the hint unavailable: %v (yaah-610z fail-open)", drifted)
+	}
+}
