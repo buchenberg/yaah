@@ -202,21 +202,55 @@ def assert_sub_token_share() -> None:
     )
 
 
+# The two settlement layers spell their actions differently: goatherd's
+# run_output.settled.v1 records the past-tense SettlementAction ("applied",
+# "selected", "released", "discarded"), while yaah's proposal fact records
+# the settle verb the operator invoked ("apply", "select", "release",
+# "discard"). The three-way apply path settles its sealed output with
+# SettleDiscard by design (consume-once) and records action=apply ONLY in
+# yaah.proposal.settled.v1, so a verifier that reads the goatherd family
+# alone fails a legitimately-applied settlement (yaah-rv4n) — the actual
+# outcome lives in the yaah fact, and asserting it is stronger evidence
+# than the transport verb either way: the fact is appended only after the
+# merge writes land.
+_YAAH_SETTLE_VERB_TO_ACTION = {
+    "select": "selected",
+    "apply": "applied",
+    "release": "released",
+    "discard": "discarded",
+}
+
+
 def settled_actions() -> set[str]:
-    """Return the settlement actions recorded in the trace store."""
+    """Return the settlement actions recorded in the trace store.
+
+    Both layers count: goatherd's run_output settle facts (past-tense
+    actions) and yaah's yaah.proposal.settled.v1 facts (settle verbs,
+    normalized to the past-tense vocabulary so either layer's settlement
+    satisfies the same assert).
+    """
     conn = _connect(TRACE_DB)
     try:
         rows = conn.execute(
             """
-            SELECT DISTINCT json_extract(r.body_json, '$.action')
+            SELECT DISTINCT json_extract(r.body_json, '$.action'),
+                            r.schema_ref
             FROM records r
             WHERE r.schema_ref IN ('shepherd.run_output.settled.v1',
-                                   'goatherd.run_output.settled.v1')
+                                   'goatherd.run_output.settled.v1',
+                                   'yaah.proposal.settled.v1')
             """
         ).fetchall()
     finally:
         conn.close()
-    return {action for (action,) in rows if action}
+    actions: set[str] = set()
+    for action, schema_ref in rows:
+        if not action:
+            continue
+        if schema_ref == "yaah.proposal.settled.v1":
+            action = _YAAH_SETTLE_VERB_TO_ACTION.get(action, action)
+        actions.add(action)
+    return actions
 
 
 def settled_output_ids() -> set[str]:
