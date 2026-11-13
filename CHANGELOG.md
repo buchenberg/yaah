@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.179.0](https://github.com/buchenberg/yaah/compare/v0.178.0...v0.179.0) (2026-11-13)
+
+
+### Features
+
+* **workflow:** authority and cost validation WF030-WF036 (yaah-0u0v.8) ([5b2ec3b](https://github.com/buchenberg/yaah/commit/5b2ec3bf550ab07ccd1d128f31a9867368084c23))
+* **workflow:** value and template validation WF010-WF014 (yaah-0u0v.6) ([3516e01](https://github.com/buchenberg/yaah/commit/3516e0128e18129789f81a944335e555956a9b26))
+* **workflow:** value/template WF010-WF014 + authority/cost WF030-WF036 validation (yaah-0u0v.6, yaah-0u0v.8) ([4891675](https://github.com/buchenberg/yaah/commit/489167513695cfeddb42769801d1b2c9e99ba3a6))
+
+
+### Bug Fixes
+
+* **workflow:** attribute an exceeded host ceiling correctly in WF033 (review) ([5626063](https://github.com/buchenberg/yaah/commit/5626063f51384472dc0cbcadd19eea160ec25fdd))
+* **workflow:** do not re-price a negative budget against the host ceiling (review) ([427507e](https://github.com/buchenberg/yaah/commit/427507e219aaa2a20c164e83ae0724e224be29fb))
+
+
+### Tests
+
+* **workflow:** pin the two-finding WF033 host-ceiling attribution shape ([1f8b6fa](https://github.com/buchenberg/yaah/commit/1f8b6fa277682b1bbfeda154439712d419a2e495))
+
 ## [0.178.0](https://github.com/buchenberg/yaah/compare/v0.177.1...v0.178.0) (2026-11-13)
 
 
