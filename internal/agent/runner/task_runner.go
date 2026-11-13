@@ -95,10 +95,6 @@ type taskRunnerOpts struct {
 	// tuning, and concurrency caps from the parent config.
 	defaults config.Defaults
 
-	// pipelineDisabled is agents.middleware.disabled, forwarded so an
-	// opt-out such as [evidence_guard] also applies inside delegated loops.
-	pipelineDisabled []string
-
 	// toolSpillDir is the directory where oversized sub-agent tool
 	// results are spilled to disk. Injected from the composition root so
 	// sub-agents inherit the parent's spill directory instead of reaching
@@ -506,7 +502,6 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			MaxToolConcurrency:     opts.defaults.MaxToolConcurrency,
 			EvidenceGuardNudge:     opts.defaults.EvidenceGuardNudge,
 			EvidenceGuardHalt:      opts.defaults.EvidenceGuardHalt,
-			PipelineDisabled:       opts.pipelineDisabled,
 			JSONMode:               jsonMode,
 			SeedMessages:           params.SeedMessages,
 			ToolResultMaxLines:     opts.defaults.ToolResultMaxLines,

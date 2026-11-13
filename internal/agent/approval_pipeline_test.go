@@ -51,7 +51,7 @@ func TestApprovalMiddlewareViaPipeline(t *testing.T) {
 // TestApprovalSubAgentLoopUnaffected ensures sub-agent loops keep
 // ApprovalMode "allow" and exclude the approval middleware.
 func TestApprovalSubAgentLoopUnaffected(t *testing.T) {
-	names := pipeline.SubAgentPipelineNames(nil)
+	names := pipeline.SubAgentPipelineNames()
 	if slices.Contains(names, "approval") {
 		t.Error("sub-agent pipeline should not contain approval middleware")
 	}

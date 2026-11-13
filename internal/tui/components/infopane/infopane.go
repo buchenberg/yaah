@@ -27,7 +27,6 @@ type State struct {
 	SubAgents             SubAgentInfo
 	Embedding             EmbeddingInfo
 	World                 worldinfo.Status
-	Pipeline              []string
 	AgentActive           bool
 	AgentPromptTokens     int
 	AgentCompletionTokens int
@@ -160,14 +159,6 @@ func Format(s State, th *colors.Theme) string {
 	} else {
 		b.WriteString(th.TagBold(th.Heading, "Embedding\n"))
 		b.WriteString(th.Tag(th.Dim, "  (inactive)\n"))
-	}
-
-	if len(s.Pipeline) > 0 {
-		b.WriteString("\n")
-		b.WriteString(th.TagBold(th.Heading, "Middleware\n"))
-		for _, name := range s.Pipeline {
-			b.WriteString(fmt.Sprintf("  %s %s\n", th.Tag(th.Dim, "→"), th.Tag(th.Detail, name)))
-		}
 	}
 
 	if s.EphemeralMsg != "" {

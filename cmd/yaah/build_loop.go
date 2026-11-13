@@ -278,8 +278,6 @@ func (s *agentSession) loopBuilder(
 		CompactModel:               compactModel,
 		FallbackProvider:           fallbackProvider,
 		FallbackModel:              fallbackModel,
-		PipelineEnabled:            s.cfg.Agent.Middleware.Enabled,
-		PipelineDisabled:           s.cfg.Agent.Middleware.Disabled,
 		MCPApproval:                resolveMCPApproval(s.cfg),
 		MCPToolNames:               s.mcpToolNames,
 		SubAgentMaxConcurrency:     s.cfg.Agent.SubAgent.MaxConcurrency,

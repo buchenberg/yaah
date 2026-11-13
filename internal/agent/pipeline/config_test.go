@@ -22,35 +22,25 @@ func TestPipeline_OrchestratorTraceBuilder(t *testing.T) {
 }
 
 func TestPipeline_SubAgentPipelineNames(t *testing.T) {
-	names := SubAgentPipelineNames(nil)
+	names := SubAgentPipelineNames()
 	want := []string{"tool_concurrency", "shepherd_trace", "evidence_guard"}
 	if len(names) != len(want) {
-		t.Fatalf("SubAgentPipelineNames(nil) = %v, want %v", names, want)
+		t.Fatalf("SubAgentPipelineNames() = %v, want %v", names, want)
 	}
 	for i, name := range want {
 		if names[i] != name {
-			t.Errorf("SubAgentPipelineNames(nil)[%d] = %q, want %q", i, names[i], name)
+			t.Errorf("SubAgentPipelineNames()[%d] = %q, want %q", i, names[i], name)
 		}
 	}
 }
 
 func TestPipeline_SubAgentExcludesOrchestrator(t *testing.T) {
-	names := SubAgentPipelineNames(nil)
+	names := SubAgentPipelineNames()
 	excluded := []string{"steer", "followup", "approval", "compaction", "loop_detection", "soft_prune"}
 	for _, name := range excluded {
 		if slices.Contains(names, name) {
 			t.Errorf("sub-agent pipeline should not contain orchestrator middleware %q", name)
 		}
-	}
-}
-
-func TestPipeline_SubAgentNamesHonourDisabled(t *testing.T) {
-	names := SubAgentPipelineNames([]string{"shepherd_trace"})
-	if slices.Contains(names, "shepherd_trace") {
-		t.Error("disabled shepherd_trace should be excluded")
-	}
-	if !slices.Contains(names, "tool_concurrency") {
-		t.Error("tool_concurrency should remain when only shepherd_trace is disabled")
 	}
 }
 
@@ -231,60 +221,6 @@ func TestNewFromConfig_ShepherdTraceNoopWithoutStore(t *testing.T) {
 	}
 }
 
-// TestResolvedPipelineNames_Additive pins the additive enabled-list
-// semantics (review B10a): middleware.enabled extends the defaults and
-// disabled removes from the union; it no longer replaces the default
-// set (which silently dropped inline_limit and conflict_detect).
-func TestResolvedPipelineNames_Additive(t *testing.T) {
-	t.Run("empty lists yield defaults", func(t *testing.T) {
-		got := ResolvedPipelineNames(nil, nil)
-		if !reflect.DeepEqual(got, defaultPipelineNames) {
-			t.Errorf("ResolvedPipelineNames(nil, nil) = %v, want %v", got, defaultPipelineNames)
-		}
-	})
-
-	t.Run("defaults include the intent-loop guard", func(t *testing.T) {
-		if !slices.Contains(ResolvedPipelineNames(nil, nil), "intent_loop") {
-			t.Error("intent_loop missing from the default pipeline; the TUI info pane and docs claim it runs")
-		}
-	})
-
-	t.Run("enabled extends defaults", func(t *testing.T) {
-		got := ResolvedPipelineNames([]string{"shepherd_trace"}, nil)
-		if !slices.Contains(got, "shepherd_trace") {
-			t.Errorf("extra enabled entry missing: %v", got)
-		}
-		for _, d := range defaultPipelineNames {
-			if !slices.Contains(got, d) {
-				t.Errorf("default %q dropped by additive enabled list: %v", d, got)
-			}
-		}
-	})
-
-	t.Run("enabled deduplicates against defaults", func(t *testing.T) {
-		got := ResolvedPipelineNames([]string{"steer", "approval"}, nil)
-		count := 0
-		for _, n := range got {
-			if n == "steer" {
-				count++
-			}
-		}
-		if count != 1 {
-			t.Errorf("steer appears %d times, want 1: %v", count, got)
-		}
-	})
-
-	t.Run("disabled removes from the union", func(t *testing.T) {
-		got := ResolvedPipelineNames([]string{"shepherd_trace"}, []string{"approval", "shepherd_trace"})
-		if slices.Contains(got, "approval") || slices.Contains(got, "shepherd_trace") {
-			t.Errorf("disabled entries still active: %v", got)
-		}
-		if !slices.Contains(got, "inline_limit") {
-			t.Errorf("inline_limit must survive a custom enabled list: %v", got)
-		}
-	})
-}
-
 // TestNewFromConfig_PromptCachingKnob pins the boolean prompt_caching
 // knob (review B10b): setting it includes the middleware without the
 // name list, and it stays a single instance.
@@ -305,19 +241,6 @@ func TestNewFromConfig_PromptCachingKnob(t *testing.T) {
 	pipe2 := NewFromConfig(PipelineConfig{})
 	if pipe2.Find("prompt_caching") != nil {
 		t.Error("prompt_caching middleware present with knob unset")
-	}
-}
-
-// TestNewFromConfig_PromptCachingDisabledWins pins precedence: an
-// explicit disabled entry beats the boolean knob (review: the knob
-// used to re-append middleware the user explicitly disabled).
-func TestNewFromConfig_PromptCachingDisabledWins(t *testing.T) {
-	pipe := NewFromConfig(PipelineConfig{
-		PromptCaching:    true,
-		PipelineDisabled: []string{"prompt_caching"},
-	})
-	if pipe.Find("prompt_caching") != nil {
-		t.Error("disabled list must take precedence over the prompt_caching knob")
 	}
 }
 

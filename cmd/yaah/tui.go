@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/tui"
 	"github.com/buchenberg/yaah/internal/tui/components/mcpinfo"
@@ -88,21 +87,6 @@ func runTUI() error {
 	if subProvider == "" {
 		subProvider = sess.ProviderName()
 	}
-	mc := cfg.Agent.Middleware
-	// Show the RESOLVED composition, not the configured additions: a config
-	// that lists middleware.enabled entries used to make this pane display
-	// only those entries, hiding every default (evidence_guard, approval,
-	// and later intent_loop). ResolvedPipelineNames owns the additive
-	// enabled/disabled semantics for the real pipeline.
-	pipelineList := pipeline.ResolvedPipelineNames(mc.Enabled, mc.Disabled)
-	// The prompt_caching boolean is honored independently of the name
-	// lists (an explicit disabled entry wins), so mirror NewFromConfig or
-	// the pane would omit a middleware that runs.
-	if cfg.Agent.Default.PromptCaching &&
-		!slices.Contains(mc.Disabled, "prompt_caching") &&
-		!slices.Contains(pipelineList, "prompt_caching") {
-		pipelineList = append(pipelineList, "prompt_caching")
-	}
 	app.SetConfig(
 		cfg.Agent.SubAgent.Provider != "" || cfg.Agent.SubAgent.Model != "",
 		subProvider,
@@ -110,7 +94,6 @@ func runTUI() error {
 		subModel,
 		cfg.EmbeddingSearchLive(),
 		cfg.Embedding.Model,
-		pipelineList,
 	)
 	app.SetWorld(sess.WorldStatus())
 

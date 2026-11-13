@@ -63,13 +63,13 @@ The probe is deliberately behavior-forcing: it does not prove the original
 natural thrash would have hit at six. It does prove the threshold wiring, the
 steer text, and that the guard leaves the final answer correct in this shape.
 
-## Delegated inheritance and the disabled list
+## Delegated inheritance
 
-A shared-mode developer dispatch ran the same stale-read task. With
-`agents.middleware.disabled: [loop_detection]`, the child trace contained the
-evidence-guard steer and still answered correctly. Adding `evidence_guard` to
-that list produced eight reads, no steer, and the same correct answer. That
-confirms both the sub-agent inheritance path and the disabled list.
+A shared-mode developer dispatch ran the same stale-read task. The child trace
+contained the evidence-guard steer and still answered correctly, confirming
+that delegated loops run the same curated pipeline (and the same guard) as the
+orchestrator. The guard is not selectively removable: it is part of the fixed
+composition, and its two knobs are the only way to tune it.
 
 ## Chosen defaults
 

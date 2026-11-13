@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/permissions"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -148,27 +147,19 @@ func (d *dangerousGitStub) Execute(context.Context, string) (string, error) {
 	return "ran", nil
 }
 
-// TestDispatch_PlanModeDeniesDangerousCallWithoutApprovalMiddleware pins the
-// review finding: the plan-mode denial used to live only in the approval
-// middleware, so `middleware.disabled: [approval]` let `git commit` through.
-// Dispatch is the always-on gate and must refuse on its own.
-func TestDispatch_PlanModeDeniesDangerousCallWithoutApprovalMiddleware(t *testing.T) {
+// TestDispatch_PlanModeDeniesDangerousCallAtDispatch pins the review
+// finding: the plan-mode denial used to live only in the approval
+// middleware, so a pipeline without it let `git commit` through. The
+// pipeline is now fixed (approval always runs), and dispatch is still the
+// layer that must refuse on its own — this test bypasses the middleware.
+func TestDispatch_PlanModeDeniesDangerousCallAtDispatch(t *testing.T) {
 	const commitArgs = `{"action":"commit","message":"x"}`
 	reg := tools.NewEmptyRegistry()
 	gitStub := &dangerousGitStub{}
 	reg.Register(gitStub)
 
 	l := NewLoop(nil, reg, WithToolsLevel(ReadOnlyTools))
-	l.Config.PipelineDisabled = []string{"approval"}
 	l.Hooks = &HookEmitter{}
-
-	// The middleware really is absent from the configured pipeline, so this
-	// test proves the dispatch layer, not the approval layer.
-	for _, name := range pipeline.ResolvedPipelineNames(l.Config.PipelineNames, l.Config.PipelineDisabled) {
-		if name == "approval" {
-			t.Fatal("approval middleware is still configured; the test proves nothing")
-		}
-	}
 
 	d := l.newDispatch(0, types.ToolCall{ID: "c1", Type: "function", Function: types.ToolCallFn{Name: "git", Arguments: commitArgs}})
 	results := make(chan toolExecResult, 1)

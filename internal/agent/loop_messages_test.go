@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -43,16 +44,19 @@ func TestLoop_overflowCompactionSurvivesToNextIteration(t *testing.T) {
 
 	loop := &Loop{
 		Config: LoopConfig{
-			SystemPrompt:     "test prompt",
-			MaxLoopCycles:    3,
-			MaxRetries:       0, // auto-compact handles the overflow
-			ContextWindow:    4000,
-			CompactModel:     "test",
-			PipelineDisabled: []string{"compaction"},
+			SystemPrompt:  "test prompt",
+			MaxLoopCycles: 3,
+			MaxRetries:    0, // auto-compact handles the overflow
+			ContextWindow: 4000,
+			CompactModel:  "test",
 		},
 		Provider:        fp,
 		Registry:        tools.NewRegistry(),
 		CompactProvider: summarizer,
+		// Run the overflow path alone: an empty pipeline keeps the
+		// compaction middleware out of the way, so the only compaction
+		// is the in-Call recovery this test covers.
+		pipelineOverride: pipeline.NewPipeline(),
 	}
 
 	// Pre-populate enough messages that compaction must trim them

@@ -187,15 +187,14 @@ func (l *Loop) authorizeGate(name, args string, d *pipeline.Decision) {
 }
 
 // admitTool is the always-on dispatch gate: the second consumer of the
-// Authorize decision, and the one that cannot be switched off. The approval
-// middleware runs the gate axis, but that middleware is optional
-// (middleware.disabled: [approval]) and absent entirely from a sub-agent loop,
-// so every terminal verdict must hold here too: a mode whose promise is
-// "mutating actions are withheld", a posture that denies, and a rule that
-// denies must not be switchable off by configuration. Dispatch adds the
-// admission axis (the tool level, name-keyed) on top, so nothing it withholds
-// is ever admitted while a gate-passed call can still be refused at the tool
-// level.
+// Authorize decision, and the one that no loop can omit. The approval
+// middleware runs the gate axis on the orchestrator, but it is absent
+// entirely from a sub-agent loop, so every terminal verdict must hold here
+// too: a mode whose promise is "mutating actions are withheld", a posture
+// that denies, and a rule that denies must not be switchable off by
+// configuration. Dispatch adds the admission axis (the tool level,
+// name-keyed) on top, so nothing it withholds is ever admitted while a
+// gate-passed call can still be refused at the tool level.
 //
 // The verdict is shared; the wording is per layer. This gate runs the
 // admission axis first, so in read-only mode a name the level excludes is
@@ -218,10 +217,11 @@ func (l *Loop) admitTool(name, args string) (bool, error) {
 	//
 	// GateDeny is final whatever produced it: a user rule, the mcp_approval
 	// posture, or the global approval posture being "deny". Leaving the posture
-	// halves to the middleware made `mcp_approval: deny` a no-op whenever the
-	// approval middleware was disabled or absent (every sub-agent loop), which
-	// is the bug this gate closes. The wording comes from the decision's
-	// origin, so a posture denial never reads as a rule the user wrote.
+	// halves to the middleware made `mcp_approval: deny` a no-op in every
+	// sub-agent loop (and in older builds whenever the middleware was
+	// disabled), which is the bug this gate closes. The wording comes from the
+	// decision's origin, so a posture denial never reads as a rule the user
+	// wrote.
 	//
 	// GateAsk is deliberately NOT enforced here for an orchestrator loop —
 	// dispatch has no way to prompt, and an ask that silently denied would

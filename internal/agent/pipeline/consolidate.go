@@ -47,8 +47,8 @@ func NewConsolidateMiddleware(turnsInterval, itersInterval int, dispatch Consoli
 	}
 }
 
-// Name returns the middleware name, used to key it in builtinBuilders and to
-// resolve it from the pipeline config's enabled/disabled lists.
+// Name returns the middleware name, used to key it in builtinBuilders and
+// the fixed orchestrator pipeline list.
 func (m *ConsolidateMiddleware) Name() string { return "consolidate" }
 
 // PrepareStep is a no-op: the nudge is cadence-driven and does not touch the

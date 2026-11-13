@@ -175,7 +175,7 @@ type Step struct {
 
 `Pipeline` wraps an ordered list of `Middleware`. Each hook method iterates through every middleware in registration order. Errors are wrapped with the middleware name and halt the pipeline.
 
-The middleware list is resolved from the `builtinBuilders` and `subAgentBuilders` registries (maps of `func(PipelineConfig) Middleware` in `config.go`; `permission` and `tool_concurrency` share named builder functions across both). Builders construct implementations from `PipelineConfig` fields, including injected callbacks (approval gating, conflict reporting) so the pipeline stays free of agent-package dependencies. The `ResolvedPipelineNames()` function applies the `enabled`/`disabled` config overrides to produce the final ordered list.
+The middleware list is resolved from the `builtinBuilders` and `subAgentBuilders` registries (maps of `func(PipelineConfig) Middleware` in `config.go`; `permission` and `tool_concurrency` share named builder functions across both). Builders construct implementations from `PipelineConfig` fields, including injected callbacks (approval gating, conflict reporting) so the pipeline stays free of agent-package dependencies. The orchestrator order is the fixed `defaultPipelineNames` list; the sub-agent order is `subAgentPipelineNames` plus conditional prepends.
 
 ```go
 func (p *Pipeline) RunPrepareStep(ctx context.Context, step *Step) (*Step, error) {
@@ -187,7 +187,7 @@ func (p *Pipeline) RunPrepareStep(ctx context.Context, step *Step) (*Step, error
 }
 ```
 
-The pipeline is built in `buildPipeline()` with a config-driven order:
+The pipeline is built in `buildPipeline()` in a fixed order:
 1. `steer` — high-priority mid-turn messages
 2. `followup` — queued between-turn messages
 3. `compaction` — context window enforcement (LLM summarization)
@@ -200,22 +200,31 @@ The pipeline is built in `buildPipeline()` with a config-driven order:
 10. `intent_loop` — detects repeated cross-turn plans and can steer or halt
 11. `evidence_guard` — nudges or halts exploration that stops producing new evidence
 12. `conflict_detect` — `PostTool` conflict reports driven by the injected tracker via `DetectAndResetReport()`
+13. `consolidate` — cadence-driven memory nudge; inert unless the consolidate intervals are set
 
-The default set is defined in `defaultPipelineNames` in `config.go`. Users can override which middleware runs via `config.yaml`:
+The set is defined in `defaultPipelineNames` in `config.go` and is **fixed**:
+every built-in middleware runs, because each one is either a safety net
+(compaction, the evidence/loop/intent guards, and the approval pipeline,
+which is the only layer that can prompt) or required plumbing (the
+steer/followup channels and tracing). There is no general enable/disable
+list and no arbitrary `Loop.Middleware` injection seam.
+
+The two genuinely optional behaviours have their own knobs:
 
 ```yaml
 agents:
-  middleware:
-    enabled: [prompt_caching]
-    disabled: [approval]
+  default:
+    prompt_caching: true        # opt in: Anthropic cache-control breakpoints
+    consolidate_turns_interval: 5   # opt in: cadence-driven memory nudge
 ```
 
-`enabled` is additive for the orchestrator: listed middleware are added to
-the default set (duplicates collapse). `disabled` removes names from both the
-orchestrator and sub-agent pipelines. Middleware not registered in the
-relevant builder set is silently skipped.
+`prompt_caching` appends its middleware when the boolean is set;
+`consolidate` is always installed but does nothing until one of its
+intervals is set.
 
-Middleware selection is config-driven: `agents.middleware.enabled` / `disabled` are resolved by `ResolvedPipelineNames`, and `buildPipeline()` always builds from that resolved list and the relevant builder registry. There is no arbitrary `Loop.Middleware` injection seam.
+`buildPipeline()` builds both the orchestrator and sub-agent pipelines from
+the relevant builder registry; the sub-agent set is curated in
+`subAgentPipelineNames`, not a subset chosen at runtime.
 
 ### Individual middleware
 
@@ -256,8 +265,9 @@ Current behavior:
   stops at a non-index-0 system message, bounding the per-turn cost to new
   messages.
 
-`SoftPruneMiddleware` is on by default (after `compaction`, before
-`approval`). Disable with `agents.middleware.disabled: [soft_prune]`.
+`SoftPruneMiddleware` is always on (after `compaction`, before
+`approval`); `prune_protect_tokens`, `prune_min_reclaim`, and
+`prune_min_turns` tune how aggressively it marks stale results.
 
 #### ApprovalMiddleware (`pipeline/approval.go`)
 

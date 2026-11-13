@@ -96,7 +96,7 @@ Ranked by value:
 Synthesizing §3 into a sixth direction: add a **counter-gated consolidation stage** to the pipeline, so durable capture is *scheduled* rather than *accidental*.
 
 - Two counters: user turns and tool iterations.
-- Config-driven thresholds (yaah's existing `agents.middleware` config is the natural home).
+- Config-driven thresholds (`agents.default.consolidate_turns_interval` / `consolidate_iters_interval`).
 - On threshold, run a **bounded consolidation pass** with a restricted toolset and a recursion guard.
 - Product of the pass: proposed memory entries + proposed skill create/patch — **not** a prose summary (that's direction 3/4's job).
 
@@ -130,8 +130,8 @@ Two orthogonal triggers, one action. The middleware contract (`PrepareStep` /
 ```
 pipeline: steer → followup → compaction → soft_prune → approval → inline_limit
           → tool_concurrency → shepherd_trace → loop_detection → intent_loop
-          → evidence_guard → conflict_detect
-          (consolidate is opt-in via agents.middleware.enabled)
+          → evidence_guard → conflict_detect → consolidate
+          (consolidate is inert until an interval knob is set)
 
 compaction (enriched — pressure check, pressure-driven)
   PrepareStep / PostTool:
@@ -198,7 +198,7 @@ consolidator sub-agent (role: "consolidator", restricted tools, recursion guard)
 
 - **Autonomous self-modification is the risk hermes is engineered around.** yaah must adopt the guardrails *before* enabling unattended writes — not after.
 - **ReadOnly-skills friction in isolated mode** needs a clear answer: consolidation output must be a *proposal* crossing the `apply_out` boundary, never a direct in-container write.
-- **Cadence default.** 10 turns / 10 iterations is hermes's heuristic; yaah should surface it as policy (`agents.middleware.consolidate`) and let the `IneffectiveCompactions` signal tune it (ties to direction 1).
+- **Cadence default.** 10 turns / 10 iterations is hermes's heuristic; yaah should surface it as policy (`agents.default.consolidate_turns_interval` / `consolidate_iters_interval`) and let the `IneffectiveCompactions` signal tune it (ties to direction 1).
 - **Consolidator cost.** A full background fork per N turns is non-trivial token spend; the light-vs-full staging (direction 5) is the mitigation.
 - **Idempotency.** Duplicate memory/skill writes across overlapping consolidations must be deduped (hermes's ledger + `reuse_after_patch` are the pattern to follow).
 

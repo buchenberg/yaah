@@ -72,8 +72,7 @@ too, so `git branch -q <name>`, `git branch -v <name>` and
 `git branch --sort=refname <name>` are denied while `git branch -q --list`,
 `git branch -v --list` and `git branch --sort=refname --list` pass. The mode's
 promise is that the capability is absent, not that the user may grant it, and
-the denial is enforced at dispatch, so `middleware.disabled: [approval]`
-cannot switch it off.
+the denial is enforced at dispatch, independently of the approval middleware.
 `staticcheck` reports diagnostics and writes nothing, though its `-vettool`
 and `-toolexec` flags are denied — both make `go vet` execute a caller-named
 binary — and a `packages` value that opens with `-` is refused outright,
@@ -349,13 +348,15 @@ contract and daemon requirements.
 
 ## Middleware
 
-Every turn runs through a configurable middleware pipeline. The orchestrator
-registers the built-in middleware and enables a default set (see the table);
-`middleware.enabled` is additive and `middleware.disabled` removes names.
+Every turn runs through a fixed middleware pipeline. The orchestrator
+registers the built-in middleware and runs all of them; there is no
+enable/disable list. Each one is either a safety net (compaction, the
+evidence/loop/intent guards, approval), required plumbing (steering,
+follow-ups, tracing), or inert until its own knob turns it on.
 Sub-agent loops use a curated pipeline (`tool_concurrency`, `shepherd_trace`,
-and `evidence_guard`, plus `permission`, `steer`, and `supervisor_guard` where
-applicable). The full
-table, the default order, and enable/disable rules live in
+and `evidence_guard`, plus `steer` and `supervisor_guard` where applicable).
+The full table, the fixed order, and the two opt-in knobs
+(`prompt_caching`, the consolidate intervals) live in
 [configuration.md](./configuration.md#middleware).
 
 ## Supervision lifecycle

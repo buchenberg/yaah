@@ -31,35 +31,14 @@ func TestCheckPipeline_MatchesSourceOfTruth(t *testing.T) {
 			t.Errorf("pipeline report %q missing default middleware %q", check.Detail, name)
 		}
 	}
-	if strings.Contains(check.Detail, "staleness") {
-		t.Errorf("pipeline report still lists deleted middleware staleness: %q", check.Detail)
-	}
 }
 
-func TestCheckPipeline_AdditiveEnabled(t *testing.T) {
+func TestCheckPipeline_PromptCachingKnob(t *testing.T) {
 	cfg := &config.Config{}
-	cfg.Agent.Middleware.Enabled = []string{"shepherd_trace"}
+	cfg.Agent.Default.PromptCaching = true
 	check := CheckPipeline(cfg, nil)
-	if !strings.Contains(check.Detail, "shepherd_trace") {
-		t.Errorf("enabled entry missing from report: %q", check.Detail)
-	}
-	for _, name := range pipeline.DefaultPipelineNames() {
-		if !strings.Contains(check.Detail, name) {
-			t.Errorf("default middleware %q dropped when enabled list is set: %q", name, check.Detail)
-		}
-	}
-}
-
-func TestCheckPipeline_Disabled(t *testing.T) {
-	cfg := &config.Config{}
-	cfg.Agent.Middleware.Disabled = []string{"approval"}
-	check := CheckPipeline(cfg, nil)
-	active, _, _ := strings.Cut(check.Detail, " (disabled")
-	if strings.Contains(active, "approval") {
-		t.Errorf("disabled middleware still reported active: %q", check.Detail)
-	}
-	if !strings.Contains(check.Detail, "disabled: approval") {
-		t.Errorf("report should mention disabled middleware: %q", check.Detail)
+	if !strings.Contains(check.Detail, "prompt_caching") {
+		t.Errorf("prompt_caching knob missing from report: %q", check.Detail)
 	}
 }
 

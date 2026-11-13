@@ -108,6 +108,11 @@ type Loop struct {
 	brokerClosed bool
 	ctxMgrMu     sync.Mutex // guards lazy CtxMgr fills from concurrent tool goroutines
 
+	// pipelineOverride, when non-nil, replaces the middleware pipeline
+	// buildPipeline would otherwise assemble. Test-only seam: production
+	// code leaves it nil and the loop always uses the fixed composition.
+	pipelineOverride *pipeline.Pipeline
+
 	LLM *llm.Client
 
 	CompactProvider  Provider
@@ -260,8 +265,7 @@ type LoopConfig struct {
 	// after, so the persona wins on overlap (last-match-wins). The
 	// Authorize decision path folds it together with the posture the call's
 	// class derives (Stricter, Deny > Ask > Allow); admitTool enforces every
-	// terminal verdict at dispatch, so a disabled approval pipeline cannot
-	// silently bypass a deny, and refuses an ask on a sub-agent loop (a
+	// terminal verdict at dispatch, and refuses an ask on a sub-agent loop (a
 	// dispatch has no approval bridge, so ask there would otherwise be a
 	// silent allow). Nil or empty means no rules — behavior is exactly the
 	// pre-W5 gates.
@@ -294,8 +298,6 @@ type LoopConfig struct {
 	ConsolidateItersInterval int
 	CompactModel             string
 	SessionID                string
-	PipelineNames            []string
-	PipelineDisabled         []string
 	OtelEnabled              bool
 	OtelVerbose              bool
 	SystemPrompt             string

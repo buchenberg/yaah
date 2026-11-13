@@ -70,14 +70,24 @@ func TestConsolidateMiddleware_Name(t *testing.T) {
 }
 
 // TestConsolidateBuilderRegistered locks in that the consolidate builder lives
-// in builtinBuilders (the orchestrator map) — a prior revision registered it in
-// subAgentBuilders, where middleware.enabled could never reach it.
+// in builtinBuilders (the orchestrator map) and in the fixed default pipeline.
+// A prior revision registered it in subAgentBuilders, and later it required a
+// generic middleware.enabled entry to run; both are gone.
 func TestConsolidateBuilderRegistered(t *testing.T) {
 	if _, ok := builtinBuilders["consolidate"]; !ok {
 		t.Fatal("consolidate not registered in builtinBuilders (orchestrator map)")
 	}
 	if _, ok := subAgentBuilders["consolidate"]; ok {
 		t.Fatal("consolidate must not be registered in subAgentBuilders")
+	}
+	found := false
+	for _, name := range defaultPipelineNames {
+		if name == "consolidate" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("consolidate missing from defaultPipelineNames: %v", defaultPipelineNames)
 	}
 	builder := builtinBuilders["consolidate"]
 	m := builder(PipelineConfig{

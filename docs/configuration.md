@@ -174,10 +174,6 @@ agents:
   quality_gates:
     developer: [tester]
 
-  middleware:
-    enabled: [prompt_caching]          # additive, orchestrator only
-    disabled: []                       # removes from both pipelines
-
 # ── MCP servers ────────────────────────────────────────────────
 mcp_servers:
   filesystem:
@@ -460,28 +456,41 @@ the loader for that surface:
 
 ### Middleware
 
-**`agents.middleware`** — control the pipeline. `enabled` is **additive
-and orchestrator-only**: listed middleware are added to the default
-orchestrator pipeline (duplicates collapse). `disabled` removes middleware
-from both the orchestrator and sub-agent pipelines. The default orchestrator
-pipeline is
-`steer → followup → compaction → soft_prune → approval → inline_limit → tool_concurrency → loop_detection → intent_loop → evidence_guard → conflict_detect`.
+The middleware pipeline is **fixed**: every built-in middleware runs on
+every turn. There is no enable/disable list. Each middleware is either a
+safety net (compaction, the evidence/loop/intent guards, and the approval
+pipeline, which is the only layer that can prompt), required plumbing (the
+steer/followup channels and tracing), or inert until its own knob turns it
+on. The orchestrator order is
+`steer → followup → compaction → soft_prune → approval → inline_limit → tool_concurrency → shepherd_trace → loop_detection → intent_loop → evidence_guard → conflict_detect → consolidate`.
 
-| Middleware | Default | Purpose |
-|---|---|---|
-| `steer` | on | High-priority mid-turn steering input |
-| `followup` | on | Queued between-turn messages, coalesced |
-| `compaction` | on | LLM-powered context summarization |
-| `soft_prune` | on | Elide stale tool-output content (no LLM) |
-| `approval` | on | Gate dangerous tools |
-| `inline_limit` | on | Cap tool calls dispatched per turn (0 = unlimited) |
-| `loop_detection` | on | Halt identical tool+result loops |
-| `intent_loop` | on | Steer (3 turns) and halt (8 turns) when the assistant re-announces the same plan without changing files — catches the paraphrased, read-only loops `loop_detection` cannot see |
-| `evidence_guard` | on | Steer/halt when repeated calls or unchanged re-reads produce no new evidence |
-| `conflict_detect` | on | Flag evidence-backed divergent writes and unknown shell mutations across sub-agents |
-| `tool_concurrency` | on | Cap concurrent tool goroutines |
-| `prompt_caching` | off | Anthropic cache-control breakpoints — include via `agents.default.prompt_caching: true`; naming it in `enabled` also works |
-| `supervisor_guard` | sub-agents only | Blocking destructive-shell guard; present in the sub-agent pipeline when tracing/supervision is active |
+| Middleware | Purpose |
+|---|---|
+| `steer` | High-priority mid-turn steering input |
+| `followup` | Queued between-turn messages, coalesced |
+| `compaction` | LLM-powered context summarization |
+| `soft_prune` | Elide stale tool-output content (no LLM); `prune_*` keys tune it |
+| `approval` | Gate dangerous tools |
+| `inline_limit` | Cap tool calls dispatched per turn (0 = unlimited) |
+| `tool_concurrency` | Cap concurrent tool goroutines |
+| `shepherd_trace` | Record the session transcript and tool facts |
+| `loop_detection` | Halt identical tool+result loops |
+| `intent_loop` | Steer (3 turns) and halt (8 turns) when the assistant re-announces the same plan without changing files — catches the paraphrased, read-only loops `loop_detection` cannot see |
+| `evidence_guard` | Steer/halt when repeated calls or unchanged re-reads produce no new evidence |
+| `conflict_detect` | Flag evidence-backed divergent writes and unknown shell mutations across sub-agents |
+| `consolidate` | Cadence-driven memory nudge; inert until `consolidate_turns_interval` or `consolidate_iters_interval` is set |
+
+The two genuinely optional behaviours are controlled by their own keys, not
+by a pipeline list:
+
+- `agents.default.prompt_caching: true` opts into Anthropic cache-control
+  breakpoints.
+- `agents.default.consolidate_turns_interval` / `consolidate_iters_interval`
+  enable the memory nudge.
+
+Sub-agent loops run a curated subset (`tool_concurrency`, `shepherd_trace`,
+`evidence_guard`, plus `steer` when a supervision channel is wired and
+`supervisor_guard` when supervision is active).
 
 ### Permission rulesets
 

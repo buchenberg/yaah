@@ -181,7 +181,11 @@ yaah follows **idiomatic Go** conventions. This section highlights the most impo
 
 1. Define middleware type in `internal/agent/pipeline/`
 2. Implement the `Middleware` interface (`Name`, `PrepareStep`, `PostModel`, `PostTool`)
-3. Register in `builtinBuilders` map in `internal/agent/pipeline/config.go` (optional)
+3. Register in `builtinBuilders` (or `subAgentBuilders`) and add the name to the
+   matching pipeline list (`defaultPipelineNames` / `subAgentPipelineNames`) in
+   `internal/agent/pipeline/config.go`. A middleware that should be optional
+   ships inert and is driven by its own config knob, not by a general
+   enable/disable list.
 4. Add tests
 
 ### Adding a New Event Type

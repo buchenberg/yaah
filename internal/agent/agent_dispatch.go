@@ -102,9 +102,9 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 	start := time.Now()
 	// One admission decision for the whole dispatch: the advertised tool
 	// level plus plan mode's per-call danger check. The approval middleware
-	// asks the same questions, but it is optional
-	// (middleware.disabled: [approval]) — a mode that promises mutating
-	// actions are withheld cannot be switched off by config.
+	// asks the same questions on the orchestrator, but it is absent from
+	// sub-agent loops, so dispatch stays the enforcement point for every
+	// terminal verdict.
 	allowed, refusal := l.admitTool(d.call.Function.Name, d.call.Function.Arguments)
 
 	runCtx := ctx

@@ -150,14 +150,3 @@ func TestSoftPrune_BuilderWiring(t *testing.T) {
 		t.Error("emit hook was not wired through NewFromConfig")
 	}
 }
-
-func TestSoftPrune_DisabledExcluded(t *testing.T) {
-	pipe := NewFromConfig(PipelineConfig{
-		PipelineDisabled: []string{"soft_prune"},
-	})
-	for _, n := range pipe.MiddlewareNames() {
-		if n == "soft_prune" {
-			t.Fatalf("soft_prune should be excluded by PipelineDisabled")
-		}
-	}
-}

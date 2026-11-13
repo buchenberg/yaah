@@ -68,7 +68,7 @@ var alwaysDangerous = map[string]bool{
 // using the registry's DangerClassifier when the tool has one and the
 // alwaysDangerous table for shell names no platform registry carries. It is
 // the danger vocabulary the Authorize gate stages classify with, so the
-// optional approval layer and the required dispatch gate cannot disagree about
+// approval layer and the required dispatch gate cannot disagree about
 // what is dangerous.
 func (l *Loop) dangerousCall(name, args string) bool {
 	if l.Registry != nil {

@@ -220,8 +220,7 @@ type Defaults struct {
 	// Consolidation "nudge" (docs/compaction-as-sleep.md §7): fire the
 	// consolidate middleware every N turns or every N tool results so the
 	// loop consolidates durable state to long-term memory out-of-band.
-	// Both 0 = disabled (default). Requires the "consolidate" middleware
-	// to be enabled in middleware.enabled.
+	// Both 0 = disabled (default).
 	ConsolidateTurnsInterval int `yaml:"consolidate_turns_interval"`
 	ConsolidateItersInterval int `yaml:"consolidate_iters_interval"`
 
@@ -297,14 +296,6 @@ type Hooks struct {
 	Dir string `yaml:"dir"` // directory for JSONL hook event files
 }
 
-// MiddlewareConfig controls which middleware runs in the agent pipeline.
-// Enabled is additive over the built-in defaults (it extends rather than
-// replaces them); Disabled removes names from the union.
-type MiddlewareConfig struct {
-	Enabled  []string `yaml:"enabled"`
-	Disabled []string `yaml:"disabled"`
-}
-
 // FallbackConfig configures the fallback provider/model used when the
 // primary provider returns auth, billing, or rate-limit errors.
 type FallbackConfig struct {
@@ -317,7 +308,6 @@ type AgentConfig struct {
 	Default      Defaults            `yaml:"default"`
 	Fallback     FallbackConfig      `yaml:"fallback"`
 	SubAgent     SubAgentConfig      `yaml:"subagent"`
-	Middleware   MiddlewareConfig    `yaml:"middleware"`
 	QualityGates map[string][]string `yaml:"quality_gates"` // role → validator roles dispatched after completion
 }
 

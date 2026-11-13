@@ -20,7 +20,7 @@ import (
 
 func TestArchitectureNamesDefaultPipelineInOrder(t *testing.T) {
 	doc := read(t, "../../docs/architecture.md")
-	const startMarker = "The pipeline is built in `buildPipeline()` with a config-driven order:"
+	const startMarker = "The pipeline is built in `buildPipeline()` in a fixed order:"
 	start := strings.Index(doc, startMarker)
 	if start < 0 {
 		t.Fatalf("architecture.md no longer has the pipeline inventory marker %q", startMarker)

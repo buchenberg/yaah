@@ -156,7 +156,6 @@ func (t *App) renderInfoPane() {
 			Model:   t.embeddingModel,
 		},
 		World:                 t.worldStatus,
-		Pipeline:              t.middlewarePipeline,
 		AgentActive:           t.agentActive,
 		AgentPromptTokens:     agentPrompt,
 		AgentCompletionTokens: agentCompletion,
