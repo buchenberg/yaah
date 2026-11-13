@@ -125,6 +125,19 @@ const (
 	SelectSmallestDiff SelectPolicy = "smallest_diff"
 )
 
+// SettlePolicy enumerates settlement policies: how a settle decides what it
+// can land together. It is the settle's half of the one authoring `policy`
+// key; SelectPolicy is the gate/select half. spec.Policy is the shared enum
+// because the flat node cannot tell the two apart, and per-kind membership
+// is decided here, at the conversion each kind owns.
+type SettlePolicy string
+
+// Settle policies.
+const (
+	SettlePathDisjoint SettlePolicy = "path_disjoint"
+	SettleThreeWay     SettlePolicy = "three_way"
+)
+
 // AggregateStrategy enumerates combine strategies.
 type AggregateStrategy string
 
@@ -279,6 +292,13 @@ type Node struct {
 	Order      SettleOrder    `json:"order,omitempty"`
 	OnConflict ConflictPolicy `json:"on_conflict,omitempty"`
 	OnEmpty    EmptyPolicy    `json:"on_empty,omitempty"`
+	// SettlePolicy is what a settle writes from the authoring `policy` key.
+	// The graph key is settle_policy, not policy: ir.Node is one flat struct
+	// and the select field above already owns `policy`, and encoding/json
+	// silently drops every field sharing a tag at the same depth. Each kind
+	// populates its own half of the one document key, so the resolved graph
+	// can still be read kind by kind.
+	SettlePolicy SettlePolicy `json:"settle_policy,omitempty"`
 
 	// aggregate.
 	Inputs   []*Selector       `json:"inputs,omitempty"`

@@ -183,7 +183,7 @@ func TestReferencesResolveHandBuilt(t *testing.T) {
 			graph: &ir.Graph{Name: "hand", Steps: []*ir.Node{
 				emitAt("steps.a", "a", &ir.Ref{Root: ir.RootIndex}),
 			}},
-			code: CodeWF010, path: "steps.a.value[index]", sub: "index is only in scope inside a fan-out body",
+			code: CodeWF010, path: "steps.a.value[index]", sub: "index is only in scope inside a fan-out or loop body",
 		},
 		{
 			name: "index with a path",
@@ -293,13 +293,45 @@ func TestReferencesResolveHandBuilt(t *testing.T) {
 			}}},
 		},
 		{
-			name: "loop body has no item binding",
+			name: "loop body numbers its iterations",
 			graph: &ir.Graph{Name: "hand", Steps: []*ir.Node{{
 				Path: "steps.rep", ID: "rep", Kind: ir.KindLoop, Collect: "outs",
 				Body: []*ir.Node{{Path: "steps.rep.body[0]", Kind: ir.KindEmit,
 					Value: compiled(&ir.Ref{Root: ir.RootIndex})}}},
 			}},
-			code: CodeWF010, path: "steps.rep.body[0].value[index]", sub: "index is only in scope inside a fan-out body",
+			// The scope this rule reconstructs is ir.resolveBody's, which
+			// marks fan-out and loop bodies as iterating (yaah-0u0v.33). A
+			// reference the resolver compiles must never come back here as
+			// WF010, so the loop body is silent even though it binds no item.
+		},
+		{
+			name: "aggregate body has no iteration to number",
+			graph: &ir.Graph{Name: "hand", Steps: []*ir.Node{{
+				Path: "steps.agg", ID: "agg", Kind: ir.KindAggregate, Strategy: ir.AggregateConcat,
+				Body: []*ir.Node{{Path: "steps.agg.body[0]", Kind: ir.KindEmit,
+					Value: compiled(&ir.Ref{Root: ir.RootIndex})}}},
+			}},
+			code: CodeWF010, path: "steps.agg.body[0].value[index]", sub: "index is only in scope inside a fan-out or loop body",
+		},
+		{
+			name: "a loop nested in a fan-out body keeps the item scope",
+			graph: &ir.Graph{Name: "hand", Steps: []*ir.Node{{
+				Path: "steps.fan", ID: "fan", Kind: ir.KindFanout, As: "ws", Collect: "results",
+				Over: &ir.Over{Literals: []any{"a"}},
+				Body: []*ir.Node{{
+					Path: "steps.fan.body[0]", ID: "rep", Kind: ir.KindLoop, Collect: "outs",
+					Body: []*ir.Node{{Path: "steps.fan.body[0].body[0]", Kind: ir.KindEmit,
+						Value: compiled(&ir.Ref{Root: ir.RootIndex}, &ir.Ref{Root: ir.RootItem, Name: "ws"})}}},
+				}},
+			}},
+		},
+		{
+			name: "a container's own values are outside its body",
+			graph: &ir.Graph{Name: "hand", Steps: []*ir.Node{{
+				Path: "steps.rep", ID: "rep", Kind: ir.KindLoop, Collect: "outs",
+				ContinueFrom: compiled(&ir.Ref{Root: ir.RootIndex}),
+			}}},
+			code: CodeWF010, path: "steps.rep.continue_from[index]", sub: "index is only in scope inside a fan-out or loop body",
 		},
 		{
 			name: "item binding is invisible above its fan-out",
