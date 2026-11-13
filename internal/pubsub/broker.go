@@ -14,10 +14,24 @@ const (
 // subscriber is one broker subscription. Subscriptions are held by pointer
 // so a cancel handle can detach exactly its own registration. detached
 // reports whether ch has been closed, and is guarded by Broker.mu.
+//
+// delivered/dropped are this subscription's own fan-out counters, bumped at
+// every accounting point that moves the broker-wide aggregates (see
+// countDelivered/countDropped). They exist so Stats can name a slow or wedged
+// subscriber instead of collapsing every view into one global number, and
+// they are deliberately a mirror rather than a second source of truth: the
+// globals keep their exact meaning.
+//
+// Atomics are sufficient. Publishers and deliverMust update the counters under
+// the broker's read lock, detach updates nothing, and a counter is never read
+// to decide whether a send may happen — so Stats can take a value under the
+// same read lock without tearing.
 type subscriber[T any] struct {
-	id       string
-	ch       chan T
-	detached bool
+	id        string
+	ch        chan T
+	detached  bool
+	delivered atomic.Int64
+	dropped   atomic.Int64
 }
 
 type Broker[T any] struct {
@@ -35,6 +49,22 @@ func NewBroker[T any]() *Broker[T] {
 	}
 }
 
+// countDelivered accounts one event accepted by s's channel on both the
+// broker-wide aggregate and the subscription's own counter. Every delivery
+// site in Publish and deliverMust goes through these two helpers, which is
+// what keeps Stats() reconcilable with Delivered()/Dropped().
+func (b *Broker[T]) countDelivered(s *subscriber[T]) {
+	b.delivered.Add(1)
+	s.delivered.Add(1)
+}
+
+// countDropped accounts one event that did not reach s's channel. See
+// countDelivered for the dual-bookkeeping rule.
+func (b *Broker[T]) countDropped(s *subscriber[T]) {
+	b.dropped.Add(1)
+	s.dropped.Add(1)
+}
+
 func (b *Broker[T]) Publish(event T) {
 	if b.closed.Load() {
 		return
@@ -44,9 +74,9 @@ func (b *Broker[T]) Publish(event T) {
 	for _, s := range b.subs {
 		select {
 		case s.ch <- event:
-			b.delivered.Add(1)
+			b.countDelivered(s)
 		default:
-			b.dropped.Add(1)
+			b.countDropped(s)
 		}
 	}
 }
@@ -102,16 +132,16 @@ func (b *Broker[T]) deliverMust(event T) {
 	expired := false
 	for _, s := range b.subs {
 		if expired {
-			b.dropped.Add(1)
+			b.countDropped(s)
 			continue
 		}
 		select {
 		case s.ch <- event:
-			b.delivered.Add(1)
+			b.countDelivered(s)
 		case <-timer.C:
 			// The single fan-out budget is spent; every remaining
 			// subscriber is counted dropped without a send attempt.
-			b.dropped.Add(1)
+			b.countDropped(s)
 			expired = true
 		}
 	}
@@ -216,10 +246,60 @@ func (b *Broker[T]) SubscriberCount() int {
 	return len(b.subs)
 }
 
+// Dropped returns the broker-wide count of events that did not reach a
+// subscriber's channel since the broker was created. It is lifetime-wide and
+// subscription-blind: counts recorded against a subscriber that has since been
+// detached, unsubscribed or closed stay in the total, so it is not the sum of
+// the rows Stats currently returns.
 func (b *Broker[T]) Dropped() int64 {
 	return b.dropped.Load()
 }
 
+// Delivered returns the broker-wide count of events accepted by a
+// subscriber's channel since the broker was created. Accepted means buffered,
+// not consumed: a wedged reader still counts as delivered until its buffer
+// fills. Same lifetime-wide caveat as Dropped.
 func (b *Broker[T]) Delivered() int64 {
 	return b.delivered.Load()
+}
+
+// SubscriberStats is one row of Broker.Stats: a subscription's id together
+// with its own delivered/dropped counters. Anonymous subscriptions, made
+// through SubscribeHandle, carry an empty ID; their position in the slice is
+// what tells two of them apart.
+type SubscriberStats struct {
+	ID        string
+	Delivered int64
+	Dropped   int64
+}
+
+// Stats snapshots the per-subscription counters in subscription order, under
+// the same read lock the fan-out uses, and returns copies — mutating the
+// result cannot move a broker counter.
+//
+// Counting semantics are a deliberate mirror of the globals, not a split by
+// delivery mode: both the lossy Publish path and the must-deliver paths
+// (PublishMustDeliver, TryPublishMustDeliver) bump the owning subscription's
+// counter at exactly the sites that bump the aggregate. That keeps
+// sum(Stats.Delivered)+sum(Stats.Dropped) reconcilable with
+// Delivered()+Dropped() whenever no subscription has been detached, which is
+// the property the per-Run diagnostic depends on. Once a subscription is
+// detached its row disappears while its history stays in the globals, so the
+// sums can fall below the aggregates as views come and go; read Stats for
+// "which live view is slow" and the globals for lifetime totals.
+//
+// The returned slice is never nil, and is empty for a broker with no
+// subscribers (including a closed one).
+func (b *Broker[T]) Stats() []SubscriberStats {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	out := make([]SubscriberStats, 0, len(b.subs))
+	for _, s := range b.subs {
+		out = append(out, SubscriberStats{
+			ID:        s.id,
+			Delivered: s.delivered.Load(),
+			Dropped:   s.dropped.Load(),
+		})
+	}
+	return out
 }

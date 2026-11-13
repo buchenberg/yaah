@@ -460,3 +460,283 @@ func TestBroker_PublishMustDeliver_SharedDeadline(t *testing.T) {
 		t.Errorf("fan-out took %v, want at most %v (one shared deadline)", elapsed, limit)
 	}
 }
+
+// statsByID (yaah-8jou.5) returns the Stats row carrying id. It fails the
+// test when the id is absent or held by more than one live subscription, so
+// tests that use it keep their ids unique.
+func statsByID(t *testing.T, b *Broker[int], id string) SubscriberStats {
+	t.Helper()
+	stats := b.Stats()
+	var hit *SubscriberStats
+	for i := range stats {
+		if stats[i].ID != id {
+			continue
+		}
+		if hit != nil {
+			t.Fatalf("Stats() has two rows with id %q; tests using statsByID must keep ids unique", id)
+		}
+		hit = &stats[i]
+	}
+	if hit == nil {
+		t.Fatalf("Stats() has no row with id %q (%d rows)", id, len(stats))
+	}
+	return *hit
+}
+
+// reconcileStats checks that the per-subscription rows add up to the
+// broker-wide aggregates: every accounting point must bump exactly one
+// subscriber counter and one global counter, whichever path delivered or
+// dropped. The property is claimed only for a broker no subscription has been
+// detached from, because a detached row leaves the snapshot while its
+// history stays in the globals.
+func reconcileStats(t *testing.T, b *Broker[int]) {
+	t.Helper()
+	var delivered, dropped int64
+	for _, s := range b.Stats() {
+		delivered += s.Delivered
+		dropped += s.Dropped
+	}
+	if got := b.Delivered(); delivered != got {
+		t.Errorf("per-subscriber delivered sums to %d, broker Delivered() = %d", delivered, got)
+	}
+	if got := b.Dropped(); dropped != got {
+		t.Errorf("per-subscriber dropped sums to %d, broker Dropped() = %d", dropped, got)
+	}
+}
+
+// TestBroker_Stats_PerSubscriberUnderPublish (yaah-8jou.5): Publish charges
+// each subscription separately, so a view that keeps up and a view whose
+// buffer is full are told apart instead of both landing in one global number.
+func TestBroker_Stats_PerSubscriberUnderPublish(t *testing.T) {
+	b := NewBroker[int]()
+	healthy := b.Subscribe("healthy", 8)
+	stalled := b.Subscribe("stalled", 1)
+
+	const n = 5
+	for i := 0; i < n; i++ {
+		b.Publish(i)
+	}
+
+	h := statsByID(t, b, "healthy")
+	if h.Delivered != n || h.Dropped != 0 {
+		t.Errorf("healthy: delivered=%d dropped=%d, want %d/0", h.Delivered, h.Dropped, n)
+	}
+	s := statsByID(t, b, "stalled")
+	if s.Delivered != 1 || s.Dropped != n-1 {
+		t.Errorf("stalled: delivered=%d dropped=%d, want 1/%d", s.Delivered, s.Dropped, n-1)
+	}
+	reconcileStats(t, b)
+
+	// Rows are copies; handing one out cannot move a broker counter.
+	h.Dropped = 99
+	if got := statsByID(t, b, "healthy").Dropped; got != 0 {
+		t.Errorf("after mutating a returned row, healthy dropped = %d, want 0", got)
+	}
+
+	for i := 0; i < n; i++ {
+		if got := <-healthy; got != i {
+			t.Errorf("healthy received %d, want %d", got, i)
+		}
+	}
+	if got := <-stalled; got != 0 {
+		t.Errorf("stalled received %d, want the one buffered event 0", got)
+	}
+	b.Unsubscribe("healthy")
+	b.Unsubscribe("stalled")
+}
+
+// TestBroker_Stats_MustDeliverCountsEachSubscription (yaah-8jou.5): the
+// shared-deadline fan-out charges each live subscription exactly once, so a
+// stalled view shows up as drops on its own row while a healthy view's row
+// keeps counting deliveries.
+func TestBroker_Stats_MustDeliverCountsEachSubscription(t *testing.T) {
+	b := NewBroker[int]()
+	b.mustDeliverTimeout = 10 * time.Millisecond
+	healthy := b.Subscribe("healthy", 8)
+	stalled := b.Subscribe("stalled", 1)
+
+	// Fill the stalled subscription's buffer and leave healthy room, then
+	// must-deliver twice. Nobody reads stalled, so each fan-out waits for the
+	// deadline and is charged to that row alone.
+	b.Publish(0)
+	if got := <-healthy; got != 0 {
+		t.Fatalf("healthy received %d, want 0", got)
+	}
+	b.PublishMustDeliver(1)
+	b.PublishMustDeliver(2)
+
+	h := statsByID(t, b, "healthy")
+	if h.Delivered != 3 || h.Dropped != 0 {
+		t.Errorf("healthy: delivered=%d dropped=%d, want 3/0", h.Delivered, h.Dropped)
+	}
+	s := statsByID(t, b, "stalled")
+	if s.Delivered != 1 || s.Dropped != 2 {
+		t.Errorf("stalled: delivered=%d dropped=%d, want 1/2", s.Delivered, s.Dropped)
+	}
+	reconcileStats(t, b)
+
+	// The single event stalled ever holds is the one Publish left there.
+	if got := <-stalled; got != 0 {
+		t.Errorf("stalled received %d, want 0", got)
+	}
+	b.Unsubscribe("healthy")
+	b.Unsubscribe("stalled")
+}
+
+// TestBroker_Stats_RowOrderAndAnonymousIDs (yaah-8jou.5): rows come back in
+// subscription order, and anonymous SubscribeHandle subscriptions are included
+// with an empty ID — position is what tells two of them apart.
+func TestBroker_Stats_RowOrderAndAnonymousIDs(t *testing.T) {
+	b := NewBroker[int]()
+	handleCh, cancelHandle := b.SubscribeHandle(4)
+	named := b.Subscribe("named", 4)
+	extraCh, cancelExtra := b.SubscribeHandle(4)
+	defer func() {
+		cancelHandle()
+		cancelExtra()
+		b.Unsubscribe("named")
+	}()
+
+	b.Publish(1)
+	b.PublishMustDeliver(2)
+
+	stats := b.Stats()
+	if len(stats) != 3 {
+		t.Fatalf("Stats() rows = %d, want 3", len(stats))
+	}
+	if stats[0].ID != "" || stats[1].ID != "named" || stats[2].ID != "" {
+		t.Errorf("row ids = %q, %q, %q; want the anonymous rows empty and the named row between them",
+			stats[0].ID, stats[1].ID, stats[2].ID)
+	}
+	for i, s := range stats {
+		if s.Delivered != 2 || s.Dropped != 0 {
+			t.Errorf("row %d: delivered=%d dropped=%d, want 2/0", i, s.Delivered, s.Dropped)
+		}
+	}
+	reconcileStats(t, b)
+
+	for _, ch := range []<-chan int{handleCh, named, extraCh} {
+		if got := <-ch; got != 1 {
+			t.Errorf("subscriber received %d, want the first event 1", got)
+		}
+		if got := <-ch; got != 2 {
+			t.Errorf("subscriber received %d, want the second event 2", got)
+		}
+	}
+}
+
+// TestBroker_Stats_DetachedRowsDisappear (yaah-8jou.5): cancelling a handle or
+// unsubscribing removes that row, and Stats never returns nil.
+func TestBroker_Stats_DetachedRowsDisappear(t *testing.T) {
+	b := NewBroker[int]()
+	if stats := b.Stats(); stats == nil || len(stats) != 0 {
+		t.Fatalf("Stats() on a fresh broker = %v, want an empty non-nil slice", stats)
+	}
+
+	handleCh, cancel := b.SubscribeHandle(4)
+	named := b.Subscribe("by-id", 4)
+
+	b.Publish(1)
+	if len(b.Stats()) != 2 {
+		t.Fatalf("Stats() rows = %d, want 2", len(b.Stats()))
+	}
+	<-handleCh
+	<-named
+
+	cancel()
+	stats := b.Stats()
+	if len(stats) != 1 || stats[0].ID != "by-id" {
+		t.Fatalf("after cancelling a handle, rows = %+v, want one row with id \"by-id\"", stats)
+	}
+	b.Unsubscribe("by-id")
+	if got := b.Stats(); got == nil || len(got) != 0 {
+		t.Errorf("after Unsubscribe, rows = %+v, want an empty non-nil slice", got)
+	}
+
+	// The detached subscription's history stays in the broker-wide totals even
+	// though its row is gone: rows and globals are snapshots taken at
+	// different moments, which is why reconciliation is only claimed for a
+	// broker nobody has detached from.
+	if b.Delivered() != 2 || b.Dropped() != 0 {
+		t.Errorf("globals after detach: delivered=%d dropped=%d, want 2/0", b.Delivered(), b.Dropped())
+	}
+
+	b.Close()
+	if got := b.Stats(); got == nil || len(got) != 0 {
+		t.Errorf("Stats() on a closed broker = %+v, want an empty non-nil slice", got)
+	}
+}
+
+// TestBroker_Stats_RaceWithConcurrentPublish (yaah-8jou.5) runs Stats readers
+// against concurrent fan-out under -race: the counters are atomics read under
+// the same read lock the publishers hold, so a snapshot must never tear and
+// every event must still be accounted once per subscription.
+func TestBroker_Stats_RaceWithConcurrentPublish(t *testing.T) {
+	b := NewBroker[int]()
+	const subs = 4
+	const publishes = 200
+	// Every subscription sees one event per publisher.
+	const perSub = subs * publishes
+
+	chans := make([]<-chan int, 0, subs)
+	cancels := make([]func(), 0, subs)
+	for i := 0; i < subs; i++ {
+		ch, cancel := b.SubscribeHandle(perSub)
+		chans = append(chans, ch)
+		cancels = append(cancels, cancel)
+	}
+
+	var pubs, readers sync.WaitGroup
+	stop := make(chan struct{})
+	for i := 0; i < subs; i++ {
+		pubs.Add(1)
+		go func() {
+			defer pubs.Done()
+			for j := 0; j < publishes; j++ {
+				b.Publish(j)
+			}
+		}()
+	}
+	// Readers snapshot while the fan-out is in flight, and stop as soon as the
+	// publishers are done so a loaded box cannot spin.
+	for i := 0; i < 2; i++ {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					if stats := b.Stats(); len(stats) != subs {
+						t.Errorf("Stats() rows = %d while %d subscriptions are live", len(stats), subs)
+						return
+					}
+				}
+			}
+		}()
+	}
+	pubs.Wait()
+	close(stop)
+	readers.Wait()
+
+	if got := b.Delivered(); got != perSub*subs {
+		t.Errorf("Delivered() = %d, want %d", got, perSub*subs)
+	}
+	if got := b.Dropped(); got != 0 {
+		t.Errorf("Dropped() = %d, want 0 (every buffer was large enough)", got)
+	}
+	reconcileStats(t, b)
+
+	for _, ch := range chans {
+		for n := 0; n < perSub; n++ {
+			<-ch
+		}
+	}
+	for _, cancel := range cancels {
+		cancel()
+	}
+	if stats := b.Stats(); len(stats) != 0 {
+		t.Errorf("after cancelling every subscription, rows = %d, want 0", len(stats))
+	}
+}
