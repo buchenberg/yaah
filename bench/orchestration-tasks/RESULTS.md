@@ -502,3 +502,51 @@ Run with `DATASET=bench/orchestration-tasks`,
 `SUITE=bench/orchestration-tasks/mock-suite.txt`, and `DEEPSEEK_API_KEY=mock`;
 the mock service is a compose sidecar built from `_mock/` with a task-specific
 trap.
+
+## 2026-11-12 — first full-suite run of the nine-task board (6/9)
+
+Run `2026-11-12__14-45-53` (`suite.txt` at the belt-curation commit, yaah
+one-shot, deepseek-flash, `--n-concurrent 1`, binary built from main that
+morning — pre-#1592, so none of that day's compaction/protection or
+verifier fixes are in it). Verdicts are as-run and stand as recorded;
+post-run fix references are annotations, not re-scoring.
+
+| Task | Resolved | Time | Steps | In | Out | Cached | Orchestrator in/out | Sub in/out | Cost |
+|---|---|---:|---:|---:|---:|---|---|---|---:|
+| orch-compact | no | 27s | 5 | 121,675 | 1,826 | 91% | — (no subs) | — | $0.0031 |
+| orch-confinement | yes | 64s | 8 | 295,129 | 10,475 | 94% | 164,947 / 3,282 | 130,182 / 7,193 (1 developer) | $0.0098 |
+| orch-escalation | yes | 31s | 6 | 140,428 | 4,797 | 97% | 91,773 / 3,129 | 48,655 / 1,668 (1 developer) | $0.0038 |
+| orch-fanout | yes | 81s | 12 | 577,184 | 23,625 | 93% | 249,052 / 6,751 | 328,132 / 16,874 (6 developer) | $0.0216 |
+| orch-guard | yes | 44s | 7 | 221,612 | 6,028 | 97% | 120,350 / 3,974 | 101,262 / 2,054 (1 developer) | $0.0052 |
+| orch-quality-gate | yes | 66s | 10 | 364,771 | 8,628 | 92% | 165,572 / 2,666 | 199,199 / 5,962 (1 dev, 1 tester) | $0.0104 |
+| orch-recovery | no | 151s | 30 | 1,007,673 | 18,837 | 92% | — (no subs) | — | $0.0260 |
+| orch-report-fanout | yes | 75s | 7 | 305,872 | 22,221 | 86% | 156,334 / 4,208 | 149,538 / 18,013 (4 reviewer) | $0.0207 |
+| orch-settle-apply | no | 39s | 8 | 288,801 | 4,745 | 89% | 158,242 / 2,050 | 130,559 / 2,695 (1 developer) | $0.0084 |
+| **suite** | **6/9** | **578s** | **93** | **3,323,145** | **101,182** | **92%** | **2,235,618 / 46,723** | **1,087,527 / 54,459 (33% of total tokens)** | **$0.1091** |
+
+The three misses, one line each:
+
+- **orch-compact** — end state and integrity green, session-summary assert
+  red: every rollover fell to the heuristic-trim fallback, which dropped
+  nothing (the old reasoning-protection collapse) and recorded nothing.
+  Fixed that evening by #1599 (yaah-l12q): single-task verify8 on the
+  merged commit is `is_resolved: true` with a 2,589-char accepted summary
+  persisted.
+- **orch-settle-apply** — end state and integrity green, settle-verb assert
+  red: the verifier read only goatherd's settle verbs, while the three-way
+  apply path records `action=apply` only in `yaah.proposal.settled.v1` and
+  consumes its sealed output with `SettleDiscard` by design. Fixed same
+  evening by #1601 (yaah-rv4n): single-task run on the merged commit green
+  for the first time; the discard-lane canary stayed green.
+- **orch-recovery** — the genuine product miss, still open: the recovery
+  trace passes, but `/app/.orch-worktree/wt` is never re-registered and
+  `recovered.txt` never lands — the worktree the scenario staged for
+  recovery is not the workspace the operator actually recovers into. The
+  suite's most expensive task (30 steps, 151s, $0.026) burned its budget
+  working the wrong surface.
+
+Post-run state of the board (annotations, not re-scoring): under main with
+#1599 and #1601 merged, orch-compact and orch-settle-apply each pass
+single-task, and orch-recovery remains the open miss. The next honest row
+is a fresh full-suite run at a current commit, not an edited version of
+this one.
