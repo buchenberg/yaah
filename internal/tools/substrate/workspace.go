@@ -148,8 +148,9 @@ type WorkspaceSetter interface {
 // used before workspaces existed.
 //
 // When a confiner is set, Exec runs commands under the containment jail
-// (Landlock's syscall filtering on Linux, winacl's write-restricted access
-// checks on Windows) with the workspace as the sole writable root. The orchestrator's
+// (Landlock's syscall filtering on Linux, Seatbelt's sandbox profiles on
+// macOS, winacl's write-restricted access checks on Windows) with the
+// workspace as the sole writable root. The orchestrator's
 // workspace never carries one, so its commands keep running unconfined; a
 // confiner is attached only on the sub-agent workdir lane (that run's bound
 // world).
@@ -882,8 +883,9 @@ func deniedOutsideRoot(stderr, root string) (string, bool) {
 // WithinRoot reports whether p is root or lies beneath it, separator-aware so
 // "/work/wt-other" is not "inside" "/work/wt". Host path rules apply because the
 // message is produced on this host: the hint is only reachable where a kernel
-// jail actually runs (Linux via Landlock, Windows via winacl), since every other
-// placement either degrades to advisory or refuses before the body starts.
+// jail actually runs (Linux via Landlock, macOS via Seatbelt, Windows via
+// winacl), since every other placement either degrades to advisory or refuses
+// before the body starts.
 //
 // Windows-filesystem paths fold case: producers spell them inconsistently (an
 // MSYS tool lowercasing the drive letter, shell vs Explorer directory
