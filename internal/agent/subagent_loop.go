@@ -36,7 +36,6 @@ type SubAgentConfig struct {
 	MaxToolConcurrency int
 	EvidenceGuardNudge int
 	EvidenceGuardHalt  int
-	PipelineDisabled   []string
 	JSONMode           bool
 	// SeedMessages, when non-empty, pre-populates the loop's conversation so a
 	// continuation resumes from the prior run's context. Run still appends its
@@ -177,8 +176,6 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 			OtelVerbose:            cfg.OtelVerbose,
 			ApprovalMode:           "allow",
 			ToolsLevel:             FullTools,
-			PipelineNames:          nil,
-			PipelineDisabled:       cfg.PipelineDisabled,
 			WrapUpThreshold:        cfg.WrapUpThreshold,
 			SessionID:              cfg.SessionID,
 			TraceCWD:               cfg.TraceCWD,

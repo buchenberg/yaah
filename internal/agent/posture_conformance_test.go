@@ -84,11 +84,10 @@ func TestPostureConformanceMatrix(t *testing.T) {
 //     still narrows an allow posture;
 //   - the read-only floor wins over every posture.
 //
-// Every row also pins the dispatch verdict, because a posture that only the
-// optional approval middleware enforced was enforceable by configuration:
-// middleware.disabled: [approval] and every sub-agent loop have no such
-// middleware, and `mcp_approval: deny` fell through admitTool there. GateDeny
-// is now refused at dispatch whatever produced it.
+// Every row also pins the dispatch verdict, because a posture enforced only
+// by the approval middleware would not hold on a sub-agent loop (which never
+// installs it), and older builds let the middleware be disabled outright.
+// GateDeny is refused at dispatch whatever produced it.
 func TestPostureMigrationMatrix(t *testing.T) {
 	type row struct {
 		name         string

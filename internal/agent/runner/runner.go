@@ -56,7 +56,6 @@ type DelegateToolOpts struct {
 	OutputLimit      int
 	ProviderMap      map[string]config.Provider
 	Defaults         config.Defaults
-	PipelineDisabled []string
 
 	// ToolSpillDir is where oversized sub-agent tool results spill to
 	// disk. The composition root passes the same directory it injected
@@ -167,7 +166,6 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 		outputLimit:           opts.OutputLimit,
 		providerMap:           opts.ProviderMap,
 		defaults:              opts.Defaults,
-		pipelineDisabled:      opts.PipelineDisabled,
 		toolSpillDir:          opts.ToolSpillDir,
 		pathValidator:         opts.PathValidator,
 		workspace:             opts.Workspace,

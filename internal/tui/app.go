@@ -122,7 +122,6 @@ type App struct {
 	subAgentsModel       string
 	embeddingEnabled     bool
 	embeddingModel       string
-	middlewarePipeline   []string
 	worldStatus          worldinfo.Status
 	agentActive          bool
 	subAgents            []*subagent.Block
@@ -268,13 +267,12 @@ func (t *App) SetWorld(s worldinfo.Status) {
 	t.renderInfoPane()
 }
 
-func (t *App) SetConfig(subAgentsEnabled bool, subAgentsProvider string, subAgentsConcurrency int, subAgentsModel string, embeddingEnabled bool, embeddingModel string, pipeline []string) {
+func (t *App) SetConfig(subAgentsEnabled bool, subAgentsProvider string, subAgentsConcurrency int, subAgentsModel string, embeddingEnabled bool, embeddingModel string) {
 	t.subAgentsEnabled = subAgentsEnabled
 	t.subAgentsProvider = subAgentsProvider
 	t.subAgentsConcurrency = subAgentsConcurrency
 	t.subAgentsModel = subAgentsModel
 	t.embeddingEnabled = embeddingEnabled
 	t.embeddingModel = embeddingModel
-	t.middlewarePipeline = pipeline
 	t.renderInfoPane()
 }

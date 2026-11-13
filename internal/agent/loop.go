@@ -106,6 +106,9 @@ func (l *Loop) turnError(ctx context.Context, err error) error {
 // loops get the curated sub-agent pipeline; the orchestrator gets the
 // full default pipeline.
 func (l *Loop) buildPipeline() *pipeline.Pipeline {
+	if l.pipelineOverride != nil {
+		return l.pipelineOverride
+	}
 	if l.Config.IsSubAgent {
 		return pipeline.NewSubAgentPipeline(l.toPipelineConfig())
 	}
@@ -164,11 +167,9 @@ func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
 				l.ConsolidateFn(ctx, kind)
 			}
 		},
-		Pruner:           l.CtxMgr.Pruner,
-		PruneHooks:       l.pruneHooks(),
-		PipelineNames:    l.Config.PipelineNames,
-		PipelineDisabled: l.Config.PipelineDisabled,
-		ConflictTracker:  l.ConflictTracker,
+		Pruner:          l.CtxMgr.Pruner,
+		PruneHooks:      l.pruneHooks(),
+		ConflictTracker: l.ConflictTracker,
 		ConflictOnCheck: func(ctx context.Context, model string, turn int) {
 			if l.Hooks == nil {
 				return
@@ -321,7 +322,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 			messages = step.Messages
 
 			if traceMw != nil {
-				traceMw.RecordSessionContext(ctx, l.traceSessionContext(step))
+				traceMw.RecordSessionContext(ctx, l.traceSessionContext(step, pipe))
 			}
 
 			if err := l.guardContextBeforeCall(turnCtx, &messages, &req, turnSpan); err != nil {

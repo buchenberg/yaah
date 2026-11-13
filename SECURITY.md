@@ -95,8 +95,8 @@ Two additional path-level controls exist alongside the approval switch:
   boundary.
 - **Permission rulesets** (`agents.default.permissions`, role-file
   `permissions:`, `agents.default.mode`): ordered per-tool rules plus the
-  read-only mode axis, enforced at dispatch even when the approval middleware
-  is disabled. See `docs/configuration.md#permission-rulesets`. `ask` rules
+  read-only mode axis, enforced at dispatch independently of the approval
+  middleware. See `docs/configuration.md#permission-rulesets`. `ask` rules
   in a sub-agent dispatch are refused rather than silently allowed, because
   nobody is attached to prompt.
 

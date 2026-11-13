@@ -17,7 +17,7 @@ func TestBuildPipeline_SubAgentUsesSubAgentPipeline(t *testing.T) {
 
 	names := l.buildPipeline().MiddlewareNames()
 
-	want := pipeline.SubAgentPipelineNames(nil)
+	want := pipeline.SubAgentPipelineNames()
 	if len(names) != len(want) {
 		t.Fatalf("sub-agent pipeline names = %v, want %v", names, want)
 	}

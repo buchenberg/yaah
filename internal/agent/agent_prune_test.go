@@ -228,53 +228,6 @@ func TestLoop_Pruner_ResetOnCompaction(t *testing.T) {
 	}
 }
 
-// TestLoop_Pruner_DisabledViaPipeline: with soft_prune in PipelineDisabled,
-// no marking occurs and Filter is identity — behaviour matches pre-change.
-func TestLoop_Pruner_DisabledViaPipeline(t *testing.T) {
-	big := strings.Repeat("payload-", pruneBig/8)
-	fp := &fakeProvider{
-		responses: []*types.ChatResponse{
-			{Choices: []types.Choice{{
-				Message: types.Message{Role: "assistant", ToolCalls: []types.ToolCall{{
-					ID: "call_new", Type: "function", Function: types.ToolCallFn{Name: "echo", Arguments: "{}"},
-				}}},
-				FinishReason: "tool_calls",
-			}}},
-			{Choices: []types.Choice{{
-				Message: types.Message{Role: "assistant", Content: "done"}, FinishReason: "stop",
-			}}},
-		},
-	}
-	reg := tools.NewRegistry()
-	reg.Register(&fakeTool{name: "echo", result: big})
-	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
-		MaxLoopCycles:    10,
-		PipelineDisabled: []string{"soft_prune"}}, Provider: fp,
-		Registry: reg,
-	}
-	loop.State.Messages = oldTurn()
-
-	if _, err := loop.Run(context.Background(), "do work"); err != nil {
-		t.Fatalf("Run error: %v", err)
-	}
-
-	// With soft_prune disabled, the Pruner set must be empty.
-	if s := loop.CtxMgr.Pruner.Stats(); s.TotalMarked != 0 {
-		t.Errorf("disabled soft_prune should leave the pruned set empty, got TotalMarked=%d", s.TotalMarked)
-	}
-	// And every tool result in the final request must be the full content.
-	if len(fp.requests) == 0 {
-		t.Fatal("expected at least one provider request")
-	}
-	for _, m := range fp.requests[len(fp.requests)-1].Messages {
-		if m.Role == "tool" && (m.ToolCallID == "call_old" || m.ToolCallID == "call_new") {
-			if strings.Contains(m.Content, "pruned") {
-				t.Errorf("disabled soft_prune should not stub content for %q", m.ToolCallID)
-			}
-		}
-	}
-}
-
 func truncForTest(s string, n int) string {
 	if len(s) <= n {
 		return s

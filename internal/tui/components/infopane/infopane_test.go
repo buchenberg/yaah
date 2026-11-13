@@ -212,29 +212,6 @@ func TestFormat_EmbeddingDisabled(t *testing.T) {
 	}
 }
 
-func TestFormat_Pipeline(t *testing.T) {
-	th := colors.NewDarkTheme()
-	s := State{
-		Pipeline: []string{"approval", "compaction"},
-	}
-	out := Format(s, &th)
-	if !strings.Contains(out, "approval") {
-		t.Errorf("should contain pipeline entry, got %q", out)
-	}
-	if !strings.Contains(out, "compaction") {
-		t.Errorf("should contain second pipeline entry, got %q", out)
-	}
-}
-
-func TestFormat_PipelineEmpty(t *testing.T) {
-	th := colors.NewDarkTheme()
-	s := State{Pipeline: nil}
-	out := Format(s, &th)
-	if strings.Contains(out, "Middleware") {
-		t.Error("should not show middleware section when pipeline empty")
-	}
-}
-
 func TestFormat_EphemeralMsg(t *testing.T) {
 	th := colors.NewDarkTheme()
 	s := State{EphemeralMsg: "Copied!"}

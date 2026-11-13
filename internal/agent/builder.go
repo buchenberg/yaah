@@ -84,9 +84,6 @@ type LoopBuilder struct {
 	// CompactProvider and CompactModel are used for context compaction.
 	CompactProvider Provider
 	CompactModel    string
-	// PipelineEnabled / PipelineDisabled configure the middleware chain.
-	PipelineEnabled  []string
-	PipelineDisabled []string
 	// MCPApproval gates MCP-served tools ("ask", "allow", "deny");
 	// MCPToolNames carries the names they registered under.
 	MCPApproval  string
@@ -148,7 +145,6 @@ func (b *LoopBuilder) Build(opts LoopBuildOptions) *Loop {
 		WithHooks(b.Hooks),
 		WithFallback(b.FallbackProvider, b.FallbackModel),
 		WithCompactProvider(b.CompactProvider, b.CompactModel),
-		WithPipeline(b.PipelineEnabled, b.PipelineDisabled),
 		WithSteer(b.Steer),
 		WithFollowUps(b.FollowUps),
 		WithUsageHooks(b.OnUsage, b.OnSubUsage),

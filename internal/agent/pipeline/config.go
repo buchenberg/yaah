@@ -3,7 +3,6 @@ package pipeline
 import (
 	"context"
 	"slices"
-	"sort"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	"github.com/buchenberg/yaah/internal/config"
@@ -132,24 +131,16 @@ type PipelineConfig struct {
 	// inert.
 	ConsolidateTurnsInterval int
 	ConsolidateItersInterval int
-
-	PipelineNames    []string
-	PipelineDisabled []string
 }
 
-// NewFromConfig builds the default pipeline from config, honouring
-// enabled/disabled name lists.
+// NewFromConfig builds the orchestrator pipeline. The set is fixed: every
+// built-in middleware runs, because each one is either a safety net
+// (compaction, evidence/loop/intent guards, the dispatch-adjacent approval
+// pipeline) or required plumbing (steer/followup channels, tracing). The
+// only optional middleware is prompt_caching, controlled by its own
+// boolean, and consolidate, which is inert unless its cadence is set.
 func NewFromConfig(cfg PipelineConfig) *Pipeline {
-	names := ResolvedPipelineNames(cfg.PipelineNames, cfg.PipelineDisabled)
-	// The prompt_caching boolean knob is honored independently of the
-	// name lists (review B10b): when set, the middleware is appended
-	// idempotently so `prompt_caching: true` works without naming it.
-	// An explicit `disabled` entry always wins over the boolean knob.
-	if cfg.PromptCaching &&
-		!slices.Contains(cfg.PipelineDisabled, "prompt_caching") &&
-		!slices.Contains(names, "prompt_caching") {
-		names = append(names, "prompt_caching")
-	}
+	names := ActiveOrchestratorNames(cfg.PromptCaching)
 	mws := make([]Middleware, 0, len(names))
 	for _, name := range names {
 		if build, ok := builtinBuilders[name]; ok {
@@ -306,6 +297,11 @@ var defaultPipelineNames = []string{
 	"intent_loop",
 	"evidence_guard",
 	"conflict_detect",
+	// consolidate is the cadence-driven memory nudge. It is inert unless
+	// a dispatch is wired and one of the consolidate intervals is set, so
+	// it can live in the default set and be driven entirely by its own
+	// knobs (docs/compaction-as-sleep.md §7).
+	"consolidate",
 }
 
 // subAgentPipelineNames is the curated base middleware pipeline for
@@ -338,41 +334,18 @@ var subAgentPipelineNames = []string{
 	"evidence_guard",
 }
 
-// RegisteredOrchestratorNames returns the middleware names that have
-// builders in builtinBuilders. Names resolved by ResolvedPipelineNames
-// without a builder are silently skipped at pipeline build time; the
-// doctor uses this to surface such stale config entries honestly.
-func RegisteredOrchestratorNames() []string {
-	names := make([]string, 0, len(builtinBuilders))
-	for name := range builtinBuilders {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
-// DefaultPipelineNames returns a copy of the orchestrator's default
-// middleware names (before disabled-list filtering). Consumers such as
-// the TUI info pane use this instead of keeping their own copy of the
-// list, which historically drifted out of sync.
+// DefaultPipelineNames returns a copy of the orchestrator's fixed
+// middleware set. Consumers such as the doctor and the docs inventory
+// check use this instead of keeping their own copy of the list.
 func DefaultPipelineNames() []string {
 	return slices.Clone(defaultPipelineNames)
 }
 
-// SubAgentPipelineNames returns the middleware names for a sub-agent loop,
-// honouring the disabled list (for opt-out of specific middleware).
-func SubAgentPipelineNames(disabled []string) []string {
-	disabledSet := make(map[string]bool, len(disabled))
-	for _, name := range disabled {
-		disabledSet[name] = true
-	}
-	names := make([]string, 0, len(subAgentPipelineNames))
-	for _, name := range subAgentPipelineNames {
-		if !disabledSet[name] {
-			names = append(names, name)
-		}
-	}
-	return names
+// SubAgentPipelineNames returns the fixed middleware base for a sub-agent
+// loop. Callers may prepend conditional entries (steer, supervisor_guard)
+// when the corresponding dependency is wired — see NewSubAgentPipeline.
+func SubAgentPipelineNames() []string {
+	return slices.Clone(subAgentPipelineNames)
 }
 
 // NewSubAgentPipeline builds the middleware pipeline for a sub-agent loop
@@ -383,15 +356,15 @@ func SubAgentPipelineNames(disabled []string) []string {
 // The sub-agent pipeline is built from subAgentPipelineNames; conditional
 // prepends (steer, supervisor_guard) are documented on that list.
 func NewSubAgentPipeline(cfg PipelineConfig) *Pipeline {
-	names := SubAgentPipelineNames(cfg.PipelineDisabled)
+	names := SubAgentPipelineNames()
 	// Prepend in reverse of the intended order so the last prepend is
 	// first: steer must run before everything — injected guidance has to
 	// reach the model before it repeats the mistake — and the supervisor
 	// guard second, the blocking net before anything dispatches.
-	if cfg.DestructiveGuard != nil && !slices.Contains(cfg.PipelineDisabled, "supervisor_guard") {
+	if cfg.DestructiveGuard != nil {
 		names = append([]string{"supervisor_guard"}, names...)
 	}
-	if cfg.Steer != nil && !slices.Contains(cfg.PipelineDisabled, "steer") {
+	if cfg.Steer != nil {
 		names = append([]string{"steer"}, names...)
 	}
 	mws := make([]Middleware, 0, len(names))
@@ -403,30 +376,14 @@ func NewSubAgentPipeline(cfg PipelineConfig) *Pipeline {
 	return NewPipeline(mws...)
 }
 
-// ResolvedPipelineNames resolves the orchestrator pipeline from the
-// config name lists. middleware.enabled is ADDITIVE: it extends the
-// built-in defaults rather than replacing them — replacement semantics
-// silently disabled inline_limit and conflict_detect for any config
-// that listed custom middleware (review B10a). middleware.disabled
-// removes names from the union. Defaults keep their order; extra
-// enabled names follow.
-func ResolvedPipelineNames(enabled, disabled []string) []string {
-	disabledSet := make(map[string]bool, len(disabled))
-	for _, name := range disabled {
-		disabledSet[name] = true
+// ActiveOrchestratorNames returns the names NewFromConfig would install for
+// this config — the fixed default set plus prompt_caching when its own
+// boolean knob is set. The doctor and docs consumers use this instead of
+// re-deriving the composition.
+func ActiveOrchestratorNames(promptCaching bool) []string {
+	names := DefaultPipelineNames()
+	if promptCaching && !slices.Contains(names, "prompt_caching") {
+		names = append(names, "prompt_caching")
 	}
-	names := make([]string, 0, len(defaultPipelineNames)+len(enabled))
-	seen := make(map[string]bool, len(defaultPipelineNames)+len(enabled))
-	add := func(list []string) {
-		for _, name := range list {
-			if disabledSet[name] || seen[name] {
-				continue
-			}
-			seen[name] = true
-			names = append(names, name)
-		}
-	}
-	add(defaultPipelineNames)
-	add(enabled)
 	return names
 }

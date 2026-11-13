@@ -131,14 +131,6 @@ func WithSavedAllow(fn func(name, resource string) bool) Option {
 	return func(l *Loop) { l.Config.SavedAllow = fn }
 }
 
-// WithPipeline configures the middleware pipeline.
-func WithPipeline(enabled, disabled []string) Option {
-	return func(l *Loop) {
-		l.Config.PipelineNames = enabled
-		l.Config.PipelineDisabled = disabled
-	}
-}
-
 // WithSteer sets the mid-turn steering channel.
 func WithSteer(ch <-chan string) Option {
 	return func(l *Loop) { l.Steer = ch }

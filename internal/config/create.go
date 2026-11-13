@@ -66,12 +66,6 @@ agents:
   #   provider: openrouter        # optional: rotate on auth/billing/rate-limit errors
   #   model: meta-llama/llama-4-maverick
 
-  # middleware:
-  #   enabled:                    # additive over the built-in defaults
-  #     - prompt_caching          # also set agents.default.prompt_caching: true
-  #   # disabled:                 # remove middleware from the pipeline
-  #   #   - approval
-
 # observability:
 #   otel:
 #     enabled: true

@@ -18,7 +18,7 @@ func pipelineNames(p *Pipeline) []string {
 }
 
 func TestNewSubAgentPipeline_SteerConditional(t *testing.T) {
-	base := SubAgentPipelineNames(nil)
+	base := SubAgentPipelineNames()
 
 	// No channel: the pipeline is exactly the base list — unchanged
 	// behavior for every run the bridge does not cover.
@@ -36,11 +36,5 @@ func TestNewSubAgentPipeline_SteerConditional(t *testing.T) {
 	}
 	if names[0] != "steer" {
 		t.Errorf("steer must run first, got %v", names)
-	}
-
-	// Disabled by config even with a channel wired.
-	p = NewSubAgentPipeline(PipelineConfig{Steer: ch, PipelineDisabled: []string{"steer"}})
-	if slices.Contains(pipelineNames(p), "steer") {
-		t.Error("steer must respect the disabled list")
 	}
 }

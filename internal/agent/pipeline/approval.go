@@ -36,7 +36,7 @@ const (
 // WithheldReason explains a mode-level denial in the words the caller needs:
 // what was refused, by which mechanism, and how the mode changes. Shared with
 // the always-on dispatch gate (agent.admitTool) so the same refusal reads the
-// same whether the optional approval middleware or dispatch produced it.
+// same whichever layer produced it.
 func WithheldReason(tool string) string {
 	return fmt.Sprintf("tool %q is withheld in plan mode — mutating actions are not available; switch back to build mode to run it", tool)
 }

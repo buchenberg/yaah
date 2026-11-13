@@ -1274,7 +1274,6 @@ func buildDelegateTool(st *loopInfraStage, cfg *config.Config, lc *sessionConfig
 		OutputLimit:           cfg.Agent.SubAgent.OutputLimit,
 		ProviderMap:           cfg.Providers,
 		Defaults:              cfg.Agent.Default,
-		PipelineDisabled:      cfg.Agent.Middleware.Disabled,
 		ToolSpillDir:          posture.spillDir,
 		PathValidator:         ws.pathValidator,
 		Workspace:             posture.workspace,

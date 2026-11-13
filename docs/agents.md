@@ -84,7 +84,7 @@ dangerous calls meet). The mode defaults from `agents.default.mode`
 (`full`, or `read-only`); in read-only mode the loop's tool gate withholds
 the mutating set and admits the inspection set (see
 [features.md](./features.md#plan-mode)) — the gate is enforced at dispatch,
-so `middleware.disabled: [approval]` cannot bypass it. The approval axis
+independently of the approval middleware. The approval axis
 defaults from `agents.default.approval` (`ask`). Both are switchable
 mid-session through ACP `session/set_mode`, `session/set_config_option`
 (ids `mode` and `approval`), and — in a future change — the interactive
