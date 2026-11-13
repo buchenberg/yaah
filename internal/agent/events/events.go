@@ -25,9 +25,21 @@ import (
 //	}
 //
 // Pointer receivers are used so nil checks work naturally in type switches.
+//
+// Recorded decision — per-event sequence numbers and a PublishContext variant
+// were evaluated for this fan-out and DECLINED for now: drop visibility is
+// served by the broker's delivered/dropped counters and by
+// TryPublishMustDeliver's bool fallback (per-subscriber stats are
+// yaah-8jou.5), and no consumer currently needs drop detection or
+// mid-fan-out cancellation. Revisit when a concrete need appears.
 
 // Event is the interface all agent events satisfy.
 // The interface is sealed via the unexported eventMarker method.
+//
+// An event is read-only once published: the broker hands the SAME pointer to
+// every subscriber, and each view's forwarder goroutine runs concurrently with
+// the others. A view that needs a modified event must copy it first — writing
+// through the received pointer races every other consumer of that event.
 type Event interface {
 	eventMarker()
 }
@@ -136,9 +148,10 @@ func (*TitleSetEvent) eventMarker() {}
 
 // AgentChangedEvent is emitted at session start when the session runs as a
 // persona other than the default build orchestrator (yaah-21uk.10), and on
-// every mid-session persona switch including the deprecated plan/build mode
-// aliases (yaah-21uk.12 part 2 removed ModeChangedEvent — persona is the
-// only axis). Views can show which persona the session actually is
+// every mid-session persona switch. The old plan/build mode aliases are gone
+// (yaah-21uk.12), but ModeChangedEvent remains live for the read-only/full
+// mode axis: the cmd/yaah session plumbing publishes it from switchMode's
+// dispatchEvent path. Views can show which persona the session actually is
 // ("Session persona: plan") instead of the identity being invisible. Plain
 // build sessions emit nothing at start — build is the silent default; a
 // switch TO build is announced, because the event itself is the change.
@@ -288,7 +301,10 @@ var (
 	_ Event = (*ToolEndEvent)(nil)
 	_ Event = (*SubAgentStartEvent)(nil)
 	_ Event = (*SubAgentEndEvent)(nil)
+	_ Event = (*EscalationEvent)(nil)
+	_ Event = (*TitleSetEvent)(nil)
 	_ Event = (*AgentChangedEvent)(nil)
+	_ Event = (*ModeChangedEvent)(nil)
 	_ Event = (*WakeEvent)(nil)
 	_ Event = (*DoneEvent)(nil)
 	_ Event = (*CompactionStartedEvent)(nil)
