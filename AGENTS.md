@@ -18,10 +18,16 @@ from them:
 
 - **`.scratch/`** — scratch space for cloning third-party repos while building
   a skill. Real dependencies are pinned in `go.sum`.
+- **`.yaah/`** — local runtime state, including the `shepherd-worktrees/`
+  checkouts that proposal settlement creates. Each is a full copy of the repo
+  at an older commit, so a repo-wide `find` or `grep` matches every file twice
+  and reports stale code as current. Search with `git grep`, which respects
+  the ignore rules.
 - **`.beads/`, `.dolt/`** — local beads issue-tracker state; the database is
   local even though a few bootstrap files are tracked.
 - **`.ghost/`, `.claude/`, `.qwen/`, `.hermes/`, `.kilo/`, `.serena/`,
   `.entire/`, etc.** — metadata for AI coding tools.
+- **`pours/`** — local SigNoz telemetry stack deployment config.
 
 ## Repo layout
 
