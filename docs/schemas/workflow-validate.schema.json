@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://yaah.dev/schemas/workflow-validate.schema.json",
+  "title": "yaah workflow validate --json report",
+  "description": "JSON report emitted by `yaah workflow validate --json <spec>` (cmd/yaah/workflow_report.go, kind yaah.workflow.validate.v1). The shape is stable within v1: consumers can rely on the documented fields always being present with these types. errors and warnings serialize as [] (never null). Exit code is 0 when ok is true and 1 otherwise; --strict promotes warnings into failure without moving them out of the warnings array.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["kind", "spec", "status", "ok", "strict", "errors", "warnings"],
+  "properties": {
+    "kind": {
+      "const": "yaah.workflow.validate.v1",
+      "description": "Report kind discriminator; bumped only on a breaking shape change."
+    },
+    "spec": {
+      "type": "string",
+      "description": "The spec path exactly as given on the command line."
+    },
+    "name": {
+      "type": "string",
+      "description": "Workflow name from the document (omitted when the document never decoded)."
+    },
+    "status": {
+      "enum": ["valid", "invalid", "unresolved"],
+      "description": "valid = decoded, resolved, and no error findings; invalid = decoded and resolved into a graph but carries error findings; unresolved = load, decode, or ir.Resolve failed, so node-level families (WF002-WF036) could not run and the load/resolve failure is reported as a synthetic diagnostic."
+    },
+    "ok": {
+      "type": "boolean",
+      "description": "Final verdict after --strict promotion: true iff no errors and (no warnings or not strict)."
+    },
+    "strict": {
+      "type": "boolean",
+      "description": "Whether --strict was set; strict treats warnings as errors for the exit code only."
+    },
+    "errors": {
+      "type": "array",
+      "description": "Error-severity findings, canonical rule order.",
+      "items": { "$ref": "#/$defs/diagnostic" }
+    },
+    "warnings": {
+      "type": "array",
+      "description": "Warning-severity findings (host-relative rules WF030/WF031/WF033-WF036 when they cannot prove a violation on this host).",
+      "items": { "$ref": "#/$defs/diagnostic" }
+    }
+  },
+  "$defs": {
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^WF[0-9]{3}$",
+          "description": "Stable rule code from the internal/workflow/validate catalog (see its doc.go)."
+        },
+        "path": {
+          "type": "string",
+          "description": "Dotted spec path the finding points at (omitted for document-level findings)."
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable finding text."
+        }
+      }
+    }
+  }
+}

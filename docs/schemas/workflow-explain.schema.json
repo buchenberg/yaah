@@ -1,0 +1,226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://yaah.dev/schemas/workflow-explain.schema.json",
+  "title": "yaah workflow explain --json report",
+  "description": "JSON report emitted by `yaah workflow explain --json <spec>` (cmd/yaah/workflow_report.go, kind yaah.workflow.explain.v1). Everything the text report prints, machine-readable: resolved graph, per-node facts, Mermaid DAG, parameters, worst-case fan-out, cost bounds, authority union, and the settlement proof for proposal-producing nodes. The shape is stable within v1. The report is host-relative: host, cost, and the host-relative authority rules reflect the machine and configuration the command ran under; --param overrides make the report concrete for parameterized specs.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["kind", "spec", "status", "ok", "strict", "host", "params", "graph", "nodes", "edges", "mermaid", "fanout", "cost", "authority", "settlement", "errors", "warnings"],
+  "properties": {
+    "kind": { "const": "yaah.workflow.explain.v1" },
+    "spec": { "type": "string", "description": "Spec path as given on the command line." },
+    "name": { "type": "string", "description": "Workflow name from the document." },
+    "status": { "enum": ["valid", "invalid", "unresolved"], "description": "Same semantics as the validate report." },
+    "ok": { "type": "boolean", "description": "Final verdict after --strict promotion." },
+    "strict": { "type": "boolean", "description": "Whether --strict was set." },
+    "host": { "$ref": "#/$defs/env" },
+    "params": {
+      "type": "array",
+      "description": "Declared workflow parameters with their resolved values.",
+      "items": { "$ref": "#/$defs/param" }
+    },
+    "graph": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["steps", "nodes", "unreachable_nodes"],
+      "properties": {
+        "steps": { "type": "integer", "description": "Top-level step count." },
+        "nodes": { "type": "integer", "description": "Total resolved node count (including container bodies)." },
+        "unreachable_nodes": { "type": "integer", "description": "Nodes not reachable from the entry set (WF004 territory)." }
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "description": "Per-node facts in canonical order.",
+      "items": { "$ref": "#/$defs/node" }
+    },
+    "edges": {
+      "type": "array",
+      "description": "Resolved DAG edges (needs, branch arms, gate dispositions, containment).",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["from", "to", "via"],
+        "properties": {
+          "from": { "type": "string" },
+          "to": { "type": "string" },
+          "via": { "type": "string", "description": "Edge kind: needs, arm, gate, body, etc." }
+        }
+      }
+    },
+    "mermaid": { "type": "string", "description": "The resolved DAG as a Mermaid flowchart (containment as subgraphs)." },
+    "fanout": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["max_items", "max_nodes", "containers"],
+      "properties": {
+        "max_items": { "type": "integer", "description": "Worst-case fan-out width over the whole document (0 when nothing fans out)." },
+        "max_nodes": { "type": "array", "items": { "type": "string" }, "description": "Node paths attaining max_items." },
+        "containers": { "type": "array", "items": { "$ref": "#/$defs/fanoutInstance" }, "description": "Every fanout/loop container and its declared bound." }
+      }
+    },
+    "cost": { "$ref": "#/$defs/cost" },
+    "authority": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["grants", "artifacts", "hosts", "network_modes", "open_network", "unreachable_nodes"],
+      "properties": {
+        "grants": {
+          "type": "array",
+          "description": "Union of every grant any reachable node declares.",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["path", "access"],
+            "properties": {
+              "world": { "type": "string", "description": "World the grant applies in (omitted for world-agnostic grants)." },
+              "path": { "type": "string" },
+              "access": { "type": "string", "description": "readonly | readwrite." }
+            }
+          }
+        },
+        "artifacts": { "type": "array", "items": { "type": "string" }, "description": "Union of declared artifacts." },
+        "hosts": { "type": "array", "items": { "type": "string" }, "description": "Union of requested hosts." },
+        "network_modes": { "type": "array", "items": { "type": "string" }, "description": "Union of network modes (deny_all, brokered, allow_all)." },
+        "open_network": { "type": "boolean", "description": "True when any reachable node can reach the open network." },
+        "unreachable_nodes": { "type": "integer", "description": "Count excluded from the union because unreachable (authority judges all nodes; the summary counts reachable-only)." }
+      }
+    },
+    "settlement": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["proposals", "open_at_exit"],
+      "properties": {
+        "proposals": {
+          "type": "array",
+          "description": "One entry per proposal-producing boundary, from the validator's settlement proof (Prove).",
+          "items": { "$ref": "#/$defs/proposal" }
+        },
+        "open_at_exit": {
+          "type": ["array", "null"],
+          "items": { "type": "string" },
+          "description": "Producers that can reach workflow exit with a proposal still open; null when the proof cannot decide (may-analysis inconclusive)."
+        },
+        "producers_without_record": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Proposal producers the proof carries no settlement record for."
+        }
+      }
+    },
+    "errors": { "type": "array", "items": { "$ref": "#/$defs/diagnostic" } },
+    "warnings": { "type": "array", "items": { "$ref": "#/$defs/diagnostic" } }
+  },
+  "$defs": {
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "pattern": "^WF[0-9]{3}$" },
+        "path": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    },
+    "env": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Host facts the report is relative to.",
+      "properties": {
+        "roles_loaded": { "type": "boolean", "description": "Whether a role registry was readable." },
+        "worlds": { "type": "array", "items": { "type": "string" } },
+        "default_world": { "type": "string" },
+        "host_network": { "type": "string" },
+        "broker_hosts": { "type": "array", "items": { "type": "string" } },
+        "seconds_per_dispatch": { "type": "integer", "description": "Host default wall-clock per dispatch used for pricing." },
+        "max_turns_per_dispatch": { "type": "integer", "description": "Host default turn budget used for pricing." }
+      }
+    },
+    "param": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name", "type", "source"],
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string", "description": "string | integer | number | bool | list | map." },
+        "required": { "type": "boolean" },
+        "source": { "enum": ["param", "default", "unset"], "description": "param = set via --param; default = the document's declared default; unset = required and missing." },
+        "value": { "description": "Resolved value (omitted when unset)." }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["path", "kind"],
+      "properties": {
+        "path": { "type": "string", "description": "Canonical dotted node path." },
+        "id": { "type": "string" },
+        "kind": { "type": "string", "description": "delegate | fanout | loop | gate | branch | collect | dispatch, etc." },
+        "needs": { "type": "array", "items": { "type": "string" } },
+        "role": { "type": "string" },
+        "lane": { "type": "string", "description": "proposal | report | shared." },
+        "network": { "type": "string" },
+        "world": { "type": "string" },
+        "inherited": { "type": "boolean", "description": "World/lane inherited from defaults rather than declared (shown with * in text)." },
+        "grants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["path", "access"],
+            "properties": {
+              "path": { "type": "string" },
+              "access": { "type": "string" }
+            }
+          }
+        },
+        "notes": { "type": "array", "items": { "type": "string" }, "description": "Renderer annotations (e.g. over/as/collect for containers, retries, effective settle policy with its default marking)." },
+        "produces_proposal": { "type": "boolean" }
+      }
+    },
+    "fanoutInstance": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["path", "items"],
+      "properties": {
+        "path": { "type": "string" },
+        "max_parallel": { "type": ["integer", "null"], "description": "Declared concurrency cap; null/absent when unbounded." },
+        "items": { "type": "string", "description": "Where the item list comes from (literal count or run-time source path)." },
+        "literal_items": { "type": "integer", "description": "Item count when statically known." },
+        "run_time_list": { "type": "boolean", "description": "True when the list is only known at run time (bound honesty flag for cost)." }
+      }
+    },
+    "cost": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["dispatches", "dispatch_bound", "turns_priced", "wall_clock_priced", "exceeds_ceiling", "budget_checked"],
+      "properties": {
+        "dispatches": { "type": "integer", "description": "Worst-case dispatch count." },
+        "dispatch_bound": { "type": "string", "description": "Honesty of the bound: exact, ceiling, or unbound reasons." },
+        "unbound": { "type": "array", "items": { "type": "string" }, "description": "Nodes whose fan-out could not be statically bounded." },
+        "turns": { "type": "integer", "description": "Worst-case turn total (0 when not priced)." },
+        "turns_priced": { "type": "boolean" },
+        "wall_clock_seconds": { "type": "integer" },
+        "wall_clock_priced": { "type": "boolean" },
+        "ceiling": { "type": "integer", "description": "Effective ceiling used for the budget check." },
+        "exceeds_ceiling": { "type": "boolean", "description": "True when worst-case dispatches exceed the effective ceiling (WF034)." },
+        "declared_ceiling": { "type": ["integer", "null"], "description": "The document's own ceiling, when declared." },
+        "host_ceiling": { "type": "integer", "description": "Host default ceiling." },
+        "budget_checked": { "type": "boolean" }
+      }
+    },
+    "proposal": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["proposal", "dispositions", "actions", "once_on_every_path", "settled_on_every_path", "stranded"],
+      "properties": {
+        "proposal": { "type": "string", "description": "Canonical name of the proposal-producing boundary (node path or bound name)." },
+        "dispositions": { "type": "array", "items": { "type": "string" }, "description": "Guaranteed disposition classes from the settlement proof (select/apply/release/discard/continue/fork per WF020-WF029 semantics)." },
+        "actions": { "type": "string", "description": "Settlement actions the proof observed." },
+        "once_on_every_path": { "type": "boolean", "description": "Settled at most/exactly once on every path (WF021/WF022 territory)." },
+        "settled_on_every_path": { "type": "boolean", "description": "Every path through the graph settles it (no leak)." },
+        "stranded": { "type": "boolean", "description": "Can reach exit unsettled (WF026)." }
+      }
+    }
+  }
+}
