@@ -14,8 +14,8 @@ import (
 // Later families (values and templates, proposal linearity, authority and
 // cost) are separate aggregates over the same graph. They do not join here
 // — "structural" is the name of this family, not a stage in a pipeline.
-// Values is the next one; see Validate for the end-to-end seam that runs
-// both.
+// Values and Linearity are the other two that Validate runs; Authority and
+// Cost take a host Env, so a caller that has one runs them itself.
 func Structural(g *ir.Graph) []Diagnostic {
 	if g == nil {
 		return nil
@@ -33,11 +33,11 @@ func Structural(g *ir.Graph) []Diagnostic {
 // resolved graph and its diagnostics out. A document that strict decoding
 // or resolution rejects never becomes a graph, so the failure is reported
 // as one WF001 diagnostic through Diagnose; otherwise Structural runs
-// first and Values runs after it, over the same graph and the document it
-// came from.
+// first, Values runs after it, and Linearity runs last — all three over
+// the same graph and the document it came from.
 //
 // Return contract: a document that parses and resolves yields a non-nil
-// graph and diagnostics carrying only WF002–WF014 findings (possibly
+// graph and diagnostics carrying only WF002–WF029 findings (possibly
 // none); a document that never became a graph yields a nil graph and
 // exactly one WF001. The graph is therefore nil exactly when the
 // diagnostics contain a WF001. Findings stay grouped by rule in catalog
@@ -56,5 +56,6 @@ func Validate(data []byte) (*ir.Graph, []Diagnostic) {
 	}
 	out := Structural(g)
 	out = append(out, Values(doc, g)...)
+	out = append(out, Linearity(g)...)
 	return g, out
 }
