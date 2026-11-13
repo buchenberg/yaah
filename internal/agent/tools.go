@@ -288,7 +288,17 @@ func (l *Loop) compactMessagesIsolated(ctx context.Context, messages []types.Mes
 // against an isolated state view and returns the compacted slice; it
 // never writes l.State.Messages directly (B6).
 func (l *Loop) llmCompact(ctx context.Context, messages []types.Message, threshold float64) []types.Message {
-	return l.compactMessagesIsolated(ctx, messages, threshold)
+	// The provider's overflow verdict caused this pass — yaah's own token
+	// bookkeeping did not (and may disagree, since the preserve tail can
+	// clamp above a small window). Mark it so compactContext books the
+	// pass as "overflow" instead of "threshold": an overflow-shaped
+	// fallback must trim (the retry loop needs the message list to
+	// shrink), while a threshold-shaped fits-the-tail pass books as
+	// skipped (yaah-pcd2) and leaves the history verbatim.
+	l.State.CompactionForcedByOverflow = true
+	out := l.compactMessagesIsolated(ctx, messages, threshold)
+	l.State.CompactionForcedByOverflow = false
+	return out
 }
 
 // llmTrim reduces context deterministically by removing the oldest

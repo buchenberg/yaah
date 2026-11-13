@@ -397,13 +397,19 @@ func TestCompactContextTrimFallbackPersistsMarker(t *testing.T) {
 	}
 }
 
-// TestCompactContextNoOpTrimRecordsNothing pins the boundary review found:
-// the message-count trigger fires with the conversation still inside
-// trimContext's 80% window, so trim installs and drops nothing — and a
-// marker there would tell resume that context was lost when none was.
-func TestCompactContextNoOpTrimRecordsNothing(t *testing.T) {
+// TestCompactContextCountTriggerResolvesTheCount pins yaah-l12q's
+// residual: the message-count trigger fires with the conversation
+// inside trimContext's 80% window, so the token trim is a no-op — and
+// without a count-targeted pass the rollover dropped nothing, recorded
+// nothing, and left the count above compact_max_messages, rearming
+// the trigger on every subsequent message (the orch-compact shape:
+// ten rollovers, zero persisted). The budget pass resolves what fired:
+// messages drop under the budget, the fallback marker records the
+// rollover truthfully, and the trigger does not rearm on the next
+// message.
+func TestCompactContextCountTriggerResolvesTheCount(t *testing.T) {
 	p := &compactionRecordingProvider{placeholderAll: true}
-	db := newPersistTestDB(t, "sess-trim-noop")
+	db := newPersistTestDB(t, "sess-count-trim")
 	cm := &ContextManager{
 		ContextWindow:      6000,
 		EstimateFactor:     1.3,
@@ -412,7 +418,7 @@ func TestCompactContextNoOpTrimRecordsNothing(t *testing.T) {
 		CompactModel:       "test-small-model",
 		CompactMaxMessages: 10,
 		DB:                 db,
-		SessionID:          "sess-trim-noop",
+		SessionID:          "sess-count-trim",
 		State: &LoopState{
 			// Below both token gates, so the message-count trigger is
 			// what fires — the shape this test needs.
@@ -434,10 +440,71 @@ func TestCompactContextNoOpTrimRecordsNothing(t *testing.T) {
 	if cm.State.LastCompactionMethod != "trim" {
 		t.Fatalf("method = %q, want trim — the test presumes every summary source failed", cm.State.LastCompactionMethod)
 	}
-	if len(cm.State.Messages) != before {
-		t.Fatalf("messages dropped (%d -> %d): the test presumes a no-op trim", before, len(cm.State.Messages))
+	if cm.State.LastCompactionSummary != "" {
+		t.Fatalf("trim installed an in-memory summary: %q", cm.State.LastCompactionSummary)
 	}
-	session, err := db.GetSession("sess-trim-noop")
+	if len(cm.State.Messages) >= before {
+		t.Fatalf("the count-triggered rollover dropped nothing (%d messages) — the trigger rearms on the next message", len(cm.State.Messages))
+	}
+	if len(cm.State.Messages) > 10 {
+		t.Fatalf("messages = %d, want within the compact_max_messages budget (10) so the count trigger stays disarmed", len(cm.State.Messages))
+	}
+	if cm.State.Messages[0].Role != "system" {
+		t.Errorf("system message lost: role=%q", cm.State.Messages[0].Role)
+	}
+	session, err := db.GetSession("sess-count-trim")
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := session.CompactedSummary
+	if strings.TrimSpace(marker) == "" {
+		t.Fatal("the count-triggered trim left no record — the rollover is invisible to resume and the scenario checkers (yaah-l12q)")
+	}
+	if !strings.Contains(marker, "[context rollover]") || !strings.Contains(marker, "heuristic trim") {
+		t.Errorf("marker does not identify itself as the trim fallback: %q", marker)
+	}
+}
+
+// TestCompactContextProtectedCountTrimRecordsNothing pins the boundary
+// that survives the count fix: when reasoning protection keeps every
+// candidate, the budget pass cuts nothing — and a marker there would
+// tell resume that context was lost when none was. The no-record rule
+// is tied to messages actually dropping, not to the trigger that fired.
+func TestCompactContextProtectedCountTrimRecordsNothing(t *testing.T) {
+	p := &compactionRecordingProvider{placeholderAll: true}
+	db := newPersistTestDB(t, "sess-count-protected")
+	cm := &ContextManager{
+		ContextWindow:         6000,
+		EstimateFactor:        1.3,
+		Provider:              p,
+		CompactProvider:       p,
+		CompactModel:          "test-small-model",
+		CompactMaxMessages:    10,
+		ReasoningProtectTurns: 32,
+		DB:                    db,
+		SessionID:             "sess-count-protected",
+		State: &LoopState{
+			LastPromptTokens:           100,
+			CompactionBudgetMultiplier: 1.0,
+		},
+	}
+	cm.State.Messages = append(cm.State.Messages, types.SystemMsg("sys"))
+	// The first conversation message is a reasoning-carrying assistant
+	// turn: ProtectReasoningTurns anchors to it and keeps everything
+	// after, so the budget pass has no candidate it may cut.
+	first := types.Message{Role: "assistant", Content: strings.Repeat("r", 500), ReasoningContent: "keep everything from here"}
+	cm.State.Messages = append(cm.State.Messages, first)
+	for range 31 {
+		cm.State.Messages = append(cm.State.Messages, types.UserMsg(strings.Repeat("x", 500)))
+	}
+
+	before := len(cm.State.Messages)
+	cm.compactContext(context.Background(), 0.25)
+
+	if len(cm.State.Messages) != before {
+		t.Fatalf("messages dropped (%d -> %d): the fixture presumes protection keeps every candidate", before, len(cm.State.Messages))
+	}
+	session, err := db.GetSession("sess-count-protected")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -564,5 +631,190 @@ func TestCompactContextAcceptedSummaryPersists(t *testing.T) {
 	}
 	if session.CompactedSummary != "summary" {
 		t.Fatalf("compacted_summary = %q, want the accepted summary", session.CompactedSummary)
+	}
+}
+
+// TestCompactContextThresholdTrimResolvesTarget pins the threshold
+// trigger's half of yaah-l12q's residual: the fallback's token trim
+// aimed at trimContext's 80% window, which sits far above the
+// compaction target — so a threshold-triggered rollover over an
+// unreachable summarizer trimmed nothing (in-window), recorded
+// nothing, and rearmed the trigger on every subsequent message. The
+// fallback now trims to the target the trigger itself measures
+// against, disarms it, and the marker records the rollover.
+func TestCompactContextThresholdTrimResolvesTarget(t *testing.T) {
+	p := &compactionRecordingProvider{placeholderAll: true}
+	db := newPersistTestDB(t, "sess-threshold-trim")
+	cm := &ContextManager{
+		ContextWindow:   6000,
+		EstimateFactor:  1.3,
+		Provider:        p,
+		CompactProvider: p,
+		CompactModel:    "test-small-model",
+		DB:              db,
+		SessionID:       "sess-threshold-trim",
+		State: &LoopState{
+			// Over the 0.3 target (1800), under the overflow line —
+			// the threshold trigger is what fires.
+			LastPromptTokens:           3000,
+			CompactionBudgetMultiplier: 1.0,
+		},
+	}
+	cm.State.Messages = append(cm.State.Messages, types.SystemMsg("sys"))
+	for range 40 {
+		cm.State.Messages = append(cm.State.Messages, types.UserMsg(strings.Repeat("x", 500)))
+	}
+
+	before := len(cm.State.Messages)
+	cm.compactContext(context.Background(), 0.3)
+
+	if cm.State.LastCompactionMethod != "trim" {
+		t.Fatalf("method = %q, want trim — the test presumes every summary source failed", cm.State.LastCompactionMethod)
+	}
+	if cm.State.LastCompactionSummary != "" {
+		t.Fatalf("trim installed an in-memory summary: %q", cm.State.LastCompactionSummary)
+	}
+	if len(cm.State.Messages) >= before {
+		t.Fatalf("the threshold-triggered rollover dropped nothing (%d messages) — the trigger rearms on the next message", len(cm.State.Messages))
+	}
+	chars := 0
+	for _, m := range cm.State.Messages {
+		chars += len(m.Content) + len(m.ReasoningContent)
+	}
+	if chars/4 > 1800 {
+		t.Errorf("post-trim estimate %d > the 1800-token target — the threshold trigger is still armed", chars/4)
+	}
+	session, err := db.GetSession("sess-threshold-trim")
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := session.CompactedSummary
+	if strings.TrimSpace(marker) == "" {
+		t.Fatal("the threshold-triggered trim left no record — the rollover is invisible to resume and the scenario checkers (yaah-l12q)")
+	}
+	if !strings.Contains(marker, "[context rollover]") || !strings.Contains(marker, "heuristic trim") {
+		t.Errorf("marker does not identify itself as the trim fallback: %q", marker)
+	}
+}
+
+// TestCompactContextReasoningHeadTrimPreservesLinkageAndTask pins the
+// invariants yaah-6a6c's regression test (AllReasoningConversationTrims)
+// does not: on a single giant agentic turn whose reasoning carriers sit
+// near the head, the fallback trim must land on a linkage-safe boundary
+// (no tool result may outlive its assistant caller), must stay inside the
+// reasoning-protection window, and must re-inject the task instruction
+// when its user prompt is dropped — the live orch-compact run answered
+// instead of writing the report because the re-inject carried the
+// [STEER] churn notice rather than the task.
+func TestCompactContextReasoningHeadTrimPreservesLinkageAndTask(t *testing.T) {
+	p := &compactionRecordingProvider{placeholderAll: true}
+	db := newPersistTestDB(t, "sess-reasoning-head")
+	cm := &ContextManager{
+		ContextWindow:         6000,
+		EstimateFactor:        1.3,
+		Provider:              p,
+		CompactProvider:       p,
+		CompactModel:          "test-small-model",
+		ReasoningProtectTurns: 2,
+		DB:                    db,
+		SessionID:             "sess-reasoning-head",
+		State: &LoopState{
+			LastPromptTokens:           3000, // over the 0.3 target: threshold trigger
+			CompactionBudgetMultiplier: 1.0,
+		},
+	}
+	// One agentic turn: a big system prompt, the task's only user
+	// message, then three read exchanges with reasoning on every
+	// assistant — the first one at the head of the conversation.
+	cm.State.Messages = append(cm.State.Messages, types.SystemMsg(strings.Repeat("s", 16000)))
+	cm.State.Messages = append(cm.State.Messages, types.UserMsg("read every file in /app/data and write the report"))
+	for batch := 0; batch < 3; batch++ {
+		calls := []types.ToolCall{}
+		for i := 0; i < 6; i++ {
+			calls = append(calls, types.ToolCall{
+				ID:   fmt.Sprintf("batch%d-call%d", batch, i),
+				Type: "function",
+				Function: types.ToolCallFn{
+					Name:      "read",
+					Arguments: fmt.Sprintf(`{"path":"/app/data/f%d.txt"}`, batch*6+i),
+				},
+			})
+		}
+		cm.State.Messages = append(cm.State.Messages, types.Message{
+			Role:             "assistant",
+			Content:          fmt.Sprintf("reading batch %d", batch),
+			ReasoningContent: strings.Repeat("think ", 150),
+			ToolCalls:        calls,
+		})
+		for i := 0; i < 6; i++ {
+			cm.State.Messages = append(cm.State.Messages, types.Message{
+				Role:       "tool",
+				ToolCallID: fmt.Sprintf("batch%d-call%d", batch, i),
+				Name:       "read",
+				Content:    strings.Repeat("t", 2200),
+			})
+		}
+	}
+
+	// A loop-detection steer lands mid-loop — synthetic guidance, not
+	// the task. The trim re-inject must capture the task, not this.
+	cm.State.Messages = append(cm.State.Messages, types.UserMsg(
+		"[STEER] You have called the read tool heavily for 3 consecutive turns. Consider a different approach."))
+
+	before := len(cm.State.Messages)
+	cm.compactContext(context.Background(), 0.3)
+
+	if got := len(p.snapshot()); got == 0 {
+		t.Error("the summarizer was never attempted: with the windowed split the excerpt carries real content (the rejection falls to the trim)")
+	}
+	if len(cm.State.Messages) >= before {
+		t.Fatalf("trim dropped nothing (%d messages) — the protection collapse rearmed the trigger and recorded no rollover", len(cm.State.Messages))
+	}
+	// Bounded protection: the newest ReasoningProtectTurns carriers
+	// survive; the head carrier is releasable.
+	carriers := 0
+	for _, m := range cm.State.Messages {
+		if m.Role == "assistant" && m.ReasoningContent != "" {
+			carriers++
+		}
+	}
+	if carriers > 2 {
+		t.Errorf("kept %d reasoning carriers, want at most the newest %d: the earliest carriers must be trimmable or single-turn sessions never shrink", carriers, 2)
+	}
+	// Linkage: every kept tool result still has its assistant caller kept.
+	callers := map[string]bool{}
+	for _, m := range cm.State.Messages {
+		for _, c := range m.ToolCalls {
+			callers[c.ID] = true
+		}
+	}
+	for _, m := range cm.State.Messages {
+		if m.Role == "tool" && !callers[m.ToolCallID] {
+			t.Errorf("trim orphaned tool result %q: its assistant caller was dropped (hard 400 on every OpenAI-compatible provider)", m.ToolCallID)
+		}
+	}
+	// The task instruction must survive as the re-injected active task
+	// when its user prompt was dropped.
+	found := false
+	for _, m := range cm.State.Messages {
+		if strings.Contains(m.Content, "Active task (preserve verbatim):") {
+			if !strings.Contains(m.Content, "/app/data") {
+				t.Errorf("re-inject carried synthetic traffic instead of the task: %q", m.Content)
+			}
+			if strings.Contains(m.Content, "[STEER]") {
+				t.Error("re-inject captured the steer notice — the live verify6 shape that never wrote the report")
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the dropped task instruction was not re-injected: the agent resumes with no record of the deliverable")
+	}
+	session, err := db.GetSession("sess-reasoning-head")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(session.CompactedSummary); got == "" {
+		t.Fatal("the rollover persisted nothing — the orch-compact session-summary check reads exactly this")
 	}
 }

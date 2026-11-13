@@ -6,6 +6,7 @@ package context
 
 import (
 	"math"
+	"strings"
 
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/types"
@@ -110,6 +111,41 @@ func LastUserPrompt(msgs []types.Message) string {
 		if msgs[i].Role == "user" && msgs[i].Content != "" {
 			return msgs[i].Content
 		}
+	}
+	return ""
+}
+
+// internalUserPrefixes lists the content prefixes of user-role messages
+// that carry agent-internal guidance (steering, loop detection,
+// supervision, conflict reports, background dispatch) rather than text
+// the operator typed. The canonical registries — with the full rationale
+// for each prefix — live in internal/acp's internalUserMarkers and
+// internal/memory's titleSkipPrefixes; keep the three in sync when a new
+// synthetic prefix is introduced.
+var internalUserPrefixes = []string{"[STEER] ", "SUPERVISOR: ", "CONFLICT: ", "[BACKGROUND"}
+
+// ActiveTaskPrompt is LastUserPrompt with the synthetic traffic removed:
+// the most recent user message that is genuinely the operator's task.
+// Compaction re-injects it as the preserved instruction — yaah-l12q: a
+// re-inject that captured the latest [STEER] churn notice instead of the
+// task let the live orch-compact run finish its whole analysis and never
+// write the report.
+func ActiveTaskPrompt(msgs []types.Message) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != "user" || msgs[i].Content == "" {
+			continue
+		}
+		internal := false
+		for _, prefix := range internalUserPrefixes {
+			if strings.HasPrefix(msgs[i].Content, prefix) {
+				internal = true
+				break
+			}
+		}
+		if internal {
+			continue
+		}
+		return msgs[i].Content
 	}
 	return ""
 }

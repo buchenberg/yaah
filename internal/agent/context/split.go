@@ -192,3 +192,18 @@ func TruncateRunes(s string, maxLen int) string {
 	tailLen := maxLen / 3
 	return string(runes[:headLen]) + "\n...[truncated]...\n" + string(runes[len(runes)-tailLen:])
 }
+
+// SnapCutPastToolResults moves a cut point forward past any tool results
+// so the first kept message is never a tool result whose assistant caller
+// was dropped — an orphaned tool message is a hard 400 on every
+// OpenAI-compatible provider. The reverse orphan (a kept caller whose
+// results were dropped) cannot happen: a trim only drops from the oldest
+// end, and results come after their caller. Boundary points that are
+// assistant or user messages are exchange starts and pass through
+// unchanged.
+func SnapCutPastToolResults(messages []types.Message, keepStart int) int {
+	for keepStart < len(messages) && messages[keepStart].Role == "tool" {
+		keepStart++
+	}
+	return keepStart
+}
