@@ -905,6 +905,75 @@ func overlappingPaths(deltaPaths, hostPaths []string) []string {
 	return overlap
 }
 
+// unionPathLists merges two sorted-unique path lists into one, sorted.
+func unionPathLists(a, b []string) []string {
+	seen := make(map[string]bool, len(a)+len(b))
+	out := make([]string, 0, len(a)+len(b))
+	for _, list := range [][]string{a, b} {
+		for _, p := range list {
+			if !seen[p] {
+				seen[p] = true
+				out = append(out, p)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// driftedApplyPaths lists the proposal-owned paths whose current content in
+// the parent working tree no longer matches the dispatch basis. Content
+// decides, not the tree-diff capture: the basis state records the exact
+// dispatch-time tree (Capture stages the dirty working tree, so a
+// pre-existing modification is part of the basis and never fires here),
+// while the kernel-side drift/diff capture is documented unreliable for
+// working-tree rewrites (yaah-610z: a same-size edit written moments after
+// the dispatch was intermittently absent from the drift list). A
+// path_disjoint apply whole-path overwrites whatever the parent has on disk,
+// so a drifted owned path is silent data loss unless refused PRE-write —
+// this is apply's guard, cloning the proven proposalPathDrifted authority
+// from the three-way merge. The parentDrift hint only ever widens the set;
+// a basis that cannot be read for a path counts that path as drifted (the
+// proposal_merge.go unbasisable precedent: none of the strategies may run
+// on a guess).
+//
+// Applicable where the parent world is a repository on disk — worktree
+// outputs and host-target deltas. Where it is not (no repository path),
+// the guard has no content to read and reports nothing: the kernel's own
+// checks remain the authority there. Session-target deltas resolve
+// against the session container and keep their sessionChangedSinceBasis
+// guard.
+func (p *retainedProposal) driftedApplyPaths(ctx context.Context) []string {
+	if p.repoPath == "" {
+		return nil
+	}
+	hints := make(map[string]bool)
+	if drift, err := p.parentDrift(ctx); err == nil {
+		for _, path := range drift {
+			hints[PathKey(normalizeProposalPath(path))] = true
+		}
+	}
+	eol := newEOLNormalization(ctx, p.repoPath)
+	var drifted []string
+	for _, rel := range p.changedFiles() {
+		hinted := hints[PathKey(normalizeProposalPath(rel))]
+		base, baseExists, err := p.baseContentFull(ctx, rel)
+		if err != nil {
+			drifted = append(drifted, rel)
+			continue
+		}
+		current, currentExists, err := p.parentContentFull(ctx, rel)
+		if err != nil {
+			drifted = append(drifted, rel)
+			continue
+		}
+		if proposalPathDrifted(hinted, rel, eol, base, baseExists, current, currentExists) {
+			drifted = append(drifted, rel)
+		}
+	}
+	return drifted
+}
+
 // writeProposalMarker records a settlement transition inside the artifact
 // directory. The applying marker makes a crash mid-settlement detectable on
 // rehydration; the settled marker makes a crash between the host write and the
@@ -1100,12 +1169,21 @@ func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retain
 		if err != nil {
 			return Settlement{}, fmt.Errorf("proposal %s: apply: cannot determine the parent's changes since the dispatch, refusing to write: %w", p.id, err)
 		}
-		if overlap := overlappingPaths(p.delta.Paths(), changed); len(overlap) > 0 {
+		guard := overlappingPaths(p.delta.Paths(), changed)
+		// The changed-since-basis diff is the same capture machinery
+		// proposal_merge.go documents as unreliable for working-tree
+		// rewrites (yaah-610z); the host lane is a repository on disk, so
+		// the content guard applies too. The session target resolves
+		// against the session container and keeps the diff check alone.
+		if !sessionTarget {
+			guard = unionPathLists(guard, p.driftedApplyPaths(ctx))
+		}
+		if len(guard) > 0 {
 			return Settlement{}, &proposalApplyConflict{
 				ProposalID: p.id,
-				Paths:      overlap,
+				Paths:      guard,
 				Strategy:   proposalApplyPathDisjoint,
-				Changes:    proposalChangesForPaths(ctx, p, overlap),
+				Changes:    proposalChangesForPaths(ctx, p, guard),
 				Cause:      goatherd.ErrApplyConflict,
 			}
 		}

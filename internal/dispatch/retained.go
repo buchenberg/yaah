@@ -1653,6 +1653,23 @@ func (r *ProposalRegistry) settleRetainedProposalDefault(ctx context.Context, id
 		env.Retained = retained
 	}
 
+	// The kernel's ErrApplyConflict names overlap paths only from its own
+	// drift capture, which proposal_merge.go documents as unreliable for
+	// working-tree rewrites (yaah-610z), and a path_disjoint apply
+	// whole-path overwrites the parent's disk content for the proposal's
+	// paths: an uncommitted parent edit to an owned path was silent data
+	// loss on the no-conflict path. Content decides, pre-write (yaah-gkll.2).
+	if verb == goatherd.SettleApply {
+		if drifted := p.driftedApplyPaths(ctx); len(drifted) > 0 {
+			return Settlement{}, &proposalApplyConflict{
+				ProposalID: id,
+				Paths:      drifted,
+				Strategy:   proposalApplyPathDisjoint,
+				Changes:    proposalChangesForPaths(ctx, p, drifted),
+				Cause:      goatherd.ErrApplyConflict,
+			}
+		}
+	}
 	settleErr := p.output.Settle(ctx, verb)
 	if settleErr != nil {
 		switch {
