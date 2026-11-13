@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.177.1](https://github.com/buchenberg/yaah/compare/v0.177.0...v0.177.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* **agent:** line-align truncation cuts and make single-line spills pageable ([da41197](https://github.com/buchenberg/yaah/commit/da411971da72377a4f058ec1e7e9cda5aae0b808))
+* **agent:** line-align truncation cuts and make single-line spills pageable (yaah-was9.13, yaah-was9.14) ([1e7b0b0](https://github.com/buchenberg/yaah/commit/1e7b0b01e84a1e4eede3006db77092e0457c1a61))
+
 ## [0.177.0](https://github.com/buchenberg/yaah/compare/v0.176.1...v0.177.0) (2026-11-13)
 
 
