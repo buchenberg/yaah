@@ -59,6 +59,7 @@ yaah/
 │   ├── cwdpath/                 # cwd canonicalization shared by store + filters
 │   ├── dispatch/                # dispatch lanes, proposal settlement, git-delta apply
 │   ├── doctor/                  # `yaah doctor` checks
+│   ├── envelopecheck/           # envelope/doc parity gate shared by tools + dispatch
 │   ├── instructions/            # AGENTS.md/CLAUDE.md discovery
 │   ├── jail/                    # per-platform containment backend selection
 │   ├── jobs/                    # background jobs + sub-agent I/O contract
