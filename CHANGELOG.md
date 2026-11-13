@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.175.7](https://github.com/buchenberg/yaah/compare/v0.175.6...v0.175.7) (2026-11-13)
+
+
+### Documentation
+
+* **orch:** record the nine-task board's first full-suite run (yaah-4pmm) ([9ca954c](https://github.com/buchenberg/yaah/commit/9ca954c5bf597ba204d198109e7e98130d6fa5d3))
+* **orch:** record the nine-task board's first full-suite run (yaah-4pmm) ([7348c54](https://github.com/buchenberg/yaah/commit/7348c546517128f834004a01511ff387bc7e3f6d))
+
 ## [0.175.6](https://github.com/buchenberg/yaah/compare/v0.175.5...v0.175.6) (2026-11-13)
 
 
