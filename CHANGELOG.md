@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.179.1](https://github.com/buchenberg/yaah/compare/v0.179.0...v0.179.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* **ir:** resolve-time fidelity for settle policy, selector field, and loop index (yaah-0u0v.31/.32/.33) ([972617b](https://github.com/buchenberg/yaah/commit/972617b2e25adfc26ebf29c24ef2c39cf6729336))
+
+
+### Documentation
+
+* **ir:** pin the no-op selector field semantics as a retention filter (review) ([f4ca04d](https://github.com/buchenberg/yaah/commit/f4ca04df4a8de60554327ca0d1dc400484bfa9af))
+
 ## [0.179.0](https://github.com/buchenberg/yaah/compare/v0.178.0...v0.179.0) (2026-11-13)
 
 
