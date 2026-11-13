@@ -1,5 +1,5 @@
 ---
-name: agent-files primary capability (yaah-21uk)
+name: agent-files-primary-capability-yaah-21uk
 description: Epic yaah-21uk: mode: primary|subagent|all on role files; build/plan session modes retired in favor of switchable personas (mid-session switching supported — decision reversal 2026-11-08).
 status: completed
 ---

@@ -18,8 +18,8 @@ seam.
 
 ## Companion plan
 
-This plan is executed as **workstream W0** of the master plan *yaah
-opencode-family agent parity* (at `../yaah opencode-family agent parity/PLAN.md`
+This plan is executed as **workstream W0** of the master plan
+*opencode-family-agent-parity* (at `../opencode-family-agent-parity/PLAN.md`
 — a sibling directory in this plans dir, inside the yaah repo).
 Division of labor: this plan owns the axis-restructure scope below — its
 Phases 1–5 are W0 verbatim; the master plan owns sequencing, milestones, and

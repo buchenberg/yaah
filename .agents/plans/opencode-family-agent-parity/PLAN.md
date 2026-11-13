@@ -1,5 +1,5 @@
 ---
-name: yaah opencode-family agent parity
+name: opencode-family-agent-parity
 description: Adopt opencode-family agent semantics (file-authority routing, prompt-replace, mode default all, permission rulesets, watcher reload) on top of the decoupled agent/mode/approval session axes from ../decouple-persona-mode-approval/PLAN.md; greenfield replacement, no compat paths. Complementary pair: decouple plan owns the W0 axis-restructure scope, this plan owns sequencing + parity workstreams W1-W7.
 status: approved
 ---
