@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.176.1](https://github.com/buchenberg/yaah/compare/v0.176.0...v0.176.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* **agent:** must-deliver classification for critical events + wire CtxMgr.Broker ([1e9d256](https://github.com/buchenberg/yaah/commit/1e9d256e47164ee5580f8821b9d1730ce7d32992))
+
 ## [0.176.0](https://github.com/buchenberg/yaah/compare/v0.175.10...v0.176.0) (2026-11-13)
 
 
