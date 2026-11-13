@@ -111,10 +111,12 @@ func (bv *BrokerView) forward(target View) {
 // one-line change: it needs a way of saying "this generation is finished" that
 // is not itself a view action — a subscriber refcount, or an explicit retire
 // call owned by publishDone — plus a decision about who sets the broker's
-// closed flag. Left as "unsubscribe only", the retired broker would stay open
-// with no consumers, a stale publisher would keep buffering into it rather
-// than being refused, and applyDefaults would need a different signal to
-// re-arm. Revisit if several concurrent views on one broker ever become real.
+// closed flag. Left as "unsubscribe only", the retired broker would stay
+// open with no consumers: events published into it would be silently
+// dropped rather than refused, a later Subscribe could register a fresh
+// consumer that stale publishers then feed with a retired Run's events,
+// and applyDefaults would need a different signal to re-arm. Revisit if
+// several concurrent views on one broker ever become real.
 func (bv *BrokerView) Close() {
 	if bv.unsub != nil {
 		bv.unsub()

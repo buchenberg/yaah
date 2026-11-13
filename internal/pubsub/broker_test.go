@@ -551,7 +551,11 @@ func TestBroker_Stats_PerSubscriberUnderPublish(t *testing.T) {
 // keeps counting deliveries.
 func TestBroker_Stats_MustDeliverCountsEachSubscription(t *testing.T) {
 	b := NewBroker[int]()
-	b.mustDeliverTimeout = 10 * time.Millisecond
+	// Generous deadline on purpose: this test asserts counts, not timing
+	// (the shared-deadline bound has its own test), and a tight budget
+	// would let a descheduled healthy send race the timer into a random
+	// select pick on loaded CI runners.
+	b.mustDeliverTimeout = 100 * time.Millisecond
 	healthy := b.Subscribe("healthy", 8)
 	stalled := b.Subscribe("stalled", 1)
 

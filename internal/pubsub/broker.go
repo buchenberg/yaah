@@ -288,6 +288,14 @@ type SubscriberStats struct {
 // sums can fall below the aggregates as views come and go; read Stats for
 // "which live view is slow" and the globals for lifetime totals.
 //
+// The snapshot is NOT a point-in-time cut: publishers hold only the read
+// lock, so a concurrent fan-out can advance counters between row reads.
+// Each row is internally race-free (atomic loads), but the reconciliation
+// above is exact only at quiescence — while a run is idle, or after the
+// final DoneEvent. Taking the write lock instead would serialize Stats
+// behind an in-flight fan-out and its whole stall budget, which is exactly
+// what a diagnostic must not do.
+//
 // The returned slice is never nil, and is empty for a broker with no
 // subscribers (including a closed one).
 func (b *Broker[T]) Stats() []SubscriberStats {
