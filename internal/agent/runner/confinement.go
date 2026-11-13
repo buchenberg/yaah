@@ -93,7 +93,8 @@ func recordConfinementDegradedFact(ctx context.Context, scope *goatherd.Scope, c
 // workdir dispatch when agents.subagent.containment asks for one, and describes
 // what it resolved to (for the trace). It returns a nil workspace to leave the
 // host path. "" / "auto" (the default) jail on the platform backend (Landlock
-// on Linux, winacl on Windows) and degrade to advisory elsewhere; "off" (or
+// on Linux, Seatbelt on macOS, winacl on Windows) and degrade to advisory
+// elsewhere; "off" (or
 // "none"/"advisory") mean no jail;
 // "paddock" (alias "jail") fails closed. The writable root is the worktree — the
 // sub-agent's bound world — so the kernel boundary and the run's own boundary

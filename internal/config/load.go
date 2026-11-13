@@ -358,7 +358,8 @@ type SubAgentConfig struct {
 
 	// Containment selects the syscall jail for workdir sub-agent dispatches
 	// (Plan 7). "" / "auto" (the default) jail on the platform backend (Landlock
-	// on Linux, winacl on Windows) and fall back to advisory elsewhere; "off"
+	// on Linux, Seatbelt on macOS, winacl on Windows) and fall back to
+	// advisory elsewhere; "off"
 	// (or "none"/"advisory") leaves the host path; "paddock" (alias "jail")
 	// fails closed when the host cannot
 	// jail. The orchestrator's own commands are never jailed either way, only a

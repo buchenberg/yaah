@@ -59,17 +59,18 @@ yaah does **not** trust:
 
 ## Permission model
 
-yaah's safety model is intentionally simple: one global `approval`
-setting, a coarse deny-list for obviously destructive shell patterns,
-and an explicit opt-in for auto-approve.
+yaah's safety model is layered: a global `approval` posture that gates
+dangerous calls, ordered per-tool/per-path permission rulesets
+(`agents.default.permissions`), a coarse deny-list for obviously destructive
+shell patterns, and an explicit opt-in for auto-approve.
 
 ### `default.approval` (in `~/.yaah/config.yaml`)
 
 | Value   | Behavior                                                                 |
 |---------|--------------------------------------------------------------------------|
-| `ask`   | (Default) Prompt before every tool call. User types `y` / `n` at the REPL.|
+| `ask`   | (Default) Prompt before dangerous tool calls; non-dangerous calls run. User types `y` / `n` at the REPL.|
 | `allow` | Run every tool call without prompting. Explicit opt-in.                  |
-| `deny`  | Refuse every tool call. Useful for read-only sessions.                   |
+| `deny`  | Refuse dangerous calls outright; non-dangerous calls still run. Pair with `read-only` mode for a session that never mutates. |
 
 Approval is the **posture** for dangerous operations, not the whole policy:
 `agents.default.permissions` (and a role file's `permissions:`) adds ordered
@@ -175,8 +176,9 @@ yaah --approval allow "run headless tests"
 YAAH_APPROVAL=deny yaah                       # read-only session
 ```
 
-Invalid values fall back to `ask` with a warning on stderr. The override
-applies to all tools — there is still no per-tool or per-path approval.
+Invalid values fall back to `ask`. The override sets the posture for
+dangerous calls across all tools; per-tool and per-path control lives in the
+`agents.default.permissions` rulesets described under Permission model above.
 
 ### Dangerous-command guard (best-effort, not a security boundary)
 

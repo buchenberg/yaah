@@ -241,7 +241,8 @@ func TestGitConfigValue_QuotesAndEscapes(t *testing.T) {
 // the git rule when the refusal is git's own metadata.
 func TestConfinementHint_ExplainsRefusedWrites(t *testing.T) {
 	// Host-native absolute paths: the hint is only reachable where a kernel jail
-	// runs (Linux via Landlock, Windows via winacl), but the function is
+	// runs (Linux via Landlock, macOS via Seatbelt, Windows via winacl), but the
+	// function is
 	// cross-platform code and must not be tested with one platform's path shapes.
 	root := t.TempDir()
 	outside := t.TempDir()
