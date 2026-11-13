@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.178.0](https://github.com/buchenberg/yaah/compare/v0.177.1...v0.178.0) (2026-11-13)
+
+
+### Features
+
+* **workflow:** structural validation WF001-WF005 (yaah-0u0v.5) ([d5f1740](https://github.com/buchenberg/yaah/commit/d5f174016efd6e12bd45ee9153acc43e2c23eeee))
+* **workflow:** structural validation WF001-WF005 + bench IR mapping (yaah-0u0v.5, yaah-0u0v.10) ([c84021f](https://github.com/buchenberg/yaah/commit/c84021fe22effd63d305a31a82ba854374b56afc))
+
+
+### Bug Fixes
+
+* **workflow:** WF004 join-all reachability semantics + review doc clarifications (yaah-0u0v.5) ([2038bf3](https://github.com/buchenberg/yaah/commit/2038bf327b4db47a291647135b8c81f219394dc7))
+
+
+### Documentation
+
+* **workflow:** bench IR mapping and bounded-repair golden (yaah-0u0v.10) ([0fb3beb](https://github.com/buchenberg/yaah/commit/0fb3beb297ba61e44dfb030eb687d0dee3bf24ae))
+
 ## [0.177.1](https://github.com/buchenberg/yaah/compare/v0.177.0...v0.177.1) (2026-11-13)
 
 
