@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.176.0](https://github.com/buchenberg/yaah/compare/v0.175.10...v0.176.0) (2026-11-13)
+
+
+### Features
+
+* **pubsub:** cancel-handle subscriptions and one shared MustDeliver deadline ([5725c15](https://github.com/buchenberg/yaah/commit/5725c155eb3ee463b0b90f256480aa68ed4a9da4))
+* **pubsub:** cancel-handle subscriptions and one shared MustDeliver deadline (yaah-8jou.3, yaah-8jou.4) ([5b5ea08](https://github.com/buchenberg/yaah/commit/5b5ea08dd2c61570a8a368f2d4f14c057a69f5e2))
+
+
+### Code Refactoring
+
+* **pubsub:** address review — use the view's cancel handle in Close, explicit expired flag ([83ff94f](https://github.com/buchenberg/yaah/commit/83ff94fe7126896ae7cd11513fe143b8f1bc88b4))
+
 ## [0.175.10](https://github.com/buchenberg/yaah/compare/v0.175.9...v0.175.10) (2026-11-13)
 
 
