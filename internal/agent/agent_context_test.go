@@ -1089,7 +1089,7 @@ func TestProtectReasoningTurns(t *testing.T) {
 			wantKeepStart: 1, // must include the u1→a1 turn
 		},
 		{
-			name: "already protected — reasoning in keepMsgs",
+			name: "window satisfied — older reasoning turns are droppable",
 			messages: []types.Message{
 				types.SystemMsg("sys"),
 				types.UserMsg("u1"),
@@ -1099,7 +1099,39 @@ func TestProtectReasoningTurns(t *testing.T) {
 			},
 			keepStart:     3, // u2→a2 turn is kept, includes reasoning
 			protectTurns:  1,
-			wantKeepStart: 1, // must also protect a1 — all reasoning is preserved
+			wantKeepStart: 3, // the window is satisfied; a1's turn is history now
+		},
+		{
+			name: "all-reasoning history does not rewind to the oldest turn",
+			messages: []types.Message{
+				types.SystemMsg("sys"),
+				types.UserMsg("u1"),
+				assistantWithReasoning("a1", "reason-1"),
+				types.UserMsg("u2"),
+				assistantWithReasoning("a2", "reason-2"),
+				types.UserMsg("u3"),
+				assistantWithReasoning("a3", "reason-3"),
+				types.UserMsg("u4"),
+				assistantWithReasoning("a4", "reason-4"),
+			},
+			keepStart:     7, // only the last turn is kept (one reasoning message)
+			protectTurns:  2,
+			wantKeepStart: 5, // pull in the third turn only — the window, not all history
+		},
+		{
+			name: "both reasoning turns pulled into the window",
+			messages: []types.Message{
+				types.SystemMsg("sys"),
+				types.UserMsg("u1"),
+				assistantWithReasoning("a1", "reason-1"),
+				types.UserMsg("u2"),
+				assistantWithReasoning("a2", "reason-2"),
+				types.UserMsg("u3"),
+				types.AssistantMsg("a3", nil),
+			},
+			keepStart:     6, // only a3 is kept, no reasoning
+			protectTurns:  2,
+			wantKeepStart: 1, // both a1 and a2 are inside the two-turn window
 		},
 		{
 			name: "protectTurns=0 returns input unchanged",
@@ -1111,6 +1143,21 @@ func TestProtectReasoningTurns(t *testing.T) {
 			keepStart:     2,
 			protectTurns:  0,
 			wantKeepStart: 2,
+		},
+		{
+			name: "tool loop — absent user message does not rewind to the prompt",
+			messages: []types.Message{
+				types.SystemMsg("sys"),
+				types.UserMsg("u1"),
+				assistantWithReasoning("a1", "reason-1"),
+				types.ToolResultMsg("call-1", "bash", "out-1"),
+				assistantWithReasoning("a2", "reason-2"),
+				types.ToolResultMsg("call-2", "bash", "out-2"),
+				assistantWithReasoning("a3", "reason-3"),
+			},
+			keepStart:     6, // only the last assistant is kept
+			protectTurns:  2,
+			wantKeepStart: 4, // a2's own index — not the single user prompt at 1
 		},
 		{
 			name: "protect multiple reasoning turns",

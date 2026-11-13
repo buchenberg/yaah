@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -473,6 +474,72 @@ func TestCompactContextExcerptCarriesAnchoredSummaryOnce(t *testing.T) {
 	if got := strings.Count(prompt, summary); got != 1 {
 		t.Fatalf("the anchored summary appears %d time(s) in the summarization prompt, want 1 (its own section, not also excerpted)", got)
 	}
+}
+
+// TestCompactContextAllReasoningConversationTrims pins yaah-6a6c: when the
+// provider reasons on every turn (deepseek-flash does), the protection
+// window must not make compaction a no-op. The fallback trim has to drop
+// history — old reasoning turns included — while every kept assistant
+// message keeps its reasoning (the thinking-mode contract applies to what a
+// request sends, not to what it no longer sends), and the fallback marker
+// records the rollover the scenario verifier looks for.
+func TestCompactContextAllReasoningConversationTrims(t *testing.T) {
+	p := &compactionRecordingProvider{placeholderAll: true}
+	db := newPersistTestDB(t, "sess-reasoning-trim")
+	cm := compactionTestManager(p)
+	cm.DB = db
+	cm.SessionID = "sess-reasoning-trim"
+	cm.ReasoningProtectTurns = 2
+	cm.State.Messages = reasoningConversation(24)
+
+	before := len(cm.State.Messages)
+	reasoningBefore := agentctx.CountReasoningMessages(cm.State.Messages)
+	cm.compactContext(context.Background(), 0.25)
+
+	if cm.State.LastCompactionMethod != "trim" {
+		t.Fatalf("method = %q, want trim — the test presumes every summarizer attempt failed", cm.State.LastCompactionMethod)
+	}
+	if len(cm.State.Messages) >= before {
+		t.Fatalf("compaction dropped nothing (%d -> %d): an all-reasoning conversation must still compact", before, len(cm.State.Messages))
+	}
+	if got := agentctx.CountReasoningMessages(cm.State.Messages); got >= reasoningBefore {
+		t.Fatalf("old reasoning turns were not droppable (%d -> %d): the window is %d turns, not all history",
+			reasoningBefore, got, cm.ReasoningProtectTurns)
+	}
+	for _, m := range cm.State.Messages {
+		if m.Role == "assistant" && m.ReasoningContent == "" {
+			t.Fatalf("a kept assistant message lost its reasoning: %+v", m)
+		}
+	}
+	session, err := db.GetSession("sess-reasoning-trim")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(session.CompactedSummary) == "" {
+		t.Fatal("the trim rollover left no record — the scenario checkers see an empty rollover")
+	}
+}
+
+// reasoningConversation builds the real shape a thinking-mode provider
+// produces: one user prompt, then assistant(reasoning, tool call) / tool-result
+// cycles. The single user message is what made the original protection rewind
+// to the start of the conversation (yaah-6a6c), so the fixture must carry it.
+func reasoningConversation(turns int) []types.Message {
+	msgs := []types.Message{
+		types.SystemMsg("sys"),
+		types.UserMsg("read every file in the data directory"),
+	}
+	for i := range turns {
+		id := fmt.Sprintf("call-%d", i)
+		a := types.AssistantMsg(strings.Repeat("work ", 40), []types.ToolCall{{
+			ID:       id,
+			Type:     "function",
+			Function: types.ToolCallFn{Name: "read", Arguments: `{"filePath":"data/f"}`},
+		}})
+		a.ReasoningContent = strings.Repeat("thinking ", 80)
+		msgs = append(msgs, a, types.ToolResultMsg(id, "read", strings.Repeat("data ", 200)))
+	}
+	return msgs
 }
 
 // TestCompactContextAcceptedSummaryPersists guards the shared persistence

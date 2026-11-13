@@ -461,8 +461,45 @@ def assert_tool_message_contains(text: str) -> None:
     ), f"no tool result contains {text!r}"
 
 
+def trace_tool_calls(name: str) -> int:
+    """Count assistant tool calls named ``name`` in the append-only trace.
+
+    Compaction rebases the persisted transcript (``sessions``/``messages``)
+    to the compacted baseline, so a tool call made before a rollover is
+    summarized away and no longer visible in ``session_messages()``. The
+    trace records every assistant message with its tool calls
+    (``yaah.message.assistant.v1``) and is never rewritten, which makes it
+    the durable evidence for "the agent used this tool" (yaah-6a6c). A
+    missing trace (a run that did not record) reports 0.
+    """
+    if not TRACE_DB.exists():
+        return 0
+    conn = _connect(TRACE_DB)
+    try:
+        rows = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM records, json_each(json_extract(records.body_json, '$.tool_calls'))
+            WHERE records.schema_ref = 'yaah.message.assistant.v1'
+              AND json_extract(json_each.value, '$.function.name') = ?
+            """,
+            (name,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return 0
+    finally:
+        conn.close()
+    return rows[0][0] if rows else 0
+
+
 def assert_tool_calls(name: str, minimum: int = 1) -> None:
-    """At least ``minimum`` assistant tool calls used ``name``."""
+    """At least ``minimum`` assistant tool calls used ``name``.
+
+    Counts the persisted transcript first, then falls back to the trace: a
+    working compaction rolls the transcript over, and the calls before the
+    rollover survive only in the trace (yaah-6a6c). The maximum of the two
+    views is the evidence — either view alone under-counts a compacted run.
+    """
     import json
 
     count = 0
@@ -472,8 +509,10 @@ def assert_tool_calls(name: str, minimum: int = 1) -> None:
         for call in json.loads(message["tool_calls"]):
             if (call.get("function") or {}).get("name") == name:
                 count += 1
+    count = max(count, trace_tool_calls(name))
     assert count >= minimum, (
-        f"expected at least {minimum} {name!r} tool calls, found {count}"
+        f"expected at least {minimum} {name!r} tool calls, found {count} "
+        "(persisted transcript and trace)"
     )
 
 
