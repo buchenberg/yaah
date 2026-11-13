@@ -69,6 +69,26 @@ func TestCodeOrganizationNamesEveryInternalPackage(t *testing.T) {
 	}
 }
 
+// TestAgentsLayoutNamesEveryInternalPackage applies the same rule to AGENTS.md.
+// Its layout is the routing table every agent session loads, so a package
+// missing from it misroutes work to the wrong directory. code-organization.md
+// was already gated and stayed current; AGENTS.md was not, and drifted.
+func TestAgentsLayoutNamesEveryInternalPackage(t *testing.T) {
+	doc := read(t, "../../AGENTS.md")
+	entries, err := os.ReadDir(filepath.Clean("../../internal"))
+	if err != nil {
+		t.Fatalf("read internal packages: %v", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if !strings.Contains(doc, "── "+entry.Name()+"/") {
+			t.Errorf("AGENTS.md repo layout does not name internal/%s/; the tree must match `ls internal/`", entry.Name())
+		}
+	}
+}
+
 // planModeSection returns features.md's Plan mode section: from the heading to
 // the next "## " heading, or to the end of the page when Plan mode is the last
 // section. The bound is checked rather than assumed — a restructure that moves
