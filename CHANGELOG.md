@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.175.8](https://github.com/buchenberg/yaah/compare/v0.175.7...v0.175.8) (2026-11-13)
+
+
+### Bug Fixes
+
+* **dispatch:** pre-write content guard refuses apply over parent edits (yaah-gkll.2) ([02c8390](https://github.com/buchenberg/yaah/commit/02c8390630e02a199da794ae71d4852528e641a2))
+* **dispatch:** pre-write content guard refuses apply over parent edits (yaah-gkll.2) ([12d59e7](https://github.com/buchenberg/yaah/commit/12d59e77e6a68388b61baee79a3982e7b463b87f))
+
 ## [0.175.7](https://github.com/buchenberg/yaah/compare/v0.175.6...v0.175.7) (2026-11-13)
 
 
