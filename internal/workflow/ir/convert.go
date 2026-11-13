@@ -163,6 +163,22 @@ func convertSelectPolicy(p spec.Policy) (SelectPolicy, error) {
 	return "", resolveErrf("", "unconvertible select policy %q", p)
 }
 
+// convertSettlePolicy converts the settle's half of the shared `policy` key.
+// A selection policy is not a settlement disposition, so it is rejected here
+// rather than dropped: resolveSettle is the only reader of `policy` on a
+// settle, and a value converted to "" is invisible to WF014, which reads the
+// graph and cannot name a field the resolver never set. convertSelectPolicy
+// rejects the mirror case for the same reason.
+func convertSettlePolicy(p spec.Policy) (SettlePolicy, error) {
+	switch p {
+	case spec.PolicyPathDisjoint:
+		return SettlePathDisjoint, nil
+	case spec.PolicyThreeWay:
+		return SettleThreeWay, nil
+	}
+	return "", resolveErrf("", "unconvertible settle policy %q", p)
+}
+
 func convertAggregateStrategy(s spec.AggregateStrategy) (AggregateStrategy, error) {
 	switch s {
 	case "":

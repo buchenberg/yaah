@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -396,7 +397,9 @@ func TestCompileTemplateSegments(t *testing.T) {
 			"build":  {id: "build", kind: spec.KindFanout, hasCollect: true},
 			"second": {id: "second", kind: spec.KindEmit},
 		},
-		items: []string{"ws"},
+		// A fan-out body scope: the item binding and the iteration counter.
+		items:   []string{"ws"},
+		indexed: true,
 	}
 	tpl, err := compileTemplate("t", "Work on {{ ws.brief }} ({{ index }}) for {{ params.task }}; see {{ steps.plan.output.summary }} and {{ steps.build.collect }}.", lex)
 	if err != nil {
@@ -431,7 +434,9 @@ func TestRenderAndHandles(t *testing.T) {
 		steps: map[string]*stepInfo{
 			"report": {id: "report", kind: spec.KindDelegate},
 		},
-		items: []string{"ws"},
+		// A fan-out body scope, so both `ws` and `index` resolve.
+		items:   []string{"ws"},
+		indexed: true,
 	}
 	tpl, err := compileTemplate("t", "Goal: {{ params.task }}; item {{ ws.name }} #{{ index }}; run {{ run.id }}/{{ run.attempt }}; big: {{ steps.report.output.blob }}", lex)
 	if err != nil {
@@ -573,5 +578,407 @@ func TestValueTextComposites(t *testing.T) {
 	got, err = valueText(jsonNum)
 	if err != nil || got != "42" {
 		t.Errorf("valueText(42) = %q, %v", got, err)
+	}
+}
+
+// ------------------------------------------------------------ settle policy
+
+// stepDoc is a fan-out followed by one node whose kind and payload vary, so
+// a policy test can name the kind that declares the key.
+func stepDoc(kind, policy string) []byte {
+	head := "apiVersion: yaah.workflow/v1\nkind: Workflow\nmetadata: {name: t}\nspec:\n  steps:\n    - id: fan\n      kind: fanout\n      over: [a]\n      as: ws\n      collect: results\n      body:\n        kind: delegate\n        role: developer\n        prompt: build it\n"
+	id, payload := "land", "      proposals: { from: steps.fan.collect }\n      action: apply\n"
+	if kind == "select" {
+		id, payload = "pick", "      candidates: { from: steps.fan.collect }\n"
+	}
+	body := "    - id: " + id + "\n      kind: " + kind + "\n      needs: [fan]\n" + payload
+	return []byte(head + body + "      policy: " + policy + "\n")
+}
+
+func nodeByID(t *testing.T, g *Graph, id string) *Node {
+	t.Helper()
+	for _, n := range g.Steps {
+		if n.ID == id {
+			return n
+		}
+	}
+	t.Fatalf("graph has no top-level step %q", id)
+	return nil
+}
+
+// TestSettlePolicyReachesTheGraph pins yaah-0u0v.31: spec.Node.Policy decodes
+// the two settlement values, and resolveSettle used to read only on_conflict
+// and on_empty, so `policy: path_disjoint` was dropped on the way into the
+// graph while the document still said the settle had chosen one.
+func TestSettlePolicyReachesTheGraph(t *testing.T) {
+	for _, tc := range []struct {
+		policy string
+		want   SettlePolicy
+	}{
+		{"path_disjoint", SettlePathDisjoint},
+		{"three_way", SettleThreeWay},
+	} {
+		t.Run(tc.policy, func(t *testing.T) {
+			g, err := Resolve(mustParse(t, stepDoc("settle", tc.policy)))
+			if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
+			land := nodeByID(t, g, "land")
+			if land.SettlePolicy != tc.want {
+				t.Errorf("settle SettlePolicy = %q, want %q", land.SettlePolicy, tc.want)
+			}
+			// The select half of the shared key stays unpopulated on a
+			// settle, which is what keeps the two graph keys honest about
+			// the one document key.
+			if land.Policy != "" {
+				t.Errorf("settle also populated Policy = %q, want it left zero", land.Policy)
+			}
+			// Wire shape: the settle writes settle_policy, never policy.
+			raw, err := GraphJSON(g)
+			if err != nil {
+				t.Fatalf("GraphJSON: %v", err)
+			}
+			if !strings.Contains(string(raw), `"settle_policy":"`+tc.policy+`"`) {
+				t.Errorf("graph json lacks the settle policy key:\n%s", raw)
+			}
+			if strings.Contains(string(raw), `"policy":"`) {
+				t.Errorf("graph json wrote the select key for a settle:\n%s", raw)
+			}
+		})
+	}
+
+	// The two goldens that documented the defect carry it now.
+	for _, tc := range []struct {
+		name string
+		want SettlePolicy
+	}{
+		{"fanout_settle", SettlePathDisjoint},
+		{"bounded_repair", SettleThreeWay},
+	} {
+		t.Run("golden "+tc.name, func(t *testing.T) {
+			g, err := Resolve(goldenDoc(t, tc.name))
+			if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
+			if got := nodeByID(t, g, "land").SettlePolicy; got != tc.want {
+				t.Errorf("%s land.SettlePolicy = %q, want %q", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestPolicyVocabularyIsPerKind pins the design decision behind the settle
+// policy field: the resolver converts faithfully what the vocabulary allows
+// for the kind it is resolving and refuses the other half, so a document
+// cannot leave the pipeline claiming a disposition its node cannot honour.
+// WF014 reads the graph and cannot see a dropped field, so a silent drop
+// here would be unreported; the rejection is what keeps the two rules from
+// double-reporting the same mistake.
+func TestPolicyVocabularyIsPerKind(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		kind    string
+		policy  string
+		path    string
+		wantSub string
+	}{
+		{"settle rejects a selection policy", "settle", "judge", "steps.land.policy", "unconvertible settle policy"},
+		{"settle rejects first_success", "settle", "first_success", "steps.land.policy", "unconvertible settle policy"},
+		{"settle rejects smallest_diff", "settle", "smallest_diff", "steps.land.policy", "unconvertible settle policy"},
+		{"select rejects a settlement policy", "select", "path_disjoint", "steps.pick.policy", "unconvertible select policy"},
+		{"select rejects three_way", "select", "three_way", "steps.pick.policy", "unconvertible select policy"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Resolve(mustParse(t, stepDoc(tc.kind, tc.policy)))
+			var re *ResolveError
+			if !errors.As(err, &re) {
+				t.Fatalf("error is %T, want *ResolveError: %v", err, err)
+			}
+			if re.Path != tc.path {
+				t.Errorf("path = %q, want %q", re.Path, tc.path)
+			}
+			if !strings.Contains(re.Message, tc.wantSub) {
+				t.Errorf("message %q does not contain %q", re.Message, tc.wantSub)
+			}
+		})
+	}
+
+	// The kind that owns neither half still drops the key: `policy` on a
+	// gate has no compiled home, which is WF014's documented blind spot for
+	// a field the resolver never reads at all.
+	gateDoc := "apiVersion: yaah.workflow/v1\nkind: Workflow\nmetadata: {name: t}\nspec:\n  steps:\n    - id: g\n      kind: gate\n      assert: {name: ok}\n      policy: path_disjoint\n"
+	g, err := Resolve(mustParse(t, []byte(gateDoc)))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if n := nodeByID(t, g, "g"); n.Policy != "" || n.SettlePolicy != "" {
+		t.Errorf("gate populated Policy = %q, SettlePolicy = %q; want both zero", n.Policy, n.SettlePolicy)
+	}
+}
+
+// --------------------------------------------------------- selector field
+
+const selectorFieldDoc = `apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata: {name: t}
+spec:
+  steps:
+    - id: fan
+      kind: fanout
+      over: [a]
+      as: ws
+      collect: results
+      body:
+        kind: delegate
+        role: developer
+        prompt: build it
+    - id: rep
+      kind: loop
+      needs: [fan]
+      max_iterations: 2
+      until: { from: steps.fan.collect, field: verdict, equals: pass }
+      collect: outs
+      body:
+        kind: delegate
+        role: developer
+        prompt: repair it
+    - id: land
+      kind: settle
+      needs: [rep]
+      proposals: { from: steps.fan.collect }
+      where: { from: steps.fan.collect, field: verdict, equals: pass }
+      action: apply
+    - id: bare
+      kind: select
+      needs: [land]
+      candidates: { from: steps.fan.collect }
+      policy: judge
+    - id: proj
+      kind: settle
+      needs: [bare]
+      proposals: { from: steps.fan.collect }
+      where: { from: steps.fan.collect, field: verdict }
+      action: apply
+`
+
+// TestSelectorFieldReachesThePredicate pins yaah-0u0v.32: spec.Selector.Field
+// decoded but compileSelector never read it, so
+// `where: {from: steps.x.collect, field: verdict, equals: pass}` compiled to a
+// predicate comparing the whole element against "pass" — silently the wrong
+// semantics, and the only place the author's field survived was the document.
+func TestSelectorFieldReachesThePredicate(t *testing.T) {
+	g, err := Resolve(mustParse(t, []byte(selectorFieldDoc)))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		got  Predicate
+		want Predicate
+	}{
+		{
+			name: "loop until keeps its field with its operator",
+			got:  nodeByID(t, g, "rep").Until.Predicate,
+			want: Predicate{Op: PredEquals, Arg: "pass", Field: "verdict"},
+		},
+		{
+			name: "settle where keeps its field",
+			got:  nodeByID(t, g, "land").Where.Predicate,
+			want: Predicate{Op: PredEquals, Arg: "pass", Field: "verdict"},
+		},
+		{
+			name: "a field with no operator is still carried",
+			got:  nodeByID(t, g, "proj").Where.Predicate,
+			want: Predicate{Field: "verdict"},
+		},
+		{
+			name: "an undeclared field stays empty",
+			got:  nodeByID(t, g, "land").Proposals.Predicate,
+			want: Predicate{},
+		},
+		{
+			name: "a selector without a predicate stays bare",
+			got:  nodeByID(t, g, "bare").Candidates.Predicate,
+			want: Predicate{},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.got.Field != tc.want.Field {
+				t.Errorf("Predicate.Field = %q, want %q", tc.got.Field, tc.want.Field)
+			}
+			if tc.got.Op != tc.want.Op {
+				t.Errorf("Predicate.Op = %q, want %q", tc.got.Op, tc.want.Op)
+			}
+			if !reflect.DeepEqual(tc.got.Arg, tc.want.Arg) {
+				t.Errorf("Predicate.Arg = %#v, want %#v", tc.got.Arg, tc.want.Arg)
+			}
+		})
+	}
+
+	// Wire shape: filtered selectors carry field, unfiltered ones do not.
+	raw, err := GraphJSON(g)
+	if err != nil {
+		t.Fatalf("GraphJSON: %v", err)
+	}
+	if got := strings.Count(string(raw), `"field":"verdict"`); got != 3 {
+		t.Errorf("graph json has %d field keys, want 3:\n%s", got, raw)
+	}
+
+	// The goldens that depend on field projection agree.
+	for _, tc := range []struct {
+		name string
+		id   string
+	}{
+		{"bounded_repair", "land"},
+		{"fanout_settle", "land"},
+	} {
+		t.Run("golden "+tc.name, func(t *testing.T) {
+			gh, err := Resolve(goldenDoc(t, tc.name))
+			if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
+			if f := nodeByID(t, gh, tc.id).Where.Predicate.Field; f != "verdict" {
+				t.Errorf("%s %s.Where.Predicate.Field = %q, want verdict", tc.name, tc.id, f)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------- index scope
+
+// TestIndexInLoopBodies pins yaah-0u0v.33: compileRef admitted `index` only
+// where the lexical scope carried an item binding, so a loop body could not
+// number its iterations — the very thing the error text promised it could
+// do. The scope now keys on "this body iterates", not "this body binds an
+// item": fan-out and loop bodies have an index, a fan-out keeps one when the
+// author wrote no `as`, a container's own fields are still resolved outside
+// its body, and an aggregate body combines inputs rather than iterating them
+// so it stays out.
+func TestIndexInLoopBodies(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		steps    string
+		wantSub  string
+		wantPath string
+	}{
+		{
+			name: "a loop body numbers its iterations",
+			steps: `  steps:
+    - id: rep
+      kind: loop
+      max_iterations: 3
+      collect: outs
+      body:
+        kind: delegate
+        role: developer
+        prompt: attempt {{ index }} of 3
+`,
+		},
+		{
+			name: "a fan-out body with no as binding still has index",
+			steps: `  steps:
+    - id: fan
+      kind: fanout
+      over: [a, b]
+      collect: results
+      body:
+        kind: delegate
+        role: developer
+        prompt: item {{ index }}
+`,
+		},
+		{
+			name: "a loop nested in a fan-out body sees both scopes",
+			steps: `  steps:
+    - id: fan
+      kind: fanout
+      over: [a, b]
+      as: ws
+      collect: results
+      body:
+        - id: rep
+          kind: loop
+          max_iterations: 2
+          collect: outs
+          body:
+            kind: delegate
+            role: developer
+            prompt: '{{ ws }} attempt {{ index }}'
+`,
+		},
+		{
+			name: "a container's own fields are outside its body",
+			steps: `  steps:
+    - id: rep
+      kind: loop
+      max_iterations: 2
+      continue_from: "resume at {{ index }}"
+      collect: outs
+      body:
+        kind: delegate
+        role: developer
+        prompt: attempt {{ index }}
+`,
+			wantSub:  "index is only in scope inside a fan-out or loop body",
+			wantPath: "steps.rep.continue_from",
+		},
+		{
+			name: "an aggregate body combines and has no index",
+			steps: `  steps:
+    - id: fan
+      kind: fanout
+      over: [a]
+      as: ws
+      collect: results
+      body:
+        kind: delegate
+        role: developer
+        prompt: build it
+    - id: agg
+      kind: aggregate
+      needs: [fan]
+      strategy: concat
+      inputs:
+        - from: steps.fan.collect
+      body:
+        kind: emit
+        value: "attempt {{ index }}"
+`,
+			wantSub: "index is only in scope inside a fan-out or loop body",
+		},
+		{
+			name: "top level still has no index",
+			steps: `  steps:
+    - id: a
+      kind: emit
+      value: "{{ index }}"
+`,
+			wantSub: "index is only in scope inside a fan-out or loop body",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := "apiVersion: yaah.workflow/v1\nkind: Workflow\nmetadata: {name: t}\nspec:\n" + tc.steps
+			doc, err := spec.Parse([]byte(src))
+			if err != nil {
+				t.Fatalf("spec.Parse: %v\n%s", err, src)
+			}
+			_, err = Resolve(doc)
+			if tc.wantSub == "" {
+				if err != nil {
+					t.Fatalf("Resolve: %v", err)
+				}
+				return
+			}
+			var re *ResolveError
+			if !errors.As(err, &re) {
+				t.Fatalf("error is %T, want *ResolveError: %v", err, err)
+			}
+			if !strings.Contains(re.Message, tc.wantSub) {
+				t.Errorf("message %q does not contain %q", re.Message, tc.wantSub)
+			}
+			if tc.wantPath != "" && re.Path != tc.wantPath {
+				t.Errorf("path = %q, want %q", re.Path, tc.wantPath)
+			}
+		})
 	}
 }

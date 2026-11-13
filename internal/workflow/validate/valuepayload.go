@@ -22,11 +22,15 @@ import (
 //
 // Fields the resolver has no home for are invisible to this rule, which is
 // the price of testing the graph instead of the document, and is recorded
-// with the code rather than hidden: `policy` on a settle is legal at the
-// top of spec/types.go's "gate and select" comment and dropped on the way
-// into the IR, so a settle's `policy: three_way` cannot be judged here at
-// all. Fixing that belongs to the same bead that fixes Selector.Field
-// (yaah-0u0v.32), not to this rule.
+// with the code rather than hidden: `policy` on a kind that has no policy at
+// all — a gate, a fan-out, a loop — is legal in the document and dropped on
+// the way into the IR, so nothing here can name it. What the two kinds that
+// do own a policy write from that one shared key is now carried
+// (yaah-0u0v.31): `policy` on a select, `settle_policy` on a settle, each on
+// its own field, because ir.Node is one flat struct and encoding/json drops
+// every field sharing a tag. A value from the other half of the vocabulary
+// (`policy: judge` on a settle, `policy: path_disjoint` on a select) is
+// refused by the resolver, which is why this rule never reports it twice.
 func payloadsMatchKind(c *valueCtx) []Diagnostic {
 	var out []Diagnostic
 	for _, n := range c.order {
@@ -69,7 +73,7 @@ var payloadFields = map[ir.Kind]map[string]bool{
 	ir.KindBranch:    names("on", "cases", "default"),
 	ir.KindLoop:      names("until", "max_iterations", "continue_from", "body", "collect"),
 	ir.KindGate:      names("assert", "judge", "on_pass", "on_fail"),
-	ir.KindSettle:    names("proposals", "where", "action", "order", "on_conflict", "on_empty"),
+	ir.KindSettle:    names("proposals", "where", "action", "settle_policy", "order", "on_conflict", "on_empty"),
 	ir.KindSelect:    names("candidates", "judge", "policy"),
 	ir.KindAggregate: names("inputs", "strategy", "body"),
 	ir.KindCall:      names("workflow", "params", "max_depth"),
@@ -136,6 +140,7 @@ func populatedPayloads(n *ir.Node) []populatedField {
 		{"order", n.Order != ""},
 		{"on_conflict", n.OnConflict != ""},
 		{"on_empty", n.OnEmpty != ""},
+		{"settle_policy", n.SettlePolicy != ""},
 		// aggregate
 		{"inputs", len(n.Inputs) > 0},
 		{"strategy", n.Strategy != ""},

@@ -57,10 +57,25 @@ const (
 	PredExists    PredOp = "exists"
 )
 
-// Predicate is a compiled selector predicate with its literal argument.
+// Predicate is a compiled selector predicate: the operator, its literal
+// argument, and the element property the operator reads.
 type Predicate struct {
 	Op  PredOp `json:"op,omitempty"`
 	Arg any    `json:"arg,omitempty"`
+	// Field is the authoring `field:` key: the property of each element the
+	// predicate compares. It lives here rather than on Selector because it
+	// is the left operand of the comparison, not a projection of the result
+	// — `where: {from: xs, field: verdict, equals: pass}` keeps the elements
+	// of xs whose verdict is pass, so the value the selector yields is still
+	// the element. An empty Field compares the element itself.
+	//
+	// compileSelector used to drop it (yaah-0u0v.32), which made a filtered
+	// selector silently compare the whole element against the literal.
+	// Shape checking of a field against the source's element schema stays
+	// with WF012, which reads the document too: the IR has no shape model,
+	// and rejecting here would turn a value finding into a resolution
+	// failure.
+	Field string `json:"field,omitempty"`
 }
 
 // Selector is a compiled structured selector: a source, at most one
@@ -72,7 +87,9 @@ type Selector struct {
 }
 
 // MarshalJSON omits an absent predicate so unconditional selectors
-// serialize compactly.
+// serialize compactly. A `field:` with no operator is still a predicate
+// clause — an element-wise filter with nothing to compare is the projection
+// the author asked for — so the compact form keys on either half being set.
 func (s *Selector) MarshalJSON() ([]byte, error) {
 	if s == nil {
 		return []byte("null"), nil
@@ -83,6 +100,9 @@ func (s *Selector) MarshalJSON() ([]byte, error) {
 		if s.Predicate.Arg != nil {
 			obj["arg"] = s.Predicate.Arg
 		}
+	}
+	if s.Predicate.Field != "" {
+		obj["field"] = s.Predicate.Field
 	}
 	if s.AsList {
 		obj["as_list"] = true
@@ -101,6 +121,10 @@ func compileSelector(path string, in *spec.Selector, lex *lexscope) (*Selector, 
 		return nil, err
 	}
 	out := &Selector{From: src, AsList: in.AsList != nil && *in.AsList}
+	// The element property the predicate reads travels with the predicate.
+	// This assignment is the whole of yaah-0u0v.32: the field was decoded
+	// and then never read, so a filtered selector compared the element.
+	out.Predicate.Field = in.Field
 
 	var ops []PredOp
 	set := func(op PredOp) { ops = append(ops, op) }

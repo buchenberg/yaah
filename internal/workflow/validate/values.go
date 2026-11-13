@@ -95,10 +95,17 @@ type valueCtx struct {
 
 // nodeScope is the lexical scope one node's values are written in: the step
 // ids it may name and the item bindings it may read, both innermost-first
-// for a body-local name.
+// for a body-local name, plus whether the node sits in a body that iterates.
 type nodeScope struct {
 	steps map[string]*ir.Node
 	items map[string]*ir.Node
+	// indexed marks a node under a fan-out or a loop — the two containers
+	// whose bodies run repeatedly and therefore own an iteration counter.
+	// A loop binds no item, so this cannot be read off items; ir keys on the
+	// same distinction (lexscope.indexed, yaah-0u0v.33) and this rule has to
+	// agree with the resolver, or a reference the graph accepts would be
+	// reported as unresolvable.
+	indexed bool
 }
 
 func newValueCtx(doc *spec.Document, g *ir.Graph) *valueCtx {
@@ -118,7 +125,10 @@ func newValueCtx(doc *spec.Document, g *ir.Graph) *valueCtx {
 // reconstructs is ir.resolveBody's: all top-level ids are visible everywhere,
 // a body sees the ids of its own siblings up to and including itself, and a
 // nested body inherits the scope its container was resolved in — which is why
-// the walk climbs outward and applies what it finds innermost-last.
+// the walk climbs outward and applies what it finds innermost-last. The
+// iteration counter follows the same climb: any fan-out or loop above the
+// node puts `index` in scope, because that is the pair of containers whose
+// bodies resolveBody marks as iterating.
 func (c *valueCtx) scope(n *ir.Node) *nodeScope {
 	if s, ok := c.scopes[n]; ok {
 		return s
@@ -150,6 +160,9 @@ func (c *valueCtx) scope(n *ir.Node) *nodeScope {
 		child = up
 	}
 	for up := c.parent[n]; up != nil; up = c.parent[up] {
+		if up.Kind == ir.KindFanout || up.Kind == ir.KindLoop {
+			s.indexed = true
+		}
 		if up.Kind == ir.KindFanout && up.As != "" {
 			if _, seen := s.items[up.As]; !seen {
 				s.items[up.As] = up
@@ -359,8 +372,8 @@ func (c *valueCtx) refProblems(n *ir.Node, r *ir.Ref, at string) []Diagnostic {
 	case ir.RootItem:
 		out = append(out, c.itemProblems(n, r.Name, at, r.Path)...)
 	case ir.RootIndex:
-		if len(c.scope(n).items) == 0 {
-			out = append(out, diag(CodeWF010, at, "index is only in scope inside a fan-out body"))
+		if !c.scope(n).indexed {
+			out = append(out, diag(CodeWF010, at, "index is only in scope inside a fan-out or loop body"))
 		}
 		if len(r.Path) > 0 {
 			out = append(out, diag(CodeWF010, at, "index is a number and has no fields"))

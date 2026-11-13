@@ -39,6 +39,13 @@ type lexscope struct {
 	params map[string]spec.ParamSpec
 	steps  map[string]*stepInfo
 	items  []string
+	// indexed marks a scope nested inside a fan-out or loop body, where
+	// `index` names the current iteration. It is not derived from items:
+	// a loop iterates without binding an item, and a fan-out numbers its
+	// items whether or not the author named the binding (yaah-0u0v.33).
+	// The flag travels inward through child, so a nested body keeps the
+	// enclosing containers exactly as it keeps the enclosing bindings.
+	indexed bool
 }
 
 func (l *lexscope) child() *lexscope {
@@ -48,7 +55,7 @@ func (l *lexscope) child() *lexscope {
 	}
 	items := make([]string, len(l.items))
 	copy(items, l.items)
-	return &lexscope{params: l.params, steps: steps, items: items}
+	return &lexscope{params: l.params, steps: steps, items: items, indexed: l.indexed}
 }
 
 // Resolve compiles a decoded workflow document into the immutable graph.
@@ -285,7 +292,7 @@ func resolveFanout(n *Node, in *spec.Node, path string, lex *lexscope, topIDs ma
 	if n.OnItemFailure, err = convertItemFailure(in.OnItemFailure); err != nil {
 		return resolveErrf(path+".on_item_failure", "%v", err)
 	}
-	if n.Body, err = resolveBody(in.Body, path, lex, topIDs, defaults, n.As); err != nil {
+	if n.Body, err = resolveBody(in.Body, path, lex, topIDs, defaults, n.As, true); err != nil {
 		return err
 	}
 	return nil
@@ -319,7 +326,8 @@ func resolveLoop(n *Node, in *spec.Node, path string, lex *lexscope, topIDs map[
 	if n.ContinueFrom, err = compileTemplate(path+".continue_from", in.ContinueFrom, lex); err != nil {
 		return err
 	}
-	if n.Body, err = resolveBody(in.Body, path, lex, topIDs, defaults, ""); err != nil {
+	// A loop body numbers its iterations and binds no item (yaah-0u0v.33).
+	if n.Body, err = resolveBody(in.Body, path, lex, topIDs, defaults, "", true); err != nil {
 		return err
 	}
 	return nil
@@ -358,6 +366,14 @@ func resolveSettle(n *Node, in *spec.Node, path string, lex *lexscope) error {
 	}
 	if n.Action, err = convertSettleAction(in.Action); err != nil {
 		return resolveErrf(path+".action", "%v", err)
+	}
+	// The authoring `policy` key is shared by select and settle (see
+	// spec.Policy). A settle writes it into SettlePolicy, and a value from
+	// the selection half of the vocabulary is rejected rather than dropped.
+	if in.Policy != "" {
+		if n.SettlePolicy, err = convertSettlePolicy(in.Policy); err != nil {
+			return resolveErrf(path+".policy", "%v", err)
+		}
 	}
 	if n.Order, err = convertSettleOrder(in.Order); err != nil {
 		return resolveErrf(path+".order", "%v", err)
@@ -403,7 +419,8 @@ func resolveAggregate(n *Node, in *spec.Node, path string, lex *lexscope, topIDs
 	if n.Strategy, err = convertAggregateStrategy(in.Strategy); err != nil {
 		return resolveErrf(path+".strategy", "%v", err)
 	}
-	if n.Body, err = resolveBody(in.Body, path, lex, topIDs, defaults, ""); err != nil {
+	// An aggregate combines its inputs; there is no iteration to number.
+	if n.Body, err = resolveBody(in.Body, path, lex, topIDs, defaults, "", false); err != nil {
 		return err
 	}
 	return nil
@@ -440,7 +457,13 @@ func resolveCall(n *Node, in *spec.Node, path string, lex *lexscope) error {
 // child scope before the node resolves, so a container's own until can
 // address its collect and later siblings see earlier local ids — but a
 // sibling never sees a later id (§5.3).
-func resolveBody(body spec.Body, parentPath string, outer *lexscope, topIDs map[string]bool, defaults *spec.Defaults, itemName string) ([]*Node, error) {
+//
+// itemName is the fan-out binding the body reads per item, and numbers
+// records whether this container's body iterates at all, which is where
+// `index` gets its scope: fan-out and loop bodies say true, an aggregate
+// body says false, and a container's own fields are compiled in the outer
+// scope and so never see either.
+func resolveBody(body spec.Body, parentPath string, outer *lexscope, topIDs map[string]bool, defaults *spec.Defaults, itemName string, numbers bool) ([]*Node, error) {
 	if len(body) == 0 {
 		return nil, nil
 	}
@@ -448,6 +471,7 @@ func resolveBody(body spec.Body, parentPath string, outer *lexscope, topIDs map[
 	if itemName != "" {
 		child.items = append(child.items, itemName)
 	}
+	child.indexed = child.indexed || numbers
 	local := map[string]bool{}
 	nodes := make([]*Node, 0, len(body))
 	for i := range body {

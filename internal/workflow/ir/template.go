@@ -164,7 +164,12 @@ func compileRef(path, expr string, lex *lexscope) (*Ref, error) {
 		if len(rest) > 0 {
 			return nil, resolveErrf(path, "template reference %q: index has no fields", expr)
 		}
-		if len(lex.items) == 0 {
+		// The iteration counter of the nearest enclosing fan-out or loop
+		// body. It is keyed on the scope being a body that iterates, not on
+		// an item binding existing: a loop binds nothing, and a fan-out
+		// numbers its items with or without `as` (yaah-0u0v.33). An
+		// aggregate body combines rather than iterates, so it stays out.
+		if !lex.indexed {
 			return nil, resolveErrf(path, "template reference %q: index is only in scope inside a fan-out or loop body", expr)
 		}
 		ref.Root = RootIndex
