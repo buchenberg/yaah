@@ -99,20 +99,20 @@ func (b *Broker[T]) TryPublishMustDeliver(event T) bool {
 func (b *Broker[T]) deliverMust(event T) {
 	timer := time.NewTimer(b.mustDeliverTimeout)
 	defer timer.Stop()
-	deadline := timer.C
+	expired := false
 	for _, s := range b.subs {
-		if deadline == nil {
+		if expired {
 			b.dropped.Add(1)
 			continue
 		}
 		select {
 		case s.ch <- event:
 			b.delivered.Add(1)
-		case <-deadline:
-			// The budget is spent; nil never becomes ready, so the rest
-			// of the fan-out falls through to the drop above.
+		case <-timer.C:
+			// The single fan-out budget is spent; every remaining
+			// subscriber is counted dropped without a send attempt.
 			b.dropped.Add(1)
-			deadline = nil
+			expired = true
 		}
 	}
 }

@@ -67,7 +67,7 @@ func NewBrokerViewWithSync(broker *pubsub.Broker[Event], target View, syncFn fun
 
 // forward reads events from the subscription channel and delivers them
 // to the target view. It exits when the subscription channel is closed
-// (which happens when the broker is closed).
+// (by the view's own cancel handle or by the broker's Close).
 func (bv *BrokerView) forward(target View) {
 	defer close(bv.done)
 	if bv.sync != nil {
@@ -78,9 +78,15 @@ func (bv *BrokerView) forward(target View) {
 	}
 }
 
-// Close closes the underlying broker and waits for the forwarder
-// goroutine to exit. Safe to call multiple times.
+// Close detaches the view's own subscription, closes the underlying
+// broker, and waits for the forwarder goroutine to exit. The unsub call
+// is what closes this view's channel; broker.Close still runs so the
+// lifecycle re-arm gate (brokerClosed) keeps its meaning until yaah-8jou.7
+// decides teardown ownership. Safe to call multiple times.
 func (bv *BrokerView) Close() {
+	if bv.unsub != nil {
+		bv.unsub()
+	}
 	bv.broker.Close()
 	<-bv.done
 }
