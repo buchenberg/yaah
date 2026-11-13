@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.180.0](https://github.com/buchenberg/yaah/compare/v0.179.1...v0.180.0) (2026-11-13)
+
+
+### Features
+
+* **workflow:** proposal linearity and settlement validation WF020-WF029 (yaah-0u0v.7) ([ee4d657](https://github.com/buchenberg/yaah/commit/ee4d657b20aede02323e9375997b62a1cccd6dd5))
+* **workflow:** proposal linearity and settlement validation WF020-WF029 (yaah-0u0v.7) ([7e6bc5d](https://github.com/buchenberg/yaah/commit/7e6bc5deb9153b7956a111baece7e984f16891d1))
+
 ## [0.179.1](https://github.com/buchenberg/yaah/compare/v0.179.0...v0.179.1) (2026-11-13)
 
 
