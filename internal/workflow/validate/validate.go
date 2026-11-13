@@ -33,10 +33,13 @@ func Structural(g *ir.Graph) []Diagnostic {
 // as one WF001 diagnostic through Diagnose; otherwise Structural's
 // findings are returned.
 //
-// The graph is nil exactly when the diagnostics contain a WF001, and a
-// workflow that resolves always has a graph even when it carries
-// findings — callers that want to run a validated workflow should require
-// zero diagnostics, which is what the spec goldens assert.
+// Return contract: a document that parses and resolves yields a non-nil
+// graph and diagnostics carrying only WF002–WF005 findings (possibly
+// none); a document that never became a graph yields a nil graph and
+// exactly one WF001. The graph is therefore nil exactly when the
+// diagnostics contain a WF001. Callers that want to run a validated
+// workflow should require zero diagnostics, which is what the spec
+// goldens assert.
 func Validate(data []byte) (*ir.Graph, []Diagnostic) {
 	doc, err := spec.Parse(data)
 	if err != nil {

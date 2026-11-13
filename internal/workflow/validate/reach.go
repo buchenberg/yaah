@@ -7,16 +7,18 @@ import "github.com/buchenberg/yaah/internal/workflow/ir"
 // scheduler may start with. A body node is entered through its container,
 // so it is reachable when its container is.
 //
-// Reachability is the path relation: a node that declares needs is
-// reachable once any one of the steps it needs is reachable. Two things
-// break the chain, and both are already named by another rule: a needs
-// cycle (WF003 reports the loop) and a reference no node satisfies (WF002).
-// The overlap is deliberate. WF003 is the document defect an author fixes;
-// WF004 is the scheduling consequence that makes a run refuse to start, and
-// it names every step stranded behind the defect rather than only the
-// defect itself. A graph whose needs is acyclic and fully bound therefore
-// always satisfies WF004 by construction — that is the theorem this rule
-// checks, not a heuristic.
+// Reachability follows the executor's join-all needs: a node that declares
+// needs is enterable only once every step it needs is itself enterable,
+// because the scheduler waits for all of them before entering it. One need
+// that never completes therefore strands the node as surely as an island
+// does. Two things break the chain, and both are already named by another
+// rule: a needs cycle (WF003 reports the loop) and a reference no node
+// satisfies (WF002). The overlap is deliberate. WF002 and WF003 are the
+// document defects an author fixes; WF004 is the scheduling consequence
+// that makes a run refuse to start, and it names every step stranded behind
+// the defect rather than only the defect itself. A graph whose needs is
+// acyclic and fully bound therefore always satisfies WF004 by construction
+// — that is the theorem this rule checks, not a heuristic.
 func unreachable(g *ir.Graph) []Diagnostic {
 	order, parent := graphNodes(g)
 	byID := stepsByID(g)
@@ -34,13 +36,11 @@ func unreachable(g *ir.Graph) []Diagnostic {
 			if up := parent[n]; up != nil && !reach[up] {
 				continue // entered only through a container not entered yet
 			}
-			enterable := len(n.Needs) == 0
-			if !enterable {
-				for _, ref := range n.Needs {
-					if dep, ok := byID[ref]; ok && reach[dep] {
-						enterable = true
-						break
-					}
+			enterable := true // no needs: an entry step (vacuous join-all)
+			for _, ref := range n.Needs {
+				if dep, ok := byID[ref]; !ok || !reach[dep] {
+					enterable = false
+					break
 				}
 			}
 			if enterable {
@@ -62,7 +62,20 @@ func unreachable(g *ir.Graph) []Diagnostic {
 			out = append(out, diag(CodeWF004, n.Path, "body node is unreachable because its container %s is", up.Path))
 			continue
 		}
-		out = append(out, diag(CodeWF004, n.Path, "not reachable from the entry set: its needs chain never reaches a step without needs"))
+		// A node here always has at least one blocking need: with none it
+		// is an entry step and was marked above, and an unreachable
+		// container took the previous branch. Name the first blocker in
+		// needs order so the message is deterministic and points at a
+		// root the author can fix.
+		for _, ref := range n.Needs {
+			if dep, ok := byID[ref]; !ok {
+				out = append(out, diag(CodeWF004, n.Path, "not reachable from the entry set: need %q names no step", ref))
+				break
+			} else if !reach[dep] {
+				out = append(out, diag(CodeWF004, n.Path, "not reachable from the entry set: need %q is not reachable", ref))
+				break
+			}
+		}
 	}
 	return out
 }

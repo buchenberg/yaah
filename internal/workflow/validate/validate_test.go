@@ -203,7 +203,7 @@ var adversarialCases = []adversarialCase{
 		wantCodes: seq(CodeWF003, CodeWF004, CodeWF004, CodeWF004),
 		code:      CodeWF004,
 		path:      "steps.tail",
-		sub:       "never reaches a step without needs",
+		sub:       `need "lone_a" is not reachable`,
 	},
 	{
 		file:      "duplicate_output_names.yaml",
@@ -564,7 +564,7 @@ func TestReachabilityCoversBodyNodes(t *testing.T) {
         needs: [cyc_a]
 `,
 			path:  "steps.fan.body[0]",
-			sub:   "never reaches a step without needs",
+			sub:   `need "cyc_a" is not reachable`,
 			codes: seq(CodeWF003, CodeWF004, CodeWF004, CodeWF004),
 		},
 		{
@@ -825,6 +825,28 @@ func TestHandBuiltGraphReferences(t *testing.T) {
 			}},
 			code: CodeWF002, path: "steps.b.needs[0]", sub: `unknown step id "ghost"`,
 			codes: seq(CodeWF002, CodeWF004),
+		},
+		{
+			// WF004 joins on every need: one reachable need does not
+			// rescue a node whose other need names no step.
+			name: "mixed needs, one reachable and one dangling",
+			graph: &ir.Graph{Name: "hand-built", Steps: []*ir.Node{
+				emit("steps.a", "a"),
+				emit("steps.b", "b", "a", "ghost"),
+			}},
+			code: CodeWF004, path: "steps.b", sub: `need "ghost" names no step`,
+			codes: seq(CodeWF002, CodeWF004),
+		},
+		{
+			name: "mixed needs, one reachable and one stranded in a cycle",
+			graph: &ir.Graph{Name: "hand-built", Steps: []*ir.Node{
+				emit("steps.entry", "entry"),
+				emit("steps.x", "x", "y"),
+				emit("steps.y", "y", "x"),
+				emit("steps.tail", "tail", "entry", "x"),
+			}},
+			code: CodeWF004, path: "steps.tail", sub: `need "x" is not reachable`,
+			codes: seq(CodeWF003, CodeWF004, CodeWF004, CodeWF004),
 		},
 		{
 			name: "branch arm naming no step",

@@ -22,8 +22,9 @@ const (
 	CodeWF002 = "WF002"
 	// CodeWF003 marks a needs cycle or an unbounded call depth.
 	CodeWF003 = "WF003"
-	// CodeWF004 marks a node the scheduler can never enter, because no
-	// path from the entry set reaches it.
+	// CodeWF004 marks a node the scheduler can never enter: needs joins
+	// on every entry, so one need that names no step or is itself
+	// stranded keeps the node out of every possible run.
 	CodeWF004 = "WF004"
 	// CodeWF005 marks an output binding: an empty or duplicated name, or
 	// a schema that is neither a schema name nor a well-formed JSON
