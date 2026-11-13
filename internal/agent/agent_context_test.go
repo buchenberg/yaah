@@ -125,10 +125,17 @@ func TestCompactContext_continuationGuard(t *testing.T) {
 
 	loop.compactContext(context.Background(), 0.25)
 
-	// splitTail is boundary-safe: compaction fires during continuation and
-	// preserves tool-call linkage.
-	if len(fp.requests) == 0 {
-		t.Error("compact provider should be called even during continuation (splitTail is boundary-safe)")
+	// The tail holds the whole conversation, so there is nothing to
+	// summarize: the compact provider is NOT called (asking it to
+	// summarize the bare template is guaranteed junk output — the live
+	// yaah-l12q shape), and the pass books as skipped instead (see
+	// TestCompactContext_emptyOldFitsTail). Compaction itself still
+	// fires during continuation, and linkage must survive it.
+	if len(fp.requests) != 0 {
+		t.Errorf("compact provider called with nothing to summarize: %d requests", len(fp.requests))
+	}
+	if loop.State.LastCompactionMethod != "skipped" {
+		t.Errorf("LastCompactionMethod = %q; want %q", loop.State.LastCompactionMethod, "skipped")
 	}
 	// Verify tool linkage: every assistant tool_call id has a matching tool result.
 	seen := make(map[string]bool)
@@ -1264,10 +1271,12 @@ func TestForceCompact_ReportsSummaryAndMethod(t *testing.T) {
 // TestCompactContext_emptyOldFitsTail: the whole conversation fits the
 // preserve tail while the message-count trigger forces the pass (token
 // estimates stay under target — window 4000, ~270 estimated tokens), so
-// this exercises the CompactMaxMessages path that motivated the guard. The
-// compact provider is still called, but the summary must NOT install over
-// unchanged history — that grew context (kilo review, yaah-pcd2). The pass
-// books as "skipped" and counts toward the anti-thrash guard.
+// this exercises the CompactMaxMessages path that motivated the guard.
+// There is nothing to summarize, so the compact provider is not called
+// (yaah-l12q: a bare-template request is guaranteed junk output), and no
+// summary may install over unchanged history — that grew context (kilo
+// review, yaah-pcd2). The pass books as "skipped" and counts toward the
+// anti-thrash guard.
 func TestCompactContext_emptyOldFitsTail(t *testing.T) {
 	p := summaryProvider()
 	msgs := []types.Message{types.SystemMsg("sys")}
@@ -1295,8 +1304,8 @@ func TestCompactContext_emptyOldFitsTail(t *testing.T) {
 			break
 		}
 	}
-	if len(p.requests) != 1 {
-		t.Errorf("compact provider call count = %d; want 1 (boundary-safe continuation contract)", len(p.requests))
+	if len(p.requests) != 0 {
+		t.Errorf("compact provider call count = %d; want 0 (nothing to summarize — bare-template requests are junk)", len(p.requests))
 	}
 	if loop.State.LastCompactionMethod != "skipped" {
 		t.Errorf("LastCompactionMethod = %q; want %q", loop.State.LastCompactionMethod, "skipped")

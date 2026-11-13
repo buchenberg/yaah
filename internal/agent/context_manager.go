@@ -192,10 +192,16 @@ func (cm *ContextManager) applyCompactedSummary(summary string, sysMsg types.Mes
 		newMsgs = append(newMsgs, types.SystemMsg(agentctx.ContinuationNotice(summary)))
 	}
 
-	if lastUser := agentctx.LastUserPrompt(oldMsgs); lastUser != "" {
+	if lastUser := agentctx.ActiveTaskPrompt(oldMsgs); lastUser != "" {
 		alreadyKept := false
 		for _, m := range keepMsgs {
 			if m.Role == "user" && m.Content == lastUser {
+				alreadyKept = true
+				break
+			}
+			// A prior rollover's carrier counts too — re-injecting a
+			// task the tail already preserves duplicates it.
+			if m.Role == "system" && m.Content == "Active task (preserve verbatim):\n"+lastUser {
 				alreadyKept = true
 				break
 			}
@@ -398,6 +404,13 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 	split := agentctx.SplitTail(cm.State.Messages, budget)
 	keepMsgs := cm.State.Messages[split.KeepStart:]
 	oldMsgs := cm.State.Messages[1:split.KeepStart]
+	// The pre-protection boundary tells the two empty-oldMsgs shapes
+	// apart (yaah-l12q): at <=1 the whole conversation fits the preserve
+	// budget and the pass is structurally impossible (book skipped, do
+	// not trim); above it, protection pinned the boundary to the system
+	// message while the conversation is oversized — the pass is possible
+	// only through the trim fallback.
+	budgetKeepStart := split.KeepStart
 
 	if cm.ReasoningProtectTurns > 0 {
 		split.KeepStart = agentctx.ProtectReasoningTurns(cm.State.Messages, split.KeepStart, cm.ReasoningProtectTurns)
@@ -458,7 +471,18 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 	}
 
 	beforeEstimate := cm.estimatedTokens()
-	resp, err := compactProvider.Send(ctx, req)
+	// Protection can pin SplitTail's boundary at the system message — a
+	// single-turn session whose every reasoning carrier is "recent"
+	// leaves nothing in oldMsgs. Asking the compact model to summarize
+	// the bare template is a guaranteed placeholder and a wasted round
+	// trip (yaah-l12q: the orch-compact shape paid eight of them). Say
+	// so through the normal fallback reason instead.
+	nothingToSummarize := len(oldMsgs) == 0
+	var resp *types.ChatResponse
+	var err error
+	if !nothingToSummarize {
+		resp, err = compactProvider.Send(ctx, req)
+	}
 	summaryRejected := ""
 	if err == nil && resp != nil && len(resp.Choices) > 0 {
 		if resp.Choices[0].FinishReason == "length" {
@@ -498,6 +522,8 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 	if err != nil || resp == nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
 		reason := "empty response"
 		switch {
+		case nothingToSummarize:
+			reason = "nothing to summarize outside the preserved tail"
 		case err != nil:
 			reason = err.Error()
 		case summaryRejected != "":
@@ -518,7 +544,8 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 			factor = agentctx.DefaultEstimateFactor
 		}
 		if agentctx.PreflightTokens(oldMsgs, nil, factor) > agentctx.MinChunkTokens {
-			if chunkSummary, chunkErr := cm.chunkedCompact(ctx, oldMsgs, compactModel); chunkErr == nil && chunkSummary != "" {
+			chunkSummary, chunkErr := cm.chunkedCompact(ctx, oldMsgs, compactModel)
+			if chunkErr == nil && chunkSummary != "" {
 				if ok, vreason := agentctx.ValidateSummary(chunkSummary); ok {
 					cm.applyCompactedSummary(chunkSummary, sysMsg, oldMsgs, keepMsgs, effectiveTokens)
 					cm.State.LastCompactionMethod = "chunked"
@@ -555,20 +582,74 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 					slog.Warn("compaction rejected the chunked summary; falling back to heuristic trim",
 						"session_id", cm.SessionID, "reason", vreason)
 				}
+			} else {
+				// Silent no more (yaah-l12q's residual): a chunked
+				// error or an empty chunk summary dropped straight to
+				// trim with no trace, which is how thirteen live
+				// rollovers could ride a failing chunked path and
+				// leave the diagnostic blind. Name what happened.
+				slog.Warn("chunked compaction failed or returned nothing; falling back to heuristic trim",
+					"session_id", cm.SessionID,
+					"err", fmt.Sprint(chunkErr),
+					"empty", chunkErr == nil)
 			}
 		}
+		// The fits-the-tail shape (empty oldMsgs because the preserve
+		// budget covers the whole conversation) is structurally impossible,
+		// not a trim candidate (yaah-pcd2's kilo-review contract): the
+		// count trigger included — the anti-thrash cooldown owns the
+		// rearm story, and shrinking a conversation the tail already
+		// holds destroys verbatim history for nothing. An overflow
+		// pass is exempt: the provider itself rejected the context, so
+		// the conversation genuinely does not fit regardless of yaah's
+		// bookkeeping, and the trim is the only valve that shrinks the
+		// message list enough for the retry.
+		if nothingToSummarize && budgetKeepStart <= 1 && compactReason != "overflow" {
+			cm.bookImpossibleCompaction(ctx, compactReason, startTime, len(keepMsgs), budget,
+				"nothing to summarize — conversation fits the preserve budget")
+			return
+		}
 		beforeTrim := len(cm.State.Messages)
-		cm.trimContext()
+		// The genuine task, not the newest synthetic row: after a steer
+		// lands mid-loop, LastUserPrompt would preserve the churn notice
+		// and every subsequent rollover would repeat it while the task
+		// itself stayed lost — the live run answered instead of writing
+		// the report (yaah-l12q's verify6 shape).
+		lastUser := agentctx.ActiveTaskPrompt(cm.State.Messages)
+		// The fallback must resolve what FIRED (yaah-l12q's residual):
+		// a rollover that drops nothing neither records anything (the
+		// marker below requires dropped messages) nor disarms its own
+		// trigger, so it rearms on every subsequent message and pays
+		// a full compaction attempt each time — the orch-compact
+		// shape. trimContext's 80% window is not the line either
+		// trigger measures against: the count trigger fires under both
+		// token thresholds (so the token trim is a no-op by
+		// construction), and the threshold trigger fires at
+		// `target`, far below the 80% window (so the token trim stops
+		// short of disarming it). Trim to each trigger's own line.
+		// When even the target pass cuts nothing (reasoning protection
+		// kept everything), the no-record rule still holds.
+		if compactReason == "message_count" {
+			cm.trimContext()
+			cm.trimMessageBudget(cm.CompactMaxMessages)
+		} else {
+			cm.trimTokensTo(target)
+		}
 		cm.State.LastCompactionMethod = "trim"
 		cm.State.LastCompactionSummary = ""
 		// Record the rollover only when trim actually dropped messages
-		// (yaah-l12q): the message-count trigger fires with the
-		// conversation still inside trimContext's 80% window, where the
-		// trim is a no-op — a marker there would tell resume (which
-		// injects the row as a system message) that context was lost
-		// when none was. The in-memory summary stays empty either way:
-		// trim installs none.
+		// (yaah-l12q): a marker with nothing dropped would tell resume
+		// (which injects the row as a system message) that context was
+		// lost when none was. The in-memory summary stays empty either
+		// way: trim installs none.
 		if len(cm.State.Messages) < beforeTrim {
+			// A trim that dropped the task's user prompt leaves the
+			// agent with a preserved tail and no record of what it was
+			// asked to do. The accepted path re-injects the live
+			// instruction (applyCompactedSummary); the fallback must
+			// too, or the first rollover mid-task is where the agent
+			// forgets the deliverable.
+			cm.reinjectActiveTask(lastUser)
 			cm.persistSessionSummary(agentctx.FallbackMarker(reason))
 		}
 		if cm.Broker != nil {
@@ -604,40 +685,8 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 	// it for the retry after overflow) and book the pass as ineffective so
 	// the anti-thrash guard sees the no-op.
 	if len(oldMsgs) == 0 {
-		est := cm.estimatedTokens()
-		cm.State.LastPromptTokens = est
-		cm.State.LastPromptTokensInclusive = est
-		cm.State.LastPromptIncludesCache = false
-		cm.State.LastCachedPromptTokens = 0
-		cm.State.LastCompactionTokens = est
-		cm.State.LastCompactionMethod = "skipped"
-		cm.State.IneffectiveCompactions++
-		// Deliberately NOT a trackCompactionSavings(0): the adaptive
-		// multiplier reads low savings as "tail budget too small" and
-		// widens it — but here the pass was structurally impossible (the
-		// tail already covers the conversation), so the multiplier must
-		// stay neutral. The IneffectiveCompactions counter above owns the
-		// anti-thrash story for no-op passes.
-		if cm.Broker != nil {
-			cm.Broker.Publish(&CompactionDoneEvent{
-				BeforeTokens:    est,
-				AfterTokens:     est,
-				SavingsPct:      0,
-				Method:          "skipped",
-				IneffectiveNote: "nothing to summarize — conversation fits the preserve budget",
-				OldMsgCount:     0,
-				KeepMsgCount:    len(keepMsgs),
-				Budget:          budget,
-			})
-		}
-		if db := cm.persisterDB(); cm.SessionID != "" && db != nil {
-			cooldown := int64(0)
-			if cm.State.IneffectiveCompactions >= 2 {
-				cooldown = time.Now().Unix() + 600
-			}
-			db.SetCompactionCooldown(cm.SessionID, cooldown, cm.State.IneffectiveCompactions)
-		}
-		observability.RecordCompaction(ctx, compactReason, time.Since(startTime), est, est, 0)
+		cm.bookImpossibleCompaction(ctx, compactReason, startTime, len(keepMsgs), budget,
+			"nothing to summarize — conversation fits the preserve budget")
 		return
 	}
 
@@ -679,7 +728,23 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 // Reasoning-carrying assistant messages are protected via ProtectReasoningTurns.
 // This is a fallback when LLM-powered compaction is unavailable.
 func (cm *ContextManager) trimContext() {
-	target := cm.ContextWindow * 4 / 5
+	// The Loop's emergency valve (tools.go calls this when the provider
+	// says the context cannot even be summarized). The compaction
+	// fallback does not use this target — it trims to the compaction's
+	// own target (trimTokensTo), the same line the trigger measures
+	// against.
+	cm.trimTokensTo(cm.ContextWindow * 4 / 5)
+}
+
+// trimTokensTo drops the oldest messages until the conversation fits
+// the given token estimate — trimContext's loop, parameterized. The
+// compaction fallback trims to the compaction target so the trigger
+// that fired is actually resolved (yaah-l12q). Reasoning protection
+// wins over the target, as everywhere else.
+func (cm *ContextManager) trimTokensTo(target int) {
+	if target <= 0 {
+		return
+	}
 	totalChars := 0
 	for _, m := range cm.State.Messages {
 		totalChars += len(m.Content) + len(m.ReasoningContent)
@@ -691,7 +756,6 @@ func (cm *ContextManager) trimContext() {
 		return
 	}
 
-	sysMsg := cm.State.Messages[0]
 	rest := cm.State.Messages[1:]
 	for len(rest) > 0 && totalChars/4 > target {
 		removed := len(rest[0].Content) + len(rest[0].ReasoningContent)
@@ -703,10 +767,32 @@ func (cm *ContextManager) trimContext() {
 	}
 
 	keepStart := len(cm.State.Messages) - len(rest)
+	// A trim that orphans a tool result from its assistant caller hands
+	// the provider an invalid conversation (a hard 400). Snap to an
+	// exchange boundary, then let the reasoning-protection window keep
+	// the newest carriers (yaah-6a6c's windowed rule).
+	keepStart = agentctx.SnapCutPastToolResults(cm.State.Messages, keepStart)
 	if cm.ReasoningProtectTurns > 0 {
 		keepStart = agentctx.ProtectReasoningTurns(cm.State.Messages, keepStart, cm.ReasoningProtectTurns)
 	}
+	cm.cutMessages(keepStart)
+}
 
+// cutMessages drops everything before keepStart, keeping the system
+// message — the shared tail of trimContext and trimMessageBudget. The
+// caller owns keepStart's contract (token window or message budget);
+// reasoning protection, where it applies, was already folded in.
+func (cm *ContextManager) cutMessages(keepStart int) {
+	if keepStart < 1 {
+		keepStart = 1 // never cut into the system message
+	}
+	if keepStart > len(cm.State.Messages) {
+		keepStart = len(cm.State.Messages)
+	}
+	if len(cm.State.Messages) < 2 || keepStart <= 1 {
+		return // nothing to cut; only the system message would remain
+	}
+	sysMsg := cm.State.Messages[0]
 	newMsgs := make([]types.Message, 0, len(cm.State.Messages)-keepStart+1)
 	newMsgs = append(newMsgs, sysMsg)
 	newMsgs = append(newMsgs, cm.State.Messages[keepStart:]...)
@@ -718,6 +804,107 @@ func (cm *ContextManager) trimContext() {
 	if cm.Pruner != nil {
 		cm.Pruner.Mark(cm.State.Messages, "post_trim")
 	}
+}
+
+// bookImpossibleCompaction closes a compaction pass that had nothing to
+// summarize because the preserve tail already covers the whole
+// conversation — reached from both the accepted path (a summary came back
+// against an empty oldMsgs) and the fallback (the pre-summarize skip).
+// It rebases the token estimate (small windows rely on it for the retry
+// after overflow), books the pass as ineffective so the anti-thrash
+// cooldown engages, and deliberately does NOT track savings: the adaptive
+// multiplier would misread the structural no-op as a budget problem and
+// widen it.
+func (cm *ContextManager) bookImpossibleCompaction(ctx context.Context, compactReason string, startTime time.Time, keepCount, budgetTokens int, note string) {
+	est := cm.estimatedTokens()
+	cm.State.LastPromptTokens = est
+	cm.State.LastPromptTokensInclusive = est
+	cm.State.LastPromptIncludesCache = false
+	cm.State.LastCachedPromptTokens = 0
+	cm.State.LastCompactionTokens = est
+	cm.State.LastCompactionMethod = "skipped"
+	cm.State.IneffectiveCompactions++
+	if cm.Broker != nil {
+		cm.Broker.Publish(&CompactionDoneEvent{
+			BeforeTokens:    est,
+			AfterTokens:     est,
+			SavingsPct:      0,
+			Method:          "skipped",
+			IneffectiveNote: note,
+			OldMsgCount:     0,
+			KeepMsgCount:    keepCount,
+			Budget:          budgetTokens,
+		})
+	}
+	if db := cm.persisterDB(); cm.SessionID != "" && db != nil {
+		cooldown := int64(0)
+		if cm.State.IneffectiveCompactions >= 2 {
+			cooldown = time.Now().Unix() + 600
+		}
+		db.SetCompactionCooldown(cm.SessionID, cooldown, cm.State.IneffectiveCompactions)
+	}
+	observability.RecordCompaction(ctx, compactReason, time.Since(startTime), est, est, 0)
+}
+
+// reinjectActiveTask restores the live task instruction when a trim
+// dropped its user prompt — the accepted path does the same in
+// applyCompactedSummary. Without it the agent resumes post-trim with a
+// preserved tail but no record of the deliverable.
+func (cm *ContextManager) reinjectActiveTask(lastUser string) {
+	if lastUser == "" {
+		return
+	}
+	for _, m := range cm.State.Messages {
+		if m.Role == "user" && m.Content == lastUser {
+			return
+		}
+		// A previous trim already carries the task: sequential rollovers
+		// must not stack one carrier per pass.
+		if m.Role == "system" && m.Content == "Active task (preserve verbatim):\n"+lastUser {
+			return
+		}
+	}
+	msgs := make([]types.Message, 0, len(cm.State.Messages)+1)
+	msgs = append(msgs, cm.State.Messages[0])
+	msgs = append(msgs, types.SystemMsg("Active task (preserve verbatim):\n"+lastUser))
+	msgs = append(msgs, cm.State.Messages[1:]...)
+	cm.State.Messages = msgs
+	if cm.OnMessagesReplaced != nil {
+		cm.OnMessagesReplaced(msgs)
+	}
+}
+
+// trimMessageBudget drops the oldest messages until the conversation
+// fits the message budget — the count-triggered rollover's own target
+// (yaah-l12q's residual). trimContext aims at the token window and is
+// a no-op by construction when the count trigger fired (the trigger
+// requires the token estimates below BOTH thresholds), so without
+// this pass a count-triggered rollover that fails to summarize
+// neither resolves the count nor records anything, and the count
+// stays above compact_max_messages — the trigger rearms on every
+// subsequent message and pays a full compaction attempt each time.
+// The buffer mirrors trimContext's 80%: cut to budget*4/5 so one more
+// message does not rearm. Reasoning protection wins over the budget
+// the same way it wins over the token target.
+func (cm *ContextManager) trimMessageBudget(budget int) {
+	if budget <= 0 || len(cm.State.Messages) <= budget {
+		return
+	}
+	target := budget * 4 / 5
+	if target < 1 {
+		target = 1
+	}
+	keepStart := len(cm.State.Messages) - target
+	if keepStart < 1 {
+		keepStart = 1
+	}
+	// Same shape as trimTokensTo: land on an exchange boundary and let
+	// the windowed reasoning protection keep the newest carriers.
+	keepStart = agentctx.SnapCutPastToolResults(cm.State.Messages, keepStart)
+	if cm.ReasoningProtectTurns > 0 {
+		keepStart = agentctx.ProtectReasoningTurns(cm.State.Messages, keepStart, cm.ReasoningProtectTurns)
+	}
+	cm.cutMessages(keepStart)
 }
 
 // summarizeChunk sends a single chunk to the compact model for summarization.
