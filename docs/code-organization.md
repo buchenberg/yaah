@@ -38,6 +38,7 @@ yaah/
 │   ├── cwdpath/                # cwd canonicalization
 │   ├── dispatch/               # retained-dispatch lane: proposals, git delta, dispatch worlds
 │   ├── doctor/                 # diagnostics
+│   ├── envelopecheck/          # result-envelope/doc parity gate shared by tools + dispatch
 │   ├── instructions/           # AGENTS.md/CLAUDE.md discovery
 │   ├── jail/                   # per-platform containment selection
 │   ├── jobs/                   # background sub-agent jobs + I/O contract

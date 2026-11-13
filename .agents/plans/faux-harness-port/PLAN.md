@@ -1,7 +1,7 @@
 ---
 name: faux-harness-port
 description: "Port pi's faux-provider benchmark pattern to yaah — a scripted, zero-API-cost provider plus a full-stack test harness, regression-suite convention, golden transcripts, and a benchmark scenario runner."
-status: proposed
+status: draft
 ---
 
 # Faux Provider & Test Harness Port (pi pattern → yaah)

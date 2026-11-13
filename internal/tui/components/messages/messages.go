@@ -26,16 +26,6 @@ type Content struct {
 	Theme *colors.Theme
 }
 
-// Build creates the scrollable conversation view.
-func Build() *tview.TextView {
-	tv := tview.NewTextView().
-		SetDynamicColors(true).
-		SetScrollable(true).
-		SetWrap(true).
-		SetWordWrap(true)
-	return tv
-}
-
 // emitItem appends the rendered form of a single item to b. Format and
 // itemRows share it, so rendered rows and displayed rows cannot drift.
 func emitItem(b *strings.Builder, item *Item, rctx colors.RenderCtx) {

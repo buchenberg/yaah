@@ -18,10 +18,16 @@ from them:
 
 - **`.scratch/`** — scratch space for cloning third-party repos while building
   a skill. Real dependencies are pinned in `go.sum`.
+- **`.yaah/`** — local runtime state, including the `shepherd-worktrees/`
+  checkouts that proposal settlement creates. Each is a full copy of the repo
+  at an older commit, so a repo-wide `find` or `grep` matches every file twice
+  and reports stale code as current. Search with `git grep`, which respects
+  the ignore rules.
 - **`.beads/`, `.dolt/`** — local beads issue-tracker state; the database is
   local even though a few bootstrap files are tracked.
 - **`.ghost/`, `.claude/`, `.qwen/`, `.hermes/`, `.kilo/`, `.serena/`,
   `.entire/`, etc.** — metadata for AI coding tools.
+- **`pours/`** — local SigNoz telemetry stack deployment config.
 
 ## Repo layout
 
@@ -57,7 +63,9 @@ yaah/
 │   ├── config/                  # config load, env substitution, validation
 │   ├── control/                 # typed control-plane messages (todos, questions, approvals)
 │   ├── cwdpath/                 # cwd canonicalization shared by store + filters
+│   ├── dispatch/                # dispatch lanes, proposal settlement, git-delta apply
 │   ├── doctor/                  # `yaah doctor` checks
+│   ├── envelopecheck/           # envelope/doc parity gate shared by tools + dispatch
 │   ├── instructions/            # AGENTS.md/CLAUDE.md discovery
 │   ├── jail/                    # per-platform containment backend selection
 │   ├── jobs/                    # background jobs + sub-agent I/O contract
@@ -65,28 +73,38 @@ yaah/
 │   ├── memory/                  # SQLite sessions, memory, FTS5, embeddings
 │   ├── observability/           # OpenTelemetry tracing + span buffer
 │   ├── parity/                  # Shepherd parity ledger drift guard
+│   ├── permissions/             # ordered allow/deny/ask tool rules (leaf package)
 │   ├── plans/                   # PLAN.md discovery/parsing
 │   ├── process/                 # background process manager
 │   ├── prompts/                 # identity, roles, tool docs, prompt assembly
 │   ├── providers/               # OpenAI-compatible + Anthropic clients
 │   ├── pubsub/                  # typed event broker
 │   ├── repl/                    # REPL history, slash commands, colors
+│   ├── retention/               # owner-scoped session eviction + GC sweep ordering
 │   ├── rolefile/                # role frontmatter parsing/validation
+│   ├── runs/                    # protocol-neutral run record (MCP serve, A2A)
 │   ├── sandboxfake/             # in-memory sandbox test double
 │   ├── sessions/                # engine-level session registry (all views)
 │   ├── skills/                  # SKILL.md discovery/parsing
 │   ├── spinner/                 # terminal spinner primitives
 │   ├── todo/                    # todo-list model shared by the views
+│   ├── toolargs/                # strict tool-argument decoding, unknown-key errors
 │   ├── toolfmt/                 # shared tool result formatting
-│   ├── tools/                   # built-in tools
+│   ├── tools/                   # built-in tools (dispatch lane is internal/dispatch)
+│   │   └── substrate/           #   session sandbox, workspace bootstrap, apply-out
 │   ├── tui/                     # tview UI components
 │   ├── types/                   # message and chat request types
 │   ├── update/                  # release checking and self-update
 │   ├── wake/                    # wait_for/watch predicate engine + armed watches
+│   ├── workflow/                # typed workflow documents (dir only, no package)
+│   │   ├── ir/                  #   resolved immutable workflow graph
+│   │   └── spec/                #   typed v1 spec, canonical JSON + spec hash
 │   └── worldinfo/               # resolved dispatch-world reporting
 ├── docs/                        # user and developer docs; see docs/architecture.md
 │                                # and docs/configuration.md for the entry points
 ├── bench/                       # benchmark harnesses
+├── tools/cataloggen/            # manual regenerator for providers/catalog/data.json
+├── scripts/                     # acp-tck.sh, package-release.sh
 ├── .agents/                     # project skills and roles; role files carry mode:
 ├── .github/workflows/ci.yml     # CI: gofmt, vet, staticcheck, test, native build (ubuntu/macos/windows)
 ├── README.md
@@ -141,7 +159,11 @@ model self-report. Full workflow: `.agents/skills/yaah-dev-loop/SKILL.md`.
 ## Conventions
 
 - **Go 1.26.3+** (`go.mod` requires 1.26.3).
-- **No codegen, no build tags, no `go generate`.**
+- **No `go generate` directives and no build tags.** The one generated file,
+  `internal/providers/catalog/data.json`, is produced by hand —
+  `go run ./tools/cataloggen`, then commit the reviewed diff. The transform
+  is deterministic, and `go run ./tools/cataloggen -verify` reports upstream
+  drift without writing anything.
 - **cobra + pflag** for CLI.
 - **`internal/` for everything private.** `pkg/` is reserved for future
   exports.
@@ -152,6 +174,16 @@ model self-report. Full workflow: `.agents/skills/yaah-dev-loop/SKILL.md`.
 - **No third-party HTTP client.** Use `net/http` from the stdlib.
 - **`gopkg.in/yaml.v3`** for config parsing.
 - **`modernc.org/sqlite`** for SQLite (pure Go, no CGo, FTS5 included).
+- **`yzma` + `purego`** for in-process GGUF embeddings
+  (`internal/memory/gguf.go`): prebuilt llama.cpp bindings over FFI, so
+  semantic memory needs no Ollama or LM Studio and `CGO_ENABLED=0` holds.
+- **Every other direct require in `go.mod` is load-bearing** — tview, tcell,
+  tvxwidgets, tviewmd, uniseg (TUI); seven `go.opentelemetry.io/otel` modules
+  (tracing and metrics); `goatherd-kernel` / `goatherd-runtime` plus four
+  sandbox backends (`landlock`, `seatbelt`, `winacl`, `croft`);
+  `containerd/v2` + `errdefs` (container lane); `figlet-go` (banner);
+  `golang.org/x/tools` (`go_refactor`); `testify` (one test file). A new
+  direct dependency needs a reason the stdlib cannot cover.
 - **No model SDK for the OpenAI-compatible path.** Direct HTTP to
   `chat/completions` preserves provider extension fields
   (`reasoning_content`, Copilot mode, thinking overrides). The native

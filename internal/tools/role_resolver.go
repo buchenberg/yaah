@@ -20,21 +20,11 @@ func (e RoleNotFoundError) Error() string {
 	return fmt.Sprintf("role %q not found", e.Role)
 }
 
-// IsRoleNotFound reports whether err is a RoleNotFoundError (from either
-// the tools or agent/subagent package). It uses errors.As so wrapped
-// errors are detected.
+// IsRoleNotFound reports whether err is a RoleNotFoundError. It uses
+// errors.As so wrapped errors are detected.
 func IsRoleNotFound(err error) bool {
 	var rnfe RoleNotFoundError
-	if errors.As(err, &rnfe) {
-		return true
-	}
-	// The agent/subagent package has its own RoleNotFoundError type
-	// with the same shape. Match it by error string prefix so tools
-	// does not need to import agent/subagent.
-	if err != nil && len(err.Error()) >= 5 && err.Error()[:5] == "role " {
-		return true
-	}
-	return false
+	return errors.As(err, &rnfe)
 }
 
 // ContractField names a field in a sub-agent's response contract and
