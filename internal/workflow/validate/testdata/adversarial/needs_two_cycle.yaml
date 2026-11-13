@@ -1,0 +1,17 @@
+# WF003 and WF004: two steps that each wait on the other. Neither is an
+# entry, so the scheduler has no first node for this component.
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: needs-two-cycle
+spec:
+  steps:
+    - id: a
+      kind: delegate
+      role: developer
+      prompt: one
+      needs: [b]
+    - id: b
+      kind: emit
+      value: two
+      needs: [a]

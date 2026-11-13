@@ -1,0 +1,13 @@
+# WF003 and WF004: a step that needs itself can never be entered, and the
+# loop is its own reason.
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: needs-self-cycle
+spec:
+  steps:
+    - id: loop_a
+      kind: delegate
+      role: developer
+      prompt: spin
+      needs: [loop_a]

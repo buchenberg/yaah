@@ -1,0 +1,17 @@
+# WF005: the schema string reaches the validator untouched — OutputSpec
+# types it as a string, so "banana" is not a JSON type anyone can reject
+# before this rule runs.
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: malformed-output-schema
+spec:
+  steps:
+    - id: plan
+      kind: delegate
+      role: planner
+      prompt: plan it
+      output:
+        name: Plan
+        type: Report
+        schema: '{"type": "banana", "required": ["summary"]}'

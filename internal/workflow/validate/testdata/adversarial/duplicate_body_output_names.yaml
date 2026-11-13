@@ -1,0 +1,23 @@
+# WF005: sibling body nodes bind one output name. Both run in the same
+# lexical scope for every fan-out item, so the collect would carry two
+# values under one name.
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: duplicate-body-output-names
+spec:
+  steps:
+    - id: fan
+      kind: fanout
+      over: [alpha, beta]
+      as: ws
+      collect: results
+      body:
+        - kind: delegate
+          role: developer
+          prompt: 'build {{ ws }}'
+          output: result
+        - kind: delegate
+          role: reviewer
+          prompt: 'review {{ ws }}'
+          output: result

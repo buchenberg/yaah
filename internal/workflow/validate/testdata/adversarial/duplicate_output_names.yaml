@@ -1,0 +1,18 @@
+# WF005: two steps bind the same output name. The first binder keeps the
+# name and the second is the one reported.
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: duplicate-output-names
+spec:
+  steps:
+    - id: first
+      kind: delegate
+      role: developer
+      prompt: build it
+      output: result
+    - id: second
+      kind: delegate
+      role: reviewer
+      prompt: review it
+      output: result
