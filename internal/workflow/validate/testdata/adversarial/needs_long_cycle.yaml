@@ -1,0 +1,31 @@
+# WF003 and WF004: a five-step ring. The cycle message must name the whole
+# loop, not one link of it.
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: needs-long-cycle
+spec:
+  steps:
+    - id: a
+      kind: delegate
+      role: planner
+      prompt: plan
+      needs: [b]
+    - id: b
+      kind: delegate
+      role: developer
+      prompt: build
+      needs: [c]
+    - id: c
+      kind: delegate
+      role: reviewer
+      prompt: review
+      needs: [d]
+    - id: d
+      kind: settle
+      action: discard
+      needs: [e]
+    - id: e
+      kind: emit
+      value: land
+      needs: [a]

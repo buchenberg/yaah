@@ -1,0 +1,30 @@
+# WF003 and WF004: a healthy chain, then an island whose needs form a
+# cycle, then a step stranded behind the island. WF003 names the loop once;
+# WF004 names all three steps that can never be entered.
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: unreachable-island
+spec:
+  steps:
+    - id: start
+      kind: delegate
+      role: planner
+      prompt: plan it
+    - id: summarize
+      kind: emit
+      value: done
+      needs: [start]
+    - id: lone_a
+      kind: delegate
+      role: developer
+      prompt: work a
+      needs: [lone_b]
+    - id: lone_b
+      kind: emit
+      value: work b
+      needs: [lone_a]
+    - id: tail
+      kind: emit
+      value: after the island
+      needs: [lone_a]

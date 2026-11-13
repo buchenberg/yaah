@@ -1,0 +1,12 @@
+# WF003: a call that names its own workflow and declares no depth. The
+# runtime guard is the only thing standing between this document and an
+# unbounded recursion, so the document has to say how deep it may go.
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: recursion-abuse
+spec:
+  steps:
+    - id: again
+      kind: call
+      workflow: recursion-abuse

@@ -1,0 +1,18 @@
+# WF001 by way of a dangling needs entry. ir.Resolve refuses a reference
+# that names no step, so the document never becomes a graph and the node
+# level rules — WF002 above all — never see the defect. The same graph
+# built by hand is reported as WF002; see TestHandBuiltGraphs.
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: dangling-needs
+spec:
+  steps:
+    - id: a
+      kind: delegate
+      role: planner
+      prompt: plan it
+    - id: b
+      kind: emit
+      value: done
+      needs: [ghost]

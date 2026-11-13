@@ -26,7 +26,7 @@ func readFixture(t *testing.T, rel string) []byte {
 }
 
 func TestValidFixtures(t *testing.T) {
-	for _, name := range []string{"sequential", "fanout_settle", "speculative"} {
+	for _, name := range []string{"sequential", "fanout_settle", "bounded_repair", "speculative"} {
 		t.Run(name, func(t *testing.T) {
 			yamlBytes := readFixture(t, filepath.Join("valid", name+".yaml"))
 			jsonBytes := readFixture(t, filepath.Join("valid", name+".json"))

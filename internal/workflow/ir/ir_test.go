@@ -35,7 +35,7 @@ func mustParse(t *testing.T, data []byte) *spec.Document {
 }
 
 func TestResolveGoldenSpecs(t *testing.T) {
-	for _, name := range []string{"sequential", "fanout_settle", "speculative"} {
+	for _, name := range []string{"sequential", "fanout_settle", "bounded_repair", "speculative"} {
 		t.Run(name, func(t *testing.T) {
 			doc := mustParse(t, readTestdata(t, filepath.Join("specs", name+".yaml")))
 			g, err := Resolve(doc)
