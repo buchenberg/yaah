@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.175.5](https://github.com/buchenberg/yaah/compare/v0.175.4...v0.175.5) (2026-11-13)
+
+
+### Bug Fixes
+
+* **compaction:** honour the reasoning-protection window so history can be dropped (yaah-6a6c) ([dba46d7](https://github.com/buchenberg/yaah/commit/dba46d7383955154096fe07b4b937d3965303d5b))
+* **compaction:** honour the reasoning-protection window so history can be dropped (yaah-6a6c) ([50eb917](https://github.com/buchenberg/yaah/commit/50eb91708d7cd036ff055b9d6ee32400a07fea66))
+
 ## [0.175.4](https://github.com/buchenberg/yaah/compare/v0.175.3...v0.175.4) (2026-11-12)
 
 
