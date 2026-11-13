@@ -577,3 +577,94 @@ func TestPruner_MinReclaimUsesNetExcerptCost(t *testing.T) {
 			stats.ReclaimedTokens, len(content)/4)
 	}
 }
+
+// TestExcerpt_LineAlignsByteCappedEdges (yaah-was9.13): when the byte caps
+// cut the head or tail mid-line, the partial line is dropped — every
+// surviving fragment in the stub is a complete original record, and the
+// omission count still accounts for all lines.
+func TestExcerpt_LineAlignsByteCappedEdges(t *testing.T) {
+	originals := make(map[string]bool, 40)
+	var sb strings.Builder
+	for i := 0; i < 40; i++ {
+		line := fmt.Sprintf("id-%02d %s", i, strings.Repeat("x", 90))
+		originals[line] = true
+		if i > 0 {
+			sb.WriteByte('\n')
+		}
+		sb.WriteString(line)
+	}
+
+	got := excerpt(sb.String())
+
+	kept, omitted := 0, 0
+	for _, line := range strings.Split(got, "\n") {
+		if strings.Contains(line, "lines omitted") {
+			trimmed := strings.TrimSuffix(strings.TrimPrefix(line, "[... "), " lines omitted ...]")
+			n, err := fmt.Sscan(trimmed, &omitted)
+			if err != nil || n != 1 {
+				t.Fatalf("unparsable omission marker %q", line)
+			}
+			continue
+		}
+		if !originals[line] {
+			t.Errorf("excerpt line is not a complete original record: %q", line)
+		}
+		kept++
+	}
+	if kept+omitted != 40 {
+		t.Errorf("kept %d lines + %d omitted = %d, want 40", kept, omitted, kept+omitted)
+	}
+}
+
+// TestByteExcerpt_LineAlignsCuts (yaah-was9.13): the byte-shaped excerpt
+// backs its cuts off to whole lines whenever the content has record
+// structure — the mid-line fragments that manufactured phantom bead IDs
+// came through this path.
+func TestByteExcerpt_LineAlignsCuts(t *testing.T) {
+	originals := make(map[string]bool, 10)
+	var sb strings.Builder
+	for i := 0; i < 10; i++ {
+		line := fmt.Sprintf("row-%d %s", i, strings.Repeat("y", 90))
+		originals[line] = true
+		if i > 0 {
+			sb.WriteByte('\n')
+		}
+		sb.WriteString(line)
+	}
+
+	got := byteExcerpt(sb.String())
+
+	sawMarker := false
+	for _, line := range strings.Split(got, "\n") {
+		if strings.Contains(line, "bytes omitted") {
+			sawMarker = true
+			continue
+		}
+		if !originals[line] {
+			t.Errorf("byteExcerpt line is not a complete original record: %q", line)
+		}
+	}
+	if !sawMarker {
+		t.Error("byteExcerpt lost its omission marker")
+	}
+}
+
+// TestByteExcerpt_SingleLineKeepsRuneCut: a single huge line has no record
+// structure to align to; the rune-boundary cut stays and both sides remain
+// exact substrings of the original.
+func TestByteExcerpt_SingleLineKeepsRuneCut(t *testing.T) {
+	content := strings.Repeat("z", 5000)
+
+	got := byteExcerpt(content)
+
+	head, tail, found := strings.Cut(got, "\n[... bytes omitted ...]\n")
+	if !found {
+		t.Fatalf("missing omission marker in %q", got)
+	}
+	if !strings.HasPrefix(content, head) {
+		t.Error("head is not a prefix of the original")
+	}
+	if !strings.HasSuffix(content, tail) {
+		t.Error("tail is not a suffix of the original")
+	}
+}

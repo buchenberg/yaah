@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -29,6 +30,37 @@ func FindLineCutBytePos(s string, maxLines int) int {
 		n++
 	}
 	return len(s)
+}
+
+// WrapForPaging hard-wraps s at width-byte lines (backing off to rune
+// boundaries, byte-preserving for invalid UTF-8) so a single-line blob — a
+// delegate's JSON envelope, minified output — becomes pageable by line-based
+// readers; the spill file's own recovery hint is a dead end when the read
+// tool cannot offset into a one-line file (yaah-was9.14). Removing the
+// inserted newlines reconstructs s exactly when s contained none.
+func WrapForPaging(s string, width int) string {
+	if width <= 0 || len(s) <= width {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s) + len(s)/width + 1)
+	for len(s) > width {
+		cut := width
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
+		if cut == 0 {
+			cut = width // no rune start within width; cut hard rather than spin
+		}
+		b.WriteString(s[:cut])
+		b.WriteByte('\n')
+		s = s[cut:]
+	}
+	if s != "" {
+		b.WriteString(s)
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // CleanTruncatedDir removes spill files older than 7 days from dir.

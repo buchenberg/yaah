@@ -70,11 +70,21 @@ func (l *Loop) truncateToolResult(result string) string {
 		ts := time.Now().UnixNano()
 		filename := fmt.Sprintf("%d-tool.txt", ts)
 		fullPath := filepath.Join(spillDir, filename)
-		if writeErr := os.WriteFile(fullPath, []byte(result), 0o644); writeErr == nil {
+		// A single-line blob (a delegate's JSON envelope, minified output)
+		// defeats the recovery hint: the read tool cannot offset into a
+		// one-line file, so the spill is hard-wrapped for paging
+		// (yaah-was9.14). Content with real line structure spills verbatim.
+		spill := result
+		wrappedNote := ""
+		if strings.Count(result, "\n") <= 1 && len(result) > maxBytes {
+			spill = agentctx.WrapForPaging(result, 200)
+			wrappedNote = " (line-wrapped for paging — join lines to recover the original bytes)"
+		}
+		if writeErr := os.WriteFile(fullPath, []byte(spill), 0o644); writeErr == nil {
 			agentctx.CleanTruncatedDir(spillDir)
 			hint := fmt.Sprintf(
-				"\n...[output truncated at %d lines / %d bytes — full output at %s. To read portions, use the read tool with offset/limit or spawn a subagent for large analysis.]...",
-				truncatedLines, len(result), fullPath,
+				"\n...[output truncated at %d lines / %d bytes — full output at %s%s. To read portions, use the read tool with offset/limit or spawn a subagent for large analysis.]...",
+				truncatedLines, len(result), fullPath, wrappedNote,
 			)
 			return truncated + hint
 		}
