@@ -14,6 +14,8 @@ import (
 // Later families (values and templates, proposal linearity, authority and
 // cost) are separate aggregates over the same graph. They do not join here
 // — "structural" is the name of this family, not a stage in a pipeline.
+// Values is the next one; see Validate for the end-to-end seam that runs
+// both.
 func Structural(g *ir.Graph) []Diagnostic {
 	if g == nil {
 		return nil
@@ -30,16 +32,19 @@ func Structural(g *ir.Graph) []Diagnostic {
 // Validate is the end-to-end seam: workflow document bytes in, the
 // resolved graph and its diagnostics out. A document that strict decoding
 // or resolution rejects never becomes a graph, so the failure is reported
-// as one WF001 diagnostic through Diagnose; otherwise Structural's
-// findings are returned.
+// as one WF001 diagnostic through Diagnose; otherwise Structural runs
+// first and Values runs after it, over the same graph and the document it
+// came from.
 //
 // Return contract: a document that parses and resolves yields a non-nil
-// graph and diagnostics carrying only WF002–WF005 findings (possibly
+// graph and diagnostics carrying only WF002–WF014 findings (possibly
 // none); a document that never became a graph yields a nil graph and
 // exactly one WF001. The graph is therefore nil exactly when the
-// diagnostics contain a WF001. Callers that want to run a validated
-// workflow should require zero diagnostics, which is what the spec
-// goldens assert.
+// diagnostics contain a WF001. Findings stay grouped by rule in catalog
+// order — WF005 before WF010 is numeric, not lexical — and in document
+// order within a rule, so a caller can diff and display them without
+// sorting. Callers that want to run a validated workflow should require
+// zero diagnostics, which is what the spec goldens assert.
 func Validate(data []byte) (*ir.Graph, []Diagnostic) {
 	doc, err := spec.Parse(data)
 	if err != nil {
@@ -49,5 +54,7 @@ func Validate(data []byte) (*ir.Graph, []Diagnostic) {
 	if err != nil {
 		return nil, Diagnose(err)
 	}
-	return g, Structural(g)
+	out := Structural(g)
+	out = append(out, Values(doc, g)...)
+	return g, out
 }
