@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.175.6](https://github.com/buchenberg/yaah/compare/v0.175.5...v0.175.6) (2026-11-13)
+
+
+### Bug Fixes
+
+* **compaction:** fallback trim resolves its trigger, records, and preserves the task (yaah-l12q) ([04b23c7](https://github.com/buchenberg/yaah/commit/04b23c702c941ac1f486be30054f6e4ca8d46307))
+
 ## [0.175.5](https://github.com/buchenberg/yaah/compare/v0.175.4...v0.175.5) (2026-11-13)
 
 
