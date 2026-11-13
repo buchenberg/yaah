@@ -26,12 +26,6 @@ type ConflictDispatch struct {
 
 var conflictDispatchSeq atomic.Uint64
 
-// WithConflictLabel retains the old label-only entry point. It is a shared-lane
-// dispatch because callers that use it have no retained-world context.
-func WithConflictLabel(ctx context.Context, label string) context.Context {
-	return WithConflictDispatch(ctx, label, ConflictLaneShared)
-}
-
 // WithConflictDispatch attaches a unique dispatch identity and lane to the
 // sub-agent context. A background job carries this context into its runner, so
 // its records are attributed to the dispatching call rather than the turn that

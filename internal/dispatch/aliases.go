@@ -47,7 +47,6 @@ func newLocalWorkspace(pv *PathValidator) Workspace {
 	return substrate.NewLocalWorkspace(pv)
 }
 
-// Exported faces the tools layer calls through its dispatch_aliases seam.
-func RetainedNote(result, note string) string      { return retainedNote(result, note) }
-func FoldRetainedPartial(body, note string) string { return foldRetainedPartial(body, note) }
-func ProposalContentDigest(data []byte) string     { return proposalContentDigest(data) }
+// ProposalContentDigest is the exported face the tools layer calls through
+// its dispatch_aliases seam.
+func ProposalContentDigest(data []byte) string { return proposalContentDigest(data) }

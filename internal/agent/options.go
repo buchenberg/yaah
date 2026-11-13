@@ -3,7 +3,6 @@ package agent
 import (
 	"time"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/permissions"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -64,16 +63,10 @@ func WithPersister(p *SessionPersister) Option {
 	return func(l *Loop) { l.Persister = p }
 }
 
-// WithTraceStore sets the session-shared Shepherd trace store. The
-// orchestrator pipeline uses it for session-context, assistant, and tool-output
-// facts; nil leaves the shepherd_trace slot a noop.
-func WithTraceStore(store *shepherdtrace.SQLiteTraceStore) Option {
-	return WithTraceSink(TraceSinkOf(store))
-}
-
 // WithTraceSink sets the trace-write seam directly, for callers that already
-// hold it (the LoopBuilder's injected sink). Same contract as WithTraceStore:
-// a nil sink leaves the shepherd_trace slot a noop.
+// hold it (the LoopBuilder's injected sink). The orchestrator pipeline writes
+// session-context, assistant, and tool-output facts through it; a nil sink
+// leaves the shepherd_trace slot a noop.
 func WithTraceSink(sink TraceSink) Option {
 	return func(l *Loop) { l.Config.TraceStore = sink }
 }

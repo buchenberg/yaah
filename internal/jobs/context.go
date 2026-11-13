@@ -14,18 +14,6 @@ import (
 // contextKey is the package-local context key type for string keys.
 type contextKey string
 
-// subAgentModelKey stores the sub-agent's model name in the context so
-// the caller can read it after execution.
-const subAgentModelKey contextKey = "yaah-subagent-model"
-
-// SubAgentModelFromContext returns the model used by a completed sub-agent.
-func SubAgentModelFromContext(ctx context.Context) string {
-	if v := ctx.Value(subAgentModelKey); v != nil {
-		return v.(string)
-	}
-	return ""
-}
-
 // subAgentModelWriterKey is a context key for the closure the runner
 // calls to report the sub-agent's model name. Background jobs install a
 // mutex-guarded writer; foreground callers may adapt a *string.

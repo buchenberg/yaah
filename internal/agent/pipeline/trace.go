@@ -12,11 +12,6 @@ import (
 	"github.com/buchenberg/yaah/internal/types"
 )
 
-// NewShepherdTraceStore opens or creates a Shepherd trace store at the given path.
-func NewShepherdTraceStore(path string) (*shepherdtrace.SQLiteTraceStore, error) {
-	return shepherdtrace.NewSQLiteTraceStore(path)
-}
-
 // ShepherdTraceMiddleware records every tool call as a declaration (intent)
 // and capture (observation) in a Shepherd trace store.
 type ShepherdTraceMiddleware struct {

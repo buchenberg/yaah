@@ -37,10 +37,6 @@ func ParseSubAgentOutput(output string, runErr error) *jobs.SubAgentOutput {
 	return jobs.ParseSubAgentOutput(output, runErr)
 }
 
-func SubAgentModelFromContext(ctx context.Context) string {
-	return jobs.SubAgentModelFromContext(ctx)
-}
-
 func WithSubAgentModelPtr(ctx context.Context, ptr *string) context.Context {
 	return jobs.WithSubAgentModelPtr(ctx, ptr)
 }
@@ -61,16 +57,8 @@ func WithSubAgentWorldPtr(ctx context.Context, ptr *SubAgentWorld) context.Conte
 	return jobs.WithSubAgentWorldPtr(ctx, ptr)
 }
 
-func WithSubAgentWorldWriter(ctx context.Context, write func(SubAgentWorld)) context.Context {
-	return jobs.WithSubAgentWorldWriter(ctx, write)
-}
-
 func WriteSubAgentWorld(ctx context.Context, w SubAgentWorld) {
 	jobs.WriteSubAgentWorld(ctx, w)
-}
-
-func SubAgentWorldFromContext(ctx context.Context) SubAgentWorld {
-	return jobs.SubAgentWorldFromContext(ctx)
 }
 
 func WithSubAgentUsage(ctx context.Context, usage *types.Usage) context.Context {
@@ -81,12 +69,6 @@ func AddSubAgentUsage(ctx context.Context, delta types.Usage) {
 	jobs.AddSubAgentUsage(ctx, delta)
 }
 
-// WithSubAgentTranscript installs a transcript sink so a dispatch body can
-// capture the sub-agent's final conversation and seed a continuation from it.
-func WithSubAgentTranscript(ctx context.Context, ptr *[]types.Message) context.Context {
-	return jobs.WithSubAgentTranscript(ctx, ptr)
-}
-
 // CaptureSubAgentTranscript reports the sub-agent's final conversation through
 // the transcript sink in ctx, if one was installed.
 func CaptureSubAgentTranscript(ctx context.Context, messages []types.Message) {
@@ -95,12 +77,6 @@ func CaptureSubAgentTranscript(ctx context.Context, messages []types.Message) {
 
 // SubAgentStop is the runner's typed stop outcome (aliased from jobs).
 type SubAgentStop = jobs.SubAgentStop
-
-// WithSubAgentStop installs a stop-outcome sink so a dispatch body can report
-// why the run ended.
-func WithSubAgentStop(ctx context.Context, ptr *SubAgentStop) context.Context {
-	return jobs.WithSubAgentStop(ctx, ptr)
-}
 
 // CaptureSubAgentStop reports the run's typed stop outcome through the sink in
 // ctx, if one was installed.

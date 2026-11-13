@@ -32,11 +32,6 @@ func StartSessionSandbox(ctx context.Context, w config.WorkspaceConfig, open San
 	return substrate.StartSessionSandbox(ctx, w, open, src, deny)
 }
 
-// ProbeImageContract verifies a backend satisfies the D5 image contract.
-func ProbeImageContract(ctx context.Context, sb goatherdsandbox.Sandbox) error {
-	return substrate.ProbeImageContract(ctx, sb)
-}
-
 // OpenContainerdWorkspaceSandbox resolves the container workspace backend
 // through goatherd-runtime's sandbox registry.
 func OpenContainerdWorkspaceSandbox(w config.WorkspaceConfig) (goatherdsandbox.Sandbox, error) {
