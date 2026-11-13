@@ -34,6 +34,15 @@ func (l *Loop) publishDone(response *string, runErr *error) {
 			CachedTokens: l.State.TotalCachedPromptTokens,
 		}
 	}
+	// Delivery guarantee for the run's terminal event (yaah-8jou.6):
+	// PublishMustDeliver holds the broker's read lock and waits on this
+	// subscriber up to the 50ms fan-out budget, and brokerView.Close then
+	// detaches the subscription and waits for the forwarder goroutine, which
+	// ranges its channel to exhaustion — buffered events still queued behind
+	// the close are handed to the view before it exits. So DoneEvent is lost
+	// only if the forwarder's 4096-slot buffer is full AND the forwarder is
+	// wedged for the whole budget; a momentary backlog cannot drop it the
+	// way a lossy Publish would.
 	l.broker.PublishMustDeliver(&done)
 	l.brokerView.Close()
 	// Mark eventing as retired: applyDefaults re-arms the broker on the

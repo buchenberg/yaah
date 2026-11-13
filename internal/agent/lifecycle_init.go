@@ -54,6 +54,7 @@ func (l *Loop) ctxMgr() *ContextManager {
 			SessionID:      l.Config.SessionID,
 			DB:             db,
 			State:          &l.State,
+			Broker:         l.broker,
 		}
 	}
 	if l.CtxMgr.State == nil {
@@ -165,6 +166,13 @@ func (l *Loop) applyDefaults() {
 		l.brokerView = NewBrokerViewWithSync(l.broker, l.View, l.BeforeViewEvents)
 		l.brokerClosed = false
 	}
+	// Compaction cards ride the live broker: rebind per Run (like the
+	// title hook below) so a reused Loop's context manager never
+	// publishes into a closed generation. Before yaah-8jou.6 the field
+	// was only set in tests, so no compaction event ever reached a view.
+	if l.CtxMgr != nil {
+		l.CtxMgr.Broker = l.broker
+	}
 	// Title notifications ride the live broker: the persister fires the
 	// hook during a prompt Run, when this loop's broker exists, so
 	// rebinding per Run (like publishTokenDelta) always targets the
@@ -238,9 +246,15 @@ func (l *Loop) publishTokenDelta(token string) {
 
 // publishTitle forwards a title transition (empty → first derived title)
 // to the broker; the ACP view translates it into session_info_update.
+//
+// Must-deliver (yaah-8jou.6): the transition fires at most once per untitled
+// session, so a lossy drop leaves the client naming that session nothing for
+// the whole run. The fan-out costs at most the broker's 50ms budget and runs
+// on the loop's own goroutine (Persister.Persist), which holds no lock a
+// view's HandleEvent would need.
 func (l *Loop) publishTitle(title string, updatedAt int64) {
 	if l.broker != nil {
-		l.broker.Publish(&TitleSetEvent{Title: title, UpdatedAt: updatedAt})
+		l.broker.PublishMustDeliver(&TitleSetEvent{Title: title, UpdatedAt: updatedAt})
 	}
 }
 
