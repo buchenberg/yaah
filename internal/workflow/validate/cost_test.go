@@ -90,14 +90,6 @@ func TestDispatchBudget(t *testing.T) {
 			msg:   "widens the host ceiling 32",
 		},
 		{
-			name: "an exceeded host ceiling below a declared budget is attributed to the host",
-			steps: "  budgets:\n    max_dispatches: 10\n  steps:\n    - id: f\n      kind: fanout\n      over: [a, b, c, d, e, f]\n      max_parallel: 6\n" +
-				"      body: {kind: delegate, role: developer, prompt: hi}\n",
-			env:  Env{MaxDispatches: 4},
-			path: "spec.budgets.max_dispatches",
-			msg:  "over the effective ceiling 4",
-		},
-		{
 			name: "the host ceiling applies with no declared budget",
 			steps: "  steps:\n    - id: f\n      kind: fanout\n      over: [a, b, c, d]\n      max_parallel: 4\n" +
 				"      body: {kind: delegate, role: developer, prompt: hi}\n",
@@ -156,6 +148,32 @@ func TestDispatchBudget(t *testing.T) {
 				t.Errorf("message %q does not contain %q", d.Message, tc.msg)
 			}
 		})
+	}
+}
+
+// TestExceededHostCeilingAttribution pins the two-finding shape when a
+// declared budget both widens the host ceiling and is exceeded by the
+// worst case: the widening finding names both numbers, and the exceeding
+// finding attributes the bound that was actually exceeded — the host
+// ceiling — instead of printing the host number as the declared one.
+func TestExceededHostCeilingAttribution(t *testing.T) {
+	steps := "  budgets:\n    max_dispatches: 10\n  steps:\n    - id: f\n      kind: fanout\n      over: [a, b, c, d, e, f]\n      max_parallel: 6\n" +
+		"      body: {kind: delegate, role: developer, prompt: hi}\n"
+	diags := Cost(costGraph(t, steps), Env{MaxDispatches: 4})
+	var got []Diagnostic
+	for _, d := range diags {
+		if d.Code == CodeWF033 {
+			got = append(got, d)
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("WF033 findings = %d, want 2; got:%s", len(got), render(got))
+	}
+	if got[0].Path != "spec.budgets.max_dispatches" || !strings.Contains(got[0].Message, "widens the host ceiling 4") {
+		t.Errorf("first finding = %q at %q, want the widening message", got[0].Message, got[0].Path)
+	}
+	if !strings.Contains(got[1].Message, "over the effective ceiling 4") || !strings.Contains(got[1].Message, "lower than the 10 declared") {
+		t.Errorf("second finding = %q, want host-ceiling attribution naming the declared 10", got[1].Message)
 	}
 }
 
