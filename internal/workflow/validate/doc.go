@@ -45,6 +45,48 @@
 //	       delegate — a field the resolver drops is a constraint the author
 //	       believes is set
 //
+// The proposal linearity family closes the catalog. It is a dataflow analysis
+// over the resolved graph rather than a runtime check written twice, and its
+// subject is a document's settlement plan: which steps retain a proposal, and
+// what happens to each one.
+//
+//	WF020  settle.proposals refers to a proposal-lane collection
+//	WF021  every proposal is settled exactly once on every reachable path
+//	WF022  a select or apply target was not released or discarded earlier
+//	WF023  parallel applies name disjoint paths or are ordered by needs
+//	WF024  on_conflict: skip has a later settle that catches what it skipped
+//	WF025  a run that can end with proposals open says so
+//	WF026  a settle over a possibly-empty set declares on_empty
+//	WF027  continue_from and fork_from name one proposal from the same role
+//	       and lane, and a fork leaves its source settled elsewhere
+//	WF028  select candidates are inhabited and a judge policy declares its
+//	       judge
+//	WF029  a fan-out over a run-time list stays inside the concurrency the
+//	       workflow budgets
+//
+// The analysis carries, for each proposal token — a producing node, keyed by
+// its path — the set of paths along which it is still open, already settled
+// once, or settled twice, and it joins those sets the way the scheduler joins
+// steps: needs and data dependencies are completions, so the later state
+// wins; branch arms and gate dispositions are alternatives, so they union,
+// which is what turns a proposal settled in one arm only into a leak on the
+// other. A body's proposals leave it through its container's collect and
+// nowhere else, and an empty SettlePolicy is read as the runtime default
+// path_disjoint because resolve does not materialize it. Repetition is
+// collapsed: one token stands for a proposal produced per item or per
+// iteration, since a settlement expression is written over the set, and a
+// filtered or conflict-skipped settle counts as naming its set rather than as
+// disposing of every element of it — partial coverage is WF024's and WF026's
+// subject, not WF021's. WF025 has no declaration to read: `on_abort` is
+// scheduled with the executor, so the rule reports the exposure such a field
+// would discharge. Prove publishes the resulting disposition map as a
+// SettlementProof for `yaah workflow explain`.
+//
+// Linearity is the last family the plan calls for, so the table above is the
+// whole contract between this package and the documents it checks: adding a
+// rule still means a new constant and a row here, but there is no reserved
+// range left to grow into.
+//
 // WF014 is an extension of the plan catalog, which listed this family as
 // WF010–WF013. It is appended to the family rather than folded into WF011
 // because "the value is the wrong shape" and "the value was written where no
