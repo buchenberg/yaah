@@ -117,7 +117,11 @@ func dispatchBudget(g *ir.Graph, env Env) []Diagnostic {
 				"max_dispatches %d widens the host ceiling %d; the budget may narrow it but not raise it", d, env.MaxDispatches))
 		}
 	}
-	if est.ExceedsCeiling {
+	// A negative declaration is refused above and the run cannot start, so
+	// it is never re-priced against the host ceiling: a second finding
+	// would attribute the host number to a budget that is already under
+	// repair, which is the misattribution this block exists to avoid.
+	if est.ExceedsCeiling && (!declared || *g.Budgets.MaxDispatches >= 0) {
 		path := "spec.budgets.max_dispatches"
 		if !declared {
 			path = "spec.budgets"

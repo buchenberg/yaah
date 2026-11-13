@@ -115,6 +115,17 @@ func TestDispatchBudget(t *testing.T) {
 			msg:   "must not be negative",
 		},
 		{
+			// The refused declaration is not re-priced against the host
+			// ceiling: the refusal is the only WF033 finding, so the host
+			// number never gets printed as the declared one.
+			name: "a negative budget is not re-priced against the host ceiling",
+			steps: "  budgets:\n    max_dispatches: -1\n  steps:\n    - id: f\n      kind: fanout\n      over: [a, b, c, d, e]\n      max_parallel: 5\n" +
+				"      body: {kind: delegate, role: developer, prompt: hi}\n",
+			env:  Env{MaxDispatches: 4},
+			path: "spec.budgets.max_dispatches",
+			msg:  "must not be negative",
+		},
+		{
 			name:  "retries add dispatches",
 			steps: "  budgets:\n    max_dispatches: 2\n  steps:\n    - {id: a, kind: delegate, role: developer, prompt: hi, retry: {max_attempts: 3}}\n",
 			path:  "spec.budgets.max_dispatches",
