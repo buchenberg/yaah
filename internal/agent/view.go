@@ -32,6 +32,7 @@ func (NoopView) HandleEvent(Event) {}
 type BrokerView struct {
 	broker *pubsub.Broker[Event]
 	sub    <-chan Event
+	unsub  func()
 	done   chan struct{}
 	sync   func()
 }
@@ -47,11 +48,16 @@ func NewBrokerView(broker *pubsub.Broker[Event], target View) *BrokerView {
 // the forwarder goroutine before the first broker event is delivered. A
 // session uses it to replay events buffered before this run's broker existed,
 // preserving their order relative to live broker events.
+//
+// The subscription is taken through SubscribeHandle so the view holds its own
+// cancel handle instead of relying on a shared "view" id. Close still closes
+// the whole broker; which side owns teardown is yaah-8jou.7.
 func NewBrokerViewWithSync(broker *pubsub.Broker[Event], target View, syncFn func()) *BrokerView {
-	sub := broker.Subscribe("view", 4096)
+	sub, unsub := broker.SubscribeHandle(4096)
 	bv := &BrokerView{
 		broker: broker,
 		sub:    sub,
+		unsub:  unsub,
 		done:   make(chan struct{}),
 		sync:   syncFn,
 	}

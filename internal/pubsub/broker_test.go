@@ -311,3 +311,152 @@ func TestPublishMustDeliver_concurrentCloseDoesNotPanic(t *testing.T) {
 		wg.Wait() // a panic in either goroutine fails the test
 	}
 }
+
+// TestBroker_SubscribeHandle_CancelsExactlyOneSubscription (yaah-8jou.3)
+// pins that a cancel handle detaches exactly its own registration, even
+// though SubscribeHandle subscriptions share an empty id with each other
+// and other subscribers share a non-empty one.
+func TestBroker_SubscribeHandle_CancelsExactlyOneSubscription(t *testing.T) {
+	b := NewBroker[int]()
+	chA, cancelA := b.SubscribeHandle(4)
+	chB, _ := b.SubscribeHandle(4)
+	chDup1 := b.Subscribe("dup", 4)
+	chDup2 := b.Subscribe("dup", 4)
+
+	cancelA()
+
+	if _, open := <-chA; open {
+		t.Error("expected cancelled channel to be closed")
+	}
+	if b.SubscriberCount() != 3 {
+		t.Fatalf("expected 3 subscribers after one cancel, got %d", b.SubscriberCount())
+	}
+
+	b.Publish(7)
+	for i, ch := range []<-chan int{chB, chDup1, chDup2} {
+		select {
+		case v := <-ch:
+			if v != 7 {
+				t.Errorf("subscriber %d: expected 7, got %d", i, v)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("subscriber %d did not receive the event", i)
+		}
+	}
+}
+
+// TestBroker_SubscribeHandle_CancelIsIdempotent (yaah-8jou.3): calling the
+// handle twice must not double-close the channel.
+func TestBroker_SubscribeHandle_CancelIsIdempotent(t *testing.T) {
+	b := NewBroker[int]()
+	_, cancel := b.SubscribeHandle(4)
+
+	cancel()
+	cancel()
+
+	if b.SubscriberCount() != 0 {
+		t.Errorf("expected 0 subscribers after cancel, got %d", b.SubscriberCount())
+	}
+	b.Publish(1)
+}
+
+// TestBroker_SubscribeHandle_CancelAfterClose (yaah-8jou.3): Close nils the
+// subscriber list, so a later cancel must be a no-op rather than a panic or
+// a double close.
+func TestBroker_SubscribeHandle_CancelAfterClose(t *testing.T) {
+	b := NewBroker[int]()
+	ch, cancel := b.SubscribeHandle(4)
+
+	b.Close()
+	cancel()
+	cancel()
+
+	if _, open := <-ch; open {
+		t.Error("expected channel closed by Close")
+	}
+	if b.SubscriberCount() != 0 {
+		t.Errorf("expected 0 subscribers, got %d", b.SubscriberCount())
+	}
+}
+
+// TestBroker_SubscribeHandle_AfterClose mirrors TestBroker_SubscribeAfterClose
+// for the handle path: a closed channel and a no-op cancel.
+func TestBroker_SubscribeHandle_AfterClose(t *testing.T) {
+	b := NewBroker[int]()
+	b.Close()
+
+	ch, cancel := b.SubscribeHandle(1)
+	if _, open := <-ch; open {
+		t.Fatal("expected already-closed channel when subscribing after Close")
+	}
+	cancel()
+	if b.SubscriberCount() != 0 {
+		t.Errorf("expected 0 subscribers, got %d", b.SubscriberCount())
+	}
+}
+
+// TestBroker_Unsubscribe_RemovesAllDuplicates (yaah-8jou.3): an id may be
+// held by several subscribers, and Unsubscribe must detach every match
+// rather than returning after the first.
+func TestBroker_Unsubscribe_RemovesAllDuplicates(t *testing.T) {
+	b := NewBroker[int]()
+	dup1 := b.Subscribe("dup", 4)
+	dup2 := b.Subscribe("dup", 4)
+	keep := b.Subscribe("keep", 4)
+
+	b.Unsubscribe("dup")
+
+	if b.SubscriberCount() != 1 {
+		t.Fatalf("expected 1 subscriber after Unsubscribe, got %d", b.SubscriberCount())
+	}
+	for i, ch := range []<-chan int{dup1, dup2} {
+		if _, open := <-ch; open {
+			t.Errorf("duplicate %d: expected closed channel", i)
+		}
+	}
+
+	b.Publish(3)
+	select {
+	case v := <-keep:
+		if v != 3 {
+			t.Errorf("expected 3, got %d", v)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("remaining subscriber did not receive the event")
+	}
+}
+
+// TestBroker_PublishMustDeliver_SharedDeadline (yaah-8jou.4): the MustDeliver
+// timeout is one budget for the whole fan-out, so N stalled subscribers cost
+// about 1x timeout instead of Nx, and all of them are still counted dropped.
+func TestBroker_PublishMustDeliver_SharedDeadline(t *testing.T) {
+	const stalled = 5
+	timeout := 50 * time.Millisecond
+
+	b := NewBroker[int]()
+	b.mustDeliverTimeout = timeout
+
+	for i := 0; i < stalled; i++ {
+		b.Subscribe("full", 1)
+		b.Publish(0) // fill the buffer so every later send blocks
+	}
+
+	droppedBefore := b.Dropped()
+	deliveredBefore := b.Delivered()
+
+	start := time.Now()
+	b.PublishMustDeliver(1)
+	elapsed := time.Since(start)
+
+	if got := b.Dropped() - droppedBefore; got != stalled {
+		t.Errorf("dropped = %d, want %d", got, stalled)
+	}
+	if got := b.Delivered() - deliveredBefore; got != 0 {
+		t.Errorf("delivered = %d, want 0", got)
+	}
+	// Per-subscriber timing would take stalled*timeout; 2.5x timeout leaves a
+	// generous margin for a loaded CI runner while still ruling it out.
+	if limit := timeout + timeout*3/2; elapsed > limit {
+		t.Errorf("fan-out took %v, want at most %v (one shared deadline)", elapsed, limit)
+	}
+}
