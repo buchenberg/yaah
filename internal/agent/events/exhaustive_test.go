@@ -379,7 +379,12 @@ func discoverConsumers(t *testing.T) []string {
 				return nil
 			}
 			rel := filepath.ToSlash(mustRelativize(t, root, path))
-			if filepath.Dir(rel) == loopPackageDir {
+			// ToSlash over Dir: rel is slash-form on every OS, but
+			// filepath.Dir cleans to backslashes on Windows, which would
+			// silently defeat the loop-package exclusion there. (path.Dir
+			// would read cleaner but `path` is shadowed by the walk
+			// callback's parameter.)
+			if filepath.ToSlash(filepath.Dir(rel)) == loopPackageDir {
 				return nil
 			}
 			src, readErr := os.ReadFile(path)
