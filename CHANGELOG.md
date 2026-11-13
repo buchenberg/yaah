@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.175.9](https://github.com/buchenberg/yaah/compare/v0.175.8...v0.175.9) (2026-11-13)
+
+
+### Documentation
+
+* **orch:** cite the belt measurements instead of restating them ([926011a](https://github.com/buchenberg/yaah/commit/926011a4d8a1fd7d511b1d68deb6ab344c23ecf1))
+
 ## [0.175.8](https://github.com/buchenberg/yaah/compare/v0.175.7...v0.175.8) (2026-11-13)
 
 
