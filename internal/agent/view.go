@@ -32,6 +32,7 @@ func (NoopView) HandleEvent(Event) {}
 type BrokerView struct {
 	broker *pubsub.Broker[Event]
 	sub    <-chan Event
+	unsub  func()
 	done   chan struct{}
 	sync   func()
 }
@@ -47,11 +48,16 @@ func NewBrokerView(broker *pubsub.Broker[Event], target View) *BrokerView {
 // the forwarder goroutine before the first broker event is delivered. A
 // session uses it to replay events buffered before this run's broker existed,
 // preserving their order relative to live broker events.
+//
+// The subscription is taken through SubscribeHandle so the view holds its own
+// cancel handle instead of relying on a shared "view" id. Close still closes
+// the whole broker; which side owns teardown is yaah-8jou.7.
 func NewBrokerViewWithSync(broker *pubsub.Broker[Event], target View, syncFn func()) *BrokerView {
-	sub := broker.Subscribe("view", 4096)
+	sub, unsub := broker.SubscribeHandle(4096)
 	bv := &BrokerView{
 		broker: broker,
 		sub:    sub,
+		unsub:  unsub,
 		done:   make(chan struct{}),
 		sync:   syncFn,
 	}
@@ -61,7 +67,7 @@ func NewBrokerViewWithSync(broker *pubsub.Broker[Event], target View, syncFn fun
 
 // forward reads events from the subscription channel and delivers them
 // to the target view. It exits when the subscription channel is closed
-// (which happens when the broker is closed).
+// (by the view's own cancel handle or by the broker's Close).
 func (bv *BrokerView) forward(target View) {
 	defer close(bv.done)
 	if bv.sync != nil {
@@ -72,9 +78,15 @@ func (bv *BrokerView) forward(target View) {
 	}
 }
 
-// Close closes the underlying broker and waits for the forwarder
-// goroutine to exit. Safe to call multiple times.
+// Close detaches the view's own subscription, closes the underlying
+// broker, and waits for the forwarder goroutine to exit. The unsub call
+// is what closes this view's channel; broker.Close still runs so the
+// lifecycle re-arm gate (brokerClosed) keeps its meaning until yaah-8jou.7
+// decides teardown ownership. Safe to call multiple times.
 func (bv *BrokerView) Close() {
+	if bv.unsub != nil {
+		bv.unsub()
+	}
 	bv.broker.Close()
 	<-bv.done
 }
