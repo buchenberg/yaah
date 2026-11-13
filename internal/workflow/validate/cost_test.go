@@ -90,6 +90,14 @@ func TestDispatchBudget(t *testing.T) {
 			msg:   "widens the host ceiling 32",
 		},
 		{
+			name: "an exceeded host ceiling below a declared budget is attributed to the host",
+			steps: "  budgets:\n    max_dispatches: 10\n  steps:\n    - id: f\n      kind: fanout\n      over: [a, b, c, d, e, f]\n      max_parallel: 6\n" +
+				"      body: {kind: delegate, role: developer, prompt: hi}\n",
+			env:  Env{MaxDispatches: 4},
+			path: "spec.budgets.max_dispatches",
+			msg:  "over the effective ceiling 4",
+		},
+		{
 			name: "the host ceiling applies with no declared budget",
 			steps: "  steps:\n    - id: f\n      kind: fanout\n      over: [a, b, c, d]\n      max_parallel: 4\n" +
 				"      body: {kind: delegate, role: developer, prompt: hi}\n",

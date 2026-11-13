@@ -127,9 +127,20 @@ func dispatchBudget(g *ir.Graph, env Env) []Diagnostic {
 			basis = "at least"
 		}
 		if declared {
-			out = append(out, diag(CodeWF033, path,
-				"worst case is %s %d dispatches, over the %d declared by budgets.max_dispatches",
-				basis, est.Dispatches, est.Ceiling))
+			if d := *g.Budgets.MaxDispatches; est.Ceiling < d {
+				// The effective ceiling is the host's: printing the
+				// declared number here would send the author to edit a
+				// budget the run was never priced against. The widening
+				// finding above already names both numbers; this one
+				// names the bound that was actually exceeded.
+				out = append(out, diag(CodeWF033, path,
+					"worst case is %s %d dispatches, over the effective ceiling %d — the host ceiling is lower than the %d declared by budgets.max_dispatches",
+					basis, est.Dispatches, est.Ceiling, d))
+			} else {
+				out = append(out, diag(CodeWF033, path,
+					"worst case is %s %d dispatches, over the %d declared by budgets.max_dispatches",
+					basis, est.Dispatches, est.Ceiling))
+			}
 		} else {
 			out = append(out, diag(CodeWF033, path,
 				"worst case is %s %d dispatches, over the host ceiling %d; declare budgets.max_dispatches",
