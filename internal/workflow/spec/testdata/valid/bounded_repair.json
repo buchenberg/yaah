@@ -1,0 +1,83 @@
+{
+  "apiVersion": "yaah.workflow/v1",
+  "kind": "Workflow",
+  "metadata": {
+    "name": "bounded-repair",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "params": {
+      "task": {
+        "type": "string",
+        "required": true
+      }
+    },
+    "defaults": {
+      "lane": "proposal",
+      "network": "deny_all",
+      "grants": [
+        { "path": "src", "access": "readwrite" }
+      ]
+    },
+    "budgets": {
+      "max_dispatches": 12,
+      "max_wall_clock_seconds": 1800,
+      "max_concurrent_dispatches": 1
+    },
+    "steps": [
+      {
+        "id": "implement",
+        "kind": "delegate",
+        "role": "developer",
+        "output": "proposal",
+        "prompt": "Implement this task and return a retained proposal: {{ params.task }}\nOnly touch paths under src/.\n"
+      },
+      {
+        "id": "repair",
+        "kind": "loop",
+        "needs": ["implement"],
+        "max_iterations": 3,
+        "continue_from": "{{ steps.implement.output.proposal_id }}",
+        "until": { "from": "steps.repair.collect", "field": "verdict", "equals": "pass" },
+        "collect": "outcomes",
+        "on_failure": "continue",
+        "body": [
+          {
+            "id": "fix",
+            "kind": "delegate",
+            "role": "developer",
+            "output": "fix_proposal",
+            "prompt": "The checks failed. Repair the proposal\n{{ steps.implement.output.proposal_id }} so the verification passes.\n"
+          },
+          {
+            "id": "check",
+            "kind": "delegate",
+            "role": "tester",
+            "lane": "report",
+            "timeout_seconds": 300,
+            "output": "Verdict",
+            "prompt": "Run /app/verify.py against the repaired proposal.\nDiff: {{ steps.fix.output.diff }}\nReturn JSON: {\"verdict\":\"pass\"|\"fail\",\"reasons\":[]}.\n"
+          }
+        ]
+      },
+      {
+        "id": "land",
+        "kind": "settle",
+        "needs": ["repair"],
+        "proposals": { "from": "steps.repair.collect" },
+        "where": { "from": "steps.repair.collect", "field": "verdict", "equals": "pass" },
+        "action": "apply",
+        "policy": "three_way",
+        "on_conflict": "escalate",
+        "on_empty": "fail"
+      },
+      {
+        "id": "report",
+        "kind": "emit",
+        "needs": ["land"],
+        "value": "Repaired through {{ steps.repair.collect }}; landed {{ steps.land.output.settled }} proposal(s).\n",
+        "path": "artifacts/repair-report.md"
+      }
+    ]
+  }
+}
