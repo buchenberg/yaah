@@ -4,13 +4,16 @@ package yaah
 //
 // Agents.default.tools omitted used to mean "register everything" — and
 // between the 2026-11-02 and 2026-11-12 builds that went from a 27-tool
-// belt to 40: the file-tools era (append, bulk_files, checksum, copy,
-// copy_tree, find, mkdir, move, move_tree, rmdir, tail) plus wait_for and
-// watch all became orchestrator surface. Measured across the whole
-// 2026-11-12 five-task run (36 steps): the orchestrator called only four
-// tools (bash 64, write 4, read 4, ls 2) and none of the thirteen new
-// ones — while every extra schema (~780 tokens each) rides the per-call
-// floor on every turn. The floor doubled, 10.5K to ~20.7K tokens/call.
+// belt to 40: the file-tools era plus wait_for and watch all became
+// orchestrator surface. Every admitted schema rides the fixed per-call
+// prompt floor on every turn, so that growth doubled the floor while the
+// orchestrator kept calling the same four tools and none of the new ones.
+//
+// The measurements are cited rather than restated, so this cannot drift
+// from its source: the floor curve and its tripwire are in
+// bench/terminal-bench/HISTORY.md ("The per-call floor"), and the
+// per-schema cost with the tool-call distribution that showed the new
+// surface going unused are in docs/lazy-toolbelt-design.md.
 //
 // The file cluster already lives where the architecture wants it — the
 // developer role's belt (internal/prompts/roles/developer.md lists all
