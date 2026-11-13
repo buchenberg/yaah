@@ -365,7 +365,13 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 	}
 
 	if cm.Broker != nil {
-		cm.Broker.Publish(&CompactionStartedEvent{
+		// Compaction events are must-deliver (yaah-8jou.6): start and done
+		// are a pair, and dropping either leaves a view with a
+		// "compacting…" card that never closes, or one that never opened.
+		// Both are rare — once per pass, a handful of passes per run — so
+		// the bounded 50ms fan-out is affordable. Nothing is locked here:
+		// the loop is a single writer and compaction runs on its goroutine.
+		cm.Broker.PublishMustDeliver(&CompactionStartedEvent{
 			BeforeTokens: rawTokens,
 			TargetTokens: target,
 			Reason:       compactReason,
@@ -561,7 +567,7 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 						savingsPct = float64(beforeEstimate-afterEstimate) / float64(beforeEstimate)
 					}
 					if cm.Broker != nil {
-						cm.Broker.Publish(&CompactionDoneEvent{
+						cm.Broker.PublishMustDeliver(&CompactionDoneEvent{
 							BeforeTokens:   beforeEstimate,
 							AfterTokens:    afterEstimate,
 							SavingsPct:     savingsPct,
@@ -661,7 +667,7 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 			if beforeEstimate > 0 {
 				trimSavings = float64(beforeEstimate-afterTrim) / float64(beforeEstimate)
 			}
-			cm.Broker.Publish(&CompactionDoneEvent{
+			cm.Broker.PublishMustDeliver(&CompactionDoneEvent{
 				BeforeTokens:    beforeEstimate,
 				AfterTokens:     afterTrim,
 				SavingsPct:      trimSavings,
@@ -705,7 +711,7 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 	}
 
 	if cm.Broker != nil {
-		cm.Broker.Publish(&CompactionDoneEvent{
+		cm.Broker.PublishMustDeliver(&CompactionDoneEvent{
 			BeforeTokens:    beforeEstimate,
 			AfterTokens:     afterEstimate,
 			SavingsPct:      savingsPct,
@@ -825,7 +831,7 @@ func (cm *ContextManager) bookImpossibleCompaction(ctx context.Context, compactR
 	cm.State.LastCompactionMethod = "skipped"
 	cm.State.IneffectiveCompactions++
 	if cm.Broker != nil {
-		cm.Broker.Publish(&CompactionDoneEvent{
+		cm.Broker.PublishMustDeliver(&CompactionDoneEvent{
 			BeforeTokens:    est,
 			AfterTokens:     est,
 			SavingsPct:      0,
