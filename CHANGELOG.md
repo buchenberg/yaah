@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.177.0](https://github.com/buchenberg/yaah/compare/v0.176.1...v0.177.0) (2026-11-13)
+
+
+### Features
+
+* **pubsub:** per-subscriber stats; settle teardown ownership ([1b3896f](https://github.com/buchenberg/yaah/commit/1b3896fc26f95df5061490ce480c69d0a34a8d48))
+* **pubsub:** per-subscriber stats; settle teardown ownership (yaah-8jou.5, yaah-8jou.7) ([b0b1c7b](https://github.com/buchenberg/yaah/commit/b0b1c7baf35756aeb25ac0dd6f94d492ab3de088))
+
+
+### Bug Fixes
+
+* **events:** keep the loop-package exclusion slash-form on Windows ([d7fd7ee](https://github.com/buchenberg/yaah/commit/d7fd7ee853618628d510b0b807f654f8e673fa24))
+
+
+### Documentation
+
+* **pubsub:** address review — Stats quiescence caveat, honest retire wording, flake-proof test budget ([5342f66](https://github.com/buchenberg/yaah/commit/5342f667c5926b7cdb6298910e01002a686eb140))
+
+
+### Tests
+
+* **events:** AST-based exhaustive gate + document the no-mutation contract ([211cedc](https://github.com/buchenberg/yaah/commit/211cedca10e6fd9283c3e59201e9f4cd9d7c8011))
+
 ## [0.176.1](https://github.com/buchenberg/yaah/compare/v0.176.0...v0.176.1) (2026-11-13)
 
 
