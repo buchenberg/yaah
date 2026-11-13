@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.175.10](https://github.com/buchenberg/yaah/compare/v0.175.9...v0.175.10) (2026-11-13)
+
+
+### Documentation
+
+* correct stale containment backend lists and SECURITY.md approval semantics ([aa8a010](https://github.com/buchenberg/yaah/commit/aa8a010d2be6760089ac1181796a060eb843be9a))
+
 ## [0.175.9](https://github.com/buchenberg/yaah/compare/v0.175.8...v0.175.9) (2026-11-13)
 
 
