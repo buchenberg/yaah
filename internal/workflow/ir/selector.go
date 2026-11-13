@@ -67,7 +67,15 @@ type Predicate struct {
 	// is the left operand of the comparison, not a projection of the result
 	// — `where: {from: xs, field: verdict, equals: pass}` keeps the elements
 	// of xs whose verdict is pass, so the value the selector yields is still
-	// the element. An empty Field compares the element itself.
+	// the element. An empty Field compares the element itself. A set Field
+	// with an empty Op is a retention filter in the same shape, not a
+	// projection: the executor keeps the elements whose field is set and
+	// still yields the elements — the clause is shorthand for an
+	// `exists`/`not_empty` test on the field. A selector never changes the
+	// kind of value it yields with the operator's presence, because
+	// consumers like `settle.proposals` and `fanout.over` read elements
+	// uniformly; the executor (yaah-0u0v.11) and WF023 both rely on this
+	// one answer.
 	//
 	// compileSelector used to drop it (yaah-0u0v.32), which made a filtered
 	// selector silently compare the whole element against the literal.
@@ -88,8 +96,8 @@ type Selector struct {
 
 // MarshalJSON omits an absent predicate so unconditional selectors
 // serialize compactly. A `field:` with no operator is still a predicate
-// clause — an element-wise filter with nothing to compare is the projection
-// the author asked for — so the compact form keys on either half being set.
+// clause — the element-wise retention-filter shorthand pinned in the
+// Predicate.Field doc — so the compact form keys on either half being set.
 func (s *Selector) MarshalJSON() ([]byte, error) {
 	if s == nil {
 		return []byte("null"), nil
