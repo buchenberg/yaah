@@ -116,51 +116,68 @@ func SplitTurn(messages []types.Message, t TurnRange, budget int) int {
 	return -1
 }
 
-// ProtectReasoningTurns ensures compaction does not remove assistant messages
-// that carry reasoning_content. Thinking-mode providers (e.g. DeepSeek) require
-// EVERY reasoning-carrying assistant message to be passed back in every
-// subsequent request. If compaction removes any, the next request gets a 400:
-// "The reasoning_content in the thinking mode must be passed back to the API."
+// ProtectReasoningTurns moves the compaction boundary back so the last
+// protectTurns reasoning-carrying assistant messages stay in the kept tail.
 //
-// protectTurns=0 disables protection entirely (explicit opt-out). Otherwise
-// ALL reasoning-carrying messages in oldMsgs are protected, regardless of
-// the configured count — DeepSeek requires every one.
+// Thinking-mode providers (deepseek-flash, o-series, kimi-thinking) require
+// reasoning_content on every assistant message a request SENDS back, but a
+// request cannot be asked to pass back a message it no longer sends:
+// dropping a whole turn is safe, and every kept assistant message keeps its
+// reasoning verbatim. Protecting ALL historical reasoning instead — the
+// original rule — made compaction a no-op for any provider that reasons on
+// every turn: deepseek-flash does, so the boundary rewound to the oldest
+// reasoning turn every time, oldMsgs stayed empty, trim rebuilt the
+// identical list, and the context grew unbounded while compaction fired
+// every turn (yaah-6a6c). The configured count is the protection window;
+// older reasoning turns are summarized or trimmed like any other history.
+// The recorded 400 is still covered: orphaned tool results are repaired at
+// request time (agent_orphan.go), and a provider that rejects a trimmed
+// history outright hits StripAllReasoning, which drops the thinking-mode
+// contract for the rest of the session.
+//
+// protectTurns=0 disables protection entirely (explicit opt-out).
 func ProtectReasoningTurns(messages []types.Message, keepStart, protectTurns int) int {
-	if protectTurns <= 0 || keepStart <= 1 {
+	if protectTurns <= 0 || keepStart <= 1 || keepStart >= len(messages) {
 		return keepStart
 	}
-	// Only protect reasoning in oldMsgs (messages before keepStart).
-	// Reasoning already in keepMsgs is already preserved by compaction.
-	if idx := EarliestReasoningIndex(messages[:keepStart]); idx > 0 && idx < keepStart {
-		return idx
-	}
-	return keepStart
-}
-
-// EarliestReasoningIndex scans the message slice for assistant messages that
-// carry reasoning_content, finds the earliest (oldest) one, and returns the
-// index of its enclosing user message (or 1 if the user message is at index 0).
-// Returns 0 if no reasoning-carrying messages exist.
-//
-// This is the single source of truth for reasoning-content protection. Every
-// code path that removes messages from the conversation history must ensure
-// it preserves messages from this index onward, or the next request to a
-// thinking-mode provider will fail with a 400 error.
-func EarliestReasoningIndex(messages []types.Message) int {
-	for i := 1; i < len(messages); i++ {
-		if messages[i].Role == "assistant" && messages[i].ReasoningContent != "" {
-			for j := i - 1; j >= 0; j-- {
-				if messages[j].Role == "user" || j == 0 {
-					if j == 0 {
-						return 1
-					}
-					return j
-				}
-			}
-			return i
+	// Reasoning already in the kept tail counts against the window.
+	kept := 0
+	for i := keepStart; i < len(messages); i++ {
+		if isReasoningAssistant(messages[i]) {
+			kept++
 		}
 	}
-	return 0
+	boundary := keepStart
+	// Pull in the nearest reasoning turns still outside the tail until the
+	// window is satisfied. Walking backwards makes the final boundary the
+	// oldest turn pulled in.
+	for i := keepStart - 1; i >= 1 && kept < protectTurns; i-- {
+		if !isReasoningAssistant(messages[i]) {
+			continue
+		}
+		boundary = reasoningTurnStart(messages, i)
+		kept++
+	}
+	return boundary
+}
+
+// isReasoningAssistant reports whether m is an assistant message carrying
+// reasoning_content.
+func isReasoningAssistant(m types.Message) bool {
+	return m.Role == "assistant" && m.ReasoningContent != ""
+}
+
+// reasoningTurnStart returns where the turn containing the assistant message
+// at idx begins: the user message immediately before it when there is one, or
+// the assistant message itself in a tool loop (assistant → tool → assistant),
+// where the only user message is the original prompt far above. Walking back
+// to that prompt would rewind the boundary to the start of the conversation —
+// the yaah-6a6c no-op in its tool-loop form.
+func reasoningTurnStart(messages []types.Message, idx int) int {
+	if idx > 1 && messages[idx-1].Role == "user" {
+		return idx - 1
+	}
+	return idx
 }
 
 // TruncateRunes slices s to at most maxLen runes, preserving head and tail
