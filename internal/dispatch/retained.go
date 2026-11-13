@@ -1660,8 +1660,7 @@ func (r *ProposalRegistry) settleRetainedProposalDefault(ctx context.Context, id
 	// paths: an uncommitted parent edit to an owned path was silent data
 	// loss on the no-conflict path. Content decides, pre-write (yaah-gkll.2).
 	if verb == goatherd.SettleApply {
-		if drifted, derr := p.driftedApplyPaths(ctx); derr == nil && len(drifted) > 0 {
-			sort.Strings(drifted)
+		if drifted := p.driftedApplyPaths(ctx); len(drifted) > 0 {
 			return Settlement{}, &proposalApplyConflict{
 				ProposalID: id,
 				Paths:      drifted,

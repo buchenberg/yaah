@@ -938,11 +938,14 @@ func unionPathLists(a, b []string) []string {
 // on a guess).
 //
 // Applicable where the parent world is a repository on disk — worktree
-// outputs and host-target deltas. Session-target deltas resolve against
-// the session container and keep their sessionChangedSinceBasis guard.
-func (p *retainedProposal) driftedApplyPaths(ctx context.Context) ([]string, error) {
+// outputs and host-target deltas. Where it is not (no repository path),
+// the guard has no content to read and reports nothing: the kernel's own
+// checks remain the authority there. Session-target deltas resolve
+// against the session container and keep their sessionChangedSinceBasis
+// guard.
+func (p *retainedProposal) driftedApplyPaths(ctx context.Context) []string {
 	if p.repoPath == "" {
-		return nil, fmt.Errorf("no repository path")
+		return nil
 	}
 	hints := make(map[string]bool)
 	if drift, err := p.parentDrift(ctx); err == nil {
@@ -968,7 +971,7 @@ func (p *retainedProposal) driftedApplyPaths(ctx context.Context) ([]string, err
 			drifted = append(drifted, rel)
 		}
 	}
-	return drifted, nil
+	return drifted
 }
 
 // writeProposalMarker records a settlement transition inside the artifact
@@ -1173,9 +1176,7 @@ func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retain
 		// the content guard applies too. The session target resolves
 		// against the session container and keeps the diff check alone.
 		if !sessionTarget {
-			if drifted, derr := p.driftedApplyPaths(ctx); derr == nil {
-				guard = unionPathLists(guard, drifted)
-			}
+			guard = unionPathLists(guard, p.driftedApplyPaths(ctx))
 		}
 		if len(guard) > 0 {
 			return Settlement{}, &proposalApplyConflict{

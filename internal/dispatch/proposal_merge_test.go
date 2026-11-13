@@ -669,9 +669,8 @@ func TestDriftedApplyPathsDecidesOnContent(t *testing.T) {
 	}
 
 	// No parent movement: nothing drifted.
-	drifted, err := p.driftedApplyPaths(context.Background())
-	if err != nil || len(drifted) != 0 {
-		t.Fatalf("clean parent: drifted=%v err=%v, want none", drifted, err)
+	if drifted := p.driftedApplyPaths(context.Background()); len(drifted) != 0 {
+		t.Fatalf("clean parent: drifted=%v, want none", drifted)
 	}
 
 	// Same-size parent rewrite of the owned path...
@@ -683,10 +682,7 @@ func TestDriftedApplyPathsDecidesOnContent(t *testing.T) {
 	if _, err := p.parentDrift(context.Background()); err == nil {
 		t.Fatal("fixture expected parentDrift to be unavailable with a nil scope manager")
 	}
-	drifted, err = p.driftedApplyPaths(context.Background())
-	if err != nil {
-		t.Fatalf("guard errored: %v", err)
-	}
+	drifted := p.driftedApplyPaths(context.Background())
 	if !containsPath(drifted, "README.md") {
 		t.Fatalf("guard missed a content drift with the hint unavailable: %v (yaah-610z fail-open)", drifted)
 	}
