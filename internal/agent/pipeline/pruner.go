@@ -424,7 +424,10 @@ func truncateArgument(s string) string {
 
 // excerpt keeps the first pruneHeadLines and last pruneTailLines when the
 // content has enough lines, otherwise a bounded head and tail slice. The
-// byte caps keep a single huge line from defeating the bound.
+// byte caps keep a single huge line from defeating the bound. Edges cut by
+// the byte caps are backed off to whole lines: a fragment at a cut boundary
+// reads as a complete record, and half-cut identifiers pruned out of
+// listings have burned real batch runs (yaah-was9.13).
 func excerpt(content string) string {
 	// Count newlines before splitting: a single huge line is common for
 	// minified JSON and should not allocate a one-element line slice.
@@ -432,9 +435,17 @@ func excerpt(content string) string {
 		return byteExcerpt(content)
 	}
 	lines := strings.Split(content, "\n")
-	omitted := len(lines) - pruneHeadLines - pruneTailLines
-	head := truncateAtRune(strings.Join(lines[:pruneHeadLines], "\n"), pruneHeadBytes)
-	tail := tailAtRune(strings.Join(lines[len(lines)-pruneTailLines:], "\n"), pruneTailBytes)
+	joinedHead := strings.Join(lines[:pruneHeadLines], "\n")
+	head := truncateAtRune(joinedHead, pruneHeadBytes)
+	if len(head) < len(joinedHead) {
+		head = trimToLastLine(head)
+	}
+	joinedTail := strings.Join(lines[len(lines)-pruneTailLines:], "\n")
+	tail := tailAtRune(joinedTail, pruneTailBytes)
+	if len(tail) < len(joinedTail) {
+		tail = trimToFirstLine(tail)
+	}
+	omitted := len(lines) - countLines(head) - countLines(tail)
 	return head + "\n[... " + strconv.Itoa(omitted) + " lines omitted ...]\n" + tail
 }
 
@@ -447,7 +458,44 @@ func byteExcerpt(content string) string {
 	}
 	head := truncateAtRune(content, headLen)
 	tail := tailAtRune(content, tailLen)
+	// Line-align the cuts whenever the content has record structure to
+	// preserve (yaah-was9.13). A single huge line keeps its rune-boundary
+	// cut — there is no whole-line form to back off to.
+	if len(content) > headLen {
+		if idx := strings.LastIndexByte(head, '\n'); idx >= 0 {
+			head = head[:idx]
+		}
+	}
+	if len(content) > tailLen {
+		if idx := strings.IndexByte(tail, '\n'); idx >= 0 {
+			tail = tail[idx+1:]
+		}
+	}
 	return head + "\n[... bytes omitted ...]\n" + tail
+}
+
+// trimToLastLine drops a partial trailing line, keeping only whole lines.
+func trimToLastLine(s string) string {
+	if idx := strings.LastIndexByte(s, '\n'); idx >= 0 {
+		return s[:idx]
+	}
+	return ""
+}
+
+// trimToFirstLine drops a partial leading line, keeping only whole lines.
+func trimToFirstLine(s string) string {
+	if idx := strings.IndexByte(s, '\n'); idx >= 0 {
+		return s[idx+1:]
+	}
+	return ""
+}
+
+// countLines counts the lines in a non-empty excerpt edge.
+func countLines(s string) int {
+	if s == "" {
+		return 0
+	}
+	return strings.Count(s, "\n") + 1
 }
 
 func truncateAtRune(s string, max int) string {

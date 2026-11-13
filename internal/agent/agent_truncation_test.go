@@ -177,3 +177,61 @@ func countFiles(dir string) int {
 	}
 	return len(entries)
 }
+
+// TestTruncateToolResult_singleLineBlobSpillWrapped (yaah-was9.14): a
+// single-line blob (a delegate's JSON envelope, minified output) used to
+// spill as a one-line file the read tool could not page — the recovery hint
+// pointed at a dead end. The spill is now hard-wrapped and the hint says so;
+// joining the lines reconstructs the original bytes.
+func TestTruncateToolResult_singleLineBlobSpillWrapped(t *testing.T) {
+	result := `{"result":"` + strings.Repeat("report line\\n", 3000) + `"}`
+	loop := testLoopWithSpill(t)
+
+	got := loop.truncateToolResult(result)
+
+	if !strings.Contains(got, "line-wrapped for paging") {
+		t.Errorf("hint should announce wrapping, got tail: %q", got[max(0, len(got)-220):])
+	}
+	files, err := os.ReadDir(loop.Config.ToolSpillDir)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("expected one spill file, got %v (err %v)", files, err)
+	}
+	spill, err := os.ReadFile(filepath.Join(loop.Config.ToolSpillDir, files[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(spill), "\n") < 2 {
+		t.Error("spill of a single-line blob should be wrapped into multiple lines")
+	}
+	if joined := strings.ReplaceAll(string(spill), "\n", ""); joined != result {
+		t.Error("joining wrapped spill lines must reconstruct the original bytes")
+	}
+}
+
+// TestTruncateToolResult_multiLineSpillStaysVerbatim: content with real line
+// structure is already pageable and must spill byte-for-byte.
+func TestTruncateToolResult_multiLineSpillStaysVerbatim(t *testing.T) {
+	var sb strings.Builder
+	for i := 0; i < 3000; i++ {
+		sb.WriteString(strings.Repeat("m", 80) + "\n")
+	}
+	result := sb.String()
+	loop := testLoopWithSpill(t)
+
+	got := loop.truncateToolResult(result)
+
+	if strings.Contains(got, "line-wrapped") {
+		t.Error("multi-line content must not be wrapped")
+	}
+	files, err := os.ReadDir(loop.Config.ToolSpillDir)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("expected one spill file, got %v (err %v)", files, err)
+	}
+	spill, err := os.ReadFile(filepath.Join(loop.Config.ToolSpillDir, files[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(spill) != result {
+		t.Error("multi-line spill must be verbatim")
+	}
+}
