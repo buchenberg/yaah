@@ -24,8 +24,18 @@ type Run struct {
 	byPath     map[string]*ir.Node
 	byID       map[string]*ir.Node
 	state      map[string]*NodeState
-	dependents map[string][]string // step id -> paths of the steps that need it
+	dependents map[string][]string // node path -> paths of the nodes that need it
 	params     map[string]any
+
+	// Fan-out instances (yaah-0u0v.14). instances holds every body node one
+	// item minted, keyed by its instance path; instanceOf lists a container's
+	// instance paths in creation order (item order, then body order), which is
+	// the order the result reports; itemInFlight counts in-flight dispatches per
+	// fan-out node path — the nested max_parallel tally, which the global cap
+	// does not replace.
+	instances    map[string]*instance
+	instanceOf   map[string][]string
+	itemInFlight map[string]int
 
 	ready   []string // node paths in canonical order; the launch order
 	current map[string]*Attempt
@@ -66,12 +76,18 @@ type Run struct {
 	status       RunStatus
 	reason       string
 	stopping     bool
+	// closing reports that the run is on its way out. An item that terminates
+	// while the run closes must not close its fan-out: the close is the run's
+	// own answer, and a container declared succeeded mid-teardown would state a
+	// disposition the close never made.
+	closing bool
 }
 
-// New prepares a run over a resolved graph. Only the graph's top-level steps
-// are scheduled here: a body node is entered through its container, and the
-// containers are .14/.15, so a body node is not lifecycle state of this run
-// and is not silently skipped either — the container that owns it refuses.
+// New prepares a run over a resolved graph. Only the graph's top-level steps are
+// scheduled here: a body node is entered through its container, so it becomes
+// lifecycle state only when a fan-out expands into items (yaah-0u0v.14), and
+// until then it is not silently skipped either — the container that owns it
+// answers for it.
 func New(g *ir.Graph, rt Runtime, cfg Config) (*Run, error) {
 	if g == nil {
 		return nil, errors.New("workflow/exec: nil graph")
@@ -84,21 +100,24 @@ func New(g *ir.Graph, rt Runtime, cfg Config) (*Run, error) {
 		return nil, err
 	}
 	r := &Run{
-		cfg:        cfg,
-		rt:         rt,
-		graph:      g,
-		params:     params,
-		byPath:     map[string]*ir.Node{},
-		byID:       map[string]*ir.Node{},
-		state:      map[string]*NodeState{},
-		dependents: map[string][]string{},
-		current:    map[string]*Attempt{},
-		backoff:    map[string]time.Duration{},
-		open:       map[string]string{},
-		claims:     map[string]string{},
-		settled:    map[string]string{},
-		warned:     map[string]bool{},
-		status:     RunRunning,
+		cfg:          cfg,
+		rt:           rt,
+		graph:        g,
+		params:       params,
+		byPath:       map[string]*ir.Node{},
+		byID:         map[string]*ir.Node{},
+		state:        map[string]*NodeState{},
+		dependents:   map[string][]string{},
+		instances:    map[string]*instance{},
+		instanceOf:   map[string][]string{},
+		itemInFlight: map[string]int{},
+		current:      map[string]*Attempt{},
+		backoff:      map[string]time.Duration{},
+		open:         map[string]string{},
+		claims:       map[string]string{},
+		settled:      map[string]string{},
+		warned:       map[string]bool{},
+		status:       RunRunning,
 	}
 	for i, n := range g.Steps {
 		if n == nil {
@@ -128,8 +147,17 @@ func New(g *ir.Graph, rt Runtime, cfg Config) (*Run, error) {
 			MaxAttempts: attemptCeiling(n.Retry),
 		}
 		r.state[n.Path] = st
-		for _, ref := range n.Needs {
-			r.dependents[ref] = append(r.dependents[ref], n.Path)
+	}
+	// The dependency graph is keyed by PATH, and it is built after every id is
+	// registered: an id names a node in the scope it was compiled in, and the
+	// one identity every node and every fan-out instance has is its path.
+	for _, n := range r.nodes {
+		needs, ok := r.needPaths(n)
+		if !ok {
+			continue // a need naming no step strands the node; reach.go reports it as WF004
+		}
+		for _, dep := range needs {
+			r.dependents[dep] = append(r.dependents[dep], n.Path)
 		}
 	}
 	sort.Strings(r.paths)
@@ -240,7 +268,10 @@ func (r *Run) commit(ev Event, external bool) error {
 			ev = e
 		}
 		// Everything that has not terminated is terminated by the close, so
-		// the log cannot claim a finished run with live nodes in it.
+		// the log cannot claim a finished run with live nodes in it. The close
+		// is the run's own answer: mark it, so an item terminating inside the
+		// scan cannot close its fan-out as succeeded on the way out.
+		r.closing = true
 		if err := r.cancelOpen(e.Reason); err != nil {
 			return err
 		}
@@ -278,6 +309,8 @@ func (r *Run) commit(ev Event, external bool) error {
 		return r.onSettlementPlanned(e)
 	case ProposalSettledEvent:
 		return r.onProposalSettled(e)
+	case FanoutExpandedEvent:
+		return r.onFanoutExpanded(e)
 	case BudgetExceededEvent:
 		r.stopping = true
 		r.status = RunBudgetExceeded
@@ -338,30 +371,29 @@ func (r *Run) onNodeReady(e NodeReadyEvent) error {
 // message past it would report a problem the run never had to face.
 func (r *Run) settle(n *ir.Node) error {
 	st := r.state[n.Path]
-	for _, ref := range n.Needs {
-		dep, ok := r.byID[ref]
-		if !ok {
-			// A need that names no step can never terminate. reach.go already
-			// reports the node behind it as WF004; the scheduler leaves it
-			// pending and the run finalizes it as cancelled.
-			continue
-		}
-		switch r.state[dep.Path].State {
-		case StateSkipped:
-			return r.derive(NodeSkippedEvent{
-				NodePath: n.Path,
-				Reason:   ReasonUpstreamSkipped + ": " + dep.Path,
-			})
-		case StateCancelled:
-			return r.derive(NodeCancelledEvent{
-				NodePath: n.Path,
-				Reason:   ReasonUpstreamCancelled + ": " + dep.Path,
-			})
-		case StateFailed:
-			// on_failure: continue on the need is the declaration that the
-			// run proceeds past it. The failure is recorded as an exposed
-			// input so a trace and a later bead see what the node was handed.
-			st.Exposed = append(st.Exposed, dep.Path)
+	// A need that names no step can never terminate. reach.go already reports
+	// the node behind it as WF004; the scheduler leaves it pending and the run
+	// finalizes it as cancelled. A body instance resolves its needs inside its
+	// own item first, which is why the resolution is a call and not a map read.
+	if needs, ok := r.needPaths(n); ok {
+		for _, dep := range needs {
+			switch r.state[dep].State {
+			case StateSkipped:
+				return r.derive(NodeSkippedEvent{
+					NodePath: n.Path,
+					Reason:   ReasonUpstreamSkipped + ": " + dep,
+				})
+			case StateCancelled:
+				return r.derive(NodeCancelledEvent{
+					NodePath: n.Path,
+					Reason:   ReasonUpstreamCancelled + ": " + dep,
+				})
+			case StateFailed:
+				// on_failure: continue on the need is the declaration that the
+				// run proceeds past it. The failure is recorded as an exposed
+				// input so a trace and a later bead see what the node was handed.
+				st.Exposed = append(st.Exposed, dep)
+			}
 		}
 	}
 	if n.When != nil && r.cfg.Guard != nil {
@@ -376,6 +408,14 @@ func (r *Run) settle(n *ir.Node) error {
 	switch action, note := classifyKind(n); action {
 	case kindRefuse:
 		return r.failTerminal(n.Path, note)
+	case kindFanoutStep:
+		// A fan-out node stays ready: it dispatches nothing itself, and its
+		// items become schedulable state when the driver reports the resolved
+		// `over` list through fanout_expanded. Returning here is what keeps the
+		// expansion inside Apply with every other state change, and it is also
+		// why a fan-out whose producer has not terminated costs the run nothing
+		// while it waits.
+		return nil
 	case kindSettleStep:
 		// A settle node stays ready. Its handles may name a producer that has
 		// not terminated yet, and "not yet" is not "nothing": the driver
@@ -410,6 +450,16 @@ func (r *Run) onDispatchStarted(e DispatchStartedEvent) error {
 	// changes.
 	if cap := r.cfg.Limits.MaxConcurrentDispatches; cap > 0 && r.inFlight+1 > cap {
 		return fmt.Errorf("workflow/exec: starting %s would exceed max_concurrent_dispatches=%d", a.DispatchID, cap)
+	}
+	// The nested cap is the same kind of invariant for a fan-out's items: the
+	// container's own max_parallel bounds its in-flight dispatches whether or
+	// not the global cap has room.
+	if inst := r.instances[a.NodePath]; inst != nil {
+		if max := r.itemMaxParallel(a.NodePath); max > 0 && r.itemInFlight[inst.owner]+1 > max {
+			return fmt.Errorf("workflow/exec: starting %s would exceed %s max_parallel=%d",
+				a.DispatchID, inst.owner, max)
+		}
+		r.itemInFlight[inst.owner]++
 	}
 	if a.StartedAt.IsZero() {
 		a.StartedAt = r.rt.Now()
@@ -529,7 +579,13 @@ func (r *Run) onTerminal(path string, to State, reason string, ev Event) error {
 	case NodeFailedEvent:
 		st.Retryable = e.Retryable
 	}
-	return r.release(path)
+	if err := r.release(path); err != nil {
+		return err
+	}
+	// The node's dependents were released first, so a fan-out that closes here
+	// closes onto an already-propagated graph rather than racing its own
+	// downstream nodes.
+	return r.noteItemOutcome(path)
 }
 
 func (r *Run) onNodeCancelled(e NodeCancelledEvent) error {
@@ -554,11 +610,22 @@ func (r *Run) onNodeCancelled(e NodeCancelledEvent) error {
 	// A cancelled need still terminates: join-all releases the dependent, and
 	// the dependent's own propagation rule cancels it. That is how one cancel
 	// walks the graph instead of leaving a pending island.
-	return r.release(e.NodePath)
+	if err := r.release(e.NodePath); err != nil {
+		return err
+	}
+	return r.noteItemOutcome(e.NodePath)
 }
 
 // failTerminal applies the node's own on_failure disposition to a failure that
 // will not be retried.
+//
+// A fan-out ITEM is the exception, and deliberately so: an item's failure
+// disposition belongs to the container's on_item_failure, never to the body
+// node's own on_failure, because the item is one of N and whether N-1 siblings
+// still count is the container's declaration. So an instance's failure is
+// recorded without stopping the run, and noteItemOutcome decides what it means
+// for the fan-out. An author who wrote skip on the body node still gets the
+// skip: that is a statement about the node, not about the container.
 func (r *Run) failTerminal(path, reason string) error {
 	st := r.state[path]
 	switch st.Policy {
@@ -569,6 +636,9 @@ func (r *Run) failTerminal(path, reason string) error {
 	default:
 		if err := r.derive(NodeFailedEvent{NodePath: path, Reason: reason}); err != nil {
 			return err
+		}
+		if r.instances[path] != nil {
+			return nil
 		}
 		r.stopping = true
 		r.status = RunAborted
@@ -581,11 +651,7 @@ func (r *Run) failTerminal(path, reason string) error {
 // declares has terminated. Dependents are visited in canonical path order so
 // the derived events do not depend on map order or on which need finished last.
 func (r *Run) release(path string) error {
-	id := r.byPath[path].ID
-	if id == "" {
-		return nil
-	}
-	for _, dep := range r.dependents[id] {
+	for _, dep := range r.dependents[path] {
 		if r.state[dep].State != StatePending {
 			continue
 		}
@@ -599,17 +665,47 @@ func (r *Run) release(path string) error {
 	return nil
 }
 
+// allNeedsTerminal reports whether every need of one node has terminated.
 func (r *Run) allNeedsTerminal(path string) bool {
-	for _, ref := range r.byPath[path].Needs {
-		dep, ok := r.byID[ref]
-		if !ok {
-			return false
-		}
-		if !r.state[dep.Path].State.Terminal() {
+	needs, ok := r.needPaths(r.byPath[path])
+	if !ok {
+		return false
+	}
+	for _, dep := range needs {
+		st := r.state[dep]
+		if st == nil || !st.State.Terminal() {
 			return false
 		}
 	}
 	return true
+}
+
+// needPaths resolves a node's declared needs to the paths that must terminate
+// first. A need names a step id in the node's own scope: a top-level node's
+// needs name top-level ids, and a fan-out instance's needs name its item's
+// body-local ids FIRST and top-level ids second, which is the shadowing rule
+// ir.resolveBody's child scope applies at compile time. ok is false when a need
+// resolves to nothing, which strands the node exactly as it always has.
+func (r *Run) needPaths(n *ir.Node) ([]string, bool) {
+	if n == nil || len(n.Needs) == 0 {
+		return nil, true
+	}
+	inst := r.instances[n.Path]
+	out := make([]string, 0, len(n.Needs))
+	for _, ref := range n.Needs {
+		if inst != nil {
+			if p, ok := inst.locals[ref]; ok {
+				out = append(out, p)
+				continue
+			}
+		}
+		dep, ok := r.byID[ref]
+		if !ok {
+			return nil, false
+		}
+		out = append(out, dep.Path)
+	}
+	return out, true
 }
 
 // retire frees the node's in-flight slot. It is idempotent because a terminal
@@ -626,6 +722,13 @@ func (r *Run) retire(path string) {
 	}
 	r.inFlight--
 	delete(r.current, path)
+	if inst := r.instances[path]; inst != nil {
+		if n := r.itemInFlight[inst.owner]; n > 1 {
+			r.itemInFlight[inst.owner] = n - 1
+		} else {
+			delete(r.itemInFlight, inst.owner)
+		}
+	}
 }
 
 func (r *Run) finishAttempt(a *Attempt, e AttemptCompletedEvent) {
@@ -705,9 +808,11 @@ func (r *Run) dropReady(path string) {
 
 // cancelOpen terminates every node that has not, in canonical order, when the
 // run closes. The reason is carried onto each node so a trace can tell a node
-// the author skipped from a node the run never got to.
+// the author skipped from a node the run never got to. Fan-out instances are in
+// the scan: an instance left pending would otherwise outlive the run in the
+// result with no disposition at all.
 func (r *Run) cancelOpen(reason string) error {
-	for _, p := range r.paths {
+	for _, p := range r.allPaths() {
 		st := r.state[p]
 		if st.State.Terminal() {
 			continue
@@ -742,10 +847,11 @@ func (r *Run) Result() Result {
 		}
 		out.Elapsed = end.Sub(r.startedAt)
 	}
-	for _, p := range r.paths {
+	for _, p := range r.allPaths() {
 		st := *r.state[p]
 		st.Attempts = append([]*Attempt(nil), r.state[p].Attempts...)
 		st.Outputs = append([]NodeOutput(nil), r.state[p].Outputs...)
+		st.Items = append([]FanoutItem(nil), r.state[p].Items...)
 		out.Nodes = append(out.Nodes, &st)
 		// Run-level outputs are every node's bindings in canonical node-path
 		// order, so the list is reproducible and needs no map to read.

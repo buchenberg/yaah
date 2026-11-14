@@ -77,6 +77,13 @@ func (r *Run) Advance(ctx context.Context) (bool, error) {
 	if settling, serr := r.settleStepOnce(ctx); settling {
 		return true, serr
 	}
+	// Then the fan-out door: one expansion per cycle, after the settle cycle so
+	// a ready settlement still gets its own place in the log. An expansion
+	// dispatches nothing itself, so it appears nowhere in the dispatch tally
+	// this cycle would otherwise consult.
+	if expanding, eerr := r.fanoutStepOnce(); expanding {
+		return true, eerr
+	}
 	if len(r.outstanding) == 0 {
 		// Nothing running and nothing startable: the part of the graph this run
 		// can reach has terminated, and anything still pending is stranded
@@ -243,6 +250,9 @@ func (r *Run) anyCompleted() bool {
 // context already ended still owes every open attempt its Cancel call —
 // abandoning teardown halfway would orphan real dispatches.
 func (r *Run) stop(status RunStatus, reason string) error {
+	// The run is on its way out from here on: cancelling an item is not an
+	// outcome its fan-out may fold into a success.
+	r.closing = true
 	for _, a := range append([]*Attempt(nil), r.outstanding...) {
 		var cancelErr string
 		if err := r.rt.Cancel(a.Handle); err != nil {
@@ -273,15 +283,21 @@ func (r *Run) slotFree() bool {
 	return r.inFlight < cap
 }
 
-// nextStartable returns the first ready node the kind switch dispatches. The
-// ready queue is kept sorted by node path, so this is canonical rather than
-// insertion-ordered: two runs of the same graph with the needs declared in a
-// different order still start the same node first.
+// nextStartable returns the first ready node the kind switch dispatches AND
+// whose fan-out has room under its own max_parallel. The ready queue is kept
+// sorted by node path, so this is canonical rather than insertion-ordered: two
+// runs of the same graph with the needs declared in a different order still
+// start the same node first, and an item throttled by its fan-out's nested cap
+// is skipped for the next startable node rather than blocking the run.
 func (r *Run) nextStartable() (string, bool) {
 	for _, p := range r.ready {
-		if dispatched(r.byPath[p]) {
-			return p, true
+		if !dispatched(r.byPath[p]) {
+			continue
 		}
+		if !r.itemSlotFree(p) {
+			continue
+		}
+		return p, true
 	}
 	return "", false
 }
@@ -316,17 +332,20 @@ func (r *Run) deadline() time.Time {
 
 // disposition computes the run's status once nothing is left to schedule. The
 // scan is over canonical node order so the answer, and the reason naming it,
-// never depend on map order.
+// never depend on map order. Fan-out items are scanned too: an item that ended
+// failed under on_item_failure: continue is the same fact as a node that ended
+// failed under on_failure: continue — work was lost and the run drains with the
+// loss stated rather than reporting success over it.
 func (r *Run) disposition() RunStatus {
 	if r.stopping {
 		return r.status
 	}
-	for _, p := range r.paths {
+	for _, p := range r.allPaths() {
 		if r.state[p].State == StateFailed {
 			return RunFailed
 		}
 	}
-	for _, p := range r.paths {
+	for _, p := range r.allPaths() {
 		if r.state[p].State == StateCancelled {
 			return RunCancelled
 		}
@@ -338,9 +357,9 @@ func (r *Run) dispositionReason() string {
 	if r.stopping {
 		return r.reason
 	}
-	for _, p := range r.paths {
+	for _, p := range r.allPaths() {
 		if r.state[p].State == StateFailed {
-			return p + ": on_failure: continue exposed the failure — " + r.state[p].Reason
+			return r.exposedFailureReason(p)
 		}
 	}
 	if stranded := r.unresolved(); stranded > 0 {
@@ -349,15 +368,47 @@ func (r *Run) dispositionReason() string {
 	return "all nodes terminated"
 }
 
+// exposedFailureReason states why one failed node is a run-level failure rather
+// than an abort. The two cases are different declarations, and the reason says
+// which one was made.
+func (r *Run) exposedFailureReason(path string) string {
+	if inst := r.instances[path]; inst != nil {
+		return path + ": fan-out item failed under on_item_failure: " + itemFailureString(r.byPath[inst.owner]) +
+			" — " + r.state[path].Reason
+	}
+	return path + ": on_failure: continue exposed the failure — " + r.state[path].Reason
+}
+
 // unresolved counts nodes that never reached a terminal state.
 func (r *Run) unresolved() int {
 	var n int
-	for _, p := range r.paths {
+	for _, p := range r.allPaths() {
 		if !r.state[p].State.Terminal() {
 			n++
 		}
 	}
 	return n
+}
+
+// allPaths returns every node path this run holds in result order: a top-level
+// node in canonical order, each followed by the instances its fan-out items
+// created (and, recursively, theirs). It is the one iteration order every
+// whole-run scan uses — the close, the disposition, the scope, and the result —
+// so a graph yields one order everywhere and no scan can quietly miss an
+// instance.
+func (r *Run) allPaths() []string {
+	out := make([]string, 0, len(r.paths)+len(r.instances))
+	var emit func(path string)
+	emit = func(path string) {
+		out = append(out, path)
+		for _, ip := range r.instanceOf[path] {
+			emit(ip)
+		}
+	}
+	for _, p := range r.paths {
+		emit(p)
+	}
+	return out
 }
 
 // snapshot builds the immutable run-state view one attempt is dispatched
@@ -368,20 +419,36 @@ func (r *Run) snapshot(path string, attempt int) ir.Scope {
 		attempt: attempt,
 		params:  r.params,
 		outputs: map[string]any{},
+		collect: map[string]any{},
+		ids:     map[string]string{},
 	}
-	for _, p := range r.paths {
+	for _, p := range r.allPaths() {
 		st := r.state[p]
 		n := r.byPath[p]
-		if n.ID == "" || st.State != StateSucceeded {
+		if n == nil || st.State != StateSucceeded {
 			continue
 		}
 		// The recorded value is the node's own typed value, not only its text:
 		// a proposal-lane delegate answers for `steps.<id>.output.proposal_id`,
-		// a structured Report for `steps.<id>.output.<field>`, and a settle for
-		// `steps.<id>.output.settled`. Run.stepValue is the one place those
-		// readings are decided, so a template and a settlement handle can
-		// never disagree about what the same step produced.
-		s.outputs[n.ID] = r.stepValue(n, st)
+		// a structured Report for `steps.<id>.output.<field>`, a settle for
+		// `steps.<id>.output.settled`, and a fan-out for its collected items.
+		// Run.stepValue is the one place those readings are decided, so a
+		// template and a settlement handle can never disagree about what the
+		// same step produced.
+		s.outputs[p] = r.stepValue(n, st)
+		// Only a top-level step id is reachable by `steps.<id>`: an instance's
+		// id is body-local, so two items can share one and only the item's own
+		// scope may resolve it (locals, below).
+		if n.ID != "" && r.instances[p] == nil {
+			s.ids[n.ID] = p
+		}
+		if n.Kind == ir.KindFanout && n.Collect != "" {
+			s.collect[p] = st.Collect
+		}
+	}
+	if inst := r.instances[path]; inst != nil {
+		s.locals = inst.locals
+		s.items = r.itemBindings(path)
 	}
 	return s
 }

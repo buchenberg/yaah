@@ -138,7 +138,12 @@ func resolveNode(in *spec.Node, path string, lex *lexscope, topIDs map[string]bo
 		TimeoutSeconds: in.TimeoutSeconds,
 	}
 	for _, ref := range in.Needs {
-		if !topIDs[ref] {
+		// A need names a step id in the node's lexical scope: a top-level id,
+		// or — for a container body — an earlier body-local id. lex.steps holds
+		// every visible id at this point (all top-level ids are registered
+		// up-front, and resolveBody registers each body-local id before its
+		// later siblings resolve), so it is the one authority for both.
+		if _, ok := lex.steps[ref]; !ok {
 			return nil, resolveErrf(path+".needs", "unknown step id %q", ref)
 		}
 		n.Needs = append(n.Needs, ref)

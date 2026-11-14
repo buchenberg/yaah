@@ -33,6 +33,12 @@ const (
 	// what either means for the node and the run.
 	EventSettlementPlanned EventKind = "settlement_planned"
 	EventProposalSettled   EventKind = "proposal_settled"
+	// EventFanoutExpanded reports the item list one fan-out node resolved from
+	// its declared `over` source (yaah-0u0v.14). It is the fan-out's answer to
+	// the same question a settlement plan answers — what work does this node own
+	// — and like the plan it is an input: the reducer instantiates the item
+	// instances, and owns everything that follows.
+	EventFanoutExpanded EventKind = "fanout_expanded"
 )
 
 // derived reports whether only the reducer may emit a kind. The split is the
@@ -211,6 +217,25 @@ type ProposalSettledEvent struct {
 func (ProposalSettledEvent) Kind() EventKind  { return EventProposalSettled }
 func (e ProposalSettledEvent) target() string { return e.NodePath }
 
+// FanoutExpandedEvent reports the items a fan-out node resolved from its
+// declared `over` source. The reducer instantiates one body instance per item
+// and owns what follows: which instance may start, the fan-out's nested
+// max_parallel, the join, and the collected value. Refusal carries a reason the
+// reducer turns into the node's terminal state — an `over` source this run
+// cannot read, or a body with nothing to run — so even a refusal changes state
+// only inside Apply.
+type FanoutExpandedEvent struct {
+	NodePath string
+	// Items are the resolved `over` elements in input order. The reducer mints
+	// one item per element, in this order, and the collected value is assembled
+	// in the same order however the dispatches interleave.
+	Items   []any
+	Refusal string
+}
+
+func (FanoutExpandedEvent) Kind() EventKind  { return EventFanoutExpanded }
+func (e FanoutExpandedEvent) target() string { return e.NodePath }
+
 // BudgetExceededEvent records that a declared ceiling was reached. Axis and
 // Limit are the same strings Limits documents, so a reader never has to map
 // an enum to find out what ran out.
@@ -311,6 +336,12 @@ func detail(ev Event) string {
 		}
 		if e.Refused != "" {
 			out += " refused=" + flatten(e.Refused)
+		}
+		return out
+	case FanoutExpandedEvent:
+		out := fmt.Sprintf("%s count=%d", e.NodePath, len(e.Items))
+		if e.Refusal != "" {
+			out += " refusal=" + flatten(e.Refusal)
 		}
 		return out
 	case BudgetExceededEvent:
