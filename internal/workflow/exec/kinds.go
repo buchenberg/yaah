@@ -1,6 +1,10 @@
 package exec
 
-import "github.com/buchenberg/yaah/internal/workflow/ir"
+import (
+	"strconv"
+
+	"github.com/buchenberg/yaah/internal/workflow/ir"
+)
 
 // Terminal reasons. The scheduler states a cause for every node it ends in a
 // non-success state; an unexplained terminal node is a bug in this package.
@@ -112,15 +116,27 @@ func classifyKind(n *ir.Node) (kindAction, string) {
 	case ir.KindFanout:
 		// join is decided here rather than at expansion: a join this core cannot
 		// honor means the node may not run at all, and saying so before the
-		// first item dispatches is the honest order. Only join: all executes —
-		// any and quorum change how many items must succeed, and approximating
-		// them with all would overstate what the run proved.
-		switch n.Join {
-		case "", ir.JoinAll:
+		// first item dispatches is the honest order. All three joins execute as
+		// of yaah-0u0v.19 — all closes on its last item, any on the first
+		// success, quorum on the Nth — and what can be refused at declaration
+		// time is a quorum that is not a usable count. The other half of the
+		// quorum bound (it cannot exceed the item count) needs the resolved item
+		// list, so the driver states that one at expansion.
+		switch joinKind(n) {
+		case ir.JoinAll, ir.JoinAny:
+			return kindFanoutStep, ""
+		case ir.JoinQuorum:
+			if n.Quorum == nil {
+				return kindRefuse, ReasonFanoutQuorumInvalid + ": " + n.Path +
+					" declares join: quorum with no quorum count; a quorum is at least 1 and at most the item count"
+			}
+			if *n.Quorum < 1 {
+				return kindRefuse, ReasonFanoutQuorumInvalid + ": " + n.Path +
+					" declares quorum: " + strconv.Itoa(*n.Quorum) + "; a quorum is at least 1"
+			}
 			return kindFanoutStep, ""
 		}
-		return kindRefuse, ReasonNotImplemented + ": join " + string(n.Join) +
-			" is yaah-0u0v.19; only join: all executes in the scheduler core"
+		return kindRefuse, ReasonUnknownKind + ": fan-out join " + string(n.Join)
 	case ir.KindLoop:
 		// A loop with no bound has no number to iterate to: WF034 already reports
 		// the declaration, and a deterministic core that invented a ceiling would be

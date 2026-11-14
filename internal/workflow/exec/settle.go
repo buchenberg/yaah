@@ -308,11 +308,20 @@ func (r *Run) onSettlementAsked(e SettlementAskedEvent) error {
 	if st == nil {
 		return fmt.Errorf("workflow/exec: settlement_asked for unknown node %q", e.NodePath)
 	}
+	if st.SettlePlan == nil {
+		// A join:any|quorum container disposes of the proposals its NON-winning
+		// items sealed, through this same door and the discard verb
+		// (yaah-0u0v.19). The check precedes the state guard because that
+		// container is TERMINAL by design: the join was decided before the
+		// residue was known. It keeps the same write-ahead record a settle node
+		// does, so a resume can tell "asked, outcome unknown" from "never asked".
+		if n := r.byPath[e.NodePath]; n != nil && n.Kind == ir.KindFanout && cancelJoin(n) {
+			return r.onJoinDiscardAsked(e.NodePath, st, e)
+		}
+		return fmt.Errorf("workflow/exec: settlement_asked for node %s with no planned settlement", e.NodePath)
+	}
 	if st.State != StateReady {
 		return fmt.Errorf("workflow/exec: settlement_asked for node %s in state %s", e.NodePath, st.State)
-	}
-	if st.SettlePlan == nil {
-		return fmt.Errorf("workflow/exec: settlement_asked for node %s with no planned settlement", e.NodePath)
 	}
 	if st.Asked != "" {
 		return fmt.Errorf("workflow/exec: settlement_asked for node %s while proposal %s is still unanswered",
@@ -334,6 +343,9 @@ func (r *Run) onProposalSettled(e ProposalSettledEvent) error {
 		return fmt.Errorf("workflow/exec: proposal_settled for unknown node %q", e.NodePath)
 	}
 	if st.SettlePlan == nil {
+		if n := r.byPath[e.NodePath]; n != nil && n.Kind == ir.KindFanout && cancelJoin(n) {
+			return r.onJoinDiscardSettled(e.NodePath, st, e)
+		}
 		return fmt.Errorf("workflow/exec: proposal_settled for node %s with no planned settlement", e.NodePath)
 	}
 	if st.State != StateReady {

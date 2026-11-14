@@ -207,6 +207,22 @@ type NodeState struct {
 	Items    []FanoutItem
 	Collect  []any
 
+	// Winners is the item set a join:any|quorum container closed on
+	// (yaah-0u0v.19): the first success under any, the first N under quorum, in
+	// item order. It is the fixed answer to "which items the run collected", so
+	// Collect holds exactly these items' values and a result that arrives after
+	// the close is recorded on its own item without widening either. Empty for
+	// join: all, which never decides on a tally.
+	Winners []int
+	// Discards is the dispositions the run obtained for proposals a NON-WINNING
+	// item of this container sealed (yaah-0u0v.19). Each one went through the
+	// door's settlement path with the discard verb — the same path a settle node
+	// uses — because work the join cancelled must not leave a proposal (or its
+	// worktree) standing. A record whose settlement did not land keeps the
+	// proposal in the run's open ledger, so the close states the residue instead
+	// of asking a second time.
+	Discards []Settled
+
 	// Iterations is a loop node's own ledger (yaah-0u0v.15): one record per
 	// iteration, in iteration order, folded from the iteration's instance states
 	// as they all terminate. Collect accumulates each SUCCEEDED iteration's

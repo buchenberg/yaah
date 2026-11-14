@@ -333,9 +333,35 @@ func Resume(g *ir.Graph, rt Runtime, cfg Config, cp Checkpoint) (*Run, error) {
 	// discharged NOW, before any further work: asking again is the one thing this
 	// bead exists to prevent. The failure leaves the proposal open, so the run
 	// cannot report success over it.
+	//
+	// A join:any|quorum container's discard (yaah-0u0v.19) is the same fact seen
+	// from an already-terminated node: the container's outcome is final and cannot
+	// be re-decided, so the unknown outcome is recorded on its ledger, the ask is
+	// cleared, and the proposal stays open — which keeps the run from reporting
+	// success over it while never asking for one disposition twice.
 	for _, p := range r.allPaths() {
 		st := r.state[p]
-		if st.State != StateReady || st.Asked == "" {
+		if st.Asked == "" {
+			continue
+		}
+		if st.State != StateReady {
+			// Only a decided join container discharges its unanswered discard
+			// into Discards: that field's contract is join residue. A settle
+			// node interrupted after its ask keeps its prior handling — the ask
+			// is left set and the run that cancelled it reports the open
+			// proposal through the ledger, never by re-asking.
+			if n := r.byPath[p]; n != nil && n.Kind == ir.KindFanout && cancelJoin(n) {
+				r.warnOnce("join-discard-unknown:"+p, fmt.Sprintf(
+					"%s: a discard of proposal %s was asked for before the run stopped and the door never reported an outcome; refusing to ask a second time (a proposal has exactly one disposition), so the proposal stays open",
+					p, st.Asked))
+				st.Discards = append(st.Discards, Settled{
+					ProposalID: st.Asked,
+					Status:     ReasonSettlementInterrupted,
+					Error:      "asked for before the run stopped; the door never answered",
+					LeftOpen:   true,
+				})
+				st.Asked = ""
+			}
 			continue
 		}
 		if err := r.failTerminal(p, fmt.Sprintf("%s: proposal %s was asked for before the run stopped and the door never reported an outcome; refusing to ask a second time (a proposal has exactly one disposition)",
@@ -522,7 +548,9 @@ func copyNodeState(st *NodeState) *NodeState {
 	out.Exposed = append([]string(nil), st.Exposed...)
 	out.Outputs = append([]NodeOutput(nil), st.Outputs...)
 	out.Settled = append([]Settled(nil), st.Settled...)
+	out.Discards = append([]Settled(nil), st.Discards...)
 	out.Items = append([]FanoutItem(nil), st.Items...)
+	out.Winners = append([]int(nil), st.Winners...)
 	out.Iterations = append([]LoopIteration(nil), st.Iterations...)
 	out.Collect = append([]any(nil), st.Collect...)
 	return &out

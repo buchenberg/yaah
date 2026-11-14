@@ -276,6 +276,12 @@ func (r *Run) fanoutStepOnce() (bool, error) {
 		if deferred {
 			continue
 		}
+		if refusal == "" {
+			// A quorum above the item count is a declaration the resolved list has
+			// already disproved, so it is refused here — where both are known — and
+			// before the first item dispatches (yaah-0u0v.19).
+			refusal = quorumRefusal(n, len(items))
+		}
 		return true, r.Apply(FanoutExpandedEvent{NodePath: p, Items: items, Refusal: refusal})
 	}
 	return false, nil
@@ -484,6 +490,14 @@ func (r *Run) onFanoutExpanded(e FanoutExpandedEvent) error {
 		}
 	}
 	if len(st.Items) == 0 {
+		// Zero items is the honest empty answer for join: all — "all of them" is
+		// vacuously true — but not for a join that needs a success: any and quorum
+		// have nothing to collect and no item can ever supply one, so the container
+		// says so rather than reporting a success nobody won (yaah-0u0v.19).
+		if cancelJoin(n) {
+			return r.failTerminal(n.Path, ReasonFanoutJoinUnmet+": "+n.Path+
+				" over resolved to zero items and join "+joinLabel(n)+" needs at least one success")
+		}
 		r.warnOnce("fanout-empty:"+n.Path, n.Path+": over resolved to zero items; the fan-out closes with an empty collect")
 		return r.closeFanout(n, st)
 	}
@@ -544,7 +558,20 @@ func (r *Run) noteItemOutcome(path string) error {
 	}
 	f := r.byPath[inst.owner]
 	st := r.state[inst.owner]
-	if f == nil || st == nil || st.State != StateReady {
+	if f == nil || st == nil {
+		return nil
+	}
+	if st.State != StateReady {
+		// A join:any|quorum container that has already terminated still owns the
+		// ledger of its items: an item that terminates now — drained after the join
+		// was decided, or cancelled by it — is folded into the item record so the
+		// result states what the work did, and never into the container's value or
+		// outcome (yaah-0u0v.19).
+		if f.Kind == ir.KindFanout && cancelJoin(f) && st.State.Terminal() && len(st.Items) > inst.item {
+			if it := &st.Items[inst.item]; it.State == StatePending && r.scopeTerminal(it.Paths) {
+				r.itemOutcome(it)
+			}
+		}
 		return nil
 	}
 	switch f.Kind {
@@ -553,7 +580,12 @@ func (r *Run) noteItemOutcome(path string) error {
 	case ir.KindAggregate:
 		return r.noteAggregateInstance(f, st)
 	case ir.KindFanout:
-		// handled below
+		if cancelJoin(f) {
+			// any and quorum decide on a COUNT of item successes, not on the last
+			// item terminating, and an item failure is one of the M that did not
+			// deliver rather than a stop condition.
+			return r.noteJoinItem(f, st)
+		}
 	default:
 		return nil
 	}
