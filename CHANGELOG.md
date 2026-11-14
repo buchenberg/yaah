@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.188.0](https://github.com/buchenberg/yaah/compare/v0.187.0...v0.188.0) (2026-11-14)
+
+
+### Features
+
+* **workflow:** gate node with deterministic assert and judge (yaah-0u0v.21) ([#1660](https://github.com/buchenberg/yaah/issues/1660)) ([bfd8441](https://github.com/buchenberg/yaah/commit/bfd8441cd41aa591fec895f2929c76fff63f102f))
+
 ## [0.187.0](https://github.com/buchenberg/yaah/compare/v0.186.0...v0.187.0) (2026-11-14)
 
 
