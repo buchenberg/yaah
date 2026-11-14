@@ -265,7 +265,7 @@ func classifyGate(n *ir.Node) (kindAction, string) {
 		}
 		return kindGateStep, ""
 	}
-	if strings.TrimSpace(n.Judge.Role) == "" || n.Judge.Prompt == nil {
+	if strings.TrimSpace(n.Judge.Role) == "" || n.Judge.Prompt == nil || strings.TrimSpace(n.Judge.Prompt.Raw) == "" {
 		return kindRefuse, ReasonGateJudgeMissing + ": " + n.Path +
 			" declares a judge with no role or no prompt, so nobody is named to decide"
 	}

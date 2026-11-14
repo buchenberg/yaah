@@ -185,6 +185,12 @@ func TestGateConditions(t *testing.T) {
 			msg:   "no prompt",
 		},
 		{
+			name:  "judge with a blank prompt",
+			steps: "  steps:\n    - id: g\n      kind: gate\n      judge: {role: developer, prompt: \"   \"}\n",
+			want:  "steps.g.judge.prompt",
+			msg:   "no prompt",
+		},
+		{
 			name:  "clean assert gate",
 			steps: "  steps:\n    - {id: a, kind: delegate, role: developer, prompt: hi}\n    - {id: g, kind: gate, assert: {name: nonempty, args: {from: a}}}\n",
 		},

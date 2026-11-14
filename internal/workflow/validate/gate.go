@@ -44,7 +44,7 @@ func gateConditions(g *ir.Graph) []Diagnostic {
 			continue
 		}
 		if n.Assert == nil {
-			if n.Judge.Prompt == nil {
+			if n.Judge.Prompt == nil || strings.TrimSpace(n.Judge.Prompt.Raw) == "" {
 				out = append(out, diag(CodeWF037, n.Path+".judge.prompt",
 					"declares a judge with no prompt, so nobody is told what verdict to reach"))
 			}

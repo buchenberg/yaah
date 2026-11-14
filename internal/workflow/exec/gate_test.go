@@ -279,6 +279,11 @@ func TestGateRefusals(t *testing.T) {
 				Judge: &ir.Judge{Prompt: &ir.Template{}}},
 			ReasonGateJudgeMissing,
 		},
+		{
+			"judge-empty-prompt", ir.Node{Path: "steps.g", Kind: ir.KindGate,
+				Judge: &ir.Judge{Role: "developer", Prompt: &ir.Template{Raw: "   "}}},
+			ReasonGateJudgeMissing,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
