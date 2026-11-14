@@ -1,6 +1,7 @@
 package exec
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -18,6 +19,21 @@ type Run struct {
 	cfg   Config
 	rt    Runtime
 	graph *ir.Graph
+	// specHash and specPath are the document identity this run was started
+	// from, carried so every checkpoint states which spec the state belongs to
+	// (yaah-0u0v.16). Both are informational to the scheduler: the hash is
+	// compared at Resume, by the caller that already resolved a graph.
+	specHash string
+	specPath string
+	// persisted counts the event log lines the Store has already recorded. It
+	// is the high-water mark that keeps a checkpoint from re-writing the whole
+	// log on every event.
+	persisted int
+	// ctx is the context the driver was entered with, used only for store
+	// writes made from inside Apply. A store write races nothing and outlives no
+	// run, but it does need a context, and Apply — the reducer's one mutator —
+	// has none of its own by design.
+	ctx context.Context
 
 	nodes      []*ir.Node
 	paths      []string // every top-level node path, sorted: the canonical order
@@ -73,6 +89,9 @@ type Run struct {
 	seq      int
 	started  bool
 	finished bool
+	// resumed reports that the run was rebuilt from a checkpoint, which may
+	// happen once per Run (yaah-0u0v.16).
+	resumed bool
 
 	dispatches   int
 	inFlight     int
@@ -183,6 +202,8 @@ func New(g *ir.Graph, rt Runtime, cfg Config) (*Run, error) {
 	if r.runID == "" {
 		r.runID = "workflow:" + g.Name
 	}
+	r.specHash = cfg.SpecHash
+	r.specPath = cfg.SpecPath
 	// A guard the run cannot ask about is a fact the caller should not have to
 	// infer from a node that ran anyway.
 	for _, p := range r.paths {
@@ -252,8 +273,19 @@ func nodeTimeout(n *ir.Node) time.Duration {
 // node_ready, node_succeeded, node_failed, node_skipped, retry_scheduled —
 // are rejected here, because submitting a conclusion is how a parallel state
 // view gets built.
+//
+// When a Store is configured, the checkpoint is written HERE, after the event is
+// folded and before Apply returns (yaah-0u0v.16). That ordering is the whole
+// idempotency argument: no attempt, proposal handle, or disposition can become
+// visible to a resume without being durable first, so a run that stops at any
+// boundary resumes from exactly the state it had committed. A store write fails
+// the event: a run whose state cannot be recorded must not advance, because the
+// next step would then re-do work the record does not know about.
 func (r *Run) Apply(ev Event) error {
-	return r.commit(ev, true)
+	if err := r.commit(ev, true); err != nil {
+		return err
+	}
+	return r.checkpoint()
 }
 
 func (r *Run) commit(ev Event, external bool) error {
@@ -302,6 +334,8 @@ func (r *Run) commit(ev Event, external bool) error {
 	switch e := ev.(type) {
 	case RunStartedEvent:
 		return r.onRunStarted(e)
+	case RunResumedEvent:
+		return r.onRunResumed(e)
 	case NodeReadyEvent:
 		return r.onNodeReady(e)
 	case DispatchStartedEvent:
@@ -320,6 +354,8 @@ func (r *Run) commit(ev Event, external bool) error {
 		return r.onNodeCancelled(e)
 	case SettlementPlannedEvent:
 		return r.onSettlementPlanned(e)
+	case SettlementAskedEvent:
+		return r.onSettlementAsked(e)
 	case ProposalSettledEvent:
 		return r.onProposalSettled(e)
 	case FanoutExpandedEvent:
@@ -528,6 +564,14 @@ func (r *Run) onAttemptCompleted(e AttemptCompletedEvent) error {
 			// Start itself failed: nothing was dispatched, so there is no
 			// attempt to record and no envelope to read. A broken door is not
 			// a retryable dispatch — retrying through it would loop.
+			r.retire(e.NodePath)
+			return r.failTerminal(e.NodePath, ReasonRuntimeError+": "+e.RuntimeError)
+		}
+		if st.State == StateRunning {
+			// The attempt intent was persisted before the door was asked, and
+			// the door refused (backoff or start). Close the recorded attempt
+			// as a terminal runtime error; no envelope ever came back, so there
+			// is no completion to fold.
 			r.retire(e.NodePath)
 			return r.failTerminal(e.NodePath, ReasonRuntimeError+": "+e.RuntimeError)
 		}

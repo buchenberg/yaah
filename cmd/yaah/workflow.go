@@ -69,6 +69,7 @@ The --json report shapes are stable within v1 and documented as JSON Schema:
 	cmd.AddCommand(newWorkflowValidateCmd())
 	cmd.AddCommand(newWorkflowExplainCmd())
 	cmd.AddCommand(newWorkflowRunCmd())
+	cmd.AddCommand(newWorkflowResumeCmd())
 	return cmd
 }
 

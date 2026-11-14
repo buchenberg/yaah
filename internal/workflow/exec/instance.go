@@ -84,6 +84,7 @@ func (r *Run) instantiateBody(n *ir.Node, plan instancePlan) (paths []string, un
 			item:   plan.item,
 			bound:  plan.bound,
 			name:   plan.name,
+			body:   b.Path,
 			locals: locals,
 		}
 		r.state[ip] = &NodeState{

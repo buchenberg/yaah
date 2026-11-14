@@ -14,6 +14,7 @@ import (
 // virtual clock, a host observing progress between dispatches — can drive
 // Advance itself and read State at any point.
 func (r *Run) Execute(ctx context.Context) (Result, error) {
+	r.ctx = ctx
 	for !r.finished {
 		progressed, err := r.Advance(ctx)
 		if err != nil {
@@ -43,6 +44,12 @@ func (r *Run) Execute(ctx context.Context) (Result, error) {
 // door, and submits the resulting event — which is why the same sequence comes
 // out of a real adapter and a scripted fake.
 func (r *Run) Advance(ctx context.Context) (bool, error) {
+	// Every event Apply folds is persisted under this context: the driver is the
+	// only entry point into the reducer, and a checkpoint must be cancellable
+	// with the run it belongs to (yaah-0u0v.16).
+	if ctx != nil {
+		r.ctx = ctx
+	}
 	if r.finished {
 		return false, nil
 	}
@@ -154,10 +161,22 @@ func (r *Run) startReady(ctx context.Context) (bool, error) {
 		StartedAt:  r.rt.Now(),
 	}
 	if wait := r.backoff[path]; wait > 0 {
+		a.Backoff = wait
+	}
+	// Persist the intent before the door is asked. A crash after this
+	// checkpoint but before Runtime.Start leaves the attempt recorded as
+	// in-flight, so a resume re-dispatches it under a fresh number instead of
+	// re-minting the id the door already saw. This is the write-ahead half of
+	// resume idempotency: the record is the authority, and the door is a
+	// side effect performed only after the record says it was intended.
+	if err := r.Apply(DispatchStartedEvent{Attempt: a}); err != nil {
+		return true, err
+	}
+	if a.Backoff > 0 {
 		// The delay is honored through the door, so a fake advances a virtual
 		// clock and a test never sleeps. A backoff that fails is a door
-		// malfunction on a node that has not started.
-		if err := r.rt.Backoff(ctx, wait); err != nil {
+		// malfunction on an attempt the record already shows in-flight.
+		if err := r.rt.Backoff(ctx, a.Backoff); err != nil {
 			return true, r.Apply(AttemptCompletedEvent{
 				NodePath:     path,
 				DispatchID:   a.DispatchID,
@@ -165,7 +184,6 @@ func (r *Run) startReady(ctx context.Context) (bool, error) {
 				RuntimeError: fmt.Sprintf("Runtime.Backoff: %v", err),
 			})
 		}
-		a.Backoff = wait
 	}
 	h, err := r.rt.Start(ctx, Dispatch{
 		Node:       n,
@@ -184,9 +202,6 @@ func (r *Run) startReady(ctx context.Context) (bool, error) {
 		})
 	}
 	a.Handle = h
-	if err := r.Apply(DispatchStartedEvent{Attempt: a}); err != nil {
-		return true, err
-	}
 	r.outstanding = append(r.outstanding, a)
 	return true, nil
 }

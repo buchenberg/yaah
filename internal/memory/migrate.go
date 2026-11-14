@@ -144,6 +144,106 @@ func (d *DB) migrate() error {
 	DROP INDEX IF EXISTS idx_session_watches_session;
 	CREATE INDEX IF NOT EXISTS idx_session_watches_session_armed
 		ON session_watches(session_id, armed_at, id);
+
+	-- Workflow run state (yaah-0u0v.16, workflow_repo.go). A workflow run
+	-- outlives one process: its reducer state is projected here keyed by
+	-- run_id so a killed run resumes instead of re-dispatching and
+	-- re-settling. Additive and IF NOT EXISTS, no schema-version bump.
+	--
+	-- Columns carry what a query filters or orders by (state, status, the
+	-- identity of an attempt or a disposition) and the payload column carries
+	-- the scheduler's own serialized record, which this package never reads:
+	-- the adapter in internal/workflow/store owns that shape.
+	CREATE TABLE IF NOT EXISTS workflow_runs (
+		run_id         TEXT PRIMARY KEY,
+		spec_hash      TEXT NOT NULL DEFAULT '',
+		spec_path      TEXT NOT NULL DEFAULT '',
+		graph_name     TEXT NOT NULL DEFAULT '',
+		status         TEXT NOT NULL DEFAULT 'running',
+		reason         TEXT NOT NULL DEFAULT '',
+		dispatches     INTEGER NOT NULL DEFAULT 0,
+		peak_in_flight INTEGER NOT NULL DEFAULT 0,
+		started_at     INTEGER NOT NULL DEFAULT 0,
+		finished_at    INTEGER NOT NULL DEFAULT 0,
+		params         TEXT NOT NULL DEFAULT '{}',
+		ledger         TEXT NOT NULL DEFAULT '{}',
+		warnings       TEXT NOT NULL DEFAULT '[]',
+		seq            INTEGER NOT NULL DEFAULT 0,
+		updated_at     INTEGER NOT NULL DEFAULT 0
+	);
+
+	CREATE TABLE IF NOT EXISTS workflow_nodes (
+		run_id  TEXT NOT NULL,
+		path    TEXT NOT NULL,
+		kind    TEXT NOT NULL DEFAULT '',
+		state   TEXT NOT NULL DEFAULT '',
+		ordinal INTEGER NOT NULL DEFAULT 0,
+		payload TEXT NOT NULL,
+		PRIMARY KEY (run_id, path)
+	);
+
+	-- The read rebuilds the scheduler's canonical node order.
+	CREATE INDEX IF NOT EXISTS idx_workflow_nodes_ordinal
+		ON workflow_nodes(run_id, ordinal);
+
+	CREATE TABLE IF NOT EXISTS workflow_instances (
+		run_id    TEXT NOT NULL,
+		path      TEXT NOT NULL,
+		owner     TEXT NOT NULL DEFAULT '',
+		body_path TEXT NOT NULL DEFAULT '',
+		item      INTEGER NOT NULL DEFAULT 0,
+		name      TEXT NOT NULL DEFAULT '',
+		ordinal   INTEGER NOT NULL DEFAULT 0,
+		payload   TEXT NOT NULL,
+		PRIMARY KEY (run_id, path)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_workflow_instances_ordinal
+		ON workflow_instances(run_id, ordinal);
+
+	CREATE TABLE IF NOT EXISTS workflow_attempts (
+		run_id      TEXT NOT NULL,
+		dispatch_id TEXT NOT NULL,
+		node_path   TEXT NOT NULL DEFAULT '',
+		number      INTEGER NOT NULL DEFAULT 0,
+		status      TEXT NOT NULL DEFAULT '',
+		started_at  INTEGER NOT NULL DEFAULT 0,
+		finished_at INTEGER NOT NULL DEFAULT 0,
+		payload     TEXT NOT NULL,
+		PRIMARY KEY (run_id, dispatch_id)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_workflow_attempts_node
+		ON workflow_attempts(run_id, node_path, number);
+
+	CREATE TABLE IF NOT EXISTS workflow_settlements (
+		run_id      TEXT NOT NULL,
+		node_path   TEXT NOT NULL DEFAULT '',
+		proposal_id TEXT NOT NULL,
+		producer    TEXT NOT NULL DEFAULT '',
+		action      TEXT NOT NULL DEFAULT '',
+		status      TEXT NOT NULL DEFAULT '',
+		recorded_at INTEGER NOT NULL DEFAULT 0,
+		payload     TEXT NOT NULL,
+		PRIMARY KEY (run_id, node_path, proposal_id)
+	);
+
+	-- Exactly once, as a database invariant: one SETTLED disposition per
+	-- proposal per run. Conflicted and errored dispositions are outside the
+	-- index on purpose — on_conflict: skip leaves a proposal open for a
+	-- downstream catch settle to land, and that second disposition is the
+	-- author's declaration, not a double settle.
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_settlements_settled
+		ON workflow_settlements(run_id, proposal_id) WHERE status = 'settled';
+	CREATE INDEX IF NOT EXISTS idx_workflow_settlements_proposal
+		ON workflow_settlements(run_id, proposal_id);
+
+	CREATE TABLE IF NOT EXISTS workflow_events (
+		run_id TEXT NOT NULL,
+		seq    INTEGER NOT NULL,
+		line   TEXT NOT NULL,
+		PRIMARY KEY (run_id, seq)
+	);
 	`
 
 	if _, err := d.sql.Exec(schema); err != nil {

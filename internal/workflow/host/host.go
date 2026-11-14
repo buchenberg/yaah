@@ -507,6 +507,16 @@ type Options struct {
 	// produced and recorded; only the file was not asked for.
 	ArtifactRoot string
 
+	// Store is the durable projection of the run (yaah-0u0v.16). Nil means the
+	// run keeps no state between processes, which is what a one-shot run does;
+	// a run that has a store can be killed and resumed.
+	Store exec.Store
+	// SpecHash and SpecPath identify the document the graph was resolved from.
+	// The hash is what a resume compares before continuing a run, and the path
+	// is what `yaah workflow resume <run_id>` re-reads when it is not given one.
+	SpecHash string
+	SpecPath string
+
 	// Now and Wait override the door's clock and backoff for deterministic
 	// tests.
 	Now  func() time.Time
@@ -551,9 +561,12 @@ func Execute(ctx context.Context, opts Options) (Result, error) {
 	rt.Clock = opts.Now
 	rt.Wait = opts.Wait
 	cfg := exec.Config{
-		RunID:  opts.RunID,
-		Params: opts.Params,
-		Limits: exec.LimitsFromBudgets(opts.Graph.Budgets),
+		RunID:    opts.RunID,
+		Params:   opts.Params,
+		Limits:   exec.LimitsFromBudgets(opts.Graph.Budgets),
+		SpecHash: opts.SpecHash,
+		SpecPath: opts.SpecPath,
+		Store:    opts.Store,
 		// Guard stays nil: `when` selectors are evaluated by the value-plumbing
 		// bead (yaah-0u0v.13). exec.New records that every guarded node was
 		// scheduled as if its guard passed in Result.Warnings, so the gap is
@@ -572,12 +585,73 @@ func Execute(ctx context.Context, opts Options) (Result, error) {
 	if err != nil {
 		return out, err
 	}
+	return finish(opts, out)
+}
+
+// Resume continues a run from its durable state (yaah-0u0v.16). The nodes that
+// had terminated stay terminated, the ones that were waiting stay waiting, and
+// only the work the record does not already show is dispatched — which is what
+// makes a killed fan-out resumable without duplicating dispatches or
+// settlements.
+//
+// The document must be the one the run was started from: exec.Resume compares
+// opts.SpecHash against the recorded hash and refuses a mismatch with
+// exec.ErrSpecHashMismatch. Parameters come from the run's own record, not from
+// opts: templates already rendered against them, and a run resumed under other
+// values would be a different run with the same id. opts.RunID is ignored for the
+// same reason — the id is the identity of the run being resumed.
+func Resume(ctx context.Context, opts Options, runID string) (Result, error) {
+	if opts.Graph == nil {
+		return Result{}, errors.New("workflow/host: nil graph")
+	}
+	if opts.Runner == nil {
+		return Result{}, errors.New("workflow/host: no sub-agent runner configured")
+	}
+	if opts.Store == nil {
+		return Result{}, errors.New("workflow/host: resume needs a run store; no run state is readable without one")
+	}
+	cp, err := opts.Store.LoadCheckpoint(ctx, runID)
+	if err != nil {
+		return Result{}, err
+	}
+	rt := NewRuntime(opts.Runner)
+	rt.Retained = opts.Retained
+	rt.Clock = opts.Now
+	rt.Wait = opts.Wait
+	cfg := exec.Config{
+		RunID:    runID,
+		Limits:   exec.LimitsFromBudgets(opts.Graph.Budgets),
+		SpecHash: opts.SpecHash,
+		SpecPath: opts.SpecPath,
+		Store:    opts.Store,
+	}
+	run, xerr := exec.Resume(opts.Graph, rt, cfg, cp)
+	if xerr != nil {
+		return Result{}, xerr
+	}
+	res, xerr := run.Execute(ctx)
+	out := Result{
+		Run:     res,
+		Runtime: rt,
+	}
+	if xerr != nil {
+		return out, xerr
+	}
+	return finish(opts, out)
+}
+
+// finish appends the door-side facts a resumed run shares with a fresh one: the
+// declines the lane could not honor and the artifacts the run declared. Writing
+// artifacts again on a resume is idempotent by construction — the file is
+// rewritten from the value the run recorded — so a partially written artifact set
+// is repaired rather than duplicated.
+func finish(opts Options, out Result) (Result, error) {
 	// A node declined at the door for a seed binding, a proposal lane, or an
 	// unrenderable prompt is already reported as a runtime_error on the node;
 	// the warnings below cover what ran but did not get everything it asked
 	// for.
-	out.Warnings = append(out.Warnings, declinedNodes(opts.Graph, res)...)
-	arts, warns, werr := writeArtifacts(opts.ArtifactRoot, res)
+	out.Warnings = append(out.Warnings, declinedNodes(opts.Graph, out.Run)...)
+	arts, warns, werr := writeArtifacts(opts.ArtifactRoot, out.Run)
 	out.Artifacts = arts
 	out.Warnings = append(out.Warnings, warns...)
 	if werr != nil {

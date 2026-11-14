@@ -97,6 +97,27 @@ type Config struct {
 	// RunID labels the run. Empty asks the scheduler to mint one from the
 	// graph name; the value always lands in run_started.
 	RunID string
+	// SpecHash is the digest of the document this graph resolved from
+	// (spec.SpecHash). It is persisted with the run so a resume can refuse to
+	// continue a run against a document that has changed underneath it
+	// (yaah-0u0v.16). Empty declines the refusal, and is only appropriate for a
+	// caller that keeps no state.
+	SpecHash string
+	// SpecPath is the document path the run was started from, recorded as the
+	// caller named it. It is what `yaah workflow resume <run_id>` re-reads when
+	// no path is given. Informational: the scheduler never opens it.
+	SpecPath string
+	// Store is the durable projection of this run (yaah-0u0v.16). Nil means the
+	// run keeps no state, which is what a one-shot run and every deterministic
+	// test do.
+	//
+	// The store is written from inside the reducer, after every applied event
+	// and before Apply returns, so a run that stops at any point leaves a
+	// checkpoint that is exactly the state the reducer had committed — never a
+	// half-applied step. A save that fails is reported to the driver and NO
+	// further event is applied: a run whose state cannot be recorded must not
+	// advance, or a resume would re-do work the log never recorded.
+	Store Store
 	// Limits are the ceilings the caller declares. The scheduler adds none.
 	Limits Limits
 	// Params binds the workflow parameters the graph declares. A declared
