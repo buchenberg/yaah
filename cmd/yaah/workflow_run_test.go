@@ -3,6 +3,8 @@ package yaah
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/buchenberg/yaah/internal/workflow/host"
 	"strings"
 	"testing"
 
@@ -149,5 +151,17 @@ func TestWorkflowRunStrictRefusesWarnings(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Errorf("runner called %d times for a --strict refusal", calls)
+	}
+}
+
+// TestRunReportCarriesStrict pins that the validation gate's --strict flag
+// reaches the run.v1 report (review #1644: it was declared required by the
+// schema and never populated).
+func TestRunReportCarriesStrict(t *testing.T) {
+	if rep := runReportOf("spec.yaml", host.Result{}, true); !rep.Strict {
+		t.Error("strict = false in report, want the gate flag threaded through")
+	}
+	if rep := runReportOf("spec.yaml", host.Result{}, false); rep.Strict {
+		t.Error("strict = true without the flag")
 	}
 }

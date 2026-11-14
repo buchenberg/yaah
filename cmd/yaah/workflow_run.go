@@ -146,7 +146,7 @@ func runWorkflowRun(cmd *cobra.Command, path string, opts workflowRunOptions) er
 		return xerr
 	}
 
-	report := runReportOf(path, res)
+	report := runReportOf(path, res, opts.strict)
 	if opts.asJSON {
 		if werr := writeRunJSON(out, report); werr != nil {
 			return werr
@@ -203,7 +203,7 @@ type workflowArtifactView struct {
 	Path     string `json:"path"`
 }
 
-func runReportOf(specPath string, res host.Result) workflowRunReport {
+func runReportOf(specPath string, res host.Result, strict bool) workflowRunReport {
 	rep := workflowRunReport{
 		Kind:       runJSONKind,
 		Spec:       specPath,
@@ -211,6 +211,7 @@ func runReportOf(specPath string, res host.Result) workflowRunReport {
 		Status:     string(res.Run.Status),
 		OK:         res.Run.Status == exec.RunSucceeded,
 		Reason:     res.Run.Reason,
+		Strict:     strict,
 		Dispatches: res.Run.Dispatches,
 		ElapsedMs:  res.Run.Elapsed.Milliseconds(),
 		Outputs:    []workflowOutputView{},
