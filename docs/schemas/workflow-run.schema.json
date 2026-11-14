@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://yaah.dev/schemas/workflow-run.schema.json",
+  "title": "yaah workflow run --json report",
+  "description": "JSON report emitted by 'yaah workflow run --json <spec>' (cmd/yaah/workflow_run.go, kind yaah.workflow.run.v1) after the document passed the validation gate and executed through the host door. A run REFUSED at the validation gate (error-severity findings, or any finding under --strict) reports the yaah.workflow.validate.v1 shape instead and never mints a run id: a run.v1 report always describes a run that reached the scheduler. All lists serialize as [] (never null). Exit code is 0 when ok is true and 1 otherwise.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["kind", "spec", "run_id", "status", "ok", "strict", "dispatches", "elapsed_ms", "outputs", "nodes", "artifacts", "warnings"],
+  "properties": {
+    "kind": { "const": "yaah.workflow.run.v1" },
+    "spec": { "type": "string", "description": "Spec path as given on the command line." },
+    "run_id": { "type": "string", "description": "The run's label: --run-id when given, else minted from the graph name." },
+    "status": {
+      "enum": ["succeeded", "failed", "aborted", "cancelled", "budget_exceeded"],
+      "description": "The scheduler's terminal verdict: succeeded = every node terminated succeeded or skipped; aborted = an error-severity node failure under the abort policy; failed = an exposed failure the run continued past (on_failure: continue); cancelled = Cancel or context end; budget_exceeded = a Limits axis ran out."
+    },
+    "ok": { "type": "boolean", "description": "True iff status is succeeded." },
+    "reason": { "type": "string", "description": "The stopping cause: the aborting node, the exhausted budget axis, or the first exposed failure." },
+    "strict": { "type": "boolean", "description": "Whether --strict was set at the validation gate." },
+    "dispatches": { "type": "integer", "description": "Dispatch attempts the run consumed against its budget." },
+    "elapsed_ms": { "type": "integer", "description": "Run wall-clock in milliseconds." },
+    "outputs": {
+      "type": "array",
+      "description": "Every recorded output binding in canonical node-path order: delegate reports and emit values.",
+      "items": { "$ref": "#/$defs/output" }
+    },
+    "nodes": {
+      "type": "array",
+      "description": "Per-node terminal state in canonical order.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["path", "kind", "state"],
+        "properties": {
+          "path": { "type": "string" },
+          "kind": { "type": "string", "description": "One of the eleven IR kinds." },
+          "state": { "enum": ["pending", "ready", "running", "succeeded", "failed", "skipped", "cancelled"], "description": "Lifecycle position; a terminal run leaves no node pending/ready/running." },
+          "reason": { "type": "string", "description": "Why the node ended as it did (failure cause, skip source, refusal naming the owning bead)." }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "description": "Artifacts the host door wrote for emit nodes under --artifact-root.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["node_path", "declared", "path"],
+        "properties": {
+          "node_path": { "type": "string" },
+          "name": { "type": "string", "description": "The output binding name." },
+          "declared": { "type": "string", "description": "The world-relative path as the document wrote it." },
+          "path": { "type": "string", "description": "The host path it was resolved to under the artifact root." }
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Reducer warnings (e.g. an unevaluated when guard) and door warnings (e.g. a declined artifact write), sorted."
+    }
+  },
+  "$defs": {
+    "output": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["node_path", "kind"],
+      "properties": {
+        "node_path": { "type": "string", "description": "The producing node." },
+        "kind": { "type": "string", "description": "The producing node's IR kind (delegate or emit in this bead)." },
+        "name": { "type": "string", "description": "The binding name: the declared output name, or the step id for an emit that declares none." },
+        "value": { "type": "string", "description": "The delivered report text or rendered emit value. Per-field extraction from structured results is yaah-0u0v.13." },
+        "artifact_path": { "type": "string", "description": "The declared artifact path, recorded whether or not it was written." },
+        "contract": { "type": "string", "description": "The envelope's response-contract verdict (yaah-was9.2), verbatim; absent means the lane asserted none." }
+      }
+    }
+  }
+}

@@ -56,9 +56,11 @@ func newWorkflowCmd() *cobra.Command {
   yaah workflow validate <spec>   check every rule family
   yaah workflow explain  <spec>   report the plan: graph, fan-out, cost,
                                   authority union, proposal dispositions
+  yaah workflow run      <spec>   validate, then execute and report outputs
 
-Neither command dispatches an agent, starts a session, or writes run state:
-both are static analysis over the one document you name.
+validate and explain are static analysis: neither dispatches an agent,
+starts a session, nor writes run state. run executes — through the host
+door and internal/dispatch, after the same validation gate.
 
 The --json report shapes are stable within v1 and documented as JSON Schema:
   docs/schemas/workflow-validate.schema.json   (kind yaah.workflow.validate.v1)
@@ -66,6 +68,7 @@ The --json report shapes are stable within v1 and documented as JSON Schema:
 	}
 	cmd.AddCommand(newWorkflowValidateCmd())
 	cmd.AddCommand(newWorkflowExplainCmd())
+	cmd.AddCommand(newWorkflowRunCmd())
 	return cmd
 }
 
