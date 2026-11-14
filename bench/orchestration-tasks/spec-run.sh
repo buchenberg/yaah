@@ -33,7 +33,12 @@ run_id="bench-$task"
 
 if [ ! -f "$spec" ]; then
   echo "no workflow spec for task '$task': $spec" >&2
-  echo "tasks with a spec: $(ls -d "$here"/*/spec/workflow.yaml 2>/dev/null | cut -d/ -f1 | xargs -n1 basename 2>/dev/null | tr '\n' ' ')" >&2
+  tasks=()
+  for p in "$here"/*/spec/workflow.yaml; do
+    [ -f "$p" ] || continue
+    tasks+=("$(basename "$(dirname "$(dirname "$p")")")")
+  done
+  echo "tasks with a spec: ${tasks[*]:-none}" >&2
   exit 2
 fi
 
