@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.184.0](https://github.com/buchenberg/yaah/compare/v0.183.0...v0.184.0) (2026-11-14)
+
+
+### Features
+
+* **workflow:** proposal and settle nodes over the retained lane (yaah-0u0v.13) ([#1646](https://github.com/buchenberg/yaah/issues/1646)) ([75ee8bf](https://github.com/buchenberg/yaah/commit/75ee8bf49a0aaef20da3a9e516c1238bdc7c9e74))
+
 ## [0.183.0](https://github.com/buchenberg/yaah/compare/v0.182.0...v0.183.0) (2026-11-14)
 
 
