@@ -478,24 +478,27 @@ func TestFanoutZeroItemsClosesEmpty(t *testing.T) {
 	}
 }
 
-// TestFanoutUnsupportedJoinRefused pins that any and quorum are refused with the
-// bead that owns them instead of being approximated with join: all, and that the
-// refusal happens before a single item dispatches.
-func TestFanoutUnsupportedJoinRefused(t *testing.T) {
+// TestFanoutQuorumCountRefused pins the declaration half of the quorum bound: a
+// join: quorum with no count, or with a count below 1, is refused before a single
+// item dispatches. The other joins execute as of yaah-0u0v.19, and the upper
+// bound (a quorum above the item count) needs the resolved list, so it is pinned
+// in join_test.go.
+func TestFanoutQuorumCountRefused(t *testing.T) {
 	cases := map[string]string{
-		"any":    "      join: any\n",
-		"quorum": "      join: quorum\n      quorum: 1\n",
+		"no count":   "      join: quorum\n",
+		"zero count": "      join: quorum\n      quorum: 0\n",
+		"negative":   "      join: quorum\n      quorum: -2\n",
 	}
 	for name, extra := range cases {
 		t.Run(name, func(t *testing.T) {
-			g := graphFromYAML(t, fanoutYAML("join-"+name, "[a, b]", extra))
+			g := graphFromYAML(t, fanoutYAML("join-bad-"+strings.ReplaceAll(name, " ", "-"), "[a, b]", extra))
 			res, fake := runGraph(t, g, okScript(itemPathOf("steps.f", 0, 0)), Config{})
 			f := nodeOf(t, res, "steps.f")
 			if f.State != StateFailed {
-				t.Fatalf("fan-out state = %s, want failed", f.State)
+				t.Fatalf("fan-out state = %s, want failed\nlog:\n%s", f.State, logOf(res))
 			}
-			if !strings.Contains(f.Reason, ReasonNotImplemented) || !strings.Contains(f.Reason, "0u0v.19") {
-				t.Errorf("reason = %q, want %s naming yaah-0u0v.19", f.Reason, ReasonNotImplemented)
+			if !strings.Contains(f.Reason, ReasonFanoutQuorumInvalid) {
+				t.Errorf("reason = %q, want %s", f.Reason, ReasonFanoutQuorumInvalid)
 			}
 			if len(fake.Started()) != 0 {
 				t.Errorf("dispatched %v before refusing the join — nothing may start", startedPaths(fake))

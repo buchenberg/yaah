@@ -68,6 +68,13 @@ func (r *Run) Advance(ctx context.Context) (bool, error) {
 	if axis, limit, ok := r.breach(); ok {
 		return true, r.Apply(BudgetExceededEvent{Axis: axis, Limit: limit})
 	}
+	// A join:any|quorum container that has already decided leaves items nobody will
+	// collect. They are drained or cancelled HERE, before the ready queue is
+	// consulted, so cancelling work and then starting more of it in the same cycle
+	// cannot happen (yaah-0u0v.19).
+	if clearing, cerr := r.clearOrphanItems(); clearing {
+		return true, cerr
+	}
 	started, err := r.startReady(ctx)
 	if err != nil {
 		return true, err
@@ -83,6 +90,13 @@ func (r *Run) Advance(ctx context.Context) (bool, error) {
 	// tally this cycle would otherwise consult.
 	if settling, serr := r.settleStepOnce(ctx); settling {
 		return true, serr
+	}
+	// Then the residue of a decided join: a proposal a NON-winning item sealed is
+	// discarded through the same settlement door, one per cycle, so the disposal
+	// gets its own place in the log instead of happening off the record inside the
+	// cancellation.
+	if discarding, derr := r.discardStepOnce(ctx); discarding {
+		return true, derr
 	}
 	// Then the fan-out door: one expansion per cycle, after the settle cycle so
 	// a ready settlement still gets its own place in the log. An expansion
@@ -264,6 +278,21 @@ func (r *Run) popOutstanding() {
 	r.outstanding = r.outstanding[1:]
 }
 
+// dropOutstanding removes one node's attempts from the driver's queue. It is how
+// a decided join stops polling work it has stopped caring about: an attempt the
+// driver commits itself (a drained result) or cancels through the door
+// (yaah-0u0v.19) must not be polled again, or the next commitHead cycle would
+// submit an envelope for a node that already terminated.
+func (r *Run) dropOutstanding(path string) {
+	kept := r.outstanding[:0]
+	for _, a := range r.outstanding {
+		if a.NodePath != path {
+			kept = append(kept, a)
+		}
+	}
+	r.outstanding = kept
+}
+
 func (r *Run) anyCompleted() bool {
 	for _, a := range r.outstanding {
 		if _, ok := r.rt.Completed(a.Handle); ok {
@@ -378,12 +407,17 @@ func (r *Run) disposition() RunStatus {
 		return r.status
 	}
 	for _, p := range r.allPaths() {
-		if r.state[p].State == StateFailed {
+		// An item of a decided join is not a run-level fact: the container answered
+		// for the join, and whether this item delivered is recorded on its own item
+		// record (yaah-0u0v.19). Without this, a failed item under join: any — the
+		// normal shape of "try three, take the first that works" — would report the
+		// whole run failed.
+		if r.state[p].State == StateFailed && !r.inJoinResidue(p) {
 			return RunFailed
 		}
 	}
 	for _, p := range r.allPaths() {
-		if r.state[p].State == StateCancelled {
+		if r.state[p].State == StateCancelled && !r.inJoinResidue(p) {
 			return RunCancelled
 		}
 	}

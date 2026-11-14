@@ -45,12 +45,19 @@ type FakeRuntime struct {
 	// reported as untouched, the node ends with a runtime failure, and the
 	// path is reachable in a test.
 	SettleErr map[string]error
+	// Hold names the node paths whose attempts stay IN FLIGHT: Completed reports
+	// nothing for them until the attempt is cancelled (Cancel clears the hold).
+	// It is the one hook a cancellation test needs, because an ordinary scripted
+	// attempt completes the instant it starts — there would be nothing left to
+	// cancel (yaah-0u0v.19).
+	Hold map[string]bool
 
 	start    time.Time
 	now      time.Time
 	consumed map[string]int
 	solved   map[string]Completion
 	read     map[string]bool
+	held     map[string]bool
 	started  []Dispatch
 	cancels  []string
 	settles  []SettleRequest
@@ -68,6 +75,7 @@ func NewFakeRuntime(t time.Time) *FakeRuntime {
 		consumed: map[string]int{},
 		solved:   map[string]Completion{},
 		read:     map[string]bool{},
+		held:     map[string]bool{},
 	}
 }
 
@@ -141,6 +149,9 @@ func (f *FakeRuntime) Start(_ context.Context, d Dispatch) (Handle, error) {
 		c.Lane = string(d.Node.Lane)
 	}
 	f.solved[d.DispatchID] = c
+	if f.Hold[d.Node.Path] {
+		f.held[d.DispatchID] = true
+	}
 	return Handle{DispatchID: d.DispatchID}, nil
 }
 
@@ -149,6 +160,9 @@ func (f *FakeRuntime) Start(_ context.Context, d Dispatch) (Handle, error) {
 // first time, which is what lets the scheduler poll the head of its dispatch
 // order until that attempt's turn to commit arrives.
 func (f *FakeRuntime) Completed(h Handle) (Completion, bool) {
+	if f.held[h.DispatchID] {
+		return Completion{}, false
+	}
 	c, ok := f.solved[h.DispatchID]
 	if !ok {
 		return Completion{}, false
@@ -171,6 +185,7 @@ func (f *FakeRuntime) Cancel(h Handle) error {
 	if err := f.CancelErr[h.DispatchID]; err != nil {
 		return err
 	}
+	delete(f.held, h.DispatchID)
 	if _, ok := f.solved[h.DispatchID]; !ok {
 		return nil
 	}

@@ -951,6 +951,8 @@ func (r *Run) Result() Result {
 		st.Attempts = append([]*Attempt(nil), r.state[p].Attempts...)
 		st.Outputs = append([]NodeOutput(nil), r.state[p].Outputs...)
 		st.Items = append([]FanoutItem(nil), r.state[p].Items...)
+		st.Winners = append([]int(nil), r.state[p].Winners...)
+		st.Discards = append([]Settled(nil), r.state[p].Discards...)
 		st.Iterations = append([]LoopIteration(nil), r.state[p].Iterations...)
 		out.Nodes = append(out.Nodes, &st)
 		// Run-level outputs are every node's bindings in canonical node-path
