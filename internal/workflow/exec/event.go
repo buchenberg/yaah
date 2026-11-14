@@ -39,6 +39,22 @@ const (
 	// — and like the plan it is an input: the reducer instantiates the item
 	// instances, and owns everything that follows.
 	EventFanoutExpanded EventKind = "fanout_expanded"
+	// EventLoopIterationStarted asks the reducer to instantiate one loop
+	// iteration's body (yaah-0u0v.15); EventLoopCompleted reports what ended the
+	// loop — its declared terminator, its declared bound, or a terminator the run
+	// could not evaluate. Both are inputs: the driver decides WHEN, the reducer
+	// decides what it means, and the instances a loop creates are ordinary nodes
+	// from there on.
+	EventLoopIterationStarted EventKind = "loop_iteration_started"
+	EventLoopCompleted        EventKind = "loop_completed"
+	// EventBranchRouted reports the arm a branch's selector resolved to
+	// (yaah-0u0v.15). It is the branch's whole decision as an input, so the
+	// reducer applies it — record the arm, skip the rest — inside Apply.
+	EventBranchRouted EventKind = "branch_routed"
+	// EventAggregateInputs reports the values an aggregate's inputs resolved to
+	// (yaah-0u0v.15). A deterministic strategy combines them in the reducer; a
+	// summarize instantiates its body.
+	EventAggregateInputs EventKind = "aggregate_inputs"
 )
 
 // derived reports whether only the reducer may emit a kind. The split is the
@@ -236,6 +252,64 @@ type FanoutExpandedEvent struct {
 func (FanoutExpandedEvent) Kind() EventKind  { return EventFanoutExpanded }
 func (e FanoutExpandedEvent) target() string { return e.NodePath }
 
+// LoopIterationStartedEvent asks the reducer to instantiate one loop iteration.
+// Iteration is the 0-based index the reducer must find next in its own ledger: a
+// driver asking for any other index is a bug in this package, not a declaration an
+// author can fix.
+type LoopIterationStartedEvent struct {
+	NodePath  string
+	Iteration int
+}
+
+func (LoopIterationStartedEvent) Kind() EventKind  { return EventLoopIterationStarted }
+func (e LoopIterationStartedEvent) target() string { return e.NodePath }
+
+// LoopCompletedEvent reports what ended a loop. Terminated names the declaration
+// that fired — until, or the bound — and Exhausted marks the one case that is not
+// a success when a terminator WAS declared: the bound reached without the
+// condition ever matching. Refusal carries a terminator the run could not
+// evaluate, which the reducer turns into the node's terminal state.
+type LoopCompletedEvent struct {
+	NodePath string
+	// Iterations is how many iterations ran, for the log line: the reducer's own
+	// ledger is the authority, and the driver states what it read.
+	Iterations int
+	Terminated string
+	Exhausted  bool
+	Refusal    string
+}
+
+func (LoopCompletedEvent) Kind() EventKind  { return EventLoopCompleted }
+func (e LoopCompletedEvent) target() string { return e.NodePath }
+
+// BranchRoutedEvent reports a branch's decision: the step id of the arm the
+// resolved value selected, empty when no case matched and no default was declared,
+// and Refusal for a value the run could not route on. Value is the resolved value
+// rendered as one log field, so the log line says what was matched as well as what
+// was chosen.
+type BranchRoutedEvent struct {
+	NodePath string
+	Value    string
+	Selected string
+	Refusal  string
+}
+
+func (BranchRoutedEvent) Kind() EventKind  { return EventBranchRouted }
+func (e BranchRoutedEvent) target() string { return e.NodePath }
+
+// AggregateInputsEvent carries the values one aggregate's inputs resolved to, in
+// declaration order. Refusal carries an input the run could not read, which the
+// reducer turns into the aggregate's terminal state rather than combining a
+// shorter list than the author declared.
+type AggregateInputsEvent struct {
+	NodePath string
+	Inputs   []any
+	Refusal  string
+}
+
+func (AggregateInputsEvent) Kind() EventKind  { return EventAggregateInputs }
+func (e AggregateInputsEvent) target() string { return e.NodePath }
+
 // BudgetExceededEvent records that a declared ceiling was reached. Axis and
 // Limit are the same strings Limits documents, so a reader never has to map
 // an enum to find out what ran out.
@@ -340,6 +414,29 @@ func detail(ev Event) string {
 		return out
 	case FanoutExpandedEvent:
 		out := fmt.Sprintf("%s count=%d", e.NodePath, len(e.Items))
+		if e.Refusal != "" {
+			out += " refusal=" + flatten(e.Refusal)
+		}
+		return out
+	case LoopIterationStartedEvent:
+		return fmt.Sprintf("%s iteration=%d", e.NodePath, e.Iteration)
+	case LoopCompletedEvent:
+		out := fmt.Sprintf("%s iterations=%d terminated=%s", e.NodePath, e.Iterations, orDash(e.Terminated))
+		if e.Exhausted {
+			out += " exhausted=true"
+		}
+		if e.Refusal != "" {
+			out += " refusal=" + flatten(e.Refusal)
+		}
+		return out
+	case BranchRoutedEvent:
+		out := fmt.Sprintf("%s route=%s value=%s", e.NodePath, orDash(e.Selected), orDash(flatten(e.Value)))
+		if e.Refusal != "" {
+			out += " refusal=" + flatten(e.Refusal)
+		}
+		return out
+	case AggregateInputsEvent:
+		out := fmt.Sprintf("%s inputs=%d", e.NodePath, len(e.Inputs))
 		if e.Refusal != "" {
 			out += " refusal=" + flatten(e.Refusal)
 		}

@@ -84,6 +84,21 @@ func (r *Run) Advance(ctx context.Context) (bool, error) {
 	if expanding, eerr := r.fanoutStepOnce(); expanding {
 		return true, eerr
 	}
+	// Then the routing, combining, and iterating doors (yaah-0u0v.15), in that
+	// fixed order so a graph holding all three yields one sequence: one routed
+	// value, one resolved aggregate input list, and one loop step per cycle. None
+	// of them dispatches anything itself, so none appears in the dispatch tally
+	// this cycle would otherwise consult — and a branch decision or an aggregate
+	// combine still gets its own place in the log.
+	if routing, rerr := r.branchStepOnce(); routing {
+		return true, rerr
+	}
+	if combining, cerr := r.aggregateStepOnce(); combining {
+		return true, cerr
+	}
+	if iterating, ierr := r.loopStepOnce(); iterating {
+		return true, ierr
+	}
 	if len(r.outstanding) == 0 {
 		// Nothing running and nothing startable: the part of the graph this run
 		// can reach has terminated, and anything still pending is stranded
@@ -295,6 +310,13 @@ func (r *Run) nextStartable() (string, bool) {
 			continue
 		}
 		if !r.itemSlotFree(p) {
+			continue
+		}
+		// A branch arm is startable only once the branch that names it has
+		// decided: the routing decision cannot be overtaken by the ready queue's
+		// path order, which would otherwise start an arm named early in the
+		// document before its branch ran at all.
+		if _, undecided := r.armRouting(p); undecided {
 			continue
 		}
 		return p, true

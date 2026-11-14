@@ -199,6 +199,26 @@ type NodeState struct {
 	Expanded bool
 	Items    []FanoutItem
 	Collect  []any
+
+	// Iterations is a loop node's own ledger (yaah-0u0v.15): one record per
+	// iteration, in iteration order, folded from the iteration's instance states
+	// as they all terminate. Collect accumulates each SUCCEEDED iteration's
+	// product value in that same order, so it is the value a terminator reads
+	// while the loop is still running and the value the loop reports when it
+	// closes.
+	Iterations []LoopIteration
+
+	// Selected is a branch node's routing decision (yaah-0u0v.15): the node path
+	// of the arm it chose, or empty for "no case matched and no default was
+	// declared". The arms a branch did not select read it — through the routing
+	// relation the reducer keeps — to decide whether they may run at all.
+	Selected string
+
+	// Combined is an aggregate node's value (yaah-0u0v.15): the concatenated
+	// list, the merged mapping, or a summarize body's product. It is kept
+	// structured so `steps.<id>.output` and a selector read the value rather than
+	// a re-parse of its text, while Result carries the text.
+	Combined any
 }
 
 // NodeOutput is one declared output binding the reducer recorded for a node.

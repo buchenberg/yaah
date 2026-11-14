@@ -519,13 +519,13 @@ func TestWallClockBudgetExceeded(t *testing.T) {
 // that would contradict validate's proof of the same graph. The refusal reason
 // names the owning bead or door where one is assigned.
 //
-// fanout_settle is no longer in this list: its prod-kind fan-out executes as of
-// yaah-0u0v.14, and what stops that golden now is an `over` source its
-// unscripted producer cannot supply — a fact about the run, not about a missing
-// kind. TestFanoutOverUnavailable pins that separately.
+// fanout_settle and bounded_repair are no longer in this list: their fan-out
+// and loop kinds execute as of yaah-0u0v.14/.15, and what stops those goldens
+// now is a source the unscripted producer cannot supply — a fact about the run,
+// not about a missing kind. TestFanoutOverUnavailable pins the fan-out case.
 func TestNonDelegateKindsRefused(t *testing.T) {
 	params := map[string]any{"task": "verify"}
-	for _, golden := range []string{"bounded_repair", "speculative"} {
+	for _, golden := range []string{"speculative"} {
 		t.Run(golden, func(t *testing.T) {
 			g := goldenGraph(t, golden)
 			res, _ := runGraph(t, g, nil, Config{Params: params})

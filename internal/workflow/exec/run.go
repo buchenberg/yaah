@@ -36,6 +36,12 @@ type Run struct {
 	instances    map[string]*instance
 	instanceOf   map[string][]string
 	itemInFlight map[string]int
+	// arms is the ROUTING relation a branch owns (yaah-0u0v.15): an arm path
+	// maps to the branches that may decide about it. It is kept beside the
+	// dependency graph rather than inside it, because an arm may declare its
+	// branch as a need and then it is both, while a branch that names an arm is
+	// not a dependency of it.
+	arms map[string]map[string]bool
 
 	ready   []string // node paths in canonical order; the launch order
 	current map[string]*Attempt
@@ -111,6 +117,7 @@ func New(g *ir.Graph, rt Runtime, cfg Config) (*Run, error) {
 		instances:    map[string]*instance{},
 		instanceOf:   map[string][]string{},
 		itemInFlight: map[string]int{},
+		arms:         map[string]map[string]bool{},
 		current:      map[string]*Attempt{},
 		backoff:      map[string]time.Duration{},
 		open:         map[string]string{},
@@ -159,6 +166,12 @@ func New(g *ir.Graph, rt Runtime, cfg Config) (*Run, error) {
 		for _, dep := range needs {
 			r.dependents[dep] = append(r.dependents[dep], n.Path)
 		}
+	}
+	// The routing relation is registered after every id for the same reason the
+	// dependency graph is: an arm is named by step id, and a path is the one
+	// identity every node and every instance has.
+	for _, n := range r.nodes {
+		r.registerArms(n)
 	}
 	sort.Strings(r.paths)
 	for id := range r.dependents {
@@ -311,6 +324,14 @@ func (r *Run) commit(ev Event, external bool) error {
 		return r.onProposalSettled(e)
 	case FanoutExpandedEvent:
 		return r.onFanoutExpanded(e)
+	case LoopIterationStartedEvent:
+		return r.onLoopIterationStarted(e)
+	case LoopCompletedEvent:
+		return r.onLoopCompleted(e)
+	case BranchRoutedEvent:
+		return r.onBranchRouted(e)
+	case AggregateInputsEvent:
+		return r.onAggregateInputs(e)
 	case BudgetExceededEvent:
 		r.stopping = true
 		r.status = RunBudgetExceeded
@@ -396,6 +417,17 @@ func (r *Run) settle(n *ir.Node) error {
 			}
 		}
 	}
+	// Routing precedes the guard for the same reason an upstream skip does: an arm
+	// the deciding branch did not select is a node this path through the graph
+	// never reached, so running the author's guard against it would report a
+	// problem the run never had to face. An arm whose branch has not terminated yet
+	// is a WAIT — the driver holds it instead of starting it — so nothing is decided
+	// here and the question is asked again when the branch terminates.
+	if selected, undecided := r.armRouting(n.Path); undecided {
+		return nil
+	} else if !selected {
+		return r.derive(NodeSkippedEvent{NodePath: n.Path, Reason: r.armSkipReason(n.Path)})
+	}
 	if n.When != nil && r.cfg.Guard != nil {
 		ok, err := r.cfg.Guard(n, r.snapshot(n.Path, len(st.Attempts)+1))
 		if err != nil {
@@ -415,6 +447,15 @@ func (r *Run) settle(n *ir.Node) error {
 		// expansion inside Apply with every other state change, and it is also
 		// why a fan-out whose producer has not terminated costs the run nothing
 		// while it waits.
+		return nil
+	case kindLoopStep, kindBranchStep, kindAggregateStep:
+		// A loop, a branch, and an aggregate stay ready: none of them dispatches
+		// anything itself. The driver resolves what each needs from run state —
+		// one loop iteration past the last, one routed value, one resolved input
+		// list — and the body instances they create are the dispatches, counted
+		// against the global cap and the budget axes like any other node's. What
+		// they cannot do at all was already refused by classifyKind, before a
+		// single instance existed.
 		return nil
 	case kindSettleStep:
 		// A settle node stays ready. Its handles may name a producer that has
@@ -852,6 +893,7 @@ func (r *Run) Result() Result {
 		st.Attempts = append([]*Attempt(nil), r.state[p].Attempts...)
 		st.Outputs = append([]NodeOutput(nil), r.state[p].Outputs...)
 		st.Items = append([]FanoutItem(nil), r.state[p].Items...)
+		st.Iterations = append([]LoopIteration(nil), r.state[p].Iterations...)
 		out.Nodes = append(out.Nodes, &st)
 		// Run-level outputs are every node's bindings in canonical node-path
 		// order, so the list is reproducible and needs no map to read.
