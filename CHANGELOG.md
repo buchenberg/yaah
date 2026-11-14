@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.181.0](https://github.com/buchenberg/yaah/compare/v0.180.0...v0.181.0) (2026-11-14)
+
+
+### Features
+
+* **workflow:** validate and explain CLI skeleton (yaah-0u0v.9) ([a867597](https://github.com/buchenberg/yaah/commit/a867597e80d7d9538a7cba969fe3bd795ddc4405))
+* **workflow:** validate and explain CLI skeleton (yaah-0u0v.9) ([fc664ce](https://github.com/buchenberg/yaah/commit/fc664ceb85fd16728256f14cd59e8bfb6a32bb92))
+
+
+### Bug Fixes
+
+* **workflow:** honor the documented report contracts (review [#1640](https://github.com/buchenberg/yaah/issues/1640)) ([958c410](https://github.com/buchenberg/yaah/commit/958c41033edd69ad870135b35157fd0bac5bc704))
+* **workflow:** review round 2 — escape mermaid, honest findings line, proof-aligned producers ([63aee9f](https://github.com/buchenberg/yaah/commit/63aee9ff2d21de3e298892ac0afea371ad6db880))
+
 ## [0.180.0](https://github.com/buchenberg/yaah/compare/v0.179.1...v0.180.0) (2026-11-13)
 
 
