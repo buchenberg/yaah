@@ -3,7 +3,6 @@ package exec
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -158,39 +157,51 @@ func maxParallelOf(n *ir.Node) int {
 // discriminator inserted between its container and its body index. It is a pure
 // function of the graph and the item index, which is what makes it stable across
 // runs and greppable in a trace.
+func itemPath(containerPath string, item int, bodyPath string) string {
+	return instanceChildPath(containerPath, ".items["+strconv.Itoa(item)+"]", bodyPath)
+}
+
+// instanceChildPath splices one instance discriminator into a body node's
+// template path, at the container's own boundary.
 //
 // A nested container is itself an instance, so its path already carries its
-// ancestor's ".items[j]" segment(s) while its body nodes still carry authoring
-// template paths. The prefix is therefore the container's TEMPLATE path, not its
-// instance path: for container `steps.outer.items[0].body[1]` and body node
-// `steps.outer.body[1].body[0]` the result is
+// ancestors' ".items[j]"/".iters[k]" segments while its body nodes still carry
+// authoring template paths. The prefix is therefore the container's TEMPLATE
+// path, not its instance path: for container `steps.outer.items[0].body[1]` and
+// body node `steps.outer.body[1].body[0]` the result is
 // `steps.outer.items[0].body[1].items[k].body[0]` — not the malformed
 // `...items[k].steps.outer...` a naive instance-path prefix would mint.
-func itemPath(containerPath string, item int, bodyPath string) string {
+func instanceChildPath(containerPath, discriminator, bodyPath string) string {
 	tmpl := templatePath(containerPath)
 	rest := bodyPath
 	if len(tmpl) <= len(bodyPath) && bodyPath[:len(tmpl)] == tmpl {
 		rest = bodyPath[len(tmpl):]
 	}
-	return containerPath + ".items[" + strconv.Itoa(item) + "]" + rest
+	return containerPath + discriminator + rest
 }
 
 // templatePath recovers a container's authoring template path from its instance
-// path by stripping every ".items[j]" segment itemPath inserted. Removal is
-// exact — nothing authored can contain ".items[" (ir.Resolve only appends
-// ".body[i]") — and the result is always a prefix of the container's own
-// body-node template paths.
+// path by stripping every instance discriminator it carries — ".items[j]" for a
+// fan-out item and ".iters[k]" for a loop iteration, at any depth. Removal is
+// exact (nothing authored can contain either marker: ir.Resolve only appends
+// ".body[i]") and the result is always a prefix of the container's own body-node
+// template paths.
 func templatePath(path string) string {
 	for {
-		i := strings.LastIndex(path, ".items[")
-		if i < 0 {
+		cut := -1
+		for _, marker := range []string{".items[", ".iters["} {
+			if i := strings.LastIndex(path, marker); i > cut {
+				cut = i
+			}
+		}
+		if cut < 0 {
 			return path
 		}
-		j := strings.IndexByte(path[i:], ']')
+		j := strings.IndexByte(path[cut:], ']')
 		if j < 0 {
 			return path
 		}
-		path = path[:i] + path[i+j+1:]
+		path = path[:cut] + path[cut+j+1:]
 	}
 }
 
@@ -389,7 +400,7 @@ func filterElements(elems []any, p ir.Predicate) ([]any, string) {
 	for _, e := range elems {
 		v, why := elementField(e, p.Field)
 		if why != "" {
-			return nil, why
+			return nil, ReasonFanoutOverUnavailable + ": " + why
 		}
 		ok, err := predicateMatch(v, p)
 		if err != nil {
@@ -402,31 +413,40 @@ func filterElements(elems []any, p ir.Predicate) ([]any, string) {
 	return out, ""
 }
 
-// elementField reads the predicate's field out of one item. A field no item
-// carries is refused rather than compared as absent: an `over` filter that
-// matched nothing because a name was mistyped is exactly the quiet outcome a
-// fan-out of zero items would produce.
+// elementField reads the predicate's field out of one element of a filtered
+// selector set. A field no element carries is refused rather than compared as
+// absent: an `over` filter that matched nothing because a name was mistyped is
+// exactly the quiet outcome a fan-out of zero items would produce, and a loop
+// terminator that never matched because of the same typo would run to its bound
+// and call that an answer. The caller prefixes the reason it reports this under.
 func elementField(e any, field string) (any, string) {
 	if field == "" {
 		return e, ""
 	}
-	m, _ := e.(map[string]any)
+	m := objectOf(e)
 	if m == nil {
-		if s, isStr := e.(string); isStr {
-			if decoded, ok := decodeJSONObject(s); ok {
-				m = decoded
-			}
-		}
-	}
-	if m == nil {
-		return nil, ReasonFanoutOverUnavailable + fmt.Sprintf(
-			": an item is not a mapping, so it has no field %q", field)
+		return nil, fmt.Sprintf("an element is not a mapping, so it has no field %q", field)
 	}
 	v, ok := m[field]
 	if !ok {
-		return nil, ReasonFanoutOverUnavailable + fmt.Sprintf(": no item carries the field %q", field)
+		return nil, fmt.Sprintf("no element carries the field %q", field)
 	}
 	return v, ""
+}
+
+// objectOf reads a value as a mapping: a decoded object, or a string holding
+// one. It is how a recorded value that arrived as JSON text is read by name,
+// the same decoding stepValue applies to a structured report body.
+func objectOf(v any) map[string]any {
+	if m, ok := v.(map[string]any); ok {
+		return m
+	}
+	if s, isStr := v.(string); isStr {
+		if decoded, ok := decodeJSONObject(s); ok {
+			return decoded
+		}
+	}
+	return nil
 }
 
 // onFanoutExpanded instantiates one body instance per item and hands them to the
@@ -479,83 +499,39 @@ func (r *Run) onFanoutExpanded(e FanoutExpandedEvent) error {
 	return nil
 }
 
-// instantiateItem creates the body instances of one item and registers their
-// dependencies. The body node is COPIED: the resolved graph is immutable, and an
-// instance differs from its template in exactly two fields — its path, and the
-// scope it is dispatched against.
+// instantiateItem creates the body instances of one item and records the item in
+// the fan-out's ledger.
 func (r *Run) instantiateItem(n *ir.Node, st *NodeState, j int, bound any) error {
-	locals := map[string]string{}
-	if outer := r.instances[n.Path]; outer != nil {
-		// A container nested in a body chains its item scope: the inner body
-		// sees its own binding first and the outer ones behind it.
-		for k, v := range outer.locals {
-			locals[k] = v
-		}
+	paths, unresolved, err := r.instantiateBody(n, instancePlan{
+		path:  func(b string) string { return itemPath(n.Path, j, b) },
+		item:  j,
+		bound: bound,
+		name:  n.As,
+	})
+	if err != nil {
+		return err
 	}
-	item := FanoutItem{Index: j, Bound: bound, State: StatePending}
-	for _, b := range n.Body {
-		if b == nil {
-			continue
-		}
-		ip := itemPath(n.Path, j, b.Path)
-		if _, dup := r.byPath[ip]; dup {
-			return fmt.Errorf("workflow/exec: duplicate instance path %q", ip)
-		}
-		ic := *b
-		ic.Path = ip
-		r.byPath[ip] = &ic
-		r.instances[ip] = &instance{owner: n.Path, item: j, bound: bound, name: n.As, locals: locals}
-		r.state[ip] = &NodeState{
-			Path:        ip,
-			ID:          b.ID,
-			Kind:        b.Kind,
-			State:       StatePending,
-			Needs:       append([]string(nil), b.Needs...),
-			Policy:      effectivePolicy(b.OnFailure),
-			MaxAttempts: attemptCeiling(b.Retry),
-		}
-		if b.ID != "" {
-			locals[b.ID] = ip
-		}
-		item.Paths = append(item.Paths, ip)
-	}
-	st.Items = append(st.Items, item)
-	r.instanceOf[n.Path] = append(r.instanceOf[n.Path], item.Paths...)
-	// Dependencies are registered only once the item's whole local map exists:
-	// a body node may need a sibling declared after it, and the row a need
-	// resolves against is the ITEM's, never a same-named step in another item.
-	for _, ip := range item.Paths {
-		needs, ok := r.needPaths(r.byPath[ip])
-		if !ok {
-			return r.failTerminal(n.Path, ReasonFanoutBodyUnresolved+": "+ip+
-				" needs a step that is not in its item scope")
-		}
-		for _, dep := range needs {
-			r.dependents[dep] = append(r.dependents[dep], ip)
-			// Canonical order, as New leaves the top-level lists: the release
-			// order of ready events must not depend on expansion order.
-			sort.Strings(r.dependents[dep])
-		}
+	st.Items = append(st.Items, FanoutItem{Index: j, Bound: bound, Paths: paths, State: StatePending})
+	if unresolved != "" {
+		return r.failTerminal(n.Path, ReasonFanoutBodyUnresolved+": "+unresolved+
+			" needs a step that is not in its item scope")
 	}
 	return nil
 }
 
 // allItemsTerminal reports whether every instance of one fan-out has terminated.
 func (r *Run) allItemsTerminal(owner string) bool {
-	for _, p := range r.instanceOf[owner] {
-		if !r.state[p].State.Terminal() {
-			return false
-		}
-	}
-	return true
+	return r.scopeTerminal(r.instanceOf[owner])
 }
 
-// noteItemOutcome is the fan-out's reaction to one of its items terminating.
-// Under abort a failed item fails the fan-out immediately, so the run stops
-// scheduling instead of finishing work nobody will collect; otherwise the last
-// item to terminate closes the fan-out. It runs inside Apply, after the item's
-// own terminal transition, and is a no-op when the fan-out is already terminal
-// or the run is closing.
+// noteItemOutcome is the container's reaction to one of its instances
+// terminating, dispatched by the container's kind. Under abort a failed fan-out
+// item fails the fan-out immediately, so the run stops scheduling instead of
+// finishing work nobody will collect; otherwise the last item to terminate closes
+// the fan-out. A loop folds one ITERATION when its last instance is done and lets
+// the driver ask for the next one; an aggregate folds its whole combine body. It
+// runs inside Apply, after the instance's own terminal transition, and is a no-op
+// when the container is already terminal or the run is closing.
 func (r *Run) noteItemOutcome(path string) error {
 	inst := r.instances[path]
 	if inst == nil || r.closing {
@@ -564,6 +540,16 @@ func (r *Run) noteItemOutcome(path string) error {
 	f := r.byPath[inst.owner]
 	st := r.state[inst.owner]
 	if f == nil || st == nil || st.State != StateReady {
+		return nil
+	}
+	switch f.Kind {
+	case ir.KindLoop:
+		return r.noteLoopInstance(f, st, inst)
+	case ir.KindAggregate:
+		return r.noteAggregateInstance(f, st)
+	case ir.KindFanout:
+		// handled below
+	default:
 		return nil
 	}
 	if r.state[path].State == StateFailed && effectiveItemFailure(f.OnItemFailure) == ir.OnItemAbort {
@@ -642,47 +628,10 @@ func failureRecord(it *FanoutItem) map[string]any {
 	}
 }
 
-// itemOutcome folds one item's instance states into the item's own outcome.
-// Failure outranks cancellation outranks skip — an item that lost its product is
-// the fact a reader needs first — and success carries the product instance's
-// recorded value.
+// itemOutcome folds one item's instance states into the item's own outcome,
+// through the fold every container execution shares (foldScope).
 func (r *Run) itemOutcome(it *FanoutItem) {
-	state := StateSucceeded
-	reason := ""
-	note := func(p string, s State) {
-		if state == StateFailed || (state != StateSucceeded && s != StateFailed) {
-			return
-		}
-		state = s
-		if st := r.state[p]; st != nil {
-			reason = p + ": " + st.Reason
-		} else {
-			reason = p
-		}
-	}
-	for _, p := range it.Paths {
-		st := r.state[p]
-		if st == nil {
-			continue
-		}
-		switch st.State {
-		case StateFailed:
-			note(p, StateFailed)
-		case StateCancelled:
-			note(p, StateCancelled)
-		case StateSkipped:
-			note(p, StateSkipped)
-		}
-	}
-	it.Value = nil
-	if state == StateSucceeded && len(it.Paths) > 0 {
-		last := it.Paths[len(it.Paths)-1]
-		if st := r.state[last]; st != nil && st.State == StateSucceeded {
-			it.Value = r.stepValue(r.byPath[last], st)
-		}
-	}
-	it.State = state
-	it.Reason = reason
+	it.State, it.Reason, it.Value = r.foldScope(it.Paths)
 }
 
 // fanoutBindingName is the name a fan-out's collected value is bound under: its

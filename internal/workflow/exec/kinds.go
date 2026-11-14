@@ -61,6 +61,21 @@ const (
 	// global cap and the fan-out's own max_parallel. That is why a fan-out is
 	// never handed to the door as an attempt of its own.
 	kindFanoutStep
+	// kindLoopStep runs the node's body as a sequence of iterations
+	// (yaah-0u0v.15). It dispatches nothing itself: the node stays ready, the
+	// driver asks for one iteration at a time once the previous one has
+	// terminated, and the iteration's own nodes are the dispatches — counted
+	// against the global cap and the budget axes like any other node's.
+	kindLoopStep
+	// kindBranchStep routes (yaah-0u0v.15). It dispatches nothing and expands
+	// nothing: the driver resolves the routed value, and the reducer records the
+	// chosen arm and skips the ones the branch did not select.
+	kindBranchStep
+	// kindAggregateStep combines the node's inputs (yaah-0u0v.15). A
+	// deterministic strategy (concat, json_merge) is a value step in the reducer;
+	// summarize instantiates the node's body, and those instances are the
+	// dispatches. Neither is an attempt of the aggregate's own.
+	kindAggregateStep
 	// kindRefuse ends the node failed with ReasonNotImplemented.
 	kindRefuse
 )
@@ -76,10 +91,20 @@ const (
 // door's settlement path (yaah-0u0v.13), which is an adapter over
 // internal/dispatch's existing Settle rather than a second settlement
 // implementation; a fan-out expands into item instances the ordinary scheduler
-// then runs (yaah-0u0v.14), so its own action is an expansion rather than a
-// dispatch. Everything else is refused with a reason naming the bead that owns
-// it, for the reason given in the package doc: a container that reported
-// success would contradict validate's proof of the same graph.
+// then runs (yaah-0u0v.14); a loop, a branch, and an aggregate resolve
+// themselves in the reducer and, where they run a body at all, expand into body
+// instances the ordinary scheduler runs (yaah-0u0v.15). Everything else is
+// refused with a reason naming the bead that owns it, for the reason given in the
+// package doc: a container that reported success would contradict validate's
+// proof of the same graph.
+//
+// A refusal that is a fact about the DECLARATION belongs here rather than in the
+// driver: a loop with no bound, a bodyless loop, an aggregate with no inputs or an
+// unknown strategy, and a fan-out join this core cannot honor all mean the node
+// may not run at all, and saying so before the first instance dispatches is the
+// honest order. Refusals that depend on run state — an unreadable `over` source, a
+// terminator whose producer never succeeded — are the driver's, because no
+// disposition table can know them.
 func classifyKind(n *ir.Node) (kindAction, string) {
 	switch n.Kind {
 	case ir.KindDelegate:
@@ -97,13 +122,36 @@ func classifyKind(n *ir.Node) (kindAction, string) {
 		return kindRefuse, ReasonNotImplemented + ": join " + string(n.Join) +
 			" is yaah-0u0v.19; only join: all executes in the scheduler core"
 	case ir.KindLoop:
-		return kindRefuse, ReasonNotImplemented + ": loop iteration is yaah-0u0v.15"
+		// A loop with no bound has no number to iterate to: WF034 already reports
+		// the declaration, and a deterministic core that invented a ceiling would be
+		// inventing a host policy nobody authored.
+		if n.MaxIterations == nil || *n.MaxIterations < 1 {
+			return kindRefuse, ReasonLoopUnbounded + ": " + n.Path +
+				" declares no max_iterations; the scheduler invents no bound"
+		}
+		if len(n.Body) == 0 {
+			return kindRefuse, ReasonLoopBodyMissing + ": " + n.Path + " declares no body to iterate"
+		}
+		return kindLoopStep, ""
 	case ir.KindBranch:
-		return kindRefuse, ReasonNotImplemented + ": branch arm selection is yaah-0u0v.15"
+		return kindBranchStep, ""
 	case ir.KindGate:
-		return kindRefuse, ReasonNotImplemented + ": gate assertion and judge are yaah-0u0v.15"
+		return kindRefuse, ReasonNotImplemented + ": gate assertion and judge are yaah-0u0v.21"
 	case ir.KindAggregate:
-		return kindRefuse, ReasonNotImplemented + ": aggregate combine is yaah-0u0v.15"
+		switch n.Strategy {
+		case ir.AggregateConcat, ir.AggregateJSONMerge, ir.AggregateSummarize:
+		default:
+			return kindRefuse, ReasonAggregateStrategyUnsupported + ": " + n.Path + " strategy " +
+				aggregateStrategyLabel(n.Strategy)
+		}
+		if len(n.Inputs) == 0 {
+			return kindRefuse, ReasonAggregateInputsEmpty + ": " + n.Path + " declares no inputs to combine"
+		}
+		if n.Strategy == ir.AggregateSummarize && len(n.Body) == 0 {
+			return kindRefuse, ReasonAggregateBodyMissing + ": " + n.Path +
+				" declares strategy: summarize with no body to dispatch"
+		}
+		return kindAggregateStep, ""
 	case ir.KindSettle:
 		return kindSettleStep, ""
 	case ir.KindSelect:

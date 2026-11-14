@@ -640,6 +640,15 @@ func (r *Run) stepValue(n *ir.Node, st *NodeState) any {
 		// A fan-out's value IS its collected items: `steps.<id>.output` and
 		// `steps.<id>.collect` are two readings of one list, in input order.
 		return st.collectValue()
+	case ir.KindLoop:
+		// A loop's value is its accumulation, for the same reason and in the same
+		// order: one entry per succeeded iteration.
+		return st.collectValue()
+	case ir.KindAggregate:
+		// An aggregate's value is the combine it performed: the concatenated list,
+		// the merged mapping, or a summarize body's product — structured, so a
+		// selector can read into it instead of re-parsing its text.
+		return st.Combined
 	case ir.KindDelegate:
 		if st.Proposal != nil && st.Proposal.ProposalID != "" {
 			m := map[string]any{
