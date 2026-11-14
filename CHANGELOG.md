@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.186.0](https://github.com/buchenberg/yaah/compare/v0.185.0...v0.186.0) (2026-11-14)
+
+
+### Features
+
+* **workflow:** durable workflow state and crash-safe resume (yaah-0u0v.16) ([#1653](https://github.com/buchenberg/yaah/issues/1653)) ([f4986f4](https://github.com/buchenberg/yaah/commit/f4986f483e154e794bbcdf672b7a894fab7acfbc))
+
 ## [0.185.0](https://github.com/buchenberg/yaah/compare/v0.184.1...v0.185.0) (2026-11-14)
 
 
