@@ -55,7 +55,6 @@ var workflowResumeStore = func(path string) (exec.Store, error) {
 
 type workflowResumeOptions struct {
 	workflowOptions
-	runID        string
 	statePath    string
 	specPath     string
 	artifactRoot string
