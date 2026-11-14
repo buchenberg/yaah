@@ -157,6 +157,60 @@ func TestDispatchRoles(t *testing.T) {
 	}
 }
 
+// ------------------------------------------------------------------- WF037
+
+func TestGateConditions(t *testing.T) {
+	cases := []struct {
+		name  string
+		steps string
+		want  string // finding path; empty means clean
+		msg   string
+	}{
+		{
+			name:  "neither assert nor judge",
+			steps: "  steps:\n    - {id: g, kind: gate}\n",
+			want:  "steps.g",
+			msg:   "neither assert nor judge",
+		},
+		{
+			name:  "both assert and judge",
+			steps: "  steps:\n    - id: g\n      kind: gate\n      assert: {name: nonempty}\n      judge: {role: developer, prompt: which}\n",
+			want:  "steps.g.judge",
+			msg:   "both assert and judge",
+		},
+		{
+			name:  "judge with an empty prompt",
+			steps: "  steps:\n    - id: g\n      kind: gate\n      judge: {role: developer, prompt: \"\"}\n",
+			want:  "steps.g.judge.prompt",
+			msg:   "no prompt",
+		},
+		{
+			name:  "judge with a blank prompt",
+			steps: "  steps:\n    - id: g\n      kind: gate\n      judge: {role: developer, prompt: \"   \"}\n",
+			want:  "steps.g.judge.prompt",
+			msg:   "no prompt",
+		},
+		{
+			name:  "clean assert gate",
+			steps: "  steps:\n    - {id: a, kind: delegate, role: developer, prompt: hi}\n    - {id: g, kind: gate, assert: {name: nonempty, args: {from: a}}}\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g := authorityGraph(t, tc.steps)
+			diags := Authority(g, authorityTestEnv())
+			if tc.want == "" {
+				requireSilent(t, diags, CodeWF037)
+				return
+			}
+			requireCode(t, diags, CodeWF037, tc.want)
+			if d := findingAt(t, diags, CodeWF037, tc.want); !strings.Contains(d.Message, tc.msg) {
+				t.Errorf("message %q does not mention %q", d.Message, tc.msg)
+			}
+		})
+	}
+}
+
 // ------------------------------------------------------------------- WF031
 
 func TestFilesystemGrants(t *testing.T) {

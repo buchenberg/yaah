@@ -37,11 +37,11 @@ func graphNodes(g *ir.Graph) (order []*ir.Node, parent map[*ir.Node]*ir.Node) {
 }
 
 // stepsByID indexes the top-level steps by id. Needs entries, branch arms,
-// and gate dispositions may name a top-level step and nothing else — the
-// resolver enforces exactly that — so this map is the whole reference
-// namespace for the graph rules. On a duplicate id the first binder wins,
-// because the duplicate itself is uniqueReferences' finding and must not
-// cascade into every reference to it.
+// gate dispositions, and an assert's `from` subject may name a top-level step
+// and nothing else, so this map is the whole reference namespace for the graph
+// rules. On a duplicate id the first binder wins, because the duplicate itself
+// is uniqueReferences' finding and must not cascade into every reference to
+// it.
 func stepsByID(g *ir.Graph) map[string]*ir.Node {
 	byID := map[string]*ir.Node{}
 	if g == nil {

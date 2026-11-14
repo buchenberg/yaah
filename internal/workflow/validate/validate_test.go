@@ -880,6 +880,14 @@ func TestHandBuiltGraphReferences(t *testing.T) {
 			codes: seq(CodeWF002, CodeWF002),
 		},
 		{
+			name: "gate assert subject naming no step",
+			graph: &ir.Graph{Name: "hand-built", Steps: []*ir.Node{
+				{Path: "steps.g", ID: "g", Kind: ir.KindGate, Assert: &ir.Assert{Name: "all_succeeded", Args: map[string]any{"from": "ghost"}}},
+			}},
+			code: CodeWF002, path: "steps.g.assert.args.from", sub: `unknown step id "ghost"`,
+			codes: seq(CodeWF002),
+		},
+		{
 			name: "duplicate body-local ids",
 			graph: &ir.Graph{Name: "hand-built", Steps: []*ir.Node{{
 				Path: "steps.fan", ID: "fan", Kind: ir.KindFanout,

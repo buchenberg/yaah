@@ -342,6 +342,22 @@ func (rt *Runtime) store(id string, c exec.Completion) {
 	rt.mu.Unlock()
 }
 
+// judgeFor returns the judge payload of a node that dispatches its judge as
+// the attempt: a select or gate whose policy/declaration sends a verdict
+// delegate. The scheduler hands such a node to the door with Node still
+// pointing at the container, so the door must read the prompt and role from
+// the judge payload, not from the container's own (empty) delegate fields.
+func judgeFor(n *ir.Node) *ir.Judge {
+	if n == nil || n.Judge == nil {
+		return nil
+	}
+	switch n.Kind {
+	case ir.KindSelect, ir.KindGate:
+		return n.Judge
+	}
+	return nil
+}
+
 // laneFor resolves the node's lane onto the one lane this door dispatches.
 func laneFor(n *ir.Node) (dispatch.Lane, error) {
 	switch n.Lane {
@@ -363,10 +379,14 @@ func laneFor(n *ir.Node) (dispatch.Lane, error) {
 // re-parsed: a malformed reference was a resolve failure (WF001) long before
 // it could reach here.
 func renderPrompt(d exec.Dispatch) (string, error) {
-	if d.Node.Prompt == nil {
+	prompt := d.Node.Prompt
+	if j := judgeFor(d.Node); j != nil {
+		prompt = j.Prompt
+	}
+	if prompt == nil {
 		return "", fmt.Errorf("workflow/host: node %s has no prompt to dispatch", d.Node.Path)
 	}
-	res, err := d.Node.Prompt.Render(d.Scope, ir.RenderOptions{})
+	res, err := prompt.Render(d.Scope, ir.RenderOptions{})
 	if err != nil {
 		return "", fmt.Errorf("workflow/host: node %s prompt: %w", d.Node.Path, err)
 	}
@@ -400,8 +420,12 @@ func descriptionFor(n *ir.Node) string {
 // Every field left zero means "the role and configuration decide" — the door
 // adds no defaults of its own, which is the same rule exec.Limits follows.
 func paramsFor(n *ir.Node) jobs.SubAgentParams {
+	role := n.Role
+	if j := judgeFor(n); j != nil {
+		role = j.Role
+	}
 	p := jobs.SubAgentParams{
-		Role:     n.Role,
+		Role:     role,
 		Provider: n.Provider,
 		Model:    n.Model,
 	}
@@ -448,6 +472,9 @@ func envelopeToCompletion(res dispatch.DispatchResult, d exec.Dispatch, runErr e
 	}
 	if c.Role == "" {
 		c.Role = d.Node.Role
+		if j := judgeFor(d.Node); j != nil {
+			c.Role = j.Role
+		}
 	}
 	if c.Lane == "" {
 		c.Lane = string(d.Node.Lane)

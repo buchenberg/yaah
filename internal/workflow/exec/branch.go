@@ -58,11 +58,23 @@ const (
 	ReasonBranchArmNotSelected = "branch_arm_not_selected"
 )
 
-// armIDs lists the step ids a branch can route to, in declaration order — every
-// case's `then`, then the `default`.
+// armIDs lists the step ids a node can route to, in declaration order. A branch
+// names its arms through every case's `then` and then the `default`; a gate
+// names exactly two, on_pass first and then on_fail, because a pass is the arm
+// an author reads first (yaah-0u0v.21).
 func armIDs(n *ir.Node) []string {
 	if n == nil {
 		return nil
+	}
+	if n.Kind == ir.KindGate {
+		out := make([]string, 0, 2)
+		if n.OnPass != "" {
+			out = append(out, n.OnPass)
+		}
+		if n.OnFail != "" {
+			out = append(out, n.OnFail)
+		}
+		return out
 	}
 	out := make([]string, 0, len(n.Cases)+1)
 	for _, c := range n.Cases {
@@ -82,7 +94,7 @@ func armIDs(n *ir.Node) []string {
 // An unknown or self-naming arm is skipped here: ir.resolveBranch refuses both in
 // an authored graph, and a hand-built one is refused again when the branch routes.
 func (r *Run) registerArms(n *ir.Node) {
-	if n == nil || n.Kind != ir.KindBranch {
+	if n == nil || (n.Kind != ir.KindBranch && n.Kind != ir.KindGate) {
 		return
 	}
 	for _, id := range armIDs(n) {
@@ -134,10 +146,26 @@ func (r *Run) armSkipReason(path string) string {
 	for _, b := range owners {
 		st := r.state[b]
 		if st != nil && st.State.Terminal() && st.Selected != path {
-			return ReasonBranchArmNotSelected + ": " + b + " routed to " + routedLabel(st.Selected)
+			return notTakenReason(r.byPath[b], b, st)
 		}
 	}
 	return ReasonBranchArmNotSelected + ": no branch selected " + path
+}
+
+// notTakenReason states why one routing owner did not take one arm. A branch and
+// a gate share the mechanism and not the vocabulary: a gate's decision is a
+// condition that held or did not (yaah-0u0v.21), so its arms say so. A gate that
+// terminated without routing at all — a refusal, or a failure with no on_fail —
+// names that instead of quoting an arm it never chose.
+func notTakenReason(n *ir.Node, owner string, st *NodeState) string {
+	if n != nil && n.Kind == ir.KindGate {
+		if st.State != StateSucceeded {
+			return ReasonGateArmNotTaken + ": " + owner + " ended " + string(st.State) +
+				" without selecting an arm (" + st.Reason + ")"
+		}
+		return ReasonGateArmNotTaken + ": " + owner + " routed to " + routedLabel(st.Selected)
+	}
+	return ReasonBranchArmNotSelected + ": " + owner + " routed to " + routedLabel(st.Selected)
 }
 
 // routedLabel renders a branch's decision as one log/reason field.
@@ -290,7 +318,7 @@ func (r *Run) skipUnselectedArms(n *ir.Node, selected string) error {
 		}
 		if err := r.derive(NodeSkippedEvent{
 			NodePath: dep.Path,
-			Reason:   ReasonBranchArmNotSelected + ": " + n.Path + " routed to " + routedLabel(selected),
+			Reason:   notTakenReason(n, n.Path, r.state[n.Path]),
 		}); err != nil {
 			return err
 		}

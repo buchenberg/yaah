@@ -246,9 +246,19 @@ func TestGateStillRefused(t *testing.T) {
         name: nonempty
 `
 	g := graphFromYAML(t, y)
-	res, _ := runGraph(t, g, nil, Config{})
+	res, fake := runGraph(t, g, nil, Config{})
 	n := nodeOf(t, res, "steps.g")
-	if n.State != StateFailed || !strings.Contains(n.Reason, ReasonNotImplemented) && !strings.Contains(n.Reason, "0u0v.21") {
-		t.Errorf("gate = %s %q, want not_implemented naming .21", n.State, n.Reason)
+	// A gate is no longer a not_implemented kind (yaah-0u0v.21): this one has no
+	// needs and no `from`, so its subject is the empty need list and `nonempty`
+	// fails it. With no on_fail the gate ends failed, which is the escalation path
+	// the run's own on_failure disposition (abort by default) then raises.
+	if n.State != StateFailed || !strings.Contains(n.Reason, ReasonGateFailed) {
+		t.Errorf("gate = %s %q, want failed with %s", n.State, n.Reason, ReasonGateFailed)
+	}
+	if strings.Contains(n.Reason, ReasonNotImplemented) {
+		t.Errorf("gate reason = %q, still claims not_implemented", n.Reason)
+	}
+	if len(fake.Started()) != 0 {
+		t.Errorf("a gate under assert dispatched %d attempt(s)", len(fake.Started()))
 	}
 }

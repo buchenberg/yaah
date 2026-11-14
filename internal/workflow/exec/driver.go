@@ -128,6 +128,15 @@ func (r *Run) Advance(ctx context.Context) (bool, error) {
 	if selecting, serr := r.selectStepOnce(); selecting {
 		return true, serr
 	}
+	// Then the gate door (yaah-0u0v.21): one deterministic assert evaluated per
+	// cycle. A gate under `assert` dispatches nothing, so it appears nowhere in
+	// the dispatch tally this cycle would otherwise consult, and its decision
+	// still gets its own place in the log. A gate under `judge` dispatches through
+	// the ordinary start path above and folds its verdict when the attempt
+	// completes, so it never reaches this door.
+	if gating, gerr := r.gateStepOnce(); gating {
+		return true, gerr
+	}
 	if len(r.outstanding) == 0 {
 		// Nothing running and nothing startable: the part of the graph this run
 		// can reach has terminated, and anything still pending is stranded
