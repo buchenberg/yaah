@@ -37,6 +37,15 @@ func (k EventKind) derived() bool {
 	return false
 }
 
+// orDash renders an optional log field: empty becomes "-" so event lines
+// never show bare "model=" noise while column positions stay grep-stable.
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
 // Event is one fact about a run. The marker method seals the interface: a
 // caller outside this package cannot invent an event kind the reducer has
 // never heard of, which is what makes the exhaustive switch in Apply total.
@@ -195,7 +204,7 @@ func detail(ev Event) string {
 	case AttemptCompletedEvent:
 		c := e.Completion
 		out := fmt.Sprintf("%s attempt=%d status=%s stop_reason=%s duration_ms=%d model=%s world=%s retry_asserted=%t retryable=%t",
-			e.DispatchID, e.Attempt, c.Status, c.StopReason, c.DurationMs, c.Model, c.World, c.Recovery != nil, c.Retryable())
+			e.DispatchID, e.Attempt, c.Status, orDash(c.StopReason), c.DurationMs, orDash(c.Model), orDash(c.World), c.Recovery != nil, c.Retryable())
 		if c.ProposalID != "" {
 			out += " proposal_id=" + c.ProposalID
 		}

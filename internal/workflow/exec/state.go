@@ -151,17 +151,16 @@ type NodeState struct {
 	// The fields below carry the last completion's envelope facts for
 	// consumers that only want the node's outcome. Attempt history holds the
 	// full sequence.
-	Status       string
-	StopReason   string
-	DurationMs   int64
-	Model        string
-	World        string
-	ProposalID   string
-	Result       string
-	Error        string
-	Retryable    bool
-	RecoverySet  bool
-	OutputHandle any
+	Status      string
+	StopReason  string
+	DurationMs  int64
+	Model       string
+	World       string
+	ProposalID  string
+	Result      string
+	Error       string
+	Retryable   bool
+	RecoverySet bool
 }
 
 // LastAttempt returns the node's most recent attempt, or nil.

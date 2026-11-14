@@ -50,13 +50,13 @@ func (r *Run) Advance(ctx context.Context) (bool, error) {
 		return true, r.Apply(RunStartedEvent{RunID: r.runID})
 	}
 	if err := ctx.Err(); err != nil {
-		return true, r.stop(ctx, RunCancelled, "context ended: "+err.Error())
+		return true, r.stop(RunCancelled, "context ended: "+err.Error())
 	}
 	if r.stopping {
 		// An abort, a budget breach, or a cancel: the run stops scheduling,
 		// and what is still in flight is cancelled through the door rather
 		// than abandoned.
-		return true, r.stop(ctx, r.status, r.reason)
+		return true, r.stop(r.status, r.reason)
 	}
 	if axis, limit, ok := r.breach(); ok {
 		return true, r.Apply(BudgetExceededEvent{Axis: axis, Limit: limit})
@@ -73,7 +73,7 @@ func (r *Run) Advance(ctx context.Context) (bool, error) {
 		// can reach has terminated, and anything still pending is stranded
 		// behind a need that never terminates — WF004's finding, which the
 		// scheduler finalizes as cancelled instead of waiting for.
-		return true, r.stop(ctx, r.disposition(), r.dispositionReason())
+		return true, r.stop(r.disposition(), r.dispositionReason())
 	}
 	return r.commitHead(ctx)
 }
@@ -89,7 +89,7 @@ func (r *Run) Cancel(ctx context.Context, reason string) error {
 	if reason == "" {
 		reason = "cancelled"
 	}
-	return r.stop(ctx, RunCancelled, reason)
+	return r.stop(RunCancelled, reason)
 }
 
 // startReady hands attempts to the door while the cap has room, taking ready
@@ -181,11 +181,11 @@ func (r *Run) commitHead(ctx context.Context) (bool, error) {
 			return true, err
 		}
 		if err := ctx.Err(); err != nil {
-			return true, r.stop(ctx, RunCancelled, "context ended: "+err.Error())
+			return true, r.stop(RunCancelled, "context ended: "+err.Error())
 		}
 		if err := r.rt.Block(ctx); err != nil {
 			if cerr := ctx.Err(); cerr != nil {
-				return true, r.stop(ctx, RunCancelled, "context ended: "+cerr.Error())
+				return true, r.stop(RunCancelled, "context ended: "+cerr.Error())
 			}
 			return true, r.abandonHead(head, fmt.Sprintf("Runtime.Block: %v", err))
 		}
@@ -229,7 +229,13 @@ func (r *Run) anyCompleted() bool {
 // stop cancels what is in flight through the door and closes the run. Order
 // matters and is fixed: dispatch order for the cancels, canonical path order
 // for everything the close has to terminate, so one graph yields one sequence.
-func (r *Run) stop(ctx context.Context, status RunStatus, reason string) error {
+// stop terminates the run: every outstanding attempt is cancelled and
+// recorded, then run_finished is applied. It takes no context by design —
+// teardown is unconditional. A caller whose ctx already ended still owes
+// every open attempt its Cancel call; abandoning teardown halfway would
+// orphan real dispatches, which is the one outcome a scheduler must never
+// choose because its own deadline fired.
+func (r *Run) stop(status RunStatus, reason string) error {
 	for _, a := range append([]*Attempt(nil), r.outstanding...) {
 		var cancelErr string
 		if err := r.rt.Cancel(a.Handle); err != nil {
@@ -243,7 +249,6 @@ func (r *Run) stop(ctx context.Context, status RunStatus, reason string) error {
 		}); err != nil {
 			return err
 		}
-		_ = ctx
 	}
 	r.outstanding = nil
 	return r.Apply(RunFinishedEvent{Status: status, Reason: reason})

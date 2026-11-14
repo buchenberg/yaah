@@ -171,11 +171,13 @@ func (f *FakeRuntime) Cancel(h Handle) error {
 	}
 	// A cancelled attempt reports the envelope a real lane would return once
 	// the cancellation landed, so a late completion is observable in a test.
+	// retryable is false: the run deliberately stopped this attempt, and a
+	// completion that invited retry would contradict the cancellation.
 	f.solved[h.DispatchID] = Completion{
 		Status:     StatusError,
 		DispatchID: h.DispatchID,
 		StopReason: "canceled",
-		Recovery:   &Recovery{Retryable: true},
+		Recovery:   &Recovery{Retryable: false},
 	}
 	return nil
 }
