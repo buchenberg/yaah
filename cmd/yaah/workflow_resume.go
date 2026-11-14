@@ -2,6 +2,8 @@ package yaah
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -241,11 +243,20 @@ func openWorkflowState(path string) (exec.Store, error) {
 	return store.New(db)
 }
 
-// runIdentify is the timestamped id a run uses when the caller named none and
-// --state is set, so two runs against one database cannot collide on the graph
-// name alone. Nanosecond precision keeps two runs started back-to-back distinct.
+// runIdentify is the id a run uses when the caller named none and --state is
+// set, so two runs against one database cannot collide on the graph name alone.
+// A timestamp plus a short random suffix keeps two runs started in the same
+// instant distinct even where the OS clock is coarse (Windows ticks at ~1ms).
 func runIdentify(name string) string {
-	return fmt.Sprintf("%s@%s", name, time.Now().UTC().Format("20060102T150405.000000000"))
+	return fmt.Sprintf("%s@%s-%s", name, time.Now().UTC().Format("20060102T150405.000000000"), randomSuffix(4))
+}
+
+func randomSuffix(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
 }
 
 // unusedResumeSeam keeps the jobs import meaningful if the runner seam moves.
