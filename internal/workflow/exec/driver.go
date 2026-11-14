@@ -80,9 +80,10 @@ func (r *Run) Advance(ctx context.Context) (bool, error) {
 
 // Cancel stops the run from the outside: every running attempt is cancelled
 // through the door, every node that never ran is cancelled by the close, and
-// the run finishes with RunCancelled. Call Cancel from the same goroutine that
-// drives Advance; it is not a signal to a concurrent loop.
-func (r *Run) Cancel(ctx context.Context, reason string) error {
+// the run finishes with RunCancelled. Cancel takes no context — teardown is
+// unconditional, for the reason stop documents. Call Cancel from the same
+// goroutine that drives Advance; it is not a signal to a concurrent loop.
+func (r *Run) Cancel(reason string) error {
 	if r.finished {
 		return nil
 	}
@@ -229,12 +230,9 @@ func (r *Run) anyCompleted() bool {
 // stop cancels what is in flight through the door and closes the run. Order
 // matters and is fixed: dispatch order for the cancels, canonical path order
 // for everything the close has to terminate, so one graph yields one sequence.
-// stop terminates the run: every outstanding attempt is cancelled and
-// recorded, then run_finished is applied. It takes no context by design —
-// teardown is unconditional. A caller whose ctx already ended still owes
-// every open attempt its Cancel call; abandoning teardown halfway would
-// orphan real dispatches, which is the one outcome a scheduler must never
-// choose because its own deadline fired.
+// It takes no context by design: teardown is unconditional, and a caller whose
+// context already ended still owes every open attempt its Cancel call —
+// abandoning teardown halfway would orphan real dispatches.
 func (r *Run) stop(status RunStatus, reason string) error {
 	for _, a := range append([]*Attempt(nil), r.outstanding...) {
 		var cancelErr string

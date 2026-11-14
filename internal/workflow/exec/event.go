@@ -204,7 +204,7 @@ func detail(ev Event) string {
 	case AttemptCompletedEvent:
 		c := e.Completion
 		out := fmt.Sprintf("%s attempt=%d status=%s stop_reason=%s duration_ms=%d model=%s world=%s retry_asserted=%t retryable=%t",
-			e.DispatchID, e.Attempt, c.Status, orDash(c.StopReason), c.DurationMs, orDash(c.Model), orDash(c.World), c.Recovery != nil, c.Retryable())
+			e.DispatchID, e.Attempt, orDash(c.Status), orDash(c.StopReason), c.DurationMs, orDash(c.Model), orDash(c.World), c.Recovery != nil, c.Retryable())
 		if c.ProposalID != "" {
 			out += " proposal_id=" + c.ProposalID
 		}

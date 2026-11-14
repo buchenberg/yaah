@@ -430,7 +430,7 @@ func TestCancelStopsRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	r.Cancel(context.Background(), "user abort")
+	r.Cancel("user abort")
 	res, err := r.Execute(context.Background())
 	if err != nil {
 		t.Fatalf("Execute after cancel: %v", err)
@@ -460,7 +460,7 @@ func TestCancelDuringRunCancelsInFlight(t *testing.T) {
 	if _, err := r.Advance(ctx); err != nil {
 		t.Fatalf("Advance: %v", err)
 	}
-	r.Cancel(ctx, "mid-run abort")
+	r.Cancel("mid-run abort")
 	res, err := r.Execute(ctx)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
