@@ -174,13 +174,10 @@ func runWorkflowExplainFromTrace(cmd *cobra.Command, args []string, opts workflo
 	} else {
 		renderWorkflowTrace(out, rep)
 	}
-	if rep.Status != string(exec.RunSucceeded) || len(rep.Divergences) > 0 {
-		reason := rep.Reason
-		if reason == "" {
-			reason = fmt.Sprintf("%d divergence(s) from the document", len(rep.Divergences))
-		}
-		return fmt.Errorf("run %s: status %s — %s", rep.RunID, rep.Status, reason)
-	}
+	// The report is the answer, not a gate. A run that failed or diverged from
+	// the document is a finding the caller reads — exactly as `explain <spec>`
+	// prints warnings and exits 0 — so this command reserves a non-zero exit
+	// for the failures above (no store, no record, an unreadable spec).
 	return nil
 }
 

@@ -157,22 +157,24 @@ func (r *Run) traceRecords(ev Event) []trace.Record {
 // proposal record when the attempt sealed a handle.
 func (r *Run) attemptRecords(e AttemptCompletedEvent) []trace.Record {
 	c := e.Completion
-	rec := r.nodeRecord(trace.KindDispatch, e.NodePath, c.Status)
+	status := c.Status
+	if status == "" {
+		// A door malfunction carries no envelope, so there is no status to
+		// quote. It is not a completion the run accepted, and the record says
+		// so with the one word the vocabulary has for it — for the dispatch and
+		// for any proposal it tried to seal alike.
+		status = trace.StatusRuntimeError
+	}
+	rec := r.nodeRecord(trace.KindDispatch, e.NodePath, status)
 	rec.Attempt = e.Attempt
 	rec.DispatchID = e.DispatchID
 	rec.Lane = r.laneOfCompletion(e.NodePath, c.Lane)
 	rec.Reason = firstSet(e.RuntimeError, c.StopReason, c.Error)
 	rec.Result = c.Result
 	rec.OutputDigest = trace.Digest(c.Result)
-	if rec.Status == "" {
-		// A door malfunction carries no envelope, so there is no status to
-		// quote. It is not a completion the run accepted, and the record says
-		// so with the one word the vocabulary has for it.
-		rec.Status = trace.StatusRuntimeError
-	}
 	out := []trace.Record{rec}
 	if c.ProposalID != "" {
-		p := r.nodeRecord(trace.KindProposal, e.NodePath, c.Status)
+		p := r.nodeRecord(trace.KindProposal, e.NodePath, status)
 		p.Attempt = e.Attempt
 		p.DispatchID = e.DispatchID
 		p.Lane = rec.Lane
