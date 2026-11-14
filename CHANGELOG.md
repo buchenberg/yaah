@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.185.0](https://github.com/buchenberg/yaah/compare/v0.184.1...v0.185.0) (2026-11-14)
+
+
+### Features
+
+* **workflow:** fanout with join all and per-item failure (yaah-0u0v.14) ([#1650](https://github.com/buchenberg/yaah/issues/1650)) ([e0c38b6](https://github.com/buchenberg/yaah/commit/e0c38b6e5d9c1b1dcbe5256018a289daad001f09))
+* **workflow:** loop, branch, and aggregate nodes (yaah-0u0v.15) ([#1652](https://github.com/buchenberg/yaah/issues/1652)) ([b500c74](https://github.com/buchenberg/yaah/commit/b500c744b359cb6e5834eca6dd5e6e26bbb2ad28))
+
 ## [0.184.1](https://github.com/buchenberg/yaah/compare/v0.184.0...v0.184.1) (2026-11-14)
 
 
