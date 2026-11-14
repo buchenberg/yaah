@@ -492,7 +492,9 @@ type Options struct {
 	// RunID labels the run; empty asks the scheduler to mint one from the
 	// graph name.
 	RunID string
-	// Params binds the workflow's declared parameters.
+	// Params binds the workflow's declared parameters. Execute uses these.
+	// Resume ignores them: it executes under the checkpoint's recorded
+	// parameters, which are the values the run actually started with.
 	Params map[string]any
 	// Runner is the sub-agent runner the door dispatches through. Required.
 	Runner jobs.TaskRunner

@@ -243,9 +243,9 @@ func openWorkflowState(path string) (exec.Store, error) {
 
 // runIdentify is the timestamped id a run uses when the caller named none and
 // --state is set, so two runs against one database cannot collide on the graph
-// name alone.
+// name alone. Nanosecond precision keeps two runs started back-to-back distinct.
 func runIdentify(name string) string {
-	return fmt.Sprintf("%s@%s", name, time.Now().UTC().Format("20060102T150405"))
+	return fmt.Sprintf("%s@%s", name, time.Now().UTC().Format("20060102T150405.000000000"))
 }
 
 // unusedResumeSeam keeps the jobs import meaningful if the runner seam moves.

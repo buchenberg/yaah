@@ -269,6 +269,11 @@ func Resume(g *ir.Graph, rt Runtime, cfg Config, cp Checkpoint) (*Run, error) {
 	default:
 		return nil, fmt.Errorf("%w: run %s ended %s (%s)", ErrRunAlreadyFinished, cp.RunID, cp.Status, cp.Reason)
 	}
+	// SpecHash is the caller's declaration of the document it resolved. When a
+	// caller records a hash and the checkpoint records one, they must agree;
+	// an empty hash on either side declines the comparison, because a one-shot
+	// run (or a test double) may never have recorded one. Callers that want the
+	// mismatch refused must set Config.SpecHash — the CLI always does.
 	if hs := cfg.SpecHash; hs != "" && cp.SpecHash != "" && hs != cp.SpecHash {
 		return nil, fmt.Errorf("%w: run %s was started from spec %s but the document in hand hashes to %s",
 			ErrSpecHashMismatch, cp.RunID, cp.SpecHash, hs)
