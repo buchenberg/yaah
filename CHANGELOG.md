@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.188.1](https://github.com/buchenberg/yaah/compare/v0.188.0...v0.188.1) (2026-11-14)
+
+
+### Documentation
+
+* **workflow:** track the workflow DSL design plan in-repo ([#1662](https://github.com/buchenberg/yaah/issues/1662)) ([0a799a0](https://github.com/buchenberg/yaah/commit/0a799a0c18854526f35c447fff3ac6551f4afe4b))
+
 ## [0.188.0](https://github.com/buchenberg/yaah/compare/v0.187.0...v0.188.0) (2026-11-14)
 
 
