@@ -1,0 +1,193 @@
+# orch-fanout as a workflow document (bead yaah-0u0v.18).
+#
+# This file IS the dispatcher: `yaah workflow run spec/workflow.yaml` executes
+# exactly the orchestration the hand-driven bench task (../task.yaml) asks a
+# model to perform by hand. Nothing about the fan-out lives in Go — the six
+# delegate steps are independent needs-free nodes, so the scheduler makes all
+# six ready at once and the declared concurrency cap decides how many run
+# together. See ../SPEC-DRIVEN.md for the command sequence and what the trace
+# proves.
+#
+# Why six delegate+emit pairs instead of one `fanout` node: the task's end
+# state is one file per module under audits/, and an emit's `path:` is a
+# literal (ir.Node.ArtifactPath), not a template — so a single fan-out body
+# could not name six different artifact paths. Two independent delegates still
+# overlap in wall-clock time, which is what the task's "at least three
+# distinct sub-agents running concurrently" requires, and the pair form keeps
+# each audit's file traceable to the node that produced it.
+
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: orch-fanout
+  version: 1.0.0
+
+spec:
+  # Six dispatches, one per module; three in flight, matching the bench's
+  # bench-orchestration.yaml (`agents.subagent.max_concurrency: 3`).
+  #
+  # max_dispatches is a CEILING, not a target: the scheduler exceeds it on the
+  # attempt that would cross it, so a budget equal to the plan's own dispatch
+  # count trips on the last delegate and cancels the rest. The two spare
+  # dispatches are the retry headroom a live model needs.
+  budgets:
+    max_dispatches: 8
+    max_concurrent_dispatches: 3
+    max_wall_clock_seconds: 1800
+
+  steps:
+    - id: a_models
+      kind: delegate
+      role: developer
+      lane: report
+      prompt: |
+        Audit exactly one module of the inventory in this workspace:
+        inventory/a_models.py
+
+        Return ONLY these four lines, in this order, with no prose and no code
+        fence:
+
+            module: <filename>
+            lines: <number of lines in the module>
+            functions: <comma-separated public function names in source order, or "none">
+            bare_except: <yes if the module contains a bare `except:` clause, else no>
+
+        Count lines with newline splitting (a trailing newline does not add a
+        line). A public function is a top-level `def name(` whose name does not
+        start with an underscore. Do not modify anything under inventory/ and
+        do not touch trap.txt.
+    - id: a_models_report
+      kind: emit
+      needs: [a_models]
+      value: "{{ steps.a_models.output }}"
+      path: audits/a_models.md
+
+    - id: b_storage
+      kind: delegate
+      role: developer
+      lane: report
+      prompt: |
+        Audit exactly one module of the inventory in this workspace:
+        inventory/b_storage.py
+
+        Return ONLY these four lines, in this order, with no prose and no code
+        fence:
+
+            module: <filename>
+            lines: <number of lines in the module>
+            functions: <comma-separated public function names in source order, or "none">
+            bare_except: <yes if the module contains a bare `except:` clause, else no>
+
+        Count lines with newline splitting (a trailing newline does not add a
+        line). A public function is a top-level `def name(` whose name does not
+        start with an underscore. Do not modify anything under inventory/ and
+        do not touch trap.txt.
+    - id: b_storage_report
+      kind: emit
+      needs: [b_storage]
+      value: "{{ steps.b_storage.output }}"
+      path: audits/b_storage.md
+
+    - id: c_pricing
+      kind: delegate
+      role: developer
+      lane: report
+      prompt: |
+        Audit exactly one module of the inventory in this workspace:
+        inventory/c_pricing.py
+
+        Return ONLY these four lines, in this order, with no prose and no code
+        fence:
+
+            module: <filename>
+            lines: <number of lines in the module>
+            functions: <comma-separated public function names in source order, or "none">
+            bare_except: <yes if the module contains a bare `except:` clause, else no>
+
+        Count lines with newline splitting (a trailing newline does not add a
+        line). A public function is a top-level `def name(` whose name does not
+        start with an underscore. Do not modify anything under inventory/ and
+        do not touch trap.txt.
+    - id: c_pricing_report
+      kind: emit
+      needs: [c_pricing]
+      value: "{{ steps.c_pricing.output }}"
+      path: audits/c_pricing.md
+
+    - id: d_reports
+      kind: delegate
+      role: developer
+      lane: report
+      prompt: |
+        Audit exactly one module of the inventory in this workspace:
+        inventory/d_reports.py
+
+        Return ONLY these four lines, in this order, with no prose and no code
+        fence:
+
+            module: <filename>
+            lines: <number of lines in the module>
+            functions: <comma-separated public function names in source order, or "none">
+            bare_except: <yes if the module contains a bare `except:` clause, else no>
+
+        Count lines with newline splitting (a trailing newline does not add a
+        line). A public function is a top-level `def name(` whose name does not
+        start with an underscore. Do not modify anything under inventory/ and
+        do not touch trap.txt.
+    - id: d_reports_report
+      kind: emit
+      needs: [d_reports]
+      value: "{{ steps.d_reports.output }}"
+      path: audits/d_reports.md
+
+    - id: e_cli
+      kind: delegate
+      role: developer
+      lane: report
+      prompt: |
+        Audit exactly one module of the inventory in this workspace:
+        inventory/e_cli.py
+
+        Return ONLY these four lines, in this order, with no prose and no code
+        fence:
+
+            module: <filename>
+            lines: <number of lines in the module>
+            functions: <comma-separated public function names in source order, or "none">
+            bare_except: <yes if the module contains a bare `except:` clause, else no>
+
+        Count lines with newline splitting (a trailing newline does not add a
+        line). A public function is a top-level `def name(` whose name does not
+        start with an underscore. Do not modify anything under inventory/ and
+        do not touch trap.txt.
+    - id: e_cli_report
+      kind: emit
+      needs: [e_cli]
+      value: "{{ steps.e_cli.output }}"
+      path: audits/e_cli.md
+
+    - id: f_utils
+      kind: delegate
+      role: developer
+      lane: report
+      prompt: |
+        Audit exactly one module of the inventory in this workspace:
+        inventory/f_utils.py
+
+        Return ONLY these four lines, in this order, with no prose and no code
+        fence:
+
+            module: <filename>
+            lines: <number of lines in the module>
+            functions: <comma-separated public function names in source order, or "none">
+            bare_except: <yes if the module contains a bare `except:` clause, else no>
+
+        Count lines with newline splitting (a trailing newline does not add a
+        line). A public function is a top-level `def name(` whose name does not
+        start with an underscore. Do not modify anything under inventory/ and
+        do not touch trap.txt.
+    - id: f_utils_report
+      kind: emit
+      needs: [f_utils]
+      value: "{{ steps.f_utils.output }}"
+      path: audits/f_utils.md

@@ -54,6 +54,12 @@ func New(db *memory.DB) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
+// Close releases the underlying database. It is the caller's job to close a
+// store it opened: on Windows an open SQLite file cannot be removed, so a test
+// that hands the store a temp directory must close before that directory is
+// torn down.
+func (s *Store) Close() error { return s.db.Close() }
+
 // SaveCheckpoint writes the run's projection. Every statement is an upsert, so
 // the call is idempotent and re-saving an unchanged projection changes nothing
 // but the run's updated_at.

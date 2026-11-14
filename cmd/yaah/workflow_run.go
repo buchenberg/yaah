@@ -143,6 +143,9 @@ func runWorkflowRun(cmd *cobra.Command, path string, opts workflowRunOptions) er
 	if serr != nil {
 		return serr
 	}
+	if st != nil {
+		defer st.Close()
+	}
 	runID := opts.runID
 	if st != nil && runID == "" {
 		// A durable run needs a stable id the resume command can name; the

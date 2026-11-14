@@ -82,6 +82,9 @@ func (s *jsonStore) last(runID string) (Checkpoint, error) {
 	return s.LoadCheckpoint(context.Background(), runID)
 }
 
+// Close is a no-op: the jsonStore owns no OS resource.
+func (s *jsonStore) Close() error { return nil }
+
 func cloneCheckpoint(cp Checkpoint) (Checkpoint, error) {
 	b, err := json.Marshal(cp)
 	if err != nil {
