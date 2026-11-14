@@ -2,6 +2,7 @@ package yaah
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"regexp"
@@ -33,6 +34,7 @@ func runWorkflowCmd(t *testing.T, c *cobra.Command, args ...string) (string, err
 	var buf bytes.Buffer
 	c.SetOut(&buf)
 	c.SetErr(&buf)
+	c.SetContext(context.Background())
 	if err := c.ParseFlags(args); err != nil {
 		return buf.String(), err
 	}

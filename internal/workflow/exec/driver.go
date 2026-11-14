@@ -68,6 +68,15 @@ func (r *Run) Advance(ctx context.Context) (bool, error) {
 	if started {
 		return true, nil
 	}
+	// Then the settlement door: one plan report or one disposition per cycle,
+	// so a settle node's work gets its own place in the log and its own
+	// scheduler cycle. This runs before the "nothing left to do" test, because
+	// a ready settle node is progress the run has not made yet — and a
+	// settlement starts no attempt, so it appears nowhere in the dispatch
+	// tally this cycle would otherwise consult.
+	if settling, serr := r.settleStepOnce(ctx); settling {
+		return true, serr
+	}
 	if len(r.outstanding) == 0 {
 		// Nothing running and nothing startable: the part of the graph this run
 		// can reach has terminated, and anything still pending is stranded
@@ -366,11 +375,34 @@ func (r *Run) snapshot(path string, attempt int) ir.Scope {
 		if n.ID == "" || st.State != StateSucceeded {
 			continue
 		}
-		s.outputs[n.ID] = st.Result
+		// The recorded value is the node's own typed value, not only its text:
+		// a proposal-lane delegate answers for `steps.<id>.output.proposal_id`,
+		// a structured Report for `steps.<id>.output.<field>`, and a settle for
+		// `steps.<id>.output.settled`. Run.stepValue is the one place those
+		// readings are decided, so a template and a settlement handle can
+		// never disagree about what the same step produced.
+		s.outputs[n.ID] = r.stepValue(n, st)
 	}
 	return s
 }
 
 func dispatchID(path string, attempt int) string {
 	return fmt.Sprintf("%s#%d", path, attempt)
+}
+
+// settleStepOnce drives one settlement cycle: the driver finds the first
+// ready settle node, calls the door (or reports the plan it resolved from run
+// state), and submits the resulting event. It mutates nothing itself, which is
+// why a scripted fake and the real dispatch lane produce the same sequence.
+//
+// A cycle that reports no progress is a node still waiting on a producer that
+// has not terminated: the run then falls through to whatever else it can do,
+// and a node whose producer never terminates is terminated by the close as
+// cancelled rather than settled against an input that does not exist.
+func (r *Run) settleStepOnce(ctx context.Context) (bool, error) {
+	path, ok := r.nextSettlePath()
+	if !ok {
+		return false, nil
+	}
+	return r.settleStep(ctx, path)
 }

@@ -31,6 +31,22 @@ type Run struct {
 	current map[string]*Attempt
 	backoff map[string]time.Duration
 
+	// The settlement ledger. open holds the proposals this run sealed and has
+	// not disposed of, claims the proposals a settle node is working through
+	// right now, and settled the ones that reached a disposition — each keyed
+	// proposal id -> the node path that owns or owned it.
+	//
+	// They live in the reducer because the linearity guards they serve must
+	// hold under any event ordering: a double settle is refused from the
+	// ledger, not from a scan of the graph, and a run that would end with a
+	// proposal still in open is refused by the close itself.
+	open    map[string]string
+	claims  map[string]string
+	settled map[string]string
+
+	// warned keys the run warnings that must be stated once per graph.
+	warned map[string]bool
+
 	// outstanding is the driver's queue of started, uncommitted attempts in
 	// dispatch order. It is door bookkeeping, not lifecycle state: no
 	// scheduler decision reads it except "is there anything to wait for".
@@ -78,6 +94,10 @@ func New(g *ir.Graph, rt Runtime, cfg Config) (*Run, error) {
 		dependents: map[string][]string{},
 		current:    map[string]*Attempt{},
 		backoff:    map[string]time.Duration{},
+		open:       map[string]string{},
+		claims:     map[string]string{},
+		settled:    map[string]string{},
+		warned:     map[string]bool{},
 		status:     RunRunning,
 	}
 	for i, n := range g.Steps {
@@ -145,6 +165,21 @@ func effectivePolicy(p ir.FailurePolicy) ir.FailurePolicy {
 	return p
 }
 
+// warnOnce appends a run warning the first time a fact is observed and never
+// again. Warnings are not part of the event log, so this cannot move a byte of
+// the deterministic sequence; it exists so a declaration the run honored only
+// partly is stated once instead of on every cycle that consults it.
+func (r *Run) warnOnce(key, msg string) {
+	if r.warned == nil {
+		r.warned = map[string]bool{}
+	}
+	if r.warned[key] {
+		return
+	}
+	r.warned[key] = true
+	r.warnings = append(r.warnings, msg)
+}
+
 // attemptCeiling reads a node's retry block. An absent block, an absent
 // max_attempts, or a non-positive one all mean one attempt: the ceiling is the
 // author's, and the scheduler does not add retries nobody asked for.
@@ -192,6 +227,18 @@ func (r *Run) commit(ev Event, external bool) error {
 	}
 	if ev.Kind() == EventRunFinished {
 		e := ev.(RunFinishedEvent)
+		// The run-level linearity guard: a run may not report success while a
+		// proposal it sealed is still undisposed. The check is made here, on
+		// the close, and not only in the driver's disposition, so it holds
+		// whoever submitted the event and whatever order the events came in.
+		if e.Status == RunSucceeded && !r.cfg.OpenProposals && len(r.open) > 0 {
+			e = RunFinishedEvent{
+				Status: RunFailed,
+				Reason: fmt.Sprintf("%s: %d proposal(s) left without a disposition (%s); declare the disposition with a settle node",
+					ReasonOpenProposalsAtExit, len(r.open), r.openProposalDetail()),
+			}
+			ev = e
+		}
 		// Everything that has not terminated is terminated by the close, so
 		// the log cannot claim a finished run with live nodes in it.
 		if err := r.cancelOpen(e.Reason); err != nil {
@@ -227,6 +274,10 @@ func (r *Run) commit(ev Event, external bool) error {
 		return r.onTerminal(e.NodePath, StateSkipped, e.Reason, ev)
 	case NodeCancelledEvent:
 		return r.onNodeCancelled(e)
+	case SettlementPlannedEvent:
+		return r.onSettlementPlanned(e)
+	case ProposalSettledEvent:
+		return r.onProposalSettled(e)
 	case BudgetExceededEvent:
 		r.stopping = true
 		r.status = RunBudgetExceeded
@@ -325,6 +376,14 @@ func (r *Run) settle(n *ir.Node) error {
 	switch action, note := classifyKind(n); action {
 	case kindRefuse:
 		return r.failTerminal(n.Path, note)
+	case kindSettleStep:
+		// A settle node stays ready. Its handles may name a producer that has
+		// not terminated yet, and "not yet" is not "nothing": the driver
+		// reports the resolved plan through settlement_planned once the
+		// ledger can answer for it. Nothing is dispatched and no attempt is
+		// started, so a settlement costs no dispatch budget and holds no slot
+		// under MaxConcurrentDispatches.
+		return nil
 	case kindValueStep:
 		// An emit settles here: it renders its compiled value against the
 		// run state and records the binding, so it never reaches the door
@@ -463,6 +522,7 @@ func (r *Run) onTerminal(path string, to State, reason string, ev Event) error {
 	}
 	r.retire(path)
 	r.dropReady(path)
+	r.releaseClaims(path)
 	st.State = to
 	st.Reason = reason
 	switch e := ev.(type) {
@@ -488,6 +548,7 @@ func (r *Run) onNodeCancelled(e NodeCancelledEvent) error {
 	}
 	r.retire(e.NodePath)
 	r.dropReady(e.NodePath)
+	r.releaseClaims(e.NodePath)
 	st.State = StateCancelled
 	st.Reason = e.Reason
 	// A cancelled need still terminates: join-all releases the dependent, and
@@ -608,9 +669,21 @@ func (r *Run) finishAttempt(a *Attempt, e AttemptCompletedEvent) {
 			Contract: c.ContractStatus(),
 		})
 	}
-	// A proposal a node sealed stays open: the scheduler records the id and
-	// disposes of nothing, which is what leaves room for the settlement verbs
-	// (.13) and keeps WF021's "settled exactly once" claim true.
+	// A proposal a node sealed stays open until a settle node disposes of it.
+	// The scheduler records the typed handle, adds the id to the run's open
+	// ledger, and disposes of nothing here — which is what keeps WF021's
+	// "settled exactly once" claim a fact about the run rather than an
+	// assumption about the lane.
+	if c.ProposalID != "" {
+		st.Proposal = &ProposalHandle{
+			ProposalID: c.ProposalID,
+			Producer:   st.Path,
+			Role:       c.Role,
+			Lane:       c.Lane,
+			DispatchID: a.DispatchID,
+		}
+		r.open[c.ProposalID] = st.Path
+	}
 }
 
 func (r *Run) insertReady(path string) {

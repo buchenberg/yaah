@@ -96,3 +96,29 @@ pours/
 
 # Terminal-bench run artifacts (OUTPUT_PATH landings — evidence cites run-ids, not files)
 terminal-bench/runs-*/
+
+# Added by bd (missing required patterns)
+*.db?*
+redirect
+last-touched
+bd.sock.startlock
+.sync.lock
+export-state/
+export-state.json
+last_pull
+dolt/
+embeddeddolt/
+proxieddb/
+ephemeral.sqlite3
+dolt-server.pid
+dolt-server.log
+dolt-server.lock
+dolt-server.port
+dolt-server.activity
+dolt-server-config.yaml
+daemon.*
+*.lock
+*.corrupt.backup/
+proxied_server_client_info.json
+.local_version
+backup/

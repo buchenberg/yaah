@@ -174,6 +174,21 @@ type NodeState struct {
 	// rather than appending, so the list is the node's current outputs, not
 	// its history (the history is Attempt.Result).
 	Outputs []NodeOutput
+
+	// Proposal is the typed handle this node sealed, when a proposal-lane
+	// attempt sealed one. It is what a settle node reads as its input, and it
+	// stays set after settlement: the disposition is recorded on the settle
+	// node and in the run's ledger, not by erasing the producer's fact.
+	Proposal *ProposalHandle
+
+	// SettlePlan, Settling, and Settled are a settle node's own ledger: the
+	// handle set it resolved, how far through it the run is, and every
+	// disposition the door reported. They are lifecycle state, so they are
+	// written only inside Apply — the driver reads them to decide which
+	// settlement to ask the door for next.
+	SettlePlan *SettlePlan
+	Settling   int
+	Settled    []Settled
 }
 
 // NodeOutput is one declared output binding the reducer recorded for a node.
@@ -185,8 +200,12 @@ type NodeState struct {
 // door and not the scheduler's.
 //
 // Per-binding extraction of a structured result (reading one field out of a
-// declared Report or Verdict) is value plumbing, and value plumbing is
-// yaah-0u0v.13: what lands here is the whole recorded result text.
+// declared Report or Verdict) is value plumbing, and it landed with
+// yaah-0u0v.13: references read through Run.stepValue, which resolves a
+// delegate's recorded value as the envelope facts plus any JSON object body,
+// and a settle node's as its settled record. The binding stored here is what
+// the node itself produced — a report's delivered text, an emit's rendered
+// value, a settle's settled record.
 type NodeOutput struct {
 	// NodePath and Kind name the producing node, so a flattened run output
 	// needs no second lookup.

@@ -319,6 +319,10 @@ func TestRetryCeilingStopsTheRun(t *testing.T) {
 
 // TestProposalLaneIsDeclinedAtTheDoor pins that a node this lane cannot honor
 // is refused with the owning bead named, and that nothing was dispatched.
+// TestProposalLaneIsDeclinedAtTheDoor pins the honest refusal that survives
+// yaah-0u0v.13: the proposal lane is live, but only when the door holds the
+// session's retained runtime — without it, sealing would leak a proposal
+// nobody can settle, so the node fails at the door before any work starts.
 func TestProposalLaneIsDeclinedAtTheDoor(t *testing.T) {
 	y := strings.Replace(specHead, "%s", "proposed", 1) + `  steps:
     - id: work
@@ -336,8 +340,8 @@ func TestProposalLaneIsDeclinedAtTheDoor(t *testing.T) {
 		t.Errorf("calls = %d, want 0 — a declined node must not reach the runner", runner.calls)
 	}
 	st := nodeState(t, res.Run, "steps.work")
-	if st.State != exec.StateFailed || !strings.Contains(st.Reason, "yaah-0u0v.13") {
-		t.Errorf("node = %s reason=%q, want a failure naming the settlement bead", st.State, st.Reason)
+	if st.State != exec.StateFailed || !strings.Contains(st.Reason, "retained proposal runtime") {
+		t.Errorf("node = %s reason=%q, want a failure naming the missing retained runtime", st.State, st.Reason)
 	}
 }
 

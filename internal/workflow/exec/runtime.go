@@ -43,6 +43,31 @@ type Dispatch struct {
 	Deadline time.Time
 }
 
+// SettleRequest is one settlement the run is asking the door to perform. It
+// names a proposal by the id the sealing envelope reported and the verb the
+// author declared; everything else a settlement needs — the registry, the
+// world, the merge strategy — belongs to the lane, and the door is the only
+// place that reaches it.
+//
+// Policy may be empty. An empty policy means the author declared none, and the
+// runtime default (path_disjoint) is the door's interpretation, not
+// validate's: the validator deliberately does not materialize it, so the
+// resolved graph keeps saying "undeclared" and the adapter says what it did.
+type SettleRequest struct {
+	// NodePath is the settle node asking for the disposition.
+	NodePath string
+	// ProposalID is the sealed proposal to dispose of.
+	ProposalID string
+	// Producer is the node path that sealed it, when a handle records one.
+	Producer string
+	// Verb is one of select, apply, release, discard. The scheduler maps its
+	// resolved action onto these four and refuses anything else: continue and
+	// fork are delegate re-run bindings, not settlement verbs.
+	Verb string
+	// Policy is the declared settle policy, or empty when undeclared.
+	Policy ir.SettlePolicy
+}
+
 // Runtime is the only door through which a workflow run touches the world.
 // Everything here is a side effect or a clock: no method returns scheduler
 // state, and no method may call Run.Apply.
@@ -61,6 +86,16 @@ type Runtime interface {
 	// dispatched nothing, and the run records the failure through the door
 	// malfunction path rather than inventing an envelope.
 	Start(ctx context.Context, d Dispatch) (Handle, error)
+
+	// Settle disposes of one proposal through the lane's existing settlement
+	// path and reports what the world did. It is the one door method the
+	// scheduler calls synchronously, and it is deliberately not a start/poll
+	// pair: a settlement is a world effect with one answer, the run asks for
+	// one per cycle in the plan's fixed order, and two settles may never work
+	// the same proposal at once (validate's WF023 orders any two settlement
+	// steps that could). A door that cannot settle reports an error and states
+	// nothing about the proposal; a conflict is an outcome, not an error.
+	Settle(ctx context.Context, req SettleRequest) (Settled, error)
 
 	// Completed reports the envelope for a started attempt when the attempt
 	// has finished. It must not block, and its answer must be stable: an

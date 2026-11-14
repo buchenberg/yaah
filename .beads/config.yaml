@@ -73,4 +73,5 @@
 
 sync:
     remote: buchenberg/yaah
-
+routing:
+    mode: explicit

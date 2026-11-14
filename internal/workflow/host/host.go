@@ -69,6 +69,11 @@ type Runtime struct {
 	// a whole workflow with no provider and no model call.
 	Runner jobs.TaskRunner
 
+	// Retained is the session's retained-proposal runtime (yaah-0u0v.13):
+	// proposal-lane delegates seal through it and settle nodes dispose
+	// through its registry. Nil means the door serves report-lane runs only.
+	Retained *dispatch.RetainedRuntime
+
 	// Clock reads the door time. Nil means time.Now. The scheduler samples it
 	// at event boundaries; a test supplies a virtual clock so wall-clock
 	// budget behavior is deterministic without sleeping.
@@ -134,6 +139,17 @@ func (rt *Runtime) Start(ctx context.Context, d exec.Dispatch) (exec.Handle, err
 		Params:      paramsFor(d.Node),
 		Timeout:     d.Timeout,
 		Runner:      rt.Runner,
+	}
+	if lane == dispatch.LaneProposal {
+		// A proposal sealed by a run that cannot settle it is a leak the
+		// scheduler's linearity guard would only catch at the end; refuse at
+		// the door instead, before any work starts.
+		if rt.Retained == nil || rt.Retained.Proposals == nil {
+			return exec.Handle{}, fmt.Errorf(
+				"workflow/host: node %s dispatches on the proposal lane but no retained proposal runtime is configured; sealing needs the session's retained runtime and settle needs its registry",
+				d.Node.Path)
+		}
+		req.Retained = rt.Retained
 	}
 
 	runCtx, runCancel := context.WithCancel(ctx)
@@ -215,6 +231,69 @@ func (rt *Runtime) Cancel(h exec.Handle) error {
 	return nil
 }
 
+// DefaultSettleStrategy is the runtime default for an apply whose node
+// declared no policy (yaah-0u0v.13). Validate deliberately does not
+// materialize an empty SettlePolicy — the default is a runtime fact, and
+// this is the one place it is named.
+const DefaultSettleStrategy = "path_disjoint"
+
+// Settle disposes of one proposal through the lane's existing settlement
+// runtime (yaah-0u0v.13). This is an adapter, not a second implementation:
+// the scheduler resolved the refs, enforced linearity, and picked the verb;
+// the door only translates the request into dispatch.Settle and translates
+// the Settlement back into the facts the reducer reads. Every conflict
+// detail dispatch.Settle reports — overlap paths, strategy — is preserved,
+// because on_conflict: stop must halt with a machine-readable conflict.
+func (rt *Runtime) Settle(ctx context.Context, req exec.SettleRequest) (exec.Settled, error) {
+	out := exec.Settled{ProposalID: req.ProposalID, Producer: req.Producer, Action: req.Verb}
+	if rt.Retained == nil || rt.Retained.Proposals == nil {
+		out.Status = "error"
+		out.Error = "workflow/host: settle without a retained proposal registry"
+		out.LeftOpen = true
+		return out, errors.New(out.Error)
+	}
+	var verb dispatch.SettleVerb
+	switch req.Verb {
+	case "select":
+		verb = dispatch.SettleSelect
+	case "apply":
+		verb = dispatch.SettleApply
+	case "release":
+		verb = dispatch.SettleRelease
+	case "discard":
+		verb = dispatch.SettleDiscard
+	default:
+		out.Status = "error"
+		out.Error = fmt.Sprintf("workflow/host: %q is not a settlement verb; the vocabulary is select|apply|release|discard", req.Verb)
+		out.LeftOpen = true
+		return out, errors.New(out.Error)
+	}
+	strategy := string(req.Policy)
+	if strategy == "" {
+		strategy = DefaultSettleStrategy
+	}
+	s, err := dispatch.Settle(ctx, rt.Retained.Proposals, req.ProposalID, verb, dispatch.SettleOpts{Strategy: strategy})
+	env := s.Envelope()
+	out.Status = env.Status
+	out.Outcome = s.Outcome.String()
+	out.Files = env.Files
+	for _, c := range env.Conflicts {
+		out.Conflicts = append(out.Conflicts, c.Paths...)
+	}
+	if env.Status != "settled" || err != nil {
+		// A conflict or error leaves the proposal undisposed; the reducer
+		// decides what that means for the run under its on_conflict policy.
+		out.LeftOpen = true
+	}
+	if err != nil {
+		if out.Error == "" {
+			out.Error = err.Error()
+		}
+		return out, err
+	}
+	return out, nil
+}
+
 // Backoff waits out a node's declared retry delay.
 func (rt *Runtime) Backoff(ctx context.Context, d time.Duration) error {
 	if rt.Wait != nil {
@@ -274,9 +353,7 @@ func laneFor(n *ir.Node) (dispatch.Lane, error) {
 		// this bead does not have.
 		return dispatch.LaneReport, nil
 	case ir.LaneProposal:
-		return "", fmt.Errorf(
-			"workflow/host: node %s declares lane: proposal; proposal dispatch and settlement verbs are yaah-0u0v.13",
-			n.Path)
+		return dispatch.LaneProposal, nil
 	}
 	return "", fmt.Errorf("workflow/host: node %s declares unknown lane %q", n.Path, string(n.Lane))
 }
@@ -419,6 +496,11 @@ type Options struct {
 	Params map[string]any
 	// Runner is the sub-agent runner the door dispatches through. Required.
 	Runner jobs.TaskRunner
+	// Retained wires the session's retained-proposal runtime (yaah-0u0v.13).
+	// Required for proposal-lane delegates and settle nodes; nil declines both
+	// at the door with an honest error rather than sealing proposals nobody
+	// can settle.
+	Retained *dispatch.RetainedRuntime
 	// ArtifactRoot is the directory an emit node's declared artifact path is
 	// resolved under. Empty declines every artifact write and says so in
 	// Result.Warnings — the run still succeeds, because the value was
@@ -465,6 +547,7 @@ func Execute(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, errors.New("workflow/host: no sub-agent runner configured")
 	}
 	rt := NewRuntime(opts.Runner)
+	rt.Retained = opts.Retained
 	rt.Clock = opts.Now
 	rt.Wait = opts.Wait
 	cfg := exec.Config{
