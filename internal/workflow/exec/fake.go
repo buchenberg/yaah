@@ -37,6 +37,14 @@ type FakeRuntime struct {
 	// CancelErr scripts a Runtime.Cancel error per dispatch id, so the
 	// cancel-error path on NodeState is reachable in a test.
 	CancelErr map[string]error
+	// SettleScript maps a proposal id to the settlement the door reports for
+	// it, so a settle node's dispositions are scripted as exactly as its
+	// completions are. A path with no entry answers with SettledOK.
+	SettleScript map[string]Settled
+	// SettleErr scripts a door malfunction on one settlement: the proposal is
+	// reported as untouched, the node ends with a runtime failure, and the
+	// path is reachable in a test.
+	SettleErr map[string]error
 
 	start    time.Time
 	now      time.Time
@@ -45,6 +53,7 @@ type FakeRuntime struct {
 	read     map[string]bool
 	started  []Dispatch
 	cancels  []string
+	settles  []SettleRequest
 	backoffs []time.Duration
 	blocks   int
 	inflight int
@@ -230,6 +239,69 @@ func (f *FakeRuntime) Backoffs() []time.Duration {
 // Blocks counts the idle requests the scheduler made. A run that finished
 // without ever calling Block did all its work in dispatch order.
 func (f *FakeRuntime) Blocks() int { return f.blocks }
+
+// Settle reports the scripted settlement for one proposal id. A fake answers
+// synchronously: a settlement is a world effect with one result, and the
+// scheduler asks for one per cycle, so there is nothing to poll and no clock
+// to advance. An id with no scripted entry is disposed of successfully, which
+// is what lets a happy-path test script only the interesting outcomes.
+func (f *FakeRuntime) Settle(_ context.Context, req SettleRequest) (Settled, error) {
+	f.settles = append(f.settles, req)
+	if err, ok := f.SettleErr[req.ProposalID]; ok && err != nil {
+		return Settled{}, err
+	}
+	if s, ok := f.lookupSettleScript(req); ok {
+		if s.ProposalID == "" {
+			s.ProposalID = req.ProposalID
+		}
+		return s, nil
+	}
+	return SettledOK(req), nil
+}
+
+// lookupSettleScript resolves the scripted settlement for a request: a
+// verb-scoped key ("<proposal_id> <verb>") wins over the bare proposal id, so
+// one proposal can be scripted to conflict on apply and settle on a
+// downstream discard.
+func (f *FakeRuntime) lookupSettleScript(req SettleRequest) (Settled, bool) {
+	if s, ok := f.SettleScript[req.ProposalID+" "+req.Verb]; ok {
+		return s, true
+	}
+	s, ok := f.SettleScript[req.ProposalID]
+	return s, ok
+}
+
+// SettledOK is the settlement a fake reports for a proposal nobody scripted:
+// the verb the scheduler asked for, applied, and nothing left open.
+func SettledOK(req SettleRequest) Settled {
+	return Settled{
+		ProposalID: req.ProposalID,
+		Producer:   req.Producer,
+		Action:     req.Verb,
+		Status:     SettlementStatusSettled,
+		Outcome:    "work: applied",
+	}
+}
+
+// SettleConflicted scripts a refused apply: the overlap paths are named and
+// the proposal stays open, which is the shape internal/dispatch returns for a
+// path_disjoint collision.
+func SettleConflicted(proposalID, verb string, paths ...string) Settled {
+	return Settled{
+		ProposalID: proposalID,
+		Action:     verb,
+		Status:     SettlementStatusConflict,
+		Conflicts:  append([]string(nil), paths...),
+		LeftOpen:   true,
+	}
+}
+
+// Settles returns the settlement requests the run made, in request order.
+func (f *FakeRuntime) Settles() []SettleRequest {
+	out := make([]SettleRequest, len(f.settles))
+	copy(out, f.settles)
+	return out
+}
 
 func (f *FakeRuntime) outcome(path string) Completion {
 	n := f.consumed[path]

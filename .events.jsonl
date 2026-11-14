@@ -1,0 +1,5 @@
+{"ts":"2026-11-13T16:56:08Z","source":"gt","type":"escalation_sent","actor":"deacon/","payload":{"actions":"bead,mail:mayor,email:human,sms:human","reason":"Dolt server is down","rig":"yaah-wisp-52u","severity":"critical","target":"deacon/","to":"mayor"},"visibility":"feed"}
+{"ts":"2026-11-13T16:56:54Z","source":"gt","type":"mail","actor":"deacon/","payload":{"subject":"Wisp Compaction: 2026-11-13","to":"mayor/"},"visibility":"feed"}
+{"ts":"2026-11-13T16:57:26Z","source":"gt","type":"handoff","actor":"deacon","payload":{"subject":"Deacon patrol handoff","to_session":true},"visibility":"feed"}
+{"ts":"2026-11-13T17:01:18Z","source":"gt","type":"handoff","actor":"deacon","payload":{"subject":"🪝 HOOKED: yaah-j6m5","to_session":true},"visibility":"feed"}
+{"ts":"2026-11-13T17:08:18Z","source":"gt","type":"nudge","actor":"unknown","payload":{"reason":"yaah-401e epic claimed. Open subs: 2, 4, 5, 6. Divvy up!","rig":"","target":"deacon"},"visibility":"feed"}

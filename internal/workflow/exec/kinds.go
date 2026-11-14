@@ -46,6 +46,14 @@ const (
 	// host's step (internal/workflow/host), because a scheduler core that
 	// wrote files would have a second door beside Runtime.
 	kindValueStep
+	// kindSettleStep settles the node's proposals through the door's settlement
+	// path (yaah-0u0v.13). It is neither a dispatch nor a value step: it starts
+	// no attempt and consumes no dispatch budget, because a settlement is a
+	// world effect the lane performs, not a model call the run pays for — and
+	// validate's cost model (validate/cost.go) prices only delegates, judges,
+	// calls, and containers, so counting one here would put the run over a
+	// ceiling the graph's own estimate never charged it for.
+	kindSettleStep
 	// kindRefuse ends the node failed with ReasonNotImplemented.
 	kindRefuse
 )
@@ -57,10 +65,12 @@ const (
 // arm, which refuses anything outside it.
 //
 // A delegate dispatches through the door; an emit settles as a value step in
-// the reducer (yaah-0u0v.12). Everything else is refused with a reason naming
-// the bead that owns it, for the reason given in the package doc: a container
-// or a settle that reported success would contradict validate's proof of the
-// same graph.
+// the reducer (yaah-0u0v.12); a settle disposes of proposals through the
+// door's settlement path (yaah-0u0v.13), which is an adapter over
+// internal/dispatch's existing Settle rather than a second settlement
+// implementation. Everything else is refused with a reason naming the bead
+// that owns it, for the reason given in the package doc: a container that
+// reported success would contradict validate's proof of the same graph.
 func classifyKind(n *ir.Node) (kindAction, string) {
 	switch n.Kind {
 	case ir.KindDelegate:
@@ -76,9 +86,12 @@ func classifyKind(n *ir.Node) (kindAction, string) {
 	case ir.KindAggregate:
 		return kindRefuse, ReasonNotImplemented + ": aggregate combine is yaah-0u0v.15"
 	case ir.KindSettle:
-		return kindRefuse, ReasonNotImplemented + ": settlement verbs are yaah-0u0v.13"
+		return kindSettleStep, ""
 	case ir.KindSelect:
-		return kindRefuse, ReasonNotImplemented + ": candidate selection is yaah-0u0v.13"
+		// Select chooses among candidates collected by a fanout/aggregate
+		// producer; the collection arrives with yaah-0u0v.14, so candidate
+		// selection has nothing to choose among until then.
+		return kindRefuse, ReasonNotImplemented + ": candidate selection is yaah-0u0v.14"
 	case ir.KindCall:
 		return kindRefuse, ReasonNotImplemented + ": nested workflow calls are not in the scheduler core"
 	case ir.KindEmit:

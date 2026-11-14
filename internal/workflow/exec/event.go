@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/buchenberg/yaah/internal/workflow/ir"
 )
 
 // EventKind names one lifecycle fact. The vocabulary is fixed: a scheduler
@@ -24,6 +26,13 @@ const (
 	EventNodeCancelled    EventKind = "node_cancelled"
 	EventBudgetExceeded   EventKind = "budget_exceeded"
 	EventRunFinished      EventKind = "run_finished"
+	// EventSettlementPlanned reports the handle set one settle node resolved
+	// from recorded run state; EventProposalSettled reports one disposition the
+	// door's settlement path returned. Both are inputs: the driver reads the
+	// graph's own facts and the world's own answers, and the reducer decides
+	// what either means for the node and the run.
+	EventSettlementPlanned EventKind = "settlement_planned"
+	EventProposalSettled   EventKind = "proposal_settled"
 )
 
 // derived reports whether only the reducer may emit a kind. The split is the
@@ -163,6 +172,45 @@ type NodeCancelledEvent struct {
 func (NodeCancelledEvent) Kind() EventKind  { return EventNodeCancelled }
 func (e NodeCancelledEvent) target() string { return e.NodePath }
 
+// SettlementPlannedEvent reports the proposal handles a settle node resolved
+// from recorded run state, before any settlement is asked for. Refusal
+// carries a reason the reducer turns into the node's terminal state — a
+// handle set this bead cannot resolve, or a proposal another node already
+// disposed of — so even a refusal changes state only inside Apply.
+type SettlementPlannedEvent struct {
+	NodePath string
+	Refs     []ProposalRef
+	Action   ir.SettleAction
+	Policy   ir.SettlePolicy
+	Order    ir.SettleOrder
+	// OnConflict and Empty are the node's declared dispositions, carried so
+	// the reducer's decisions read one event and not the graph behind it.
+	OnConflict ir.ConflictPolicy
+	Empty      ir.EmptyPolicy
+	Refusal    string
+}
+
+func (SettlementPlannedEvent) Kind() EventKind  { return EventSettlementPlanned }
+func (e SettlementPlannedEvent) target() string { return e.NodePath }
+
+// ProposalSettledEvent carries one settlement's outcome back from the door.
+// DoorError reports that the door itself malfunctioned: there is no
+// settlement envelope behind it, the proposal keeps whatever state it had, and
+// the node ends failed rather than retrying a world effect that may already
+// have landed.
+type ProposalSettledEvent struct {
+	NodePath  string
+	Settled   Settled
+	DoorError string
+	// Refused marks a settlement the scheduler declined to ask for at all —
+	// an action outside the four settlement verbs — as distinct from one the
+	// door attempted and could not complete.
+	Refused string
+}
+
+func (ProposalSettledEvent) Kind() EventKind  { return EventProposalSettled }
+func (e ProposalSettledEvent) target() string { return e.NodePath }
+
 // BudgetExceededEvent records that a declared ceiling was reached. Axis and
 // Limit are the same strings Limits documents, so a reader never has to map
 // an enum to find out what ran out.
@@ -235,6 +283,34 @@ func detail(ev Event) string {
 		out := e.NodePath + " reason=" + e.Reason
 		if e.CancelErr != "" {
 			out += " cancel_error=" + e.CancelErr
+		}
+		return out
+	case SettlementPlannedEvent:
+		ids := make([]string, 0, len(e.Refs))
+		for _, ref := range e.Refs {
+			ids = append(ids, ref.ProposalID)
+		}
+		out := fmt.Sprintf("%s action=%s policy=%s count=%d proposals=%s",
+			e.NodePath, orDash(string(e.Action)), orDash(string(e.Policy)), len(e.Refs), orDash(strings.Join(ids, ",")))
+		if e.Refusal != "" {
+			out += " refusal=" + flatten(e.Refusal)
+		}
+		return out
+	case ProposalSettledEvent:
+		s := e.Settled
+		out := fmt.Sprintf("%s proposal_id=%s action=%s status=%s left_open=%t",
+			e.NodePath, orDash(s.ProposalID), orDash(s.Action), orDash(s.Status), s.LeftOpen)
+		if len(s.Conflicts) > 0 {
+			out += " conflicts=" + strings.Join(s.Conflicts, ",")
+		}
+		if s.Error != "" {
+			out += " error=" + flatten(s.Error)
+		}
+		if e.DoorError != "" {
+			out += " door_error=" + flatten(e.DoorError)
+		}
+		if e.Refused != "" {
+			out += " refused=" + flatten(e.Refused)
 		}
 		return out
 	case BudgetExceededEvent:

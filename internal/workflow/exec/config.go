@@ -105,4 +105,17 @@ type Config struct {
 	Params map[string]any
 	// Guard evaluates node `when` selectors. Optional; see GuardFunc.
 	Guard GuardFunc
+	// OpenProposals is the caller's declaration that a run may finish
+	// succeeded while proposals it sealed are still undisposed.
+	//
+	// The default is the refusal: a run that ends with a worktree standing has
+	// left the author's work neither landed nor thrown away, and reporting
+	// that as success is the outcome WF021 and WF025 exist to prevent. The
+	// v1 vocabulary declares no per-node `on_abort` field to discharge it
+	// (validate/linearity.go says so at WF025's own rule), so the escape is
+	// stated by the host that owns the residue — an interactive caller that
+	// will settle from its own surface afterwards — rather than invented as a
+	// graph key the strict decoder would refuse. When that field lands, this
+	// flag becomes its folded default and the guard keeps the same reason.
+	OpenProposals bool
 }
