@@ -130,6 +130,21 @@ type WorkflowEventRow struct {
 	Line string
 }
 
+// WorkflowTraceRow is one typed trace record (yaah-0u0v.17). Seq is the
+// record's own sequence number within the run, EventSeq the event log line it
+// projects, and Kind, NodePath, Attempt and Status are columns because a trace
+// reader filters on them ("every dispatch of this node", "every settle record")
+// without decoding the payload.
+type WorkflowTraceRow struct {
+	Seq      int
+	EventSeq int
+	Kind     string
+	NodePath string
+	Attempt  int
+	Status   string
+	Payload  string
+}
+
 // WorkflowCheckpoint is one run's whole durable projection.
 type WorkflowCheckpoint struct {
 	Run         WorkflowRunRow
@@ -139,6 +154,9 @@ type WorkflowCheckpoint struct {
 	Settlements []WorkflowSettlementRow
 	// Events are appended, never rewritten: each row is one sequence number.
 	Events []WorkflowEventRow
+	// Trace are the run's typed trace records, appended from the same events the
+	// Events rows render (yaah-0u0v.17).
+	Trace []WorkflowTraceRow
 }
 
 // SaveWorkflowCheckpoint writes one run's projection in a single transaction.
@@ -253,6 +271,21 @@ func (d *DB) SaveWorkflowCheckpoint(cp WorkflowCheckpoint) error {
 			return fmt.Errorf("save workflow event %d of run %s: %w", e.Seq, run.RunID, err)
 		}
 	}
+	for _, t := range cp.Trace {
+		if _, err := tx.Exec(`
+			INSERT INTO workflow_trace (run_id, seq, event_seq, kind, node_path, attempt, status, payload)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(run_id, seq) DO UPDATE SET
+				event_seq = excluded.event_seq,
+				kind = excluded.kind,
+				node_path = excluded.node_path,
+				attempt = excluded.attempt,
+				status = excluded.status,
+				payload = excluded.payload`,
+			run.RunID, t.Seq, t.EventSeq, t.Kind, t.NodePath, t.Attempt, t.Status, t.Payload); err != nil {
+			return fmt.Errorf("save workflow trace record %d of run %s: %w", t.Seq, run.RunID, err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit workflow checkpoint %s: %w", run.RunID, err)
 	}
@@ -290,6 +323,9 @@ func (d *DB) LoadWorkflowCheckpoint(runID string) (WorkflowCheckpoint, error) {
 		return WorkflowCheckpoint{}, err
 	}
 	if cp.Events, err = d.workflowEvents(runID); err != nil {
+		return WorkflowCheckpoint{}, err
+	}
+	if cp.Trace, err = d.workflowTrace(runID); err != nil {
 		return WorkflowCheckpoint{}, err
 	}
 	return cp, nil
@@ -389,6 +425,28 @@ func (d *DB) workflowEvents(runID string) ([]WorkflowEventRow, error) {
 	return out, rows.Err()
 }
 
+// workflowTrace reads a run's trace records in the run's own sequence order, so
+// a reader reconstructs the timeline without the scheduler and without the model
+// transcript.
+func (d *DB) workflowTrace(runID string) ([]WorkflowTraceRow, error) {
+	rows, err := d.sql.Query(`
+		SELECT seq, event_seq, kind, node_path, attempt, status, payload
+		FROM workflow_trace WHERE run_id = ? ORDER BY seq`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("list workflow trace of %s: %w", runID, err)
+	}
+	defer rows.Close()
+	var out []WorkflowTraceRow
+	for rows.Next() {
+		var t WorkflowTraceRow
+		if err := rows.Scan(&t.Seq, &t.EventSeq, &t.Kind, &t.NodePath, &t.Attempt, &t.Status, &t.Payload); err != nil {
+			return nil, fmt.Errorf("scan workflow trace record: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // ListWorkflowRuns returns the most recently updated runs, newest first. It is
 // the listing a `yaah workflow runs` surface would print, and the way a caller
 // finds the id it wants to resume.
@@ -427,7 +485,7 @@ func (d *DB) DeleteWorkflowCheckpoint(runID string) error {
 	}
 	defer tx.Rollback()
 	for _, table := range []string{
-		"workflow_nodes", "workflow_instances", "workflow_attempts", "workflow_settlements", "workflow_events",
+		"workflow_nodes", "workflow_instances", "workflow_attempts", "workflow_settlements", "workflow_events", "workflow_trace",
 	} {
 		if _, err := tx.Exec(`DELETE FROM `+table+` WHERE run_id = ?`, runID); err != nil {
 			return fmt.Errorf("delete %s of run %s: %w", table, runID, err)

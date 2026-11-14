@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"text/tabwriter"
 	"time"
 
@@ -217,12 +216,19 @@ func paramsOf(a *workflowAnalysis) map[string]any {
 // the run computed it when it persisted the run. It is a separate read from the
 // analysis for one reason: the analysis answers "is this document valid", and this
 // answers "is this the same document", and a resume needs both answers.
+//
+// The decode goes through spec.Parse, not spec.ParseYAML, because the hash is the
+// content address of the canonical JSON of the document: a spec written as JSON
+// must hash to what the same spec written as YAML hashes to, and only the
+// front-end dispatching decoder can promise that. A YAML-only read here would
+// hash a JSON document through the YAML path — the two agree today, and they
+// agree because one function decides both.
 func workflowSpecHash(path string) (string, error) {
-	data, err := os.ReadFile(path)
+	data, err := readWorkflowSpec(path)
 	if err != nil {
 		return "", err
 	}
-	doc, err := spec.ParseYAML(data)
+	doc, err := spec.Parse(data)
 	if err != nil {
 		return "", err
 	}

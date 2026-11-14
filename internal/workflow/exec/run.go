@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/buchenberg/yaah/internal/workflow/trace"
 )
 
 // Run is one workflow run: the graph, the ceilings, the door, and all of the
@@ -86,9 +87,16 @@ type Run struct {
 
 	events   []string
 	warnings []string
-	seq      int
-	started  bool
-	finished bool
+	// records is the run's trace projection (yaah-0u0v.17): one typed record
+	// per lifecycle fact, appended from commit beside the log line it renders.
+	// recordsPersisted is the high-water mark the Store has already recorded, so
+	// a checkpoint appends only what is new — the same discipline the event log
+	// follows, because both are projections of the one event sequence.
+	records          []trace.Record
+	recordsPersisted int
+	seq              int
+	started          bool
+	finished         bool
 	// resumed reports that the run was rebuilt from a checkpoint, which may
 	// happen once per Run (yaah-0u0v.16).
 	resumed bool
@@ -326,10 +334,15 @@ func (r *Run) commit(ev Event, external bool) error {
 		r.finishedAt = r.rt.Now()
 		r.seq++
 		r.events = append(r.events, describe(r.seq, ev))
+		r.recordTrace(ev)
 		return nil
 	}
 	r.seq++
 	r.events = append(r.events, describe(r.seq, ev))
+	// The trace projection runs here, on the same event, immediately after the
+	// log line: one sequence, two renderings. Nothing below can make the run's
+	// trace disagree with its log.
+	r.recordTrace(ev)
 
 	switch e := ev.(type) {
 	case RunStartedEvent:
@@ -923,6 +936,7 @@ func (r *Run) Result() Result {
 		Dispatches:   r.dispatches,
 		PeakInFlight: r.peakInFlight,
 		Events:       append([]string(nil), r.events...),
+		Records:      append([]trace.Record(nil), r.records...),
 		Warnings:     append([]string(nil), r.warnings...),
 	}
 	if !r.startedAt.IsZero() {
@@ -974,8 +988,13 @@ type Result struct {
 	PeakInFlight int
 	Elapsed      time.Duration
 	Events       []string
-	Warnings     []string
-	Nodes        []*NodeState
+	// Records is the run's trace projection: one typed record per lifecycle
+	// fact, in the order the events were folded. It is a rendering of the same
+	// sequence as Events, not a second account of the run, and it is what
+	// `yaah workflow explain --from-trace` reads back from the store.
+	Records  []trace.Record
+	Warnings []string
+	Nodes    []*NodeState
 	// Outputs flattens every node's recorded output bindings in canonical
 	// node-path order: the delegate reports and emit values a run produced.
 	Outputs []NodeOutput

@@ -14,8 +14,9 @@
 // NodeState, plus the state column so a query can ask "what had terminated"
 // without decoding), one row per body instance, one row per attempt (derived from
 // the node states — the attempt history is not duplicated as separate truth), one
-// row per settlement disposition, and the new lines of the event log. Nothing
-// here decides anything: every fact comes from the reducer's snapshot.
+// row per settlement disposition, the new lines of the event log, and the trace
+// records projected from those same events (yaah-0u0v.17). Nothing here decides
+// anything: every fact comes from the reducer's snapshot.
 //
 // # Idempotence
 //
@@ -34,6 +35,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/workflow/exec"
+	"github.com/buchenberg/yaah/internal/workflow/trace"
 )
 
 // Store adapts *memory.DB to exec.Store.
@@ -163,6 +165,27 @@ func (s *Store) SaveCheckpoint(ctx context.Context, cp exec.Checkpoint) error {
 			Line: line,
 		})
 	}
+	// The trace records are the typed projection of the same events, appended in
+	// the same checkpoint transaction: a run can never record an event whose
+	// trace record is missing, because neither becomes visible alone.
+	for i, rec := range cp.Trace {
+		if rec.Seq == 0 {
+			rec.Seq = cp.TraceBase + i + 1
+		}
+		payload, terr := json.Marshal(rec)
+		if terr != nil {
+			return fmt.Errorf("workflow/store: encoding trace record %d of run %s: %w", rec.Seq, cp.RunID, terr)
+		}
+		out.Trace = append(out.Trace, memory.WorkflowTraceRow{
+			Seq:      rec.Seq,
+			EventSeq: rec.EventSeq,
+			Kind:     string(rec.Kind),
+			NodePath: rec.NodePath,
+			Attempt:  rec.Attempt,
+			Status:   rec.Status,
+			Payload:  string(payload),
+		})
+	}
 	return s.db.SaveWorkflowCheckpoint(out)
 }
 
@@ -231,6 +254,14 @@ func (s *Store) LoadCheckpoint(ctx context.Context, runID string) (exec.Checkpoi
 		cp.Events = append(cp.Events, e.Line)
 	}
 	cp.EventBase = len(cp.Events)
+	for _, t := range rows.Trace {
+		var rec trace.Record
+		if err := json.Unmarshal([]byte(t.Payload), &rec); err != nil {
+			return exec.Checkpoint{}, fmt.Errorf("workflow/store: decoding trace record %d of run %s: %w", t.Seq, runID, err)
+		}
+		cp.Trace = append(cp.Trace, rec)
+	}
+	cp.TraceBase = len(cp.Trace)
 	return cp, nil
 }
 
