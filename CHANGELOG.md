@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.187.0](https://github.com/buchenberg/yaah/compare/v0.186.0...v0.187.0) (2026-11-14)
+
+
+### Features
+
+* **workflow:** join any and quorum with cooperative cancellation (yaah-0u0v.19) ([#1658](https://github.com/buchenberg/yaah/issues/1658)) ([b2e57f1](https://github.com/buchenberg/yaah/commit/b2e57f177b9a9f69d790c1d244e7514196b8a54b))
+* **workflow:** select node with judge, first_success, and smallest_diff (yaah-0u0v.20) ([#1659](https://github.com/buchenberg/yaah/issues/1659)) ([65f5008](https://github.com/buchenberg/yaah/commit/65f500854bcd1f25f391a88e7458ac1b2972bf46))
+* **workflow:** workflow trace records and explain --from-trace (yaah-0u0v.17) ([#1655](https://github.com/buchenberg/yaah/issues/1655)) ([c6cece4](https://github.com/buchenberg/yaah/commit/c6cece447416bae051a3f4a9a67c0283062aac99))
+
 ## [0.186.0](https://github.com/buchenberg/yaah/compare/v0.185.0...v0.186.0) (2026-11-14)
 
 
