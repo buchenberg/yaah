@@ -143,13 +143,19 @@ code, then path, then message.`, workflowSeverityHelp, workflowExitHelp),
 }
 
 func newWorkflowExplainCmd() *cobra.Command {
-	var opts workflowOptions
+	var opts workflowExplainOptions
 	cmd := &cobra.Command{
-		Use:   "explain <spec.yaml|spec.json>",
-		Short: "Report a workflow spec's graph, fan-out, cost, authority, and dispositions",
-		Args:  cobra.ExactArgs(1),
+		Use:   "explain [<spec.yaml|spec.json>]",
+		Short: "Report a workflow spec's plan, or a recorded run's trace",
+		Args:  cobra.RangeArgs(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runWorkflow(cmd, args[0], opts, true)
+			if opts.fromTrace != "" {
+				return runWorkflowExplainFromTrace(cmd, args, opts)
+			}
+			if err := cobra.ExactArgs(1)(cmd, args); err != nil {
+				return err
+			}
+			return runWorkflow(cmd, args[0], opts.workflowOptions, true)
 		},
 		Long: fmt.Sprintf(`Print the plan a workflow document states, from the same data the
 validators compute — explain adds no analysis of its own:
@@ -171,6 +177,12 @@ validators compute — explain adds no analysis of its own:
               from the linearity proof
   findings    the same code/path/message list validate prints
 
+With --from-trace <run_id>, explain reports the run the trace recorded instead
+of a document's plan: the DAG the run actually walked, each node's outcome and
+dispatch tally, every proposal and its disposition, and — when a document is in
+hand — the divergences between the plan and the run. The record is the whole
+input; no model transcript is read, and nothing is re-run.
+
 An empty settle policy is displayed as the runtime default path_disjoint and
 marked (default), because resolution does not materialize it. The guaranteed
 disposition of a proposal comes from the settlement proof, not from an
@@ -187,6 +199,10 @@ and emitted as [] rather than null, and HTML escaping is off, so one
 document always encodes to the same bytes.`, workflowSeverityHelp, workflowExitHelp),
 	}
 	opts.bind(cmd, true)
+	cmd.Flags().StringVar(&opts.fromTrace, "from-trace", "",
+		"explain the run recorded under this run id instead of a document")
+	cmd.Flags().StringVar(&opts.statePath, "state", "",
+		"state database the run recorded into (required with --from-trace)")
 	return cmd
 }
 

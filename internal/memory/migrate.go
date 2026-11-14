@@ -244,6 +244,29 @@ func (d *DB) migrate() error {
 		line   TEXT NOT NULL,
 		PRIMARY KEY (run_id, seq)
 	);
+
+	-- Workflow trace records (yaah-0u0v.17). One row per typed projection of
+	-- one event line: the record's own sequence number orders the run's trace,
+	-- event_seq joins it back to workflow_events above, and the columns carry
+	-- what a reader filters on (kind, node_path, attempt, status) while payload
+	-- carries the record itself. The rows are PROJECTED FROM the reducer's
+	-- events, never maintained beside them: an event and its records are
+	-- written by the same checkpoint transaction, so the two cannot disagree.
+	-- Additive and IF NOT EXISTS, so no schema-version bump.
+	CREATE TABLE IF NOT EXISTS workflow_trace (
+		run_id    TEXT NOT NULL,
+		seq       INTEGER NOT NULL,
+		event_seq INTEGER NOT NULL DEFAULT 0,
+		kind      TEXT NOT NULL DEFAULT '',
+		node_path TEXT NOT NULL DEFAULT '',
+		attempt   INTEGER NOT NULL DEFAULT 0,
+		status    TEXT NOT NULL DEFAULT '',
+		payload   TEXT NOT NULL,
+		PRIMARY KEY (run_id, seq)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_workflow_trace_node
+		ON workflow_trace(run_id, node_path, attempt);
 	`
 
 	if _, err := d.sql.Exec(schema); err != nil {

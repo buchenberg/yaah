@@ -46,6 +46,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/buchenberg/yaah/internal/workflow/trace"
 )
 
 // Errors a resume reports. They are distinct because the caller's response
@@ -142,6 +143,14 @@ type Checkpoint struct {
 	// save writes only what is new. Events are those new lines, oldest first.
 	EventBase int      `json:"event_base,omitempty"`
 	Events    []string `json:"events,omitempty"`
+
+	// TraceBase and Trace are the same pair for the run's trace records
+	// (yaah-0u0v.17): the count the store already holds, and the new records in
+	// sequence order. A record is a typed projection of one event line, so the
+	// two append in lockstep and a resumed run's trace continues the sequence
+	// instead of restarting it.
+	TraceBase int            `json:"trace_base,omitempty"`
+	Trace     []trace.Record `json:"trace,omitempty"`
 }
 
 // Store is the durable projection of a run: the one place its state is kept
@@ -171,6 +180,7 @@ func (r *Run) checkpoint() error {
 	}
 	cp := r.Checkpoint()
 	cp.EventBase = r.persisted
+	cp.TraceBase = r.recordsPersisted
 	ctx := r.ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -179,6 +189,7 @@ func (r *Run) checkpoint() error {
 		return fmt.Errorf("workflow/exec: persisting run %s: %w", r.runID, err)
 	}
 	r.persisted = len(r.events)
+	r.recordsPersisted = len(r.records)
 	return nil
 }
 
@@ -205,6 +216,7 @@ func (r *Run) Checkpoint() Checkpoint {
 		Seq:      r.seq,
 		Warnings: append([]string(nil), r.warnings...),
 		Events:   append([]string(nil), r.events[r.newEvents():]...),
+		Trace:    append([]trace.Record(nil), r.records[r.newRecords():]...),
 	}
 	if r.graph != nil {
 		cp.GraphName = r.graph.Name
@@ -237,6 +249,18 @@ func (r *Run) newEvents() int {
 		return len(r.events)
 	}
 	return r.persisted
+}
+
+// newRecords is newEvents for the trace projection: the index of the first record
+// the store has not recorded, clamped the same way.
+func (r *Run) newRecords() int {
+	if r.recordsPersisted < 0 {
+		return 0
+	}
+	if r.recordsPersisted > len(r.records) {
+		return len(r.records)
+	}
+	return r.recordsPersisted
 }
 
 // Resume rebuilds a run from a checkpoint and returns it ready to drive: the
@@ -342,11 +366,13 @@ func (r *Run) install(cp Checkpoint) error {
 	r.finishedAt = cp.FinishedAt
 	r.warnings = append([]string(nil), cp.Warnings...)
 	r.events = append([]string(nil), cp.Events...)
+	r.records = append([]trace.Record(nil), cp.Trace...)
 	r.seq = cp.Seq
 	if r.seq < len(r.events) {
 		r.seq = len(r.events)
 	}
 	r.persisted = len(r.events)
+	r.recordsPersisted = len(r.records)
 	r.open = copyStringMap(cp.Ledger.Open)
 	r.claims = copyStringMap(cp.Ledger.Claims)
 	r.settled = copyStringMap(cp.Ledger.Settled)
