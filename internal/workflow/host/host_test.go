@@ -475,3 +475,31 @@ func TestExecuteRejectsMissingInput(t *testing.T) {
 		t.Error("a dispatch with no node must be refused")
 	}
 }
+
+// TestDeadlineCancelDoesNotRecurse is the regression pin for the composite
+// cancel closure. A dispatch under a wall-clock budget gets a WithDeadline
+// layer whose cancel closes over both layers; a closure that captured the
+// rebound variable instead of the original cancel recursed into itself
+// forever. The recursion fired in the door's goroutine AFTER the run had
+// already succeeded, racing process exit — so this test calls the stored
+// cancel synchronously, where the overflow cannot hide.
+func TestDeadlineCancelDoesNotRecurse(t *testing.T) {
+	g := goldenGraph(t, "sequential") // declares budgets.max_wall_clock_seconds
+	runner := &recorder{results: []string{"plan"}}
+	res, err := Execute(context.Background(), Options{
+		Graph:  g,
+		Params: map[string]any{"task": "verify"},
+		Runner: runner.run,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v\nlog:\n%s", err, logOf(res.Run))
+	}
+	if res.Run.Status != exec.RunSucceeded {
+		t.Fatalf("status = %s, want succeeded\nlog:\n%s", res.Run.Status, logOf(res.Run))
+	}
+	// The plan attempt ran under a deadline, so its stored cancel is the
+	// composite. Calling it must terminate.
+	if err := res.Runtime.Cancel(exec.Handle{DispatchID: "steps.plan#1"}); err != nil {
+		t.Logf("cancel of a completed attempt reported: %v (acceptable; the pin is that it returns at all)", err)
+	}
+}

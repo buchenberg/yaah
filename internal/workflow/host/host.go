@@ -136,13 +136,16 @@ func (rt *Runtime) Start(ctx context.Context, d exec.Dispatch) (exec.Handle, err
 		Runner:      rt.Runner,
 	}
 
-	runCtx, cancel := context.WithCancel(ctx)
+	runCtx, runCancel := context.WithCancel(ctx)
+	cancel := runCancel
 	// The run's wall-clock budget is the lane's problem, not the reducer's:
 	// the scheduler has no timers, so it hands the deadline here, where it
-	// can actually stop work in flight.
+	// can actually stop work in flight. The composite cancel closes over
+	// runCancel by its own binding — rebinding `cancel` to a closure that
+	// calls `cancel` would recurse into itself forever.
 	if !d.Deadline.IsZero() {
 		dlCtx, dlCancel := context.WithDeadline(runCtx, d.Deadline)
-		cancel = func() { dlCancel(); cancel() }
+		cancel = func() { dlCancel(); runCancel() }
 		runCtx = dlCtx
 	}
 	// The envelope names the dispatch it describes, so a trace joins request
