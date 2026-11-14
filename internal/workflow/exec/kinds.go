@@ -54,6 +54,13 @@ const (
 	// calls, and containers, so counting one here would put the run over a
 	// ceiling the graph's own estimate never charged it for.
 	kindSettleStep
+	// kindFanoutStep expands the node's items and schedules one body instance
+	// per item (yaah-0u0v.14). Like a settle it dispatches nothing itself: the
+	// node stays ready until the driver reports the resolved item list, and the
+	// dispatches the expansion creates are the items', counted against the
+	// global cap and the fan-out's own max_parallel. That is why a fan-out is
+	// never handed to the door as an attempt of its own.
+	kindFanoutStep
 	// kindRefuse ends the node failed with ReasonNotImplemented.
 	kindRefuse
 )
@@ -68,15 +75,27 @@ const (
 // the reducer (yaah-0u0v.12); a settle disposes of proposals through the
 // door's settlement path (yaah-0u0v.13), which is an adapter over
 // internal/dispatch's existing Settle rather than a second settlement
-// implementation. Everything else is refused with a reason naming the bead
-// that owns it, for the reason given in the package doc: a container that
-// reported success would contradict validate's proof of the same graph.
+// implementation; a fan-out expands into item instances the ordinary scheduler
+// then runs (yaah-0u0v.14), so its own action is an expansion rather than a
+// dispatch. Everything else is refused with a reason naming the bead that owns
+// it, for the reason given in the package doc: a container that reported
+// success would contradict validate's proof of the same graph.
 func classifyKind(n *ir.Node) (kindAction, string) {
 	switch n.Kind {
 	case ir.KindDelegate:
 		return kindDispatch, ""
 	case ir.KindFanout:
-		return kindRefuse, ReasonNotImplemented + ": fan-out items and join are yaah-0u0v.14"
+		// join is decided here rather than at expansion: a join this core cannot
+		// honor means the node may not run at all, and saying so before the
+		// first item dispatches is the honest order. Only join: all executes —
+		// any and quorum change how many items must succeed, and approximating
+		// them with all would overstate what the run proved.
+		switch n.Join {
+		case "", ir.JoinAll:
+			return kindFanoutStep, ""
+		}
+		return kindRefuse, ReasonNotImplemented + ": join " + string(n.Join) +
+			" is yaah-0u0v.19; only join: all executes in the scheduler core"
 	case ir.KindLoop:
 		return kindRefuse, ReasonNotImplemented + ": loop iteration is yaah-0u0v.15"
 	case ir.KindBranch:
@@ -89,9 +108,10 @@ func classifyKind(n *ir.Node) (kindAction, string) {
 		return kindSettleStep, ""
 	case ir.KindSelect:
 		// Select chooses among candidates collected by a fanout/aggregate
-		// producer; the collection arrives with yaah-0u0v.14, so candidate
-		// selection has nothing to choose among until then.
-		return kindRefuse, ReasonNotImplemented + ": candidate selection is yaah-0u0v.14"
+		// producer. The collection exists as of yaah-0u0v.14, so what is still
+		// missing is the selection itself: which candidate wins, by policy and
+		// by judge.
+		return kindRefuse, ReasonNotImplemented + ": candidate selection is yaah-0u0v.20"
 	case ir.KindCall:
 		return kindRefuse, ReasonNotImplemented + ": nested workflow calls are not in the scheduler core"
 	case ir.KindEmit:

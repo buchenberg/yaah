@@ -46,9 +46,9 @@ const (
 	// refused here rather than mapped.
 	ReasonSettleActionUnsupported = "unsupported_settle_action"
 	// ReasonSettleSourceUnavailable prefixes a proposals or where handle the
-	// scheduler cannot resolve from recorded run state: a fan-out collect or a
-	// foreign where (both .14), an output carrying no proposal handle, or a
-	// filter field no handle has.
+	// scheduler cannot resolve from recorded run state: an output carrying no
+	// proposal handle, an item binding inside a container body, or a filter
+	// field no handle has.
 	ReasonSettleSourceUnavailable = "settle_source_unavailable"
 	// ReasonNoProposalsMatched is on_empty: fail — matching nothing was an
 	// outcome the author declared unacceptable.
@@ -507,7 +507,7 @@ func (r *Run) resolveHandles(n *ir.Node) (refs []ProposalRef, deferred bool, ref
 		if !sameSource(n.Proposals.From, n.Where.From) {
 			return nil, false, ReasonSettleSourceUnavailable + ": where reads " + n.Where.From.String() +
 				" while proposals reads " + n.Proposals.From.String() +
-				"; correlating a filter with another step's set is fan-out join semantics (yaah-0u0v.14)"
+				"; correlating two steps' sets needs the join across two collects, which the scheduler does not perform yet"
 		}
 		filtered, why := applyFilter(refs, n.Where)
 		if why != "" {
@@ -518,7 +518,7 @@ func (r *Run) resolveHandles(n *ir.Node) (refs []ProposalRef, deferred bool, ref
 	sortRefs(refs, n.Order)
 	if n.Order == ir.OrderSmallestDiffFirst && len(refs) > 1 {
 		r.warnOnce("settle-order:"+n.Path, fmt.Sprintf(
-			"%s: order: smallest_diff_first settled in canonical proposal order — the scheduler holds no diff-size fact to order on (yaah-0u0v.14)", n.Path))
+			"%s: order: smallest_diff_first settled in canonical proposal order — the scheduler holds no diff-size fact to order on", n.Path))
 	}
 	return refs, false, ""
 }
@@ -545,13 +545,9 @@ func (r *Run) awaitingProducer(sel *ir.Selector) string {
 // handleRefs resolves a proposals selector into proposal refs.
 func (r *Run) handleRefs(sel *ir.Selector) ([]ProposalRef, string) {
 	src := sel.From
-	switch src.Kind {
-	case ir.SourceStepCollect:
+	if src.Kind == ir.SourceItem {
 		return nil, ReasonSettleSourceUnavailable + ": " + src.String() +
-			" is a fan-out collect; join semantics are yaah-0u0v.14"
-	case ir.SourceItem:
-		return nil, ReasonSettleSourceUnavailable + ": " + src.String() +
-			" is an item binding inside a container; body iteration is yaah-0u0v.14"
+			" is an item binding inside a container body; a settle that reads its own item's scope is not in the scheduler core yet"
 	}
 	v, err := r.selectorValue(sel)
 	if err != nil {
@@ -564,7 +560,12 @@ func (r *Run) handleRefs(sel *ir.Selector) ([]ProposalRef, string) {
 	if why != "" {
 		return nil, ReasonSettleSourceUnavailable + ": " + src.String() + " " + why
 	}
-	if src.Kind == ir.SourceStepOutput {
+	// A set read from a step — its own output or a fan-out's collected items —
+	// names that step as the producer of any element that did not record one.
+	// A fan-out collect is the case this matters for: its elements are the
+	// items' recorded values, and the container is the node the run holds
+	// responsible for them.
+	if src.Kind == ir.SourceStepOutput || src.Kind == ir.SourceStepCollect {
 		if dep, ok := r.byID[src.StepID]; ok {
 			for i := range refs {
 				if refs[i].Producer == "" {
@@ -581,7 +582,8 @@ func (r *Run) handleRefs(sel *ir.Selector) ([]ProposalRef, string) {
 // selectorValue walks a compiled selector source against recorded run state.
 // Steps read through the same value extraction a template reads, so
 // `proposals: {from: steps.work.output.proposal_id}` and the template
-// `{{ steps.work.output.proposal_id }}` answer from one place.
+// `{{ steps.work.output.proposal_id }}` answer from one place — and a fan-out's
+// `steps.<id>.collect` is the joined list that same template would render.
 func (r *Run) selectorValue(sel *ir.Selector) (any, error) {
 	src := sel.From
 	var (
@@ -595,6 +597,16 @@ func (r *Run) selectorValue(sel *ir.Selector) (any, error) {
 			return nil, fmt.Errorf("selector %s names an out-of-scope step %q", src.String(), src.StepID)
 		}
 		v = r.stepValue(dep, r.state[dep.Path])
+	case ir.SourceStepCollect:
+		dep, ok := r.byID[src.StepID]
+		if !ok {
+			return nil, fmt.Errorf("selector %s names an out-of-scope step %q", src.String(), src.StepID)
+		}
+		st := r.state[dep.Path]
+		if st == nil || st.State != StateSucceeded || st.Collect == nil {
+			return nil, fmt.Errorf("selector %s: %s has produced no collected items", src.String(), dep.Path)
+		}
+		v = st.Collect
 	case ir.SourceParams:
 		p, ok := r.params[src.Name]
 		if !ok {
@@ -624,6 +636,10 @@ func (r *Run) stepValue(n *ir.Node, st *NodeState) any {
 	switch n.Kind {
 	case ir.KindSettle:
 		return st.settledValue()
+	case ir.KindFanout:
+		// A fan-out's value IS its collected items: `steps.<id>.output` and
+		// `steps.<id>.collect` are two readings of one list, in input order.
+		return st.collectValue()
 	case ir.KindDelegate:
 		if st.Proposal != nil && st.Proposal.ProposalID != "" {
 			m := map[string]any{
@@ -792,7 +808,7 @@ func handleField(ref ProposalRef, field string) (any, string) {
 		return ref.Producer, ""
 	}
 	return nil, ReasonSettleSourceUnavailable + fmt.Sprintf(
-		": a proposal handle carries no field %q; correlating a verdict with its proposal is fan-out join semantics (yaah-0u0v.14)", field)
+		": a proposal handle carries no field %q; selecting a proposal by another step's verdict needs the join across two collects, which the scheduler does not perform yet", field)
 }
 
 func predicateMatch(v any, p ir.Predicate) (bool, error) {

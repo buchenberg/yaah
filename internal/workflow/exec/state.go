@@ -189,6 +189,16 @@ type NodeState struct {
 	SettlePlan *SettlePlan
 	Settling   int
 	Settled    []Settled
+
+	// Expanded, Items, and Collect are a fan-out node's own ledger
+	// (yaah-0u0v.14). Expanded records that the items were instantiated, so a
+	// second expansion of the same node is a refused event rather than a second
+	// set of instances; Items is the per-item record in `over` order, and
+	// Collect is the joined value the node reports — the item values in that
+	// same input order, never completion order.
+	Expanded bool
+	Items    []FanoutItem
+	Collect  []any
 }
 
 // NodeOutput is one declared output binding the reducer recorded for a node.
