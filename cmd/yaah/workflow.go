@@ -27,15 +27,21 @@ const workflowExitHelp = `Exit codes:
      the decoder's size limit, a malformed --param). With --json the report
      still goes to stdout and the summary line to stderr, and "status"
      separates "unresolved" (the document never became a graph, so the
-     node-level families could not run) from "invalid".`
+     node-level families could not run) from "invalid". "status" is the
+     document's verdict: --strict flips "ok" and the exit code but never
+     rewrites "status", so status=invalid always implies a non-empty
+     "errors".`
 
 const workflowSeverityHelp = `Severity:
   error    a defect in the document itself, true on every host
-           (WF001-WF029, WF031, WF034, WF036)
+           (WF001-WF029, WF034, WF036)
   warning  a finding whose truth depends on this host's configuration —
-           the role registry (WF030), the network ceiling (WF032), the
-           dispatch budget (WF033), the configured caps (WF035). --strict
-           promotes warnings to failures.`
+           the role registry (WF030), the world registry (WF031), the
+           network ceiling (WF032), the dispatch budget (WF033), the
+           configured caps (WF035). WF030, WF031 and WF033 also carry
+           document-intrinsic halves which stay warnings for whole-code
+           consistency — the code is the contract. --strict promotes
+           warnings to failures (ok and exit code, never status).`
 
 func init() {
 	rootCmd.AddCommand(newWorkflowCmd())

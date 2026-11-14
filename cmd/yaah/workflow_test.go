@@ -369,3 +369,106 @@ func TestWorkflowWritesNoState(t *testing.T) {
 		}
 	}
 }
+
+// TestWorkflowReviewFixPins pins the review-driven contracts (#1640):
+// never-null settlement fields, loops visible in the repetition survey,
+// no fabricated world/network facts for non-executing kinds, a JSON report
+// even on load failure, and status surviving --strict.
+func TestWorkflowReviewFixPins(t *testing.T) {
+	t.Run("settlement never null", func(t *testing.T) {
+		out, err := runWfExplain(t, "--json", "--param", "task=x", wfGoldens+"fanout_settle.yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out, `"open_at_exit": null`) || strings.Contains(out, `"dispositions": null`) {
+			t.Errorf("settlement fields serialized as null:\n%s", out)
+		}
+		var rep explainReport
+		if err := json.Unmarshal([]byte(out), &rep); err != nil {
+			t.Fatal(err)
+		}
+		if rep.Settlement.OpenAtExit == nil {
+			t.Error("open_at_exit is nil after decode; contract says []")
+		}
+	})
+	t.Run("loop in repetition survey", func(t *testing.T) {
+		out, err := runWfExplain(t, "--json", "--param", "task=x", wfGoldens+"bounded_repair.yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rep explainReport
+		if err := json.Unmarshal([]byte(out), &rep); err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, c := range rep.Fanout.Containers {
+			if c.Kind == "loop" && strings.HasSuffix(c.Path, "repair") {
+				found = true
+				if c.Literal != 3 {
+					t.Errorf("loop literal_items = %d, want declared max_iterations 3", c.Literal)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("bounded_repair's loop missing from the repetition survey: %+v", rep.Fanout.Containers)
+		}
+	})
+	t.Run("no fabricated authority facts", func(t *testing.T) {
+		out, err := runWfExplain(t, "--json", "--param", "task=x", wfGoldens+"fanout_settle.yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rep explainReport
+		if err := json.Unmarshal([]byte(out), &rep); err != nil {
+			t.Fatal(err)
+		}
+		for _, n := range rep.Nodes {
+			switch n.Kind {
+			case "settle", "emit", "branch", "collect":
+				if n.World != "" || n.Network != "" {
+					t.Errorf("%s (%s) reports world=%q network=%q — kinds that dispatch nothing must not state an execution environment", n.Path, n.Kind, n.World, n.Network)
+				}
+			}
+			if n.NetworkInherited && rep.Env.HostNetwork != "" && n.Network != rep.Env.HostNetwork {
+				t.Errorf("%s: network %q marked inherited but differs from host network %q", n.Path, n.Network, rep.Env.HostNetwork)
+			}
+			if strings.HasSuffix(n.Path, "body[0]") && n.Network == "deny_all" && n.NetworkInherited {
+				// deny_all is declared by the golden's spec defaults — a
+				// declared network must never ride on an inherited star
+				t.Errorf("%s: declared network %q marked inherited", n.Path, n.Network)
+			}
+		}
+	})
+	t.Run("load failure emits report", func(t *testing.T) {
+		out, err := runWfValidate(t, "--json", "no/such/file.yaml")
+		if err == nil {
+			t.Fatal("expected nonzero exit for missing file")
+		}
+		var rep validateReport
+		if jerr := json.Unmarshal([]byte(out), &rep); jerr != nil {
+			t.Fatalf("stdout is not a parseable report (%v):\n%s", jerr, out)
+		}
+		if rep.Status != "unresolved" || rep.OK {
+			t.Errorf("status/ok = %q/%v, want unresolved/false", rep.Status, rep.OK)
+		}
+		if len(rep.Errors) == 0 || rep.Errors[0].Code != "WF001" {
+			t.Errorf("errors = %v, want synthetic WF001", rep.Errors)
+		}
+	})
+	t.Run("strict never rewrites status", func(t *testing.T) {
+		out, err := runWfValidate(t, "--strict", "--json", wfGoldens+"sequential.yaml")
+		if err == nil {
+			t.Skip("host role registry made sequential warning-free; nothing to promote")
+		}
+		var rep validateReport
+		if jerr := json.Unmarshal([]byte(out), &rep); jerr != nil {
+			t.Fatalf("stdout is not a parseable report (%v):\n%s", jerr, out)
+		}
+		if rep.Status != "valid" {
+			t.Errorf("status = %q under --strict with zero errors, want valid (strict flips ok, not status)", rep.Status)
+		}
+		if rep.OK || len(rep.Errors) != 0 || len(rep.Warnings) == 0 {
+			t.Errorf("ok=%v errors=%d warnings=%d, want false/0/>0", rep.OK, len(rep.Errors), len(rep.Warnings))
+		}
+	})
+}

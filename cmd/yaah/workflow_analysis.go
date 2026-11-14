@@ -37,16 +37,19 @@ import (
 // those axes means "this plan does not fit the machine you are standing
 // on" — a warning by default, and a failure under --strict.
 //
-// Every other code describes the document itself and is an error. Two of
-// the four codes here have document-intrinsic halves and they are
+// Every other code describes the document itself and is an error. Three of
+// the five codes here have document-intrinsic halves and they are
 // deliberately still warnings: WF030 refuses an empty `role:` whatever the
 // registry holds (an author can read that finding as a warning and fix it
-// without a registry, and --strict is the place that demands it), and
-// WF033's negative `max_dispatches` is priced against a bound the host set.
+// without a registry, and --strict is the place that demands it), WF031's
+// non-world-relative and overlapping grants are document facts but its
+// unknown-world arm depends on which worlds this host declares, and WF033's
+// negative `max_dispatches` is priced against a bound the host set.
 // Splitting one rule across two severities by message text would make the
 // scheme depend on prose; the code is the contract, so the code decides.
 var warningCodes = map[string]bool{
 	validate.CodeWF030: true,
+	validate.CodeWF031: true,
 	validate.CodeWF032: true,
 	validate.CodeWF033: true,
 	validate.CodeWF035: true,
@@ -86,7 +89,11 @@ func (a *workflowAnalysis) failed() bool {
 }
 
 // status is the report's one-word verdict, shared by the text and JSON
-// shapes. "unresolved" is distinct from "invalid" because a document the
+// shapes. It is the document's verdict and nothing else: --strict flips ok
+// and the exit code but never rewrites status, because a warnings-only
+// document is not an invalid document — turning it "invalid" under --strict
+// would break the invariant that status=invalid implies errors is
+// non-empty. "unresolved" is distinct from "invalid" because a document the
 // decoder or the resolver refused never became a graph: the node-level
 // families could not run, and a reader needs to know that the absence of
 // other findings proves nothing.
@@ -94,7 +101,7 @@ func (a *workflowAnalysis) status() string {
 	switch {
 	case a.graph == nil:
 		return "unresolved"
-	case a.failed():
+	case len(a.errors) > 0:
 		return "invalid"
 	default:
 		return "valid"
@@ -121,7 +128,15 @@ func analyzeWorkflow(path string, rawParams []string, env validate.Env, strict b
 	}
 	data, err := readWorkflowSpec(path)
 	if err != nil {
-		return nil, err
+		// The report contract is uniform: with --json a report always goes
+		// to stdout, load failure included. A file that cannot be read is
+		// one synthetic WF001 on an unresolved document, not a bare CLI
+		// error with zero bytes of output.
+		a.errors = append(a.errors, validate.Diagnostic{
+			Code:    validate.CodeWF001,
+			Message: fmt.Sprintf("cannot read spec: %v", err),
+		})
+		return a, nil
 	}
 	doc, derr := spec.Parse(data)
 	if derr != nil {
@@ -131,7 +146,14 @@ func analyzeWorkflow(path string, rawParams []string, env validate.Env, strict b
 	a.name = doc.Metadata.Name
 	params, perr := applyWorkflowParams(doc, rawParams)
 	if perr != nil {
-		return nil, perr
+		// Same uniform contract as the read failure: a malformed --param is
+		// reported inside the document's report, so a --json caller always
+		// gets one parseable body on stdout.
+		a.errors = append(a.errors, validate.Diagnostic{
+			Code:    validate.CodeWF001,
+			Message: fmt.Sprintf("invalid --param: %v", perr),
+		})
+		return a, nil
 	}
 	a.params = params
 

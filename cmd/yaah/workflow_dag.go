@@ -119,16 +119,30 @@ func (a *workflowAnalysis) nodeView(n *ir.Node) nodeView {
 	}
 	if n.Network != "" {
 		v.Network = string(n.Network)
-	} else {
+	} else if carriesExecutionFacts(n.Kind) {
 		v.Network = string(a.env.HostNetwork)
-		v.Inherited = n.Kind == ir.KindDelegate
+		v.NetworkInherited = v.Network != ""
 	}
-	if v.World == "" {
+	if v.World == "" && carriesExecutionFacts(n.Kind) {
 		v.World = a.env.DefaultWorld
-		v.Inherited = v.World != ""
+		v.WorldInherited = v.World != ""
 	}
 	v.ProducesProposal = n.Lane == ir.LaneProposal || (n.Output != nil && n.Output.Type == ir.OutputProposal)
 	return v
+}
+
+// carriesExecutionFacts reports whether a node kind runs a payload or a judge
+// of its own — the kinds whose world/network columns state facts about an
+// execution environment. Control-flow and artifact kinds (branch, aggregate,
+// collect, emit, settle, human) dispatch nothing, so filling their columns
+// with host defaults would state an authority they never exercise; their
+// columns stay empty unless the document itself declared a value.
+func carriesExecutionFacts(k ir.Kind) bool {
+	switch k {
+	case ir.KindDelegate, ir.KindFanout, ir.KindLoop, ir.KindGate, ir.KindSelect, ir.KindCall:
+		return true
+	}
+	return false
 }
 
 func grantsOf(grants []ir.Grant) []grantView {
@@ -341,17 +355,33 @@ func (a *workflowAnalysis) edges(n *ir.Node, w workflowWalk) []edgeView {
 }
 
 // fanoutView reports the widest declared concurrency in the document, which
-// is the number the acceptance criterion calls max fan-out. A fan-out that
-// declares no max_parallel is listed with its items but contributes no
+// is the number the acceptance criterion calls max fan-out. The survey lists
+// every repetition container — fanout (parallel width, contributes to
+// max_items) and loop (sequential iterations, listed with its declared bound
+// but contributing no parallel width: a loop that hides from this survey is a
+// bounded-repair document whose worst case the reader cannot see). A fan-out
+// that declares no max_parallel is listed with its items but contributes no
 // width: WF034 has already said that repetition is unbounded, and inventing
 // a number here would contradict the finding.
 func (a *workflowAnalysis) fanoutView(w workflowWalk) fanoutView {
 	v := fanoutView{MaxNodes: []string{}, Containers: []fanoutInstance{}}
 	for _, n := range w.order {
+		if n.Kind == ir.KindLoop {
+			inst := fanoutInstance{Path: n.Path, Kind: "loop", Items: "loop body"}
+			if n.MaxIterations != nil {
+				inst.Literal = *n.MaxIterations
+				inst.Items = fmt.Sprintf("at most %d iterations", *n.MaxIterations)
+			} else {
+				inst.RunTime = true
+				inst.Items = "loop body (no declared iteration bound)"
+			}
+			v.Containers = append(v.Containers, inst)
+			continue
+		}
 		if n.Kind != ir.KindFanout {
 			continue
 		}
-		inst := fanoutInstance{Path: n.Path, MaxParallel: n.MaxParallel, Items: overText(n.Over)}
+		inst := fanoutInstance{Path: n.Path, Kind: "fanout", MaxParallel: n.MaxParallel, Items: overText(n.Over)}
 		if n.Over != nil && n.Over.Literals != nil {
 			inst.Literal = len(n.Over.Literals)
 		} else if n.Over != nil && n.Over.Selector != nil {
@@ -455,12 +485,12 @@ func (v nodeView) line() string {
 	field("role", v.Role)
 	field("lane", v.Lane)
 	world := v.World
-	if world != "" && v.Inherited {
+	if world != "" && v.WorldInherited {
 		world += "*"
 	}
 	field("world", world)
 	network := v.Network
-	if network != "" && v.Inherited {
+	if network != "" && v.NetworkInherited {
 		network += "*"
 	}
 	field("network", network)

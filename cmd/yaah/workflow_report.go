@@ -87,15 +87,19 @@ type graphView struct {
 }
 
 type nodeView struct {
-	Path             string      `json:"path"`
-	ID               string      `json:"id,omitempty"`
-	Kind             string      `json:"kind"`
-	Needs            []string    `json:"needs,omitempty"`
-	Role             string      `json:"role,omitempty"`
-	Lane             string      `json:"lane,omitempty"`
-	Network          string      `json:"network,omitempty"`
-	World            string      `json:"world,omitempty"`
-	Inherited        bool        `json:"inherited,omitempty"`
+	Path    string   `json:"path"`
+	ID      string   `json:"id,omitempty"`
+	Kind    string   `json:"kind"`
+	Needs   []string `json:"needs,omitempty"`
+	Role    string   `json:"role,omitempty"`
+	Lane    string   `json:"lane,omitempty"`
+	Network string   `json:"network,omitempty"`
+	World   string   `json:"world,omitempty"`
+	// WorldInherited and NetworkInherited are separate flags: the two columns
+	// inherit independently, and one shared flag let a declared network ride
+	// on an inherited world's star (and vice versa).
+	WorldInherited   bool        `json:"world_inherited,omitempty"`
+	NetworkInherited bool        `json:"network_inherited,omitempty"`
 	Grants           []grantView `json:"grants,omitempty"`
 	Notes            []string    `json:"notes,omitempty"`
 	ProducesProposal bool        `json:"produces_proposal,omitempty"`
@@ -123,11 +127,17 @@ type fanoutView struct {
 }
 
 type fanoutInstance struct {
-	Path        string `json:"path"`
+	Path string `json:"path"`
+	// Kind is "fanout" or "loop": a fan-out's bound is parallel width, a
+	// loop's is sequential iterations — the same survey, different units,
+	// and the report must not blur them.
+	Kind        string `json:"kind"`
 	MaxParallel *int   `json:"max_parallel,omitempty"`
 	Items       string `json:"items"`
-	Literal     int    `json:"literal_items,omitempty"`
-	RunTime     bool   `json:"run_time_list,omitempty"`
+	// Literal is the statically known item count for a fan-out, or the
+	// declared max_iterations for a loop.
+	Literal int  `json:"literal_items,omitempty"`
+	RunTime bool `json:"run_time_list,omitempty"`
 }
 
 type costView struct {
@@ -141,7 +151,6 @@ type costView struct {
 	Ceiling         int      `json:"ceiling,omitempty"`
 	ExceedsCeiling  bool     `json:"exceeds_ceiling"`
 	DeclaredCeiling *int     `json:"declared_ceiling,omitempty"`
-	HostCeiling     int      `json:"host_ceiling,omitempty"`
 	BudgetChecked   bool     `json:"budget_checked"`
 }
 
@@ -249,7 +258,6 @@ func (a *workflowAnalysis) costView() costView {
 		WallClockPriced: a.cost.WallClockKnown,
 		Ceiling:         a.cost.Ceiling,
 		ExceedsCeiling:  a.cost.ExceedsCeiling,
-		HostCeiling:     a.env.MaxDispatches,
 	}
 	if !a.cost.Complete {
 		v.DispatchBound = "at least"
@@ -293,16 +301,29 @@ func (a *workflowAnalysis) settlementView() settlementView {
 	v := settlementView{Proposals: []proposalView{}, OpenAtExit: []string{}}
 	if a.proof != nil {
 		for _, p := range a.proof.Proposals {
+			// Dispositions keeps the never-null contract: an undisposed token
+			// (a producer nothing settles — the WF026 leak case) serializes
+			// as [], not null.
+			dispositions := p.Dispositions
+			if dispositions == nil {
+				dispositions = []string{}
+			}
 			v.Proposals = append(v.Proposals, proposalView{
 				Proposal:           p.Proposal,
-				Dispositions:       p.Dispositions,
+				Dispositions:       dispositions,
 				Actions:            p.Actions,
 				OnceOnEveryPath:    p.OnceOnEveryPath,
 				SettledOnEveryPath: p.SettledOnEveryPath,
 				Stranded:           p.Stranded,
 			})
 		}
-		v.OpenAtExit = a.proof.OpenAtExit
+		// OpenAtExit keeps its [] seed when the proof found nothing open —
+		// nil from the proof means "no producer can reach exit unsettled",
+		// which serializes as []. A null open_at_exit in the report means
+		// only "no proof ran" (an unresolved document), never "all settled".
+		if a.proof.OpenAtExit != nil {
+			v.OpenAtExit = a.proof.OpenAtExit
+		}
 	}
 	// The cross-check the contract asks for: every proposal-producing node
 	// should have a disposition record. Listed, not inferred — the proof is
@@ -425,11 +446,20 @@ func renderWorkflowExplain(out io.Writer, a *workflowAnalysis) {
 		fmt.Fprintf(out, "  declared by\t%s\n", strings.Join(view.fanout.MaxNodes, ", "))
 	}
 	for _, c := range view.fanout.Containers {
-		parallel := "undeclared"
-		if c.MaxParallel != nil {
-			parallel = fmt.Sprintf("max_parallel %d", *c.MaxParallel)
+		bound := "undeclared"
+		switch c.Kind {
+		case "loop":
+			if c.Literal > 0 {
+				bound = fmt.Sprintf("max_iterations %d", c.Literal)
+			} else {
+				bound = "iteration bound undeclared"
+			}
+		default:
+			if c.MaxParallel != nil {
+				bound = fmt.Sprintf("max_parallel %d", *c.MaxParallel)
+			}
 		}
-		fmt.Fprintf(out, "  %s\t%s\t%s\n", c.Path, parallel, c.Items)
+		fmt.Fprintf(out, "  %s\t%s\t%s\n", c.Path, bound, c.Items)
 	}
 
 	fmt.Fprintf(out, "\ncost\n")

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://yaah.dev/schemas/workflow-validate.schema.json",
   "title": "yaah workflow validate --json report",
-  "description": "JSON report emitted by `yaah workflow validate --json <spec>` (cmd/yaah/workflow_report.go, kind yaah.workflow.validate.v1). The shape is stable within v1: consumers can rely on the documented fields always being present with these types. errors and warnings serialize as [] (never null). Exit code is 0 when ok is true and 1 otherwise; --strict promotes warnings into failure without moving them out of the warnings array.",
+  "description": "JSON report emitted by 'yaah workflow validate --json <spec>' (cmd/yaah/workflow_report.go, kind yaah.workflow.validate.v1). The shape is stable within v1. errors and warnings serialize as [] (never null). A report always goes to stdout when --json is set — including load failures — with the summary line on stderr. Exit code is 0 when ok is true and 1 otherwise.",
   "type": "object",
   "additionalProperties": true,
   "required": ["kind", "spec", "status", "ok", "strict", "errors", "warnings"],
@@ -21,24 +21,24 @@
     },
     "status": {
       "enum": ["valid", "invalid", "unresolved"],
-      "description": "valid = decoded, resolved, and no error findings; invalid = decoded and resolved into a graph but carries error findings; unresolved = load, decode, or ir.Resolve failed, so node-level families (WF002-WF036) could not run and the load/resolve failure is reported as a synthetic diagnostic."
+      "description": "The document's verdict, independent of --strict: valid = decoded, resolved, and no error findings; invalid = decoded and resolved into a graph but carries error findings (status=invalid always implies a non-empty errors array); unresolved = load, decode, param, or ir.Resolve failed, so node-level families (WF002-WF036) could not run and the failure is reported as a synthetic diagnostic."
     },
     "ok": {
       "type": "boolean",
-      "description": "Final verdict after --strict promotion: true iff no errors and (no warnings or not strict)."
+      "description": "Final verdict after --strict promotion: true iff no errors and (no warnings or not strict). --strict flips ok and the exit code; it never rewrites status."
     },
     "strict": {
       "type": "boolean",
-      "description": "Whether --strict was set; strict treats warnings as errors for the exit code only."
+      "description": "Whether --strict was set."
     },
     "errors": {
       "type": "array",
-      "description": "Error-severity findings, canonical rule order.",
+      "description": "Error-severity findings, canonical rule order. Every error code is document-intrinsic — true on every host (WF001-WF029, WF034, WF036).",
       "items": { "$ref": "#/$defs/diagnostic" }
     },
     "warnings": {
       "type": "array",
-      "description": "Warning-severity findings (host-relative rules WF030/WF031/WF033-WF036 when they cannot prove a violation on this host).",
+      "description": "Warning-severity findings: the host-relative codes WF030 (role registry), WF031 (world registry; its document-intrinsic halves stay warnings for whole-code consistency — the code is the contract), WF032 (network ceiling), WF033 (dispatch budget), WF035 (configured caps). --strict promotes them to failure via ok and the exit code without moving them out of this array.",
       "items": { "$ref": "#/$defs/diagnostic" }
     }
   },
