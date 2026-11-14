@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.183.0](https://github.com/buchenberg/yaah/compare/v0.182.0...v0.183.0) (2026-11-14)
+
+
+### Features
+
+* **workflow:** runtime workflow execution + 'yaah workflow run' CLI (yaah-0u0v.12) ([#1644](https://github.com/buchenberg/yaah/issues/1644)) ([436a1da](https://github.com/buchenberg/yaah/commit/436a1da8816a31f669e84f4dda4856c5d4d07e33))
+
 ## [0.182.0](https://github.com/buchenberg/yaah/compare/v0.181.0...v0.182.0) (2026-11-14)
 
 
