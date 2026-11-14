@@ -136,6 +136,7 @@ func runWorkflowExplainFromTrace(cmd *cobra.Command, args []string, opts workflo
 	if err != nil {
 		return fmt.Errorf("explain --from-trace %s: %w", opts.fromTrace, err)
 	}
+	defer st.Close()
 	cp, err := st.LoadCheckpoint(ctx, opts.fromTrace)
 	if err != nil {
 		return err

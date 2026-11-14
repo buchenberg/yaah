@@ -118,6 +118,7 @@ func runWorkflowResume(cmd *cobra.Command, runID string, opts workflowResumeOpti
 	if err != nil {
 		return err
 	}
+	defer st.Close()
 	runner, rerr := workflowRunRunner()
 	if rerr != nil {
 		return rerr

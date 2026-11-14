@@ -168,6 +168,9 @@ type Store interface {
 	// LoadCheckpoint returns the last recorded projection for a run id, or an
 	// error wrapping ErrRunNotFound.
 	LoadCheckpoint(ctx context.Context, runID string) (Checkpoint, error)
+	// Close releases the store. A caller that opened the store is responsible
+	// for closing it; on Windows an open SQLite file cannot be removed.
+	Close() error
 }
 
 // checkpoint writes the run's projection when a Store is configured. It is
