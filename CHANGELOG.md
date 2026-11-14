@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.184.1](https://github.com/buchenberg/yaah/compare/v0.184.0...v0.184.1) (2026-11-14)
+
+
+### Bug Fixes
+
+* **agent:** rename duplicate tool_use ids on arrival so tool turns can't brick a session (yaah-yfxg) ([#1648](https://github.com/buchenberg/yaah/issues/1648)) ([02970a2](https://github.com/buchenberg/yaah/commit/02970a2d25fb08180fe2061523d3f300bdcacb1b))
+
 ## [0.184.0](https://github.com/buchenberg/yaah/compare/v0.183.0...v0.184.0) (2026-11-14)
 
 
