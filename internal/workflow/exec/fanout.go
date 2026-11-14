@@ -325,11 +325,14 @@ func (r *Run) fanoutItems(n *ir.Node) (items []any, deferred bool, refusal strin
 		// so it is skipped rather than read against the whole list.
 		return []any{v}, false, ""
 	}
-	if selected, why := filterElements(elems, sel.Predicate); why != "" {
-		return nil, false, why
-	} else {
-		elems = selected
+	// filterElements answers a bare cause; the caller prefixes the reason it
+	// reports it under, so a filtered `over` and a filtered candidate set each
+	// state their own family's reason (yaah-0u0v.20).
+	selected, why := filterElements(elems, sel.Predicate)
+	if why != "" {
+		return nil, false, ReasonFanoutOverUnavailable + ": " + n.Path + " over " + sel.From.String() + " " + why
 	}
+	elems = selected
 	return elems, false, ""
 }
 
@@ -411,11 +414,11 @@ func filterElements(elems []any, p ir.Predicate) ([]any, string) {
 	for _, e := range elems {
 		v, why := elementField(e, p.Field)
 		if why != "" {
-			return nil, ReasonFanoutOverUnavailable + ": " + why
+			return nil, why
 		}
 		ok, err := predicateMatch(v, p)
 		if err != nil {
-			return nil, ReasonFanoutOverUnavailable + ": over " + err.Error()
+			return nil, "over " + err.Error()
 		}
 		if ok {
 			out = append(out, e)

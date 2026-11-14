@@ -553,6 +553,7 @@ func copyNodeState(st *NodeState) *NodeState {
 	out.Winners = append([]int(nil), st.Winners...)
 	out.Iterations = append([]LoopIteration(nil), st.Iterations...)
 	out.Collect = append([]any(nil), st.Collect...)
+	out.Candidates = append([]Candidate(nil), st.Candidates...)
 	return &out
 }
 

@@ -699,6 +699,12 @@ func (r *Run) stepValue(n *ir.Node, st *NodeState) any {
 		// the merged mapping, or a summarize body's product — structured, so a
 		// selector can read into it instead of re-parsing its text.
 		return st.Combined
+	case ir.KindSelect:
+		// A select's value is its decision: the winning candidate plus the ledger
+		// around it, so `steps.<id>.output.winner` is what a downstream settle
+		// applies and `steps.<id>.output` alone still names the proposal
+		// (yaah-0u0v.20).
+		return st.selectionValue()
 	case ir.KindDelegate:
 		if st.Proposal != nil && st.Proposal.ProposalID != "" {
 			m := map[string]any{

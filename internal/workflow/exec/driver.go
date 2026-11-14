@@ -120,6 +120,14 @@ func (r *Run) Advance(ctx context.Context) (bool, error) {
 	if iterating, ierr := r.loopStepOnce(); iterating {
 		return true, ierr
 	}
+	// Then the selection door (yaah-0u0v.20): one candidate set resolved per
+	// cycle. A select dispatches nothing to resolve its set, so it appears
+	// nowhere in the dispatch tally this cycle would otherwise consult — and a
+	// judge policy dispatches only AFTER its candidates are resolved, so an
+	// unreadable candidate source never costs a model call.
+	if selecting, serr := r.selectStepOnce(); selecting {
+		return true, serr
+	}
 	if len(r.outstanding) == 0 {
 		// Nothing running and nothing startable: the part of the graph this run
 		// can reach has terminated, and anything still pending is stranded
@@ -170,7 +178,7 @@ func (r *Run) startReady(ctx context.Context) (bool, error) {
 		Number:     number,
 		NodePath:   path,
 		DispatchID: dispatchID(path, number),
-		Role:       n.Role,
+		Role:       dispatchRole(n),
 		Lane:       string(n.Lane),
 		StartedAt:  r.rt.Now(),
 	}
@@ -361,6 +369,13 @@ func (r *Run) nextStartable() (string, bool) {
 		// path order, which would otherwise start an arm named early in the
 		// document before its branch ran at all.
 		if _, undecided := r.armRouting(p); undecided {
+			continue
+		}
+		// A select that dispatches its judge is startable only once its candidate
+		// set is resolved: the verdict names one of the candidates, so dispatching
+		// a judge against an unresolved set would pay a model to choose among
+		// nothing (yaah-0u0v.20).
+		if selectDispatchesJudge(r.byPath[p]) && !r.state[p].selectCandidatesResolved() {
 			continue
 		}
 		return p, true
