@@ -546,6 +546,55 @@ func TestFanoutOverUnavailable(t *testing.T) {
 	}
 }
 
+// TestFanoutNestedChainsItemPaths pins the item-path convention for a fan-out
+// nested in a fan-out's body. The inner container is itself an instance, so its
+// items must splice the inner discriminator into the OUTER instance path rather
+// than re-prefixing the body template path (the ".items[k].steps." corruption a
+// naive instance-path prefix would produce).
+func TestFanoutNestedChainsItemPaths(t *testing.T) {
+	y := strings.Replace(specHead, "%s", "nested", 1) + `  steps:
+    - id: outer
+      kind: fanout
+      over: [a, b]
+      as: x
+      body:
+        - id: inner
+          kind: fanout
+          over: [1, 2]
+          as: y
+          body:
+            kind: delegate
+            role: developer
+            prompt: "{{ x }}-{{ y }}"
+          collect: results
+      collect: results
+`
+	g := graphFromYAML(t, y)
+	script := map[string][]Completion{}
+	for oi := 0; oi < 2; oi++ {
+		for ii := 0; ii < 2; ii++ {
+			script[itemPathOf(itemPathOf("steps.outer", oi, 0), ii, 0)] =
+				[]Completion{Report(itoa(oi)+"-"+itoa(ii), 0)}
+		}
+	}
+	res, fake := runGraph(t, g, script, Config{})
+	if res.Status != RunSucceeded {
+		t.Fatalf("status = %s reason=%q\nlog:\n%s", res.Status, res.Reason, logOf(res))
+	}
+	paths := startedPaths(fake)
+	if len(paths) != 4 {
+		t.Fatalf("dispatches = %d, want 4 (2 outer x 2 inner)", len(paths))
+	}
+	for _, p := range paths {
+		if !strings.HasPrefix(p, "steps.outer.items[") {
+			t.Errorf("dispatch path %s, want an outer-item prefix", p)
+		}
+		if strings.Contains(p, ".steps.") {
+			t.Errorf("dispatch path %s re-prefixed the body template path", p)
+		}
+	}
+}
+
 // TestFanoutItemScopeRenders pins the per-item scope: `item.<as>` and `index`
 // render for the dispatch that item owns, and the body's own templates are the
 // ones compiled by ir.Resolve.

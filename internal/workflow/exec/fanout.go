@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/buchenberg/yaah/internal/workflow/ir"
 )
@@ -157,12 +158,40 @@ func maxParallelOf(n *ir.Node) int {
 // discriminator inserted between its container and its body index. It is a pure
 // function of the graph and the item index, which is what makes it stable across
 // runs and greppable in a trace.
+//
+// A nested container is itself an instance, so its path already carries its
+// ancestor's ".items[j]" segment(s) while its body nodes still carry authoring
+// template paths. The prefix is therefore the container's TEMPLATE path, not its
+// instance path: for container `steps.outer.items[0].body[1]` and body node
+// `steps.outer.body[1].body[0]` the result is
+// `steps.outer.items[0].body[1].items[k].body[0]` — not the malformed
+// `...items[k].steps.outer...` a naive instance-path prefix would mint.
 func itemPath(containerPath string, item int, bodyPath string) string {
+	tmpl := templatePath(containerPath)
 	rest := bodyPath
-	if len(containerPath) <= len(bodyPath) && bodyPath[:len(containerPath)] == containerPath {
-		rest = bodyPath[len(containerPath):]
+	if len(tmpl) <= len(bodyPath) && bodyPath[:len(tmpl)] == tmpl {
+		rest = bodyPath[len(tmpl):]
 	}
 	return containerPath + ".items[" + strconv.Itoa(item) + "]" + rest
+}
+
+// templatePath recovers a container's authoring template path from its instance
+// path by stripping every ".items[j]" segment itemPath inserted. Removal is
+// exact — nothing authored can contain ".items[" (ir.Resolve only appends
+// ".body[i]") — and the result is always a prefix of the container's own
+// body-node template paths.
+func templatePath(path string) string {
+	for {
+		i := strings.LastIndex(path, ".items[")
+		if i < 0 {
+			return path
+		}
+		j := strings.IndexByte(path[i:], ']')
+		if j < 0 {
+			return path
+		}
+		path = path[:i] + path[i+j+1:]
+	}
 }
 
 // itemBindings returns the item scope chain for one node path: outermost
@@ -269,8 +298,10 @@ func (r *Run) fanoutItems(n *ir.Node) (items []any, deferred bool, refusal strin
 	}
 	if sel.AsList {
 		// as_list wraps the whole value as ONE item: the author asked for a
-		// single workstream that happens to be a list.
-		elems = []any{v}
+		// single workstream that happens to be a list. A predicate is then
+		// meaningless — there is nothing to filter, only the one wrapped value —
+		// so it is skipped rather than read against the whole list.
+		return []any{v}, false, ""
 	}
 	if selected, why := filterElements(elems, sel.Predicate); why != "" {
 		return nil, false, why
