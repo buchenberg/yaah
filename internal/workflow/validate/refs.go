@@ -2,7 +2,9 @@ package validate
 
 import (
 	"fmt"
+	"strings"
 
+	wfassert "github.com/buchenberg/yaah/internal/workflow/assert"
 	"github.com/buchenberg/yaah/internal/workflow/ir"
 )
 
@@ -77,6 +79,16 @@ func uniqueReferences(g *ir.Graph) []Diagnostic {
 		if n.OnFail != "" {
 			if _, ok := byID[n.OnFail]; !ok {
 				out = append(out, diag(CodeWF002, n.Path+".on_fail", "unknown step id %q", n.OnFail))
+			}
+		}
+		if n.Assert != nil {
+			if raw, ok := n.Assert.Args[wfassert.SubjectKey].(string); ok {
+				from := strings.TrimSpace(raw)
+				if from != "" {
+					if _, ok := byID[from]; !ok {
+						out = append(out, diag(CodeWF002, n.Path+".assert.args."+wfassert.SubjectKey, "unknown step id %q", from))
+					}
+				}
 			}
 		}
 	}

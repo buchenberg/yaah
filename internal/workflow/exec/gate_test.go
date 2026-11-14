@@ -208,6 +208,19 @@ func TestGateJudgeEscalation(t *testing.T) {
 	if n.Disposition != DispositionEscalate {
 		t.Errorf("disposition = %q, want %q", n.Disposition, DispositionEscalate)
 	}
+	// The skipped arms must quote the gate's own failure, not branch
+	// vocabulary: a failed gate never selected an arm, so "routed to no arm"
+	// would lie about what happened.
+	for _, arm := range []string{"steps.p", "steps.f"} {
+		got := nodeOf(t, res, arm)
+		if got.State != StateSkipped {
+			t.Errorf("arm %s = %s, want skipped", arm, got.State)
+			continue
+		}
+		if !strings.Contains(got.Reason, ReasonGateEscalated) {
+			t.Errorf("arm %s reason = %q, want the gate's own %s", arm, got.Reason, ReasonGateEscalated)
+		}
+	}
 }
 
 // TestGateDispositionReachesDownstream pins the value plumbing: a later step

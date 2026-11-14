@@ -318,7 +318,7 @@ func (r *Run) skipUnselectedArms(n *ir.Node, selected string) error {
 		}
 		if err := r.derive(NodeSkippedEvent{
 			NodePath: dep.Path,
-			Reason:   notTakenReason(n, n.Path, &NodeState{State: StateSucceeded, Selected: selected}),
+			Reason:   notTakenReason(n, n.Path, r.state[n.Path]),
 		}); err != nil {
 			return err
 		}

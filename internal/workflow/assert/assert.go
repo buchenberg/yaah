@@ -42,6 +42,7 @@
 package assert
 
 import (
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -235,6 +236,12 @@ func kindProblem(key string, kind ArgKind, v any) string {
 		if _, ok := number(v); !ok {
 			return "arg " + strconv.Quote(key) + " must be a number, got " + kindOf(v)
 		}
+		if f, ok := v.(float64); ok && math.Trunc(f) != f {
+			return "arg " + strconv.Quote(key) + " must be a whole number (a count), got a fractional value"
+		}
+		if f, ok := v.(float32); ok && float32(math.Trunc(float64(f))) != f {
+			return "arg " + strconv.Quote(key) + " must be a whole number (a count), got a fractional value"
+		}
 	}
 	return ""
 }
@@ -353,7 +360,7 @@ func allSucceeded(in Input) (bool, string) {
 	}
 	var failed []string
 	for i, e := range entries {
-		if entryFailed(e) {
+		if e == nil || entryFailed(e) {
 			failed = append(failed, strconv.Itoa(i))
 		}
 	}

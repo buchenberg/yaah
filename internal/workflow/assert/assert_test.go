@@ -49,6 +49,7 @@ func TestProblemDeclarations(t *testing.T) {
 		{"nonempty", map[string]any{"extra": 1}, `does not read "extra"`},
 		{"count_ge", nil, `needs the argument "n"`},
 		{"count_ge", map[string]any{"n": "three"}, `"n" must be a number`},
+		{"count_ge", map[string]any{"n": 0.5}, "whole number"},
 		{"nonempty", map[string]any{"from": ""}, `"from" as a step id, and it must be a non-empty string`},
 	}
 	for _, c := range cases {
@@ -108,6 +109,10 @@ func TestAllSucceeded(t *testing.T) {
 		{[]any{map[string]any{"state": "cancelled"}}, false},
 		{
 			[]any{map[string]any{"status": "done"}, map[string]any{"state": "failed"}},
+			false,
+		},
+		{
+			[]any{nil, map[string]any{"status": "done"}},
 			false,
 		},
 	}

@@ -9,21 +9,23 @@ import (
 
 // CodeWF037 is declared in authority.go with the rest of the family's
 // vocabulary; this file is its rule.
-// over every gate in the graph, reachable or not: a
-// stranded gate is still a condition nobody could evaluate, and WF004 has
-// already said why it will not run.
 //
-// The three findings are the three ways a gate has no runnable condition:
+// gateConditions applies this rule over every gate in the graph, reachable or
+// not: a stranded gate is still a condition nobody could evaluate, and WF004
+// has already said why it will not run.
+//
+// The four findings are the four ways a gate has no runnable condition:
 //
 //   - neither half declared, so nothing decides whether it passes;
 //   - both halves declared, so the run would have two answers to choose
 //     between — and which one wins is a rule this vocabulary does not have;
 //   - an assert whose name or arguments the registry does not accept, stated in
 //     the registry's own words so the author fixes the same thing whether they
-//     read the validator or a failed run.
+//     read the validator or a failed run;
+//   - a judge whose prompt is empty, so the verdict-producing dispatch has
+//     nothing to ask.
 //
-// A judge's payload is WF030's subject (its role) and the decoder's (its
-// prompt is a required field), so this rule does not repeat either.
+// A judge's role is WF030's subject; its prompt is this rule's.
 func gateConditions(g *ir.Graph) []Diagnostic {
 	order, _ := graphNodes(g)
 	var out []Diagnostic
@@ -42,6 +44,10 @@ func gateConditions(g *ir.Graph) []Diagnostic {
 			continue
 		}
 		if n.Assert == nil {
+			if n.Judge.Prompt == nil {
+				out = append(out, diag(CodeWF037, n.Path+".judge.prompt",
+					"declares a judge with no prompt, so nobody is told what verdict to reach"))
+			}
 			continue
 		}
 		if _, ok := wfassert.Lookup(n.Assert.Name); !ok {

@@ -141,7 +141,8 @@
 //	WF036  no credential is written into the document itself — a marker
 //	       tripwire until the vocabulary grows a `secrets:` reference
 //	WF037  a gate has exactly one runnable condition: one of assert/judge, an
-//	       assert name the fixed registry holds, and arguments that check reads
+//	       assert name the fixed registry holds, arguments that check reads, and
+//	       a non-empty judge prompt
 //
 // Explain is the family's summary artifact for the CLI: the authority union
 // (every reachable grant at its widest access, every broker host, every
