@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -385,6 +386,24 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 			l.addRecoveryUsage(result.RecoveryUsage)
 			l.State.LastFinishReason = result.FinishReason
 			l.State.LastResponseModel = result.ResponseModel
+
+			// A provider can emit the same tool_use id twice in one
+			// response, or re-use an id the conversation already carries
+			// (DSML recovery also restarts its id sequence on resume).
+			// Two calls sharing an id produce two tool results for one
+			// tool_use, and the provider rejects every later request
+			// with 400 "each tool_use must have a single result".
+			// Rename collisions before the message is dispatched,
+			// persisted, or replayed.
+			var renamedIDs []string
+			msg, renamedIDs = dedupeToolCallIDs(messages, msg)
+			if len(renamedIDs) > 0 {
+				slog.Warn("provider emitted duplicate tool_use ids; renamed the collisions",
+					"provider", l.Config.ProviderName,
+					"model", l.Config.Model,
+					"ids", strings.Join(renamedIDs, ","))
+			}
+
 			messages = append(messages, msg)
 			l.Persister.Persist(msg)
 			if traceMw != nil {
