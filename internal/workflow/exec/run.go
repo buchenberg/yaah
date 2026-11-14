@@ -385,6 +385,8 @@ func (r *Run) commit(ev Event, external bool) error {
 		return r.onSelectResolved(e)
 	case SelectChosenEvent:
 		return r.onSelectChosen(e)
+	case GateEvaluatedEvent:
+		return r.onGateEvaluated(e)
 	case BudgetExceededEvent:
 		r.stopping = true
 		r.status = RunBudgetExceeded
@@ -501,7 +503,7 @@ func (r *Run) settle(n *ir.Node) error {
 		// why a fan-out whose producer has not terminated costs the run nothing
 		// while it waits.
 		return nil
-	case kindLoopStep, kindBranchStep, kindAggregateStep:
+	case kindLoopStep, kindBranchStep, kindAggregateStep, kindGateStep:
 		// A loop, a branch, and an aggregate stay ready: none of them dispatches
 		// anything itself. The driver resolves what each needs from run state —
 		// one loop iteration past the last, one routed value, one resolved input
@@ -615,8 +617,21 @@ func (r *Run) onAttemptCompleted(e AttemptCompletedEvent) error {
 		// verdict it delivered is the node's DECISION, not its completion, so the
 		// completion is folded into a choice and the choice closes the node. Every
 		// other kind closes here.
-		if n := r.byPath[e.NodePath]; n != nil && n.Kind == ir.KindSelect {
-			return r.foldVerdict(n, r.state[e.NodePath])
+		if n := r.byPath[e.NodePath]; n != nil {
+			switch n.Kind {
+			case ir.KindSelect:
+				// A select node's dispatched attempt IS its judge
+				// (yaah-0u0v.20): the verdict it delivered is the node's
+				// DECISION, not its completion, so the completion is folded into
+				// a choice and the choice closes the node.
+				return r.foldVerdict(n, r.state[e.NodePath])
+			case ir.KindGate:
+				// A gate under `judge` dispatches exactly like a select does
+				// (yaah-0u0v.21): the delivered verdict is the gate's decision,
+				// so it is folded into the same gate_evaluated event the
+				// deterministic half submits, and that event closes the node.
+				return r.foldGateVerdict(n, r.state[e.NodePath])
+			}
 		}
 		return r.derive(NodeSucceededEvent{NodePath: e.NodePath, Outputs: outputNames(r.state[e.NodePath])})
 	}

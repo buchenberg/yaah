@@ -39,6 +39,11 @@ const (
 	// CodeWF036 marks a credential written into the document itself
 	// instead of reached through a reference.
 	CodeWF036 = "WF036"
+	// CodeWF037 marks a gate whose condition cannot run: no assert and no
+	// judge, both at once, or an assert name/argument set the fixed registry
+	// does not accept. See gate.go — the code lives here so the family's
+	// vocabulary stays in one place.
+	CodeWF037 = "WF037"
 )
 
 // Role is one entry of the host role registry as the caller saw it. Plain
@@ -120,7 +125,7 @@ type Env struct {
 }
 
 // Authority runs the authority half of the family — WF030, WF031, WF032,
-// WF036 — over a resolved graph and returns every finding, nodes in
+// WF036, WF037 — over a resolved graph and returns every finding, nodes in
 // document order and rules in code order, so the slice is deterministic
 // without the caller sorting anything.
 //
@@ -139,6 +144,7 @@ func Authority(g *ir.Graph, env Env) []Diagnostic {
 	out = append(out, filesystemGrants(g, env)...)
 	out = append(out, networkPolicy(g, env)...)
 	out = append(out, inlineSecrets(g)...)
+	out = append(out, gateConditions(g)...)
 	return out
 }
 

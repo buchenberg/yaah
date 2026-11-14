@@ -699,6 +699,11 @@ func (r *Run) stepValue(n *ir.Node, st *NodeState) any {
 		// the merged mapping, or a summarize body's product — structured, so a
 		// selector can read into it instead of re-parsing its text.
 		return st.Combined
+	case ir.KindGate:
+		// A gate's value is its disposition plus the reason and verdict around it,
+		// so `steps.<id>.output.disposition` is what a downstream node routes on
+		// (yaah-0u0v.21).
+		return st.gateValue()
 	case ir.KindSelect:
 		// A select's value is its decision: the winning candidate plus the ledger
 		// around it, so `steps.<id>.output.winner` is what a downstream settle

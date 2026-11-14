@@ -79,6 +79,15 @@ const (
 	// verdict its attempt delivered — so the decision lands in the log once, in the
 	// one place a selection becomes a node's outcome.
 	EventSelectChosen EventKind = "select_chosen"
+	// EventGateEvaluated reports one gate's decision (yaah-0u0v.21): the
+	// disposition a registry assert reached, or the verdict a judge delegate
+	// delivered. It is the gate's whole condition as an input — the driver reports
+	// what the check said, or the reducer reports what the judge's attempt said —
+	// so the reducer applies it: record the value, route to the arm the gate
+	// selected, skip the other, or end the node failed so the author's on_failure
+	// disposition raises the failure. One event, both halves: a gate has one
+	// decision and one place it becomes state.
+	EventGateEvaluated EventKind = "gate_evaluated"
 )
 
 // derived reports whether only the reducer may emit a kind. The split is the
@@ -376,6 +385,31 @@ type SelectChosenEvent struct {
 func (SelectChosenEvent) Kind() EventKind  { return EventSelectChosen }
 func (e SelectChosenEvent) target() string { return e.NodePath }
 
+// GateEvaluatedEvent carries one gate's decision. Pass, Escalate, and Reason are
+// what the check or the judge said; Assert and Verdict record WHICH half decided
+// and what it delivered, so a trace can quote the decision and not only its
+// outcome. Refusal carries a subject this run could not read, which the reducer
+// turns into the node's terminal state instead of evaluating a check against a
+// value that does not exist.
+type GateEvaluatedEvent struct {
+	NodePath string
+	// Assert is the registry check that decided, empty under a judge.
+	Assert string
+	// Value is the subject the check read, rendered as one log field.
+	Value string
+	// Verdict is the judge's delivered verdict body, empty under an assert.
+	Verdict string
+	// Pass is the check's or the verdict's answer; Escalate marks a judge that
+	// declined to decide, which is terminal whatever on_fail says.
+	Pass     bool
+	Escalate bool
+	Reason   string
+	Refusal  string
+}
+
+func (GateEvaluatedEvent) Kind() EventKind  { return EventGateEvaluated }
+func (e GateEvaluatedEvent) target() string { return e.NodePath }
+
 // BudgetExceededEvent records that a declared ceiling was reached. Axis and
 // Limit are the same strings Limits documents, so a reader never has to map
 // an enum to find out what ran out.
@@ -521,6 +555,23 @@ func detail(ev Event) string {
 		out := fmt.Sprintf("%s chosen=%d ref=%s policy=%s", e.NodePath, e.Chosen, orDash(e.Ref), orDash(string(e.Policy)))
 		if e.Reason != "" {
 			out += " reason=" + flatten(e.Reason)
+		}
+		return out
+	case GateEvaluatedEvent:
+		disposition := DispositionFail
+		switch {
+		case e.Pass:
+			disposition = DispositionPass
+		case e.Escalate:
+			disposition = DispositionEscalate
+		}
+		out := fmt.Sprintf("%s disposition=%s assert=%s value=%s", e.NodePath, disposition,
+			orDash(e.Assert), orDash(e.Value))
+		if e.Reason != "" {
+			out += " reason=" + flatten(e.Reason)
+		}
+		if e.Refusal != "" {
+			out += " refusal=" + flatten(e.Refusal)
 		}
 		return out
 	case BudgetExceededEvent:

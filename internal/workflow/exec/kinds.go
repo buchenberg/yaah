@@ -2,7 +2,9 @@ package exec
 
 import (
 	"strconv"
+	"strings"
 
+	wfassert "github.com/buchenberg/yaah/internal/workflow/assert"
 	"github.com/buchenberg/yaah/internal/workflow/ir"
 )
 
@@ -80,6 +82,12 @@ const (
 	// summarize instantiates the node's body, and those instances are the
 	// dispatches. Neither is an attempt of the aggregate's own.
 	kindAggregateStep
+	// kindGateStep evaluates the node's named assert (yaah-0u0v.21). It
+	// dispatches nothing: the check is a Go function in a fixed registry, so the
+	// whole evaluation happens inside a reducer cycle and costs no budget. Under
+	// `judge` the gate's JUDGE is what dispatches, so that shape classifies as
+	// kindDispatch instead and this step never sees it.
+	kindGateStep
 	// kindSelectStep chooses among the node's resolved candidates (yaah-0u0v.20).
 	// Under a deterministic policy it dispatches nothing: the choice is a value
 	// step in the reducer. Under policy: judge the node's JUDGE is what dispatches,
@@ -158,7 +166,15 @@ func classifyKind(n *ir.Node) (kindAction, string) {
 	case ir.KindBranch:
 		return kindBranchStep, ""
 	case ir.KindGate:
-		return kindRefuse, ReasonNotImplemented + ": gate assertion and judge are yaah-0u0v.21"
+		// A gate is one computed condition plus two dispositions (yaah-0u0v.21).
+		// Which half it is decides everything: an assert is a reducer step (a
+		// registry check dispatches nothing), a judge IS a dispatch, and a gate
+		// that names neither — or both — is refused here, before the call it
+		// cannot decide is made. An assert name outside the registry is the same
+		// kind of declaration fact: the registry is an allowlist, not a namespace
+		// of free-form names, so a document naming a check this build does not
+		// ship may not run at all.
+		return classifyGate(n)
 	case ir.KindAggregate:
 		switch n.Strategy {
 		case ir.AggregateConcat, ir.AggregateJSONMerge, ir.AggregateSummarize:
@@ -215,16 +231,43 @@ func dispatched(n *ir.Node) bool {
 	return action == kindDispatch
 }
 
-// dispatchRole is the role a node's dispatch carries. A select node dispatches
-// its JUDGE payload, so the judge's role is the attempt's identity
-// (yaah-0u0v.20); every other kind is its own role, and a node that names none
-// leaves the choice to the lane.
+// dispatchRole is the role a node's dispatch carries. A select under policy
+// judge (yaah-0u0v.20) and a gate whose condition is a judge (yaah-0u0v.21) both
+// dispatch their JUDGE payload, so the judge's role is the attempt's identity;
+// every other kind is its own role, and a node that names none leaves the choice
+// to the lane.
 func dispatchRole(n *ir.Node) string {
 	if n == nil {
 		return ""
 	}
-	if selectDispatchesJudge(n) && n.Judge != nil {
+	if n.Judge != nil && (selectDispatchesJudge(n) || n.Kind == ir.KindGate) {
 		return n.Judge.Role
 	}
 	return n.Role
+}
+
+// classifyGate is the gate arm of the kind table (yaah-0u0v.21).
+func classifyGate(n *ir.Node) (kindAction, string) {
+	switch {
+	case n.Assert == nil && n.Judge == nil:
+		return kindRefuse, ReasonGateDeclarationInvalid + ": " + n.Path +
+			" declares neither assert nor judge, so nothing decides whether it passes"
+	case n.Assert != nil && n.Judge != nil:
+		return kindRefuse, ReasonGateDeclarationInvalid + ": " + n.Path +
+			" declares both assert and judge; a gate has one condition, and two would leave the run choosing which answer wins"
+	case n.Assert != nil:
+		if _, ok := wfassert.Lookup(n.Assert.Name); !ok {
+			return kindRefuse, ReasonGateAssertUnknown + ": " + n.Path + " " +
+				wfassert.Problem(n.Assert.Name, n.Assert.Args)
+		}
+		if why := wfassert.Problem(n.Assert.Name, n.Assert.Args); why != "" {
+			return kindRefuse, ReasonGateAssertArgs + ": " + n.Path + " " + why
+		}
+		return kindGateStep, ""
+	}
+	if strings.TrimSpace(n.Judge.Role) == "" || n.Judge.Prompt == nil {
+		return kindRefuse, ReasonGateJudgeMissing + ": " + n.Path +
+			" declares a judge with no role or no prompt, so nobody is named to decide"
+	}
+	return kindDispatch, ""
 }

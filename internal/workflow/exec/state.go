@@ -257,6 +257,18 @@ type NodeState struct {
 	Selection    any
 	SelectPolicy ir.SelectPolicy
 	Verdict      string
+
+	// Disposition, GateAssert, GateReason, and GateVerdict are a gate node's own
+	// ledger (yaah-0u0v.21): the answer it reached (pass, fail, or escalate), the
+	// registry assert that reached it (empty under a judge), the one sentence the
+	// check or the judge stated, and the judge's delivered verdict body (empty
+	// under an assert). They are the node's VALUE — gateValue reads them into the
+	// mapping `steps.<id>.output` resolves — which is what makes a gate's result a
+	// value rather than control flow hidden in a prompt.
+	Disposition string
+	GateAssert  string
+	GateReason  string
+	GateVerdict string
 }
 
 // NodeOutput is one declared output binding the reducer recorded for a node.

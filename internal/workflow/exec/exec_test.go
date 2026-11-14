@@ -2,7 +2,6 @@ package exec
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -28,23 +27,6 @@ func graphFromYAML(t *testing.T, y string) *ir.Graph {
 	g, err := ir.Resolve(doc)
 	if err != nil {
 		t.Fatalf("resolving graph: %v", err)
-	}
-	return g
-}
-
-func goldenGraph(t *testing.T, name string) *ir.Graph {
-	t.Helper()
-	data, err := os.ReadFile("../spec/testdata/valid/" + name + ".yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	doc, err := spec.ParseYAML(data)
-	if err != nil {
-		t.Fatalf("parsing golden %s: %v", name, err)
-	}
-	g, err := ir.Resolve(doc)
-	if err != nil {
-		t.Fatalf("resolving golden %s: %v", name, err)
 	}
 	return g
 }
@@ -514,42 +496,37 @@ func TestWallClockBudgetExceeded(t *testing.T) {
 	}
 }
 
-// TestNonDelegateKindsRefused pins the scope fence: container and selector
-// kinds this bead cannot execute end not_implemented instead of faking success
-// that would contradict validate's proof of the same graph. The refusal reason
-// names the owning bead or door where one is assigned.
+// TestNonDelegateKindsRefused pins the scope fence: node kinds this core cannot
+// execute end not_implemented instead of faking success that would contradict
+// validate's proof of the same graph. The refusal reason names the owning bead
+// or door where one is assigned.
 //
-// fanout_settle and bounded_repair are no longer in this list: their fan-out
-// and loop kinds execute as of yaah-0u0v.14/.15, and what stops those goldens
-// now is a source the unscripted producer cannot supply — a fact about the run,
-// not about a missing kind. TestFanoutOverUnavailable pins the fan-out case.
+// The fence moved with yaah-0u0v.21: gate executes now, and no golden document
+// carries a call or a human node, so the fence is pinned on the kind table
+// itself — the same discipline TestSelectNoLongerFenced follows, and the only
+// reading that cannot go vacuous when the corpus changes.
 func TestNonDelegateKindsRefused(t *testing.T) {
-	params := map[string]any{"task": "verify"}
-	for _, golden := range []string{"speculative"} {
-		t.Run(golden, func(t *testing.T) {
-			g := goldenGraph(t, golden)
-			res, _ := runGraph(t, g, nil, Config{Params: params})
-			if res.Status == RunSucceeded {
-				t.Fatal("run with unimplemented kinds reported success — contradicts the validator's proof")
+	refused := []ir.Kind{ir.KindCall, ir.KindHuman}
+	for _, kind := range refused {
+		t.Run(string(kind), func(t *testing.T) {
+			n := &ir.Node{Path: "steps.x", ID: "x", Kind: kind}
+			action, note := classifyKind(n)
+			if action != kindRefuse {
+				t.Fatalf("kind %s classifies as %v, want a refusal", kind, action)
 			}
-			found := false
-			for _, n := range res.Nodes {
-				if strings.Contains(n.Reason, ReasonNotImplemented) {
-					found = true
-				}
-			}
-			if !found {
-				t.Errorf("no node ended not_implemented (status %s, reason %q)", res.Status, res.Reason)
-			}
-			// Delegates that ran before the refusal must not be marked failed
-			// by association — the refusal is the refusing node's own.
-			for _, n := range res.Nodes {
-				if n.Kind == ir.KindDelegate && n.State == StateFailed &&
-					strings.Contains(n.Reason, ReasonNotImplemented) {
-					t.Errorf("delegate node %s refused as not_implemented — only delegate dispatches in this bead", n.Path)
-				}
+			if !strings.Contains(note, ReasonNotImplemented) {
+				t.Errorf("refusal %q does not name %s", note, ReasonNotImplemented)
 			}
 		})
+	}
+	// The kinds that execute must not be caught by the same fence: a delegate
+	// dispatches, and a gate has its own condition table (yaah-0u0v.21).
+	if action, note := classifyKind(&ir.Node{Path: "steps.d", Kind: ir.KindDelegate}); action != kindDispatch {
+		t.Errorf("a delegate classifies as %v (%s), want a dispatch", action, note)
+	}
+	if action, note := classifyKind(&ir.Node{Path: "steps.g", Kind: ir.KindGate,
+		Assert: &ir.Assert{Name: "nonempty"}}); action == kindRefuse {
+		t.Errorf("a gate with a registered assert still refuses: %s", note)
 	}
 }
 

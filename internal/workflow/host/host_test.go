@@ -507,3 +507,43 @@ func TestDeadlineCancelDoesNotRecurse(t *testing.T) {
 		t.Logf("cancel of a completed attempt reported: %v (acceptable; the pin is that it returns at all)", err)
 	}
 }
+
+// TestGateJudgeReadsJudgePromptAndRole pins the judge dispatch through the real
+// door: a gate under `judge` hands the container node to the door, so the door
+// must read the prompt and role from the judge payload, not the container's
+// empty delegate fields (yaah-0u0v.21).
+func TestGateJudgeReadsJudgePromptAndRole(t *testing.T) {
+	y := strings.Replace(specHead, "%s", "gate", 1) + `  steps:
+    - id: g
+      kind: gate
+      judge: {role: judgebot, prompt: "is the build green?"}
+      on_pass: p
+      on_fail: f
+    - id: p
+      kind: emit
+      needs: [g]
+      value: pass-branch
+    - id: f
+      kind: emit
+      needs: [g]
+      value: fail-branch
+`
+	runner := &recorder{results: []string{`{"pass": true}`}}
+	res, err := Execute(context.Background(), Options{Graph: graphFromYAML(t, y), Runner: runner.run})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	reqs := res.Requests()
+	if len(reqs) != 1 {
+		t.Fatalf("requests = %d, want exactly the judge dispatch", len(reqs))
+	}
+	if reqs[0].Prompt != "is the build green?" {
+		t.Errorf("judge prompt = %q, want the judge payload's prompt", reqs[0].Prompt)
+	}
+	if reqs[0].Params.Role != "judgebot" {
+		t.Errorf("judge role = %q, want the judge payload's role", reqs[0].Params.Role)
+	}
+	if got := nodeState(t, res.Run, "steps.g"); got.State != exec.StateSucceeded || got.Disposition != "pass" {
+		t.Errorf("gate = %s %q, want succeeded with pass disposition", got.State, got.Reason)
+	}
+}
