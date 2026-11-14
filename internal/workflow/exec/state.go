@@ -181,14 +181,21 @@ type NodeState struct {
 	// node and in the run's ledger, not by erasing the producer's fact.
 	Proposal *ProposalHandle
 
-	// SettlePlan, Settling, and Settled are a settle node's own ledger: the
-	// handle set it resolved, how far through it the run is, and every
-	// disposition the door reported. They are lifecycle state, so they are
+	// SettlePlan, Settling, Settled, and Asked are a settle node's own ledger:
+	// the handle set it resolved, how far through it the run is, every
+	// disposition the door reported, and the one disposition the run has asked
+	// for and not yet had answered. They are lifecycle state, so they are
 	// written only inside Apply — the driver reads them to decide which
 	// settlement to ask the door for next.
 	SettlePlan *SettlePlan
 	Settling   int
 	Settled    []Settled
+	// Asked names the proposal the run has asked the door to dispose of with no
+	// recorded disposition yet (yaah-0u0v.16). It is the settlement write-ahead
+	// record: it is persisted BEFORE the door is called, so a run resumed from a
+	// checkpoint can tell "asked, outcome unknown" from "never asked" and refuse
+	// to ask twice. Empty means no disposition is in flight.
+	Asked string
 
 	// Expanded, Items, and Collect are a fan-out node's own ledger
 	// (yaah-0u0v.14). Expanded records that the items were instantiated, so a

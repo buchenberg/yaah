@@ -15,7 +15,13 @@ type EventKind string
 
 // Event kinds.
 const (
-	EventRunStarted       EventKind = "run_started"
+	EventRunStarted EventKind = "run_started"
+	// EventRunResumed records that a process picked a run up from its durable
+	// checkpoint (yaah-0u0v.16). It is an ordinary input event — folded by the
+	// reducer and persisted like every other fact — because the run id, the
+	// status, and the log are all the run's own, and a resume that wrote them
+	// out of band would be a second state owner.
+	EventRunResumed       EventKind = "run_resumed"
 	EventNodeReady        EventKind = "node_ready"
 	EventDispatchStarted  EventKind = "dispatch_started"
 	EventAttemptCompleted EventKind = "attempt_completed"
@@ -32,7 +38,13 @@ const (
 	// graph's own facts and the world's own answers, and the reducer decides
 	// what either means for the node and the run.
 	EventSettlementPlanned EventKind = "settlement_planned"
-	EventProposalSettled   EventKind = "proposal_settled"
+	// EventSettlementAsked records that the run is about to ask the door for one
+	// disposition (yaah-0u0v.16). It is the settlement write-ahead record: the
+	// reducer commits it — and the store persists it — BEFORE the door is
+	// called, so a run resumed after a crash can tell "asked, outcome unknown"
+	// from "never asked". It carries no outcome and changes no disposition.
+	EventSettlementAsked EventKind = "settlement_asked"
+	EventProposalSettled EventKind = "proposal_settled"
 	// EventFanoutExpanded reports the item list one fan-out node resolved from
 	// its declared `over` source (yaah-0u0v.14). It is the fan-out's answer to
 	// the same question a settlement plan answers — what work does this node own
@@ -215,6 +227,20 @@ type SettlementPlannedEvent struct {
 func (SettlementPlannedEvent) Kind() EventKind  { return EventSettlementPlanned }
 func (e SettlementPlannedEvent) target() string { return e.NodePath }
 
+// SettlementAskedEvent records the disposition the run is about to ask the door
+// for. The driver emits it immediately before Runtime.Settle, and the reducer
+// commits it so the checkpoint states the intent durably before the world effect
+// can happen (yaah-0u0v.16). Action is the door's verb, carried for the log line
+// and for the reason a resumed run states when it refuses to ask twice.
+type SettlementAskedEvent struct {
+	NodePath   string
+	ProposalID string
+	Action     string
+}
+
+func (SettlementAskedEvent) Kind() EventKind  { return EventSettlementAsked }
+func (e SettlementAskedEvent) target() string { return e.NodePath }
+
 // ProposalSettledEvent carries one settlement's outcome back from the door.
 // DoorError reports that the door itself malfunctioned: there is no
 // settlement envelope behind it, the proposal keeps whatever state it had, and
@@ -346,6 +372,8 @@ func detail(ev Event) string {
 	switch e := ev.(type) {
 	case RunStartedEvent:
 		return "run=" + e.RunID
+	case RunResumedEvent:
+		return fmt.Sprintf("run=%s nodes=%d instances=%d", e.RunID, e.Nodes, e.Instances)
 	case NodeReadyEvent:
 		return e.NodePath
 	case DispatchStartedEvent:
@@ -395,6 +423,8 @@ func detail(ev Event) string {
 			out += " refusal=" + flatten(e.Refusal)
 		}
 		return out
+	case SettlementAskedEvent:
+		return fmt.Sprintf("%s proposal_id=%s action=%s", e.NodePath, orDash(e.ProposalID), orDash(e.Action))
 	case ProposalSettledEvent:
 		s := e.Settled
 		out := fmt.Sprintf("%s proposal_id=%s action=%s status=%s left_open=%t",

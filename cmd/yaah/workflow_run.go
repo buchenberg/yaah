@@ -46,6 +46,7 @@ type workflowRunOptions struct {
 	workflowOptions
 	runID        string
 	artifactRoot string
+	statePath    string
 }
 
 func newWorkflowRunCmd() *cobra.Command {
@@ -80,6 +81,8 @@ Flags:
   --artifact-root dir  where emit artifact paths are resolved; empty records
                        outputs without writing files (declined writes are
                        listed as warnings)
+  --state path         persist the run's reducer state to this database so
+                       'yaah workflow resume <run_id>' can continue it
   --strict             warnings refuse the run like errors
   --json               the machine-readable run report
 
@@ -90,6 +93,7 @@ Flags:
 	opts.bind(cmd, false)
 	cmd.Flags().StringVar(&opts.runID, "run-id", "", "label the run (default: minted from the graph name)")
 	cmd.Flags().StringVar(&opts.artifactRoot, "artifact-root", "", "resolve emit artifact paths under this directory")
+	cmd.Flags().StringVar(&opts.statePath, "state", "", "persist the run's reducer state to this database for `workflow resume`")
 	return cmd
 }
 
@@ -135,12 +139,29 @@ func runWorkflowRun(cmd *cobra.Command, path string, opts workflowRunOptions) er
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	st, serr := openWorkflowState(opts.statePath)
+	if serr != nil {
+		return serr
+	}
+	runID := opts.runID
+	if st != nil && runID == "" {
+		// A durable run needs a stable id the resume command can name; the
+		// one-shot default (graph name) would collide across runs.
+		runID = runIdentify(a.graph.Name)
+	}
+	specHash, herr := workflowSpecHash(path)
+	if herr != nil {
+		return herr
+	}
 	res, xerr := host.Execute(ctx, host.Options{
 		Graph:        a.graph,
-		RunID:        opts.runID,
+		RunID:        runID,
 		Params:       params,
 		Runner:       runner,
 		ArtifactRoot: opts.artifactRoot,
+		Store:        st,
+		SpecHash:     specHash,
+		SpecPath:     path,
 	})
 	if xerr != nil {
 		return xerr

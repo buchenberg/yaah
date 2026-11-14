@@ -195,6 +195,13 @@ func (r *Run) settleStep(ctx context.Context, path string) (bool, error) {
 				"; the settlement vocabulary is select|apply|release|discard",
 		})
 	}
+	// The intent is recorded — and, with a Store configured, persisted — before
+	// the door is asked, so a crash between the two leaves "asked, outcome
+	// unknown" on the record instead of a silent gap that a resume would fill by
+	// asking a second time (yaah-0u0v.16).
+	if err := r.Apply(SettlementAskedEvent{NodePath: path, ProposalID: ref.ProposalID, Action: verb}); err != nil {
+		return true, err
+	}
 	s, err := r.rt.Settle(ctx, SettleRequest{
 		NodePath:   path,
 		ProposalID: ref.ProposalID,
@@ -291,6 +298,33 @@ func (r *Run) onSettlementPlanned(e SettlementPlannedEvent) error {
 	return nil
 }
 
+// onSettlementAsked records the disposition the run is about to ask the door
+// for. It is the settlement write-ahead record (yaah-0u0v.16): the driver emits
+// this BEFORE Runtime.Settle, so the checkpoint says "asked" before the world
+// effect can happen, and a resumed run can tell an unknown outcome from a
+// settlement that never started.
+func (r *Run) onSettlementAsked(e SettlementAskedEvent) error {
+	st := r.state[e.NodePath]
+	if st == nil {
+		return fmt.Errorf("workflow/exec: settlement_asked for unknown node %q", e.NodePath)
+	}
+	if st.State != StateReady {
+		return fmt.Errorf("workflow/exec: settlement_asked for node %s in state %s", e.NodePath, st.State)
+	}
+	if st.SettlePlan == nil {
+		return fmt.Errorf("workflow/exec: settlement_asked for node %s with no planned settlement", e.NodePath)
+	}
+	if st.Asked != "" {
+		return fmt.Errorf("workflow/exec: settlement_asked for node %s while proposal %s is still unanswered",
+			e.NodePath, st.Asked)
+	}
+	if e.ProposalID == "" {
+		return fmt.Errorf("workflow/exec: settlement_asked for node %s with no proposal id", e.NodePath)
+	}
+	st.Asked = e.ProposalID
+	return nil
+}
+
 // onProposalSettled folds one disposition into the node's record and decides
 // what it means for the node: an error ends it, a conflict ends it unless the
 // author declared skip, and the last element of the plan closes it succeeded.
@@ -305,6 +339,10 @@ func (r *Run) onProposalSettled(e ProposalSettledEvent) error {
 	if st.State != StateReady {
 		return fmt.Errorf("workflow/exec: proposal_settled for node %s in state %s", e.NodePath, st.State)
 	}
+	// The unanswered ask is discharged by any answer, including a refusal: what
+	// Asked records is "a disposition is in flight", and after this event none
+	// is.
+	st.Asked = ""
 	if e.DoorError != "" {
 		st.SettlePlan = nil
 		return r.failTerminal(e.NodePath, ReasonSettlementFailed+": "+e.NodePath+": "+e.DoorError)

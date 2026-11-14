@@ -114,6 +114,11 @@ type instance struct {
 	// name is the fan-out's `as` binding; empty leaves Item(name) unbound while
 	// still giving the body its `index`.
 	name string
+	// body is the path of the body TEMPLATE this instance was copied from. It is
+	// what a resume reads to rebuild the instance's node definition when the
+	// templates are not persisted, and it is the only field here that exists for
+	// the durable projection (yaah-0u0v.16) rather than for scheduling.
+	body string
 	// locals maps the item's body-local step ids to their instance paths, so a
 	// body template or a sibling's need resolves inside its own item. A nested
 	// container's locals start from its parent's, so the inner body keeps the
