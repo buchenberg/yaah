@@ -345,12 +345,20 @@ func (a *workflowAnalysis) settlementView() settlementView {
 // itself claims produce a proposal: a dispatch on the proposal lane, or one
 // whose declared output type is Proposal. Lane and output type are graph
 // fields, so this is a filter over the graph, not a second analysis.
+// producingNodes lists the nodes that can yield a proposal, aligned with the
+// settlement proof's own producer set: the proof tracks delegate dispatches
+// and select nodes (proposal.go's producer switch), so a broader predicate
+// here would report phantom "producers without record" for kinds the proof
+// never claimed to track.
 func (a *workflowAnalysis) producingNodes() []*ir.Node {
 	var out []*ir.Node
 	if a.graph == nil {
 		return nil
 	}
 	for _, n := range a.walk().order {
+		if n.Kind != ir.KindDelegate && n.Kind != ir.KindSelect {
+			continue
+		}
 		if n.Lane == ir.LaneProposal || (n.Output != nil && n.Output.Type == ir.OutputProposal) {
 			out = append(out, n)
 		}
@@ -391,7 +399,9 @@ func renderWorkflowValidate(out io.Writer, a *workflowAnalysis) {
 	}
 	w.Flush()
 	writeFindings(out, a.errors, a.warnings)
-	if !a.failed() {
+	// "no findings" means none at all — printing it under a listed warning
+	// would contradict the list directly above it.
+	if len(a.errors) == 0 && len(a.warnings) == 0 {
 		fmt.Fprintf(out, "\nno findings\n")
 	}
 }

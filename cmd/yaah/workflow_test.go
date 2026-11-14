@@ -24,6 +24,10 @@ import (
 const wfGoldens = "../../internal/workflow/spec/testdata/valid/"
 const wfAdversarial = "../../internal/workflow/validate/testdata/adversarial/"
 
+// statusValidRE matches the text report's status line exactly — a plain
+// Contains(out, "valid") would also match "invalid".
+var statusValidRE = regexp.MustCompile(`(?m)^status\s+valid\b`)
+
 func runWorkflowCmd(t *testing.T, c *cobra.Command, args ...string) (string, error) {
 	t.Helper()
 	var buf bytes.Buffer
@@ -74,8 +78,8 @@ func TestWorkflowValidateAcceptsGoldens(t *testing.T) {
 			if err != nil {
 				t.Fatalf("validate %s: %v\noutput:\n%s", name, err, out)
 			}
-			if !strings.Contains(out, "status") || !strings.Contains(out, "valid") {
-				t.Errorf("expected status valid in text output, got:\n%s", out)
+			if !statusValidRE.MatchString(out) {
+				t.Errorf("expected 'status valid' line in text output, got:\n%s", out)
 			}
 
 			out, err = runWfValidate(t, "--json", wfGoldens+name+".yaml")
@@ -165,13 +169,15 @@ func TestWorkflowValidateUnableToAnalyze(t *testing.T) {
 			t.Error("expected error for missing file")
 		}
 	})
-	t.Run("wrong extension", func(t *testing.T) {
+	t.Run("undecodable content", func(t *testing.T) {
+		// readWorkflowSpec gates on readability and size, not extension —
+		// this file fails because its content is not a workflow document.
 		p := t.TempDir() + "/spec.txt"
 		if err := os.WriteFile(p, []byte("version: v1alpha1\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := runWfValidate(t, p); err == nil {
-			t.Error("expected error for .txt input")
+			t.Error("expected error for undecodable content")
 		}
 	})
 	t.Run("param without equals", func(t *testing.T) {
@@ -469,6 +475,29 @@ func TestWorkflowReviewFixPins(t *testing.T) {
 		}
 		if rep.OK || len(rep.Errors) != 0 || len(rep.Warnings) == 0 {
 			t.Errorf("ok=%v errors=%d warnings=%d, want false/0/>0", rep.OK, len(rep.Errors), len(rep.Warnings))
+		}
+	})
+	t.Run("mermaid escapes labels", func(t *testing.T) {
+		// Step ids are not charset-restricted by the decoder, so an
+		// adversarial id must not be able to break the diagram.
+		p := t.TempDir() + "/esc.yaml"
+		src := "apiVersion: yaah.workflow/v1\nkind: Workflow\nmetadata:\n  name: esc\nspec:\n  steps:\n    - id: 'we\"ird#1'\n      kind: delegate\n      role: developer\n      prompt: p\n"
+		if err := os.WriteFile(p, []byte(src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		out, err := runWfExplain(t, "--json", p)
+		if err != nil {
+			t.Fatalf("explain: %v\n%s", err, out)
+		}
+		var rep explainReport
+		if jerr := json.Unmarshal([]byte(out), &rep); jerr != nil {
+			t.Fatal(jerr)
+		}
+		if strings.Contains(rep.Mermaid, `we"ird`) {
+			t.Errorf("raw quote reached the mermaid label:\n%s", rep.Mermaid)
+		}
+		if !strings.Contains(rep.Mermaid, "#quot;") || !strings.Contains(rep.Mermaid, "#35;") {
+			t.Errorf("label not entity-escaped:\n%s", rep.Mermaid)
 		}
 	})
 }

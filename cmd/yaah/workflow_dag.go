@@ -444,7 +444,7 @@ func writeMermaidNodes(b *strings.Builder, w workflowWalk, nodes []*ir.Node, dep
 			continue
 		}
 		id := w.idOf[n]
-		label := fmt.Sprintf("%s (%s)", n.Path, mermaidKindLabel(n))
+		label := mermaidEscape(fmt.Sprintf("%s (%s)", n.Path, mermaidKindLabel(n)))
 		if len(n.Body) > 0 {
 			fmt.Fprintf(b, "%ssubgraph %s[\"%s\"]\n", ind, id, label)
 			writeMermaidNodes(b, w, n.Body, depth+1)
@@ -453,6 +453,18 @@ func writeMermaidNodes(b *strings.Builder, w workflowWalk, nodes []*ir.Node, dep
 		}
 		fmt.Fprintf(b, "%s%s[\"%s\"]\n", ind, id, label)
 	}
+}
+
+// mermaidEscape sanitizes text interpolated into a Mermaid quoted label.
+// Node paths embed author-chosen step ids and the decoder does not
+// charset-restrict them, so a quote or hash in an id must not be able to
+// break — or inject into — the diagram.
+func mermaidEscape(s string) string {
+	s = strings.ReplaceAll(s, "#", "#35;")
+	s = strings.ReplaceAll(s, `"`, "#quot;")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	return s
 }
 
 func mermaidKindLabel(n *ir.Node) string {
