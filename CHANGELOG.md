@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.182.0](https://github.com/buchenberg/yaah/compare/v0.181.0...v0.182.0) (2026-11-14)
+
+
+### Features
+
+* **workflow:** deterministic scheduler core (yaah-0u0v.11) ([ef833bd](https://github.com/buchenberg/yaah/commit/ef833bd4e0776230a082a2959349178f0e3f323c))
+
+
+### Bug Fixes
+
+* **workflow:** scheduler review round — honest teardown, tidy log lines (yaah-0u0v.11) ([cf6ec89](https://github.com/buchenberg/yaah/commit/cf6ec8972edff6b91bbe88045056b187ea14326b))
+* **workflow:** scheduler review round 2 — Cancel drops ctx, merged stop doc, status orDash (yaah-0u0v.11) ([e7abe7b](https://github.com/buchenberg/yaah/commit/e7abe7b45a9eb018d8b634536844099c3bba8653))
+
 ## [0.181.0](https://github.com/buchenberg/yaah/compare/v0.180.0...v0.181.0) (2026-11-14)
 
 
