@@ -67,6 +67,18 @@ const (
 	// (yaah-0u0v.15). A deterministic strategy combines them in the reducer; a
 	// summarize instantiates its body.
 	EventAggregateInputs EventKind = "aggregate_inputs"
+	// EventSelectResolved reports the candidate set one select node resolved from
+	// its `candidates` selector (yaah-0u0v.20). It is the selection's answer to the
+	// same question a fan-out expansion answers — what work does this node choose
+	// among — and like the expansion it is an input: the reducer reads every
+	// candidate into its ledger and decides what that means for the node.
+	EventSelectResolved EventKind = "select_resolved"
+	// EventSelectChosen reports the decision itself: which candidate won, by which
+	// policy (yaah-0u0v.20). Only the reducer emits it — a deterministic policy
+	// derives it from the candidate ledger, and a judge policy derives it from the
+	// verdict its attempt delivered — so the decision lands in the log once, in the
+	// one place a selection becomes a node's outcome.
+	EventSelectChosen EventKind = "select_chosen"
 )
 
 // derived reports whether only the reducer may emit a kind. The split is the
@@ -75,7 +87,7 @@ const (
 // means for the graph.
 func (k EventKind) derived() bool {
 	switch k {
-	case EventNodeReady, EventRetryScheduled, EventNodeSucceeded, EventNodeFailed, EventNodeSkipped:
+	case EventNodeReady, EventRetryScheduled, EventNodeSucceeded, EventNodeFailed, EventNodeSkipped, EventSelectChosen:
 		return true
 	}
 	return false
@@ -336,6 +348,34 @@ type AggregateInputsEvent struct {
 func (AggregateInputsEvent) Kind() EventKind  { return EventAggregateInputs }
 func (e AggregateInputsEvent) target() string { return e.NodePath }
 
+// SelectResolvedEvent carries the candidate values one select node's
+// `candidates` selector resolved, in resolved order. Refusal carries a set this
+// run could not read or that resolved to nothing, which the reducer turns into
+// the node's terminal state rather than deciding over a shorter list than the
+// author declared.
+type SelectResolvedEvent struct {
+	NodePath   string
+	Candidates []any
+	Refusal    string
+}
+
+func (SelectResolvedEvent) Kind() EventKind  { return EventSelectResolved }
+func (e SelectResolvedEvent) target() string { return e.NodePath }
+
+// SelectChosenEvent carries one selection's decision: the winning candidate's
+// index in the node's resolved candidate ledger, its ref, and the policy that
+// decided. Reason quotes what the judge said, when a judge decided.
+type SelectChosenEvent struct {
+	NodePath string
+	Policy   ir.SelectPolicy
+	Chosen   int
+	Ref      string
+	Reason   string
+}
+
+func (SelectChosenEvent) Kind() EventKind  { return EventSelectChosen }
+func (e SelectChosenEvent) target() string { return e.NodePath }
+
 // BudgetExceededEvent records that a declared ceiling was reached. Axis and
 // Limit are the same strings Limits documents, so a reader never has to map
 // an enum to find out what ran out.
@@ -469,6 +509,18 @@ func detail(ev Event) string {
 		out := fmt.Sprintf("%s inputs=%d", e.NodePath, len(e.Inputs))
 		if e.Refusal != "" {
 			out += " refusal=" + flatten(e.Refusal)
+		}
+		return out
+	case SelectResolvedEvent:
+		out := fmt.Sprintf("%s candidates=%d", e.NodePath, len(e.Candidates))
+		if e.Refusal != "" {
+			out += " refusal=" + flatten(e.Refusal)
+		}
+		return out
+	case SelectChosenEvent:
+		out := fmt.Sprintf("%s chosen=%d ref=%s policy=%s", e.NodePath, e.Chosen, orDash(e.Ref), orDash(string(e.Policy)))
+		if e.Reason != "" {
+			out += " reason=" + flatten(e.Reason)
 		}
 		return out
 	case BudgetExceededEvent:

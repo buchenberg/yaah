@@ -242,6 +242,21 @@ type NodeState struct {
 	// structured so `steps.<id>.output` and a selector read the value rather than
 	// a re-parse of its text, while Result carries the text.
 	Combined any
+
+	// Candidates, Chosen, Selection, SelectPolicy, and Verdict are a select
+	// node's own ledger (yaah-0u0v.20): what it chose among, which one won, the
+	// winning value, the effective policy with the folded default applied, and
+	// the judge's delivered verdict body under `policy: judge`. They are kept
+	// structured for the same reason Combined is — `steps.<id>.output.winner` is
+	// what a downstream settle reads — while Result carries the winner's text.
+	//
+	// Chosen is the winner's index in Candidates and is meaningful only together
+	// with a non-nil Selection: a node that has not decided yet records neither.
+	Candidates   []Candidate
+	Chosen       int
+	Selection    any
+	SelectPolicy ir.SelectPolicy
+	Verdict      string
 }
 
 // NodeOutput is one declared output binding the reducer recorded for a node.

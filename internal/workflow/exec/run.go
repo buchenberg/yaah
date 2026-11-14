@@ -381,6 +381,10 @@ func (r *Run) commit(ev Event, external bool) error {
 		return r.onBranchRouted(e)
 	case AggregateInputsEvent:
 		return r.onAggregateInputs(e)
+	case SelectResolvedEvent:
+		return r.onSelectResolved(e)
+	case SelectChosenEvent:
+		return r.onSelectChosen(e)
 	case BudgetExceededEvent:
 		r.stopping = true
 		r.status = RunBudgetExceeded
@@ -607,6 +611,13 @@ func (r *Run) onAttemptCompleted(e AttemptCompletedEvent) error {
 	r.retire(e.NodePath)
 
 	if c.Completed() {
+		// A select node's dispatched attempt IS its judge (yaah-0u0v.20): the
+		// verdict it delivered is the node's DECISION, not its completion, so the
+		// completion is folded into a choice and the choice closes the node. Every
+		// other kind closes here.
+		if n := r.byPath[e.NodePath]; n != nil && n.Kind == ir.KindSelect {
+			return r.foldVerdict(n, r.state[e.NodePath])
+		}
 		return r.derive(NodeSucceededEvent{NodePath: e.NodePath, Outputs: outputNames(r.state[e.NodePath])})
 	}
 	st.Failures++
@@ -954,6 +965,7 @@ func (r *Run) Result() Result {
 		st.Winners = append([]int(nil), r.state[p].Winners...)
 		st.Discards = append([]Settled(nil), r.state[p].Discards...)
 		st.Iterations = append([]LoopIteration(nil), r.state[p].Iterations...)
+		st.Candidates = append([]Candidate(nil), r.state[p].Candidates...)
 		out.Nodes = append(out.Nodes, &st)
 		// Run-level outputs are every node's bindings in canonical node-path
 		// order, so the list is reproducible and needs no map to read.

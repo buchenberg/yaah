@@ -2,6 +2,7 @@ package exec
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -97,6 +98,21 @@ func Proposal(proposalID string, d time.Duration) Completion {
 	return Completion{
 		Status:     StatusProposal,
 		ProposalID: proposalID,
+		DurationMs: d.Milliseconds(),
+		StopReason: "completed",
+	}
+}
+
+// ProposalWithDiff is the completion a successful proposal-lane dispatch returns
+// when the lane also reports how big the change is: the sealed proposal id, and a
+// result body carrying the changed-line count the selection policies read
+// (yaah-0u0v.20). The count is delivered as the payload's own field, which is
+// where a real lane puts it.
+func ProposalWithDiff(proposalID string, changedLines int, d time.Duration) Completion {
+	return Completion{
+		Status:     StatusProposal,
+		ProposalID: proposalID,
+		Result:     fmt.Sprintf(`{"changed_lines":%d}`, changedLines),
 		DurationMs: d.Milliseconds(),
 		StopReason: "completed",
 	}

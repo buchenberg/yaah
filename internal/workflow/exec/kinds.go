@@ -80,6 +80,12 @@ const (
 	// summarize instantiates the node's body, and those instances are the
 	// dispatches. Neither is an attempt of the aggregate's own.
 	kindAggregateStep
+	// kindSelectStep chooses among the node's resolved candidates (yaah-0u0v.20).
+	// Under a deterministic policy it dispatches nothing: the choice is a value
+	// step in the reducer. Under policy: judge the node's JUDGE is what dispatches,
+	// so that policy classifies as kindDispatch instead and this step only
+	// resolves the candidate set the verdict will name one of.
+	kindSelectStep
 	// kindRefuse ends the node failed with ReasonNotImplemented.
 	kindRefuse
 )
@@ -171,11 +177,25 @@ func classifyKind(n *ir.Node) (kindAction, string) {
 	case ir.KindSettle:
 		return kindSettleStep, ""
 	case ir.KindSelect:
-		// Select chooses among candidates collected by a fanout/aggregate
-		// producer. The collection exists as of yaah-0u0v.14, so what is still
-		// missing is the selection itself: which candidate wins, by policy and
-		// by judge.
-		return kindRefuse, ReasonNotImplemented + ": candidate selection is yaah-0u0v.20"
+		// A select chooses among a candidate set a producer already collected
+		// (yaah-0u0v.20). Under policy: judge the node's dispatch IS the judge
+		// delegate, so it goes through the door as an attempt of this node; the
+		// other two policies dispatch nothing and decide inside the reducer. A
+		// judge policy with no judge payload is a declaration fact — nobody is
+		// named to decide — so it is refused here, before the candidate set is
+		// ever resolved, and its unknown-policy sibling is refused the same way.
+		policy := selectPolicyOf(n)
+		switch policy {
+		case ir.SelectJudge:
+			if n.Judge == nil {
+				return kindRefuse, ReasonSelectJudgeMissing + ": " + n.Path +
+					" declares policy: judge with no judge payload, so nobody is named to decide"
+			}
+			return kindDispatch, ""
+		case ir.SelectFirstSuccess, ir.SelectSmallestDiff:
+			return kindSelectStep, ""
+		}
+		return kindRefuse, ReasonSelectPolicyUnsupported + ": " + n.Path + " policy " + selectPolicyLabel(policy)
 	case ir.KindCall:
 		return kindRefuse, ReasonNotImplemented + ": nested workflow calls are not in the scheduler core"
 	case ir.KindEmit:
@@ -193,4 +213,18 @@ func classifyKind(n *ir.Node) (kindAction, string) {
 func dispatched(n *ir.Node) bool {
 	action, _ := classifyKind(n)
 	return action == kindDispatch
+}
+
+// dispatchRole is the role a node's dispatch carries. A select node dispatches
+// its JUDGE payload, so the judge's role is the attempt's identity
+// (yaah-0u0v.20); every other kind is its own role, and a node that names none
+// leaves the choice to the lane.
+func dispatchRole(n *ir.Node) string {
+	if n == nil {
+		return ""
+	}
+	if selectDispatchesJudge(n) && n.Judge != nil {
+		return n.Judge.Role
+	}
+	return n.Role
 }
