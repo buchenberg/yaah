@@ -2,6 +2,7 @@ package exec
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -114,8 +115,14 @@ type RetryScheduledEvent struct {
 func (RetryScheduledEvent) Kind() EventKind  { return EventRetryScheduled }
 func (e RetryScheduledEvent) target() string { return e.NodePath }
 
-// NodeSucceededEvent closes a node that completed its work.
-type NodeSucceededEvent struct{ NodePath string }
+// NodeSucceededEvent closes a node that completed its work. Outputs names the
+// output bindings the reducer recorded for it — the delegate report or the
+// emitted value — so the event log says which node produced what without
+// quoting any of the values themselves.
+type NodeSucceededEvent struct {
+	NodePath string
+	Outputs  []string
+}
 
 func (NodeSucceededEvent) Kind() EventKind  { return EventNodeSucceeded }
 func (e NodeSucceededEvent) target() string { return e.NodePath }
@@ -215,7 +222,11 @@ func detail(ev Event) string {
 	case RetryScheduledEvent:
 		return fmt.Sprintf("%s attempt=%d backoff=%s", e.NodePath, e.Attempt, e.Backoff)
 	case NodeSucceededEvent:
-		return e.NodePath
+		out := e.NodePath
+		if len(e.Outputs) > 0 {
+			out += " outputs=" + strings.Join(e.Outputs, ",")
+		}
+		return out
 	case NodeFailedEvent:
 		return fmt.Sprintf("%s retryable=%t reason=%s", e.NodePath, e.Retryable, e.Reason)
 	case NodeSkippedEvent:

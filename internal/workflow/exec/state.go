@@ -105,6 +105,11 @@ type Attempt struct {
 	// at all. Absent is a third value distinct from "retryable: false", and
 	// the scheduler treats it as no licence to retry.
 	RecoveryAsserted bool
+	// Contract is the envelope's `contract.status` verdict, verbatim
+	// (yaah-was9.2). Empty means the lane asserted nothing about the result
+	// contract — which is what every envelope does today, since the field is
+	// reserved. The scheduler never derives a verdict of its own.
+	Contract string
 	// Cancelled marks an attempt the run stopped through the door. Its
 	// envelope, if it ever arrives, is dropped: the reducer's state is
 	// authoritative.
@@ -161,6 +166,36 @@ type NodeState struct {
 	Error       string
 	Retryable   bool
 	RecoverySet bool
+	// Contract is the last completion's contract verdict, verbatim; empty
+	// means the envelope carried no contract block.
+	Contract string
+	// Outputs are the output bindings this node produced, in declaration
+	// order. A re-run of the node replaces the binding of the same name
+	// rather than appending, so the list is the node's current outputs, not
+	// its history (the history is Attempt.Result).
+	Outputs []NodeOutput
+}
+
+// NodeOutput is one declared output binding the reducer recorded for a node.
+// It is the value a later step reads, and the record a run prints: the name is
+// the node's `output:` name (for an emit that declares none, the step id, which
+// is the name `steps.<id>.output` already reads), the value is the delivered
+// report text or the rendered emit value, and Artifact is the artifact path the
+// node declared for it — recorded, not written, because writing is the host's
+// door and not the scheduler's.
+//
+// Per-binding extraction of a structured result (reading one field out of a
+// declared Report or Verdict) is value plumbing, and value plumbing is
+// yaah-0u0v.13: what lands here is the whole recorded result text.
+type NodeOutput struct {
+	// NodePath and Kind name the producing node, so a flattened run output
+	// needs no second lookup.
+	NodePath string  `json:"node_path"`
+	Kind     ir.Kind `json:"kind"`
+	Name     string  `json:"name,omitempty"`
+	Value    string  `json:"value,omitempty"`
+	Artifact string  `json:"artifact_path,omitempty"`
+	Contract string  `json:"contract,omitempty"`
 }
 
 // LastAttempt returns the node's most recent attempt, or nil.
