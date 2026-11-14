@@ -17,6 +17,7 @@ func TestWorkflowSchemasParse(t *testing.T) {
 	}{
 		{"validate", WorkflowValidateSchemaJSON},
 		{"explain", WorkflowExplainSchemaJSON},
+		{"run", WorkflowRunSchemaJSON},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var doc map[string]any
@@ -44,6 +45,7 @@ func TestWorkflowSchemaDocsInSync(t *testing.T) {
 	}{
 		{"workflow-validate.schema.json", WorkflowValidateSchemaJSON},
 		{"workflow-explain.schema.json", WorkflowExplainSchemaJSON},
+		{"workflow-run.schema.json", WorkflowRunSchemaJSON},
 	} {
 		t.Run(tc.file, func(t *testing.T) {
 			path := filepath.Join("..", "..", "docs", "schemas", tc.file)

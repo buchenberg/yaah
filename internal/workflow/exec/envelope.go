@@ -47,6 +47,31 @@ type Completion struct {
 	// producer asserted nothing about re-dispatch, which is not an assertion
 	// that a retry is allowed.
 	Recovery *Recovery `json:"recovery,omitempty"`
+	// Contract is the envelope's `contract` block (yaah-was9.2): the per-role
+	// response contract the delivered result was checked against. It is
+	// mirrored verbatim and never synthesized — a nil Contract means the lane
+	// asserted nothing, which is what every dispatch lane does today while the
+	// field is reserved. Absent is not "checked and passed", and a typed
+	// workflow output that needs a verdict reads this field instead of
+	// running its own validator.
+	Contract *Contract `json:"contract,omitempty"`
+}
+
+// Contract mirrors dispatch.ResultContract: the name of the contract a result
+// was checked against and the verdict, with the same JSON field names so the
+// envelope parity test can decode one into the other.
+type Contract struct {
+	Name   string `json:"name,omitempty"`
+	Status string `json:"status,omitempty"`
+}
+
+// ContractStatus is the envelope's contract verdict, verbatim, or empty when
+// the envelope carried no contract block.
+func (c Completion) ContractStatus() string {
+	if c.Contract == nil {
+		return ""
+	}
+	return c.Contract.Status
 }
 
 // Recovery mirrors the envelope's recovery block: the one place the runtime

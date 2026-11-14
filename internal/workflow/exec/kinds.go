@@ -39,6 +39,13 @@ type kindAction int
 const (
 	// kindDispatch hands the node to the Runtime door as an attempt.
 	kindDispatch kindAction = iota
+	// kindValueStep settles the node inside the reducer: it renders the
+	// node's declared value against the run's scope and records the result.
+	// It dispatches nothing, so it consumes no dispatch budget, and it
+	// touches no filesystem — writing a declared artifact_path is the
+	// host's step (internal/workflow/host), because a scheduler core that
+	// wrote files would have a second door beside Runtime.
+	kindValueStep
 	// kindRefuse ends the node failed with ReasonNotImplemented.
 	kindRefuse
 )
@@ -49,10 +56,11 @@ const (
 // the compiler checks against the resolved enum's meaning, and by the default
 // arm, which refuses anything outside it.
 //
-// Only a delegate dispatches in this bead. Everything else is refused with a
-// reason naming the bead that owns it, for the reason given in the package
-// doc: a container or a settle that reported success would contradict
-// validate's proof of the same graph.
+// A delegate dispatches through the door; an emit settles as a value step in
+// the reducer (yaah-0u0v.12). Everything else is refused with a reason naming
+// the bead that owns it, for the reason given in the package doc: a container
+// or a settle that reported success would contradict validate's proof of the
+// same graph.
 func classifyKind(n *ir.Node) (kindAction, string) {
 	switch n.Kind {
 	case ir.KindDelegate:
@@ -74,7 +82,7 @@ func classifyKind(n *ir.Node) (kindAction, string) {
 	case ir.KindCall:
 		return kindRefuse, ReasonNotImplemented + ": nested workflow calls are not in the scheduler core"
 	case ir.KindEmit:
-		return kindRefuse, ReasonNotImplemented + ": artifact emission needs the value and artifact door, not the scheduler core"
+		return kindValueStep, ""
 	case ir.KindHuman:
 		return kindRefuse, ReasonNotImplemented + ": a human response is an approval door, not the scheduler core"
 	}

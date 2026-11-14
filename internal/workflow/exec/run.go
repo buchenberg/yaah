@@ -322,8 +322,14 @@ func (r *Run) settle(n *ir.Node) error {
 			return r.derive(NodeSkippedEvent{NodePath: n.Path, Reason: ReasonGuardFalse})
 		}
 	}
-	if action, note := classifyKind(n); action == kindRefuse {
+	switch action, note := classifyKind(n); action {
+	case kindRefuse:
 		return r.failTerminal(n.Path, note)
+	case kindValueStep:
+		// An emit settles here: it renders its compiled value against the
+		// run state and records the binding, so it never reaches the door
+		// and never consumes a dispatch.
+		return r.settleValueStep(n, st)
 	}
 	return nil
 }
@@ -394,7 +400,7 @@ func (r *Run) onAttemptCompleted(e AttemptCompletedEvent) error {
 	r.retire(e.NodePath)
 
 	if c.Completed() {
-		return r.derive(NodeSucceededEvent{NodePath: e.NodePath})
+		return r.derive(NodeSucceededEvent{NodePath: e.NodePath, Outputs: outputNames(r.state[e.NodePath])})
 	}
 	st.Failures++
 	// Retry only on the envelope's own assertion, and only inside the ceiling
@@ -586,6 +592,22 @@ func (r *Run) finishAttempt(a *Attempt, e AttemptCompletedEvent) {
 	st.Error = c.Error
 	st.Retryable = c.Retryable()
 	st.RecoverySet = c.Recovery != nil
+	st.Contract = c.ContractStatus()
+	// A delegate's declared output binding is the delivered result text, and
+	// its contract verdict is whatever the envelope asserted. Extracting a
+	// field out of a structured Report is value plumbing (yaah-0u0v.13);
+	// nothing here re-validates the result against the declared type or
+	// schema — that judgement belongs to the response-contract machinery on
+	// the lane (yaah-was9.2), whose verdict is mirrored verbatim below.
+	if n := r.byPath[a.NodePath]; n != nil && n.Output != nil && n.Output.Name != "" {
+		r.recordOutput(st, NodeOutput{
+			NodePath: n.Path,
+			Kind:     n.Kind,
+			Name:     n.Output.Name,
+			Value:    c.Result,
+			Contract: c.ContractStatus(),
+		})
+	}
 	// A proposal a node sealed stays open: the scheduler records the id and
 	// disposes of nothing, which is what leaves room for the settlement verbs
 	// (.13) and keeps WF021's "settled exactly once" claim true.
@@ -650,7 +672,11 @@ func (r *Run) Result() Result {
 	for _, p := range r.paths {
 		st := *r.state[p]
 		st.Attempts = append([]*Attempt(nil), r.state[p].Attempts...)
+		st.Outputs = append([]NodeOutput(nil), r.state[p].Outputs...)
 		out.Nodes = append(out.Nodes, &st)
+		// Run-level outputs are every node's bindings in canonical node-path
+		// order, so the list is reproducible and needs no map to read.
+		out.Outputs = append(out.Outputs, st.Outputs...)
 	}
 	return out
 }
@@ -685,4 +711,7 @@ type Result struct {
 	Events       []string
 	Warnings     []string
 	Nodes        []*NodeState
+	// Outputs flattens every node's recorded output bindings in canonical
+	// node-path order: the delegate reports and emit values a run produced.
+	Outputs []NodeOutput
 }
