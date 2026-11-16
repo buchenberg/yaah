@@ -3,14 +3,12 @@ package yaah
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"sort"
 	"text/tabwriter"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/workflow/exec"
 	"github.com/buchenberg/yaah/internal/workflow/host"
 	"github.com/spf13/cobra"
@@ -30,17 +28,24 @@ import (
 
 const runJSONKind = "yaah.workflow.run.v1"
 
-// workflowRunRunner is the seam the run command takes its sub-agent runner
-// from. A host session's composition (serve/TUI wiring) sets it; tests inject
-// a deterministic runner, which is how the golden end-to-end runs with no
-// model calls beyond the injected provider. The standalone default refuses
-// honestly rather than half-bootstrapping a composition root: building a
-// production runner needs the session's provider, database, workspace, and
-// scope machinery, and a run command that silently invented those would
-// dispatch under facts the user never chose.
-var workflowRunRunner = func() (jobs.TaskRunner, error) {
-	return nil, errors.New("no sub-agent runner configured: 'yaah workflow run' dispatches through the host composition's runner; standalone composition is not wired yet")
-}
+// workflowRunRunner is the seam the run and resume commands take their
+// sub-agent runner from. Its production default (workflow_runner.go) builds
+// the standalone composition: the user's validated configuration, the
+// provider a one-shot session would resolve from it, and the default store.
+// A host session's composition may set the seam instead, and tests inject a
+// deterministic runner — which is how the golden end-to-end runs with no
+// model calls.
+//
+// The default still refuses one thing on purpose. It composes only facts the
+// user wrote down: a configuration with no usable provider is refused by
+// name, and no sandbox, supervision scope tree, or retained lane is invented
+// for a run that declared none. A run command that silently made those up
+// would dispatch under facts the user never chose.
+//
+// The second return is the teardown the command owes the runner's resources
+// (the standalone default opens the dispatch store); it may be nil when a
+// composition holds none.
+var workflowRunRunner = newStandaloneWorkflowRunner
 
 type workflowRunOptions struct {
 	workflowOptions
@@ -120,9 +125,12 @@ func runWorkflowRun(cmd *cobra.Command, path string, opts workflowRunOptions) er
 		return workflowExitError(a)
 	}
 
-	runner, rerr := workflowRunRunner()
+	run, cleanup, rerr := workflowRunRunner()
 	if rerr != nil {
 		return rerr
+	}
+	if cleanup != nil {
+		defer cleanup()
 	}
 
 	params := make(map[string]any, len(a.params))
@@ -160,7 +168,7 @@ func runWorkflowRun(cmd *cobra.Command, path string, opts workflowRunOptions) er
 		Graph:        a.graph,
 		RunID:        runID,
 		Params:       params,
-		Runner:       runner,
+		Runner:       run,
 		ArtifactRoot: opts.artifactRoot,
 		Store:        st,
 		SpecHash:     specHash,

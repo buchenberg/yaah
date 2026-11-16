@@ -119,9 +119,12 @@ func runWorkflowResume(cmd *cobra.Command, runID string, opts workflowResumeOpti
 		return err
 	}
 	defer st.Close()
-	runner, rerr := workflowRunRunner()
+	run, cleanup, rerr := workflowRunRunner()
 	if rerr != nil {
 		return rerr
+	}
+	if cleanup != nil {
+		defer cleanup()
 	}
 	ctx := cmd.Context()
 	if ctx == nil {
@@ -164,7 +167,7 @@ func runWorkflowResume(cmd *cobra.Command, runID string, opts workflowResumeOpti
 	res, xerr := host.Resume(ctx, host.Options{
 		Graph:        a.graph,
 		Params:       paramsOf(a),
-		Runner:       runner,
+		Runner:       run,
 		ArtifactRoot: opts.artifactRoot,
 		Store:        st,
 		SpecHash:     hash,
