@@ -406,6 +406,14 @@ func (a *workflowAnalysis) fanoutView(w workflowWalk) fanoutView {
 // mermaid renders the graph as a flowchart. Containers become subgraphs, so
 // the body/edge list stays complete for --json while the picture keeps
 // containment readable; the body edges are therefore not drawn twice.
+//
+// The picture reads in execution order: a needs edge is drawn from the
+// dependency to the declarer (need --> n), the same direction traceMermaid
+// uses for the run record, so a top-down layout lists what runs first at the
+// top. Node shapes carry the kind's meaning — work is a rectangle, decisions
+// are a diamond, outputs are a stadium — and a fan-out's subgraph label names
+// its width, because the body template alone does not show that three items
+// run in parallel.
 func (a *workflowAnalysis) mermaid(w workflowWalk, edges []edgeView) string {
 	var b strings.Builder
 	b.WriteString("flowchart TD\n")
@@ -419,11 +427,20 @@ func (a *workflowAnalysis) mermaid(w workflowWalk, edges []edgeView) string {
 		if e.Via == "body" {
 			continue
 		}
-		from, to := w.idOf[a.nodeAt(w, e.From)], w.idOf[a.nodeAt(w, e.To)]
-		if from == "" || to == "" {
+		// A needs edge is drawn dependency-first: from the step that must
+		// finish to the step that declared the need, so the picture reads
+		// in execution order. Every other via is already declarative-first
+		// — a gate's on_pass/on_fail, a branch's case/default — so those
+		// keep the direction the node states them in.
+		from, to := e.From, e.To
+		if e.Via == "needs" {
+			from, to = e.To, e.From
+		}
+		fid, tid := w.idOf[a.nodeAt(w, from)], w.idOf[a.nodeAt(w, to)]
+		if fid == "" || tid == "" {
 			continue
 		}
-		fmt.Fprintf(&b, "%s%s -->|%s| %s\n", ind, from, e.Via, to)
+		fmt.Fprintf(&b, "%s%s -->|%s| %s\n", ind, fid, e.Via, tid)
 	}
 	return b.String()
 }
@@ -437,6 +454,47 @@ func (a *workflowAnalysis) nodeAt(w workflowWalk, path string) *ir.Node {
 	return nil
 }
 
+// mermaidShape returns the node's shape: the bracket pair that carries the
+// kind's meaning. Work is a rectangle; a decision — gate or select — is a
+// diamond; an output — emit — a stadium; settlement and human steps rounded,
+// the "soft" steps that end a path rather than compute one.
+func mermaidShape(n *ir.Node) (open, close string) {
+	switch n.Kind {
+	case ir.KindGate, ir.KindSelect:
+		return "{", "}"
+	case ir.KindEmit:
+		return "([", "])"
+	case ir.KindSettle, ir.KindHuman:
+		return "(", ")"
+	default:
+		return "[", "]"
+	}
+}
+
+// mermaidFanoutWidth describes a repetition container's parallelism for its
+// subgraph label. A fan-out's literal list names its length; a selector fans
+// over a run-time list, so it names the unknown width; a loop names its
+// declared bound. The body template alone does not show that several items
+// run in parallel.
+func mermaidFanoutWidth(n *ir.Node) string {
+	if n.Kind == ir.KindLoop {
+		if n.MaxIterations != nil {
+			return fmt.Sprintf(" ×%d", *n.MaxIterations)
+		}
+		return ""
+	}
+	if n.Over == nil {
+		return ""
+	}
+	if len(n.Over.Literals) > 0 {
+		return fmt.Sprintf(" ×%d", len(n.Over.Literals))
+	}
+	if n.Over.Selector != nil {
+		return " ×N"
+	}
+	return ""
+}
+
 func writeMermaidNodes(b *strings.Builder, w workflowWalk, nodes []*ir.Node, depth int) {
 	ind := strings.Repeat("  ", depth)
 	for _, n := range nodes {
@@ -444,14 +502,16 @@ func writeMermaidNodes(b *strings.Builder, w workflowWalk, nodes []*ir.Node, dep
 			continue
 		}
 		id := w.idOf[n]
-		label := mermaidEscape(fmt.Sprintf("%s (%s)", n.Path, mermaidKindLabel(n)))
 		if len(n.Body) > 0 {
+			label := mermaidEscape(fmt.Sprintf("%s (%s%s)", n.Path, mermaidKindLabel(n), mermaidFanoutWidth(n)))
 			fmt.Fprintf(b, "%ssubgraph %s[\"%s\"]\n", ind, id, label)
 			writeMermaidNodes(b, w, n.Body, depth+1)
 			fmt.Fprintf(b, "%send\n", ind)
 			continue
 		}
-		fmt.Fprintf(b, "%s%s[\"%s\"]\n", ind, id, label)
+		open, close := mermaidShape(n)
+		label := mermaidEscape(fmt.Sprintf("%s (%s)", n.Path, mermaidKindLabel(n)))
+		fmt.Fprintf(b, "%s%s%s\"%s\"%s\n", ind, id, open, label, close)
 	}
 }
 
