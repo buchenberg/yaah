@@ -3,29 +3,34 @@ package yaah
 import (
 	"context"
 	"encoding/json"
-
-	"github.com/buchenberg/yaah/internal/workflow/host"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/buchenberg/yaah/internal/jobs"
+	"github.com/buchenberg/yaah/internal/workflow/host"
 )
 
 // Tests for `yaah workflow run` (bead yaah-0u0v.12). The runner seam is
 // injected with a deterministic closure — the same seam the host package's
 // end-to-end tests use — so the golden run makes no model calls and never
-// sleeps. Fresh command per run, per the cli_audit_test.go convention.
+// sleeps. The seam's production default (workflow_runner.go) is exercised on
+// its own: its refusal is pinned against an empty $YAAH_HOME, and its
+// composition against a temp home holding one usable provider. Fresh command
+// per run, per the cli_audit_test.go convention.
 
 func swapRunRunner(t *testing.T, fn jobs.TaskRunner, calls *int) {
 	t.Helper()
 	prev := workflowRunRunner
-	workflowRunRunner = func() (jobs.TaskRunner, error) {
+	workflowRunRunner = func() (jobs.TaskRunner, func(), error) {
 		return func(ctx context.Context, prompt string, params jobs.SubAgentParams) (string, error) {
 			if calls != nil {
 				*calls++
 			}
 			return fn(ctx, prompt, params)
-		}, nil
+		}, func() {}, nil
 	}
 	t.Cleanup(func() { workflowRunRunner = prev })
 }
@@ -59,16 +64,111 @@ func TestWorkflowRunRefusesInvalidSpec(t *testing.T) {
 	}
 }
 
-// TestWorkflowRunRefusesWithoutRunner pins the honest standalone default:
-// with no runner configured the command says so instead of half-bootstrapping
-// a composition root or silently no-oping.
-func TestWorkflowRunRefusesWithoutRunner(t *testing.T) {
+// TestWorkflowRunStandaloneRunnerNeedsProvider pins the honest half of the
+// standalone default: a configuration with no usable credential is refused
+// with the missing fact named, rather than dispatched on the stub that only
+// fails at the first Send or papered over with an invented provider.
+// $YAAH_HOME points at an empty directory so the answer comes from an empty
+// configuration, not from this machine's ~/.yaah.
+func TestWorkflowRunStandaloneRunnerNeedsProvider(t *testing.T) {
+	t.Setenv("YAAH_HOME", t.TempDir())
 	_, err := runWfRun(t, "--param", "task=verify", wfGoldens+"sequential.yaml")
 	if err == nil {
-		t.Fatal("expected an error with no runner configured")
+		t.Fatal("expected a refusal with no provider configured")
 	}
-	if !strings.Contains(err.Error(), "no sub-agent runner configured") {
-		t.Errorf("error = %v, want the missing-runner explanation", err)
+	if !strings.Contains(err.Error(), "no provider configured") {
+		t.Errorf("error = %v, want the missing provider named", err)
+	}
+}
+
+// TestStandaloneWorkflowRunnerComposesFromConfig pins the other half: one
+// usable provider in the configuration composes a runner from the same three
+// sources the one-shot CLI uses (config, provider resolution, store) and
+// nothing beyond them. No model is called — the runner is only built.
+func TestStandaloneWorkflowRunnerComposesFromConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("YAAH_HOME", home)
+	cfg := `providers:
+  standalone:
+    api: openai
+    base_url: http://127.0.0.1:1/v1
+    api_key: test-key
+agents:
+  default:
+    provider: standalone
+    model: standalone-model
+`
+	if err := os.WriteFile(filepath.Join(home, "config.yaml"), []byte(cfg), 0o644); err != nil {
+		t.Fatalf("writing the config: %v", err)
+	}
+	r, cleanup, err := newStandaloneWorkflowRunner()
+	if err != nil {
+		t.Fatalf("compose the standalone runner: %v", err)
+	}
+	if r == nil {
+		t.Fatal("composed a nil runner")
+	}
+	if cleanup == nil {
+		t.Fatal("composed a runner with no teardown; the store handle would leak")
+	}
+	cleanup()
+}
+
+// TestWorkflowRunScriptedChainEndToEnd drives a two-delegate document through
+// the run command with a scripted closure: the second dispatch's prompt is the
+// first node's recorded report, so the value flow the reducer promises is
+// proven at the command's own seam, with no provider and no model call.
+func TestWorkflowRunScriptedChainEndToEnd(t *testing.T) {
+	spec := filepath.Join(t.TempDir(), "chain.yaml")
+	const doc = `apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: chain
+  version: 1.0.0
+spec:
+  budgets:
+    max_dispatches: 4
+    max_wall_clock_seconds: 120
+  steps:
+    - id: first
+      kind: delegate
+      role: planner
+      lane: report
+      prompt: do the first thing
+    - id: second
+      kind: delegate
+      role: planner
+      lane: report
+      needs: [first]
+      prompt: review {{ steps.first.output }}
+`
+	if err := os.WriteFile(spec, []byte(doc), 0o644); err != nil {
+		t.Fatalf("writing the spec: %v", err)
+	}
+
+	var prompts []string
+	scripted := func(_ context.Context, prompt string, _ jobs.SubAgentParams) (string, error) {
+		prompts = append(prompts, strings.TrimSpace(prompt))
+		return fmt.Sprintf("RESULT-%d", len(prompts)), nil
+	}
+	swapRunRunner(t, scripted, nil)
+	out, err := runWfRun(t, "--run-id", "chain-1", spec)
+	if err != nil {
+		t.Fatalf("run: %v\noutput:\n%s", err, out)
+	}
+	if len(prompts) != 2 {
+		t.Fatalf("runner calls = %d (%q), want 2 — one per delegate", len(prompts), prompts)
+	}
+	if prompts[0] != "do the first thing" {
+		t.Errorf("first prompt = %q, want the document's prompt verbatim", prompts[0])
+	}
+	if prompts[1] != "review RESULT-1" {
+		t.Errorf("second prompt = %q, want the first node's report rendered in", prompts[1])
+	}
+	for _, want := range []string{"chain-1", "succeeded", "steps.first", "steps.second"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report missing %q:\n%s", want, out)
+		}
 	}
 }
 

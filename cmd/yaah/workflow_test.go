@@ -503,3 +503,43 @@ func TestWorkflowReviewFixPins(t *testing.T) {
 		}
 	})
 }
+
+// TestWorkflowExplainMermaidDirection pins the diagram's two direction
+// contracts: a needs edge is recorded declarer-first but DRAWN dependency-first
+// (so the picture reads in execution order), while a gate's on_pass/on_fail
+// arms keep their declared direction. Shape and fan-out width are pinned too.
+func TestWorkflowExplainMermaidDirection(t *testing.T) {
+	out, err := runWfExplain(t, "--json", "--param", "task=verify", wfGoldens+"bounded_repair.yaml")
+	if err != nil {
+		t.Fatalf("explain: %v\n%s", err, out)
+	}
+	var rep explainReport
+	if jerr := json.Unmarshal([]byte(out), &rep); jerr != nil {
+		t.Fatal(jerr)
+	}
+	m := rep.Mermaid
+	// bounded_repair's chain: implement (n0) -> repair (n1, loop) -> land
+	// (n4, settle) -> report (n5, emit). Needs edges draw dependency-first.
+	if !strings.Contains(m, "n0 -->|needs| n1") {
+		t.Errorf("implement->repair needs edge not drawn dependency-first:\n%s", m)
+	}
+	if !strings.Contains(m, "n1 -->|needs| n4") {
+		t.Errorf("repair->land needs edge not drawn dependency-first:\n%s", m)
+	}
+	if !strings.Contains(m, "n4 -->|needs| n5") {
+		t.Errorf("land->report needs edge not drawn dependency-first:\n%s", m)
+	}
+	// Shapes: decisions are diamonds, outputs are stadiums, settlement is
+	// rounded. bounded_repair has no gate, so pin the settle and emit
+	// shapes here.
+	if !strings.Contains(m, `n4("`) {
+		t.Errorf("settle not drawn rounded:\n%s", m)
+	}
+	if !strings.Contains(m, `n5(["`) {
+		t.Errorf("emit not drawn as a stadium:\n%s", m)
+	}
+	// The loop subgraph names its declared bound.
+	if !strings.Contains(m, "loop ×3") {
+		t.Errorf("loop width missing from the subgraph label:\n%s", m)
+	}
+}
