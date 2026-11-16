@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.189.0](https://github.com/buchenberg/yaah/compare/v0.188.1...v0.189.0) (2026-11-16)
+
+
+### Features
+
+* **workflow:** standalone workflow run + readable explain mermaid ([#1664](https://github.com/buchenberg/yaah/issues/1664)) ([b927acd](https://github.com/buchenberg/yaah/commit/b927acdace95b4ab6bb35ee93680a50789b37a45))
+
 ## [0.188.1](https://github.com/buchenberg/yaah/compare/v0.188.0...v0.188.1) (2026-11-14)
 
 
