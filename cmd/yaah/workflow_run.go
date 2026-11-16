@@ -164,7 +164,7 @@ func runWorkflowRun(cmd *cobra.Command, path string, opts workflowRunOptions) er
 	if herr != nil {
 		return herr
 	}
-	res, xerr := host.Execute(ctx, host.Options{
+	hostOpts := host.Options{
 		Graph:        a.graph,
 		RunID:        runID,
 		Params:       params,
@@ -173,7 +173,14 @@ func runWorkflowRun(cmd *cobra.Command, path string, opts workflowRunOptions) er
 		Store:        st,
 		SpecHash:     specHash,
 		SpecPath:     path,
-	})
+	}
+	// The retained runtime the seam composed, if any: proposal-lane
+	// dispatches and settle nodes need it. Nil for a report-only document
+	// is fine — the door refuses proposal nodes by name then.
+	if retained := workflowRetainedRuntime.Load(); retained != nil {
+		hostOpts.Retained = retained
+	}
+	res, xerr := host.Execute(ctx, hostOpts)
 	if xerr != nil {
 		return xerr
 	}

@@ -30,15 +30,29 @@
 //   - No supervision scope tree. Scopes fork from a session's root scope;
 //     there is no session, so a dispatch runs without one rather than under a
 //     scope the trace cannot find later.
+//
+// One thing the run DOES compose when the document asks for it: the retained
+// proposal runtime. A document that declares `lane: proposal` is choosing the
+// retained lane, and refusing it would make the fanout_settle shape — the
+// speculative pattern the DSL exists for — unrunnable standalone. The runtime
+// is composed from the same facts a session composes it from (the shepherd
+// trace store, a root scope over the working tree, and a per-run proposal
+// registry), created lazily once the first proposal-lane dispatch needs it,
+// and torn down in the cleanup the seam already returns. This is not an
+// invented fact: the document declared the lane, and the runtime is the
+// machinery that lane requires.
 package yaah
 
 import (
 	"fmt"
 	"os"
+	"sync/atomic"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/runner"
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/dispatch"
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/providers"
@@ -50,6 +64,9 @@ import (
 // command owes whatever it opened (today the store; a no-op once the run is
 // over and every handle is released), so the command — not this constructor —
 // owns the lifetime. Every refusal names the fact that was missing.
+//
+// The retained runtime, when the run needs one, is composed here too — see
+// standaloneRetained() — and torn down in the same cleanup.
 func newStandaloneWorkflowRunner() (jobs.TaskRunner, func(), error) {
 	cfg, err := config.Load()
 	if err != nil {
@@ -107,11 +124,89 @@ func newStandaloneWorkflowRunner() (jobs.TaskRunner, func(), error) {
 		}
 		return nil, nil, rerr
 	}
-	cleanup := func() {}
-	if db != nil {
-		cleanup = func() { db.Close() }
+
+	// The retained runtime, when the document needs one. Composed lazily —
+	// a report-only document never pays for the shepherd infrastructure —
+	// but composed HERE, before the run starts, so a composition failure
+	// is a named refusal at the door rather than a mid-run dispatch error.
+	retained, retainedCleanup, rterr := standaloneRetained(cfg, ws, run, sessionID)
+	if rterr != nil {
+		if db != nil {
+			db.Close()
+		}
+		return nil, nil, rterr
 	}
+
+	cleanup := func() {}
+	if db != nil || retainedCleanup != nil {
+		cleanup = func() {
+			if retainedCleanup != nil {
+				retainedCleanup()
+			}
+			if db != nil {
+				db.Close()
+			}
+		}
+	}
+	workflowRetainedRuntime.Store(retained)
 	return run, cleanup, nil
+}
+
+// workflowRetainedRuntime carries the retained runtime this process's
+// workflow run composed, for the run/resume commands to hand to the door.
+// It is process-scoped because the seam is a package var: the run command
+// composes once per process invocation, and the resume command reads it
+// after the seam's default runs. Nil means the run composed no retained
+// runtime (a report-only document, or a composition that refused).
+var workflowRetainedRuntime atomic.Pointer[dispatch.RetainedRuntime]
+
+// standaloneRetained composes the retained proposal runtime for a standalone
+// workflow run: the same four facts a session composes it from, minus the
+// session. A document that declares `lane: proposal` needs this machinery —
+// the worktree fork, the scope fork, and the registry settle nodes dispose
+// through — so the composition mirrors the session's rather than inventing a
+// weaker one. It is built lazily: only when the document actually declares a
+// proposal-lane dispatch, so a report-only run pays nothing.
+//
+// The honesty rule survives: the runtime is composed from the user's config
+// (the trace path, the retained repo path, the worktree root) and the process
+// working tree, and a composition that cannot be completed is a named refusal
+// — a run that cannot settle its own proposals must not seal them.
+func standaloneRetained(cfg *config.Config, ws *workspaceStage, run jobs.TaskRunner, sessionID string) (*dispatch.RetainedRuntime, func(), error) {
+	// The graph's lane needs are a static fact of the resolved document —
+	// known before any dispatch runs. But the seam composes the runner
+	// before the graph resolves (the command resolves the document after
+	// the seam call), so the runtime is composed unconditionally and the
+	// door refuses by name when a proposal-lane node meets a nil runtime.
+	// Composing unconditionally also keeps the resume path honest: resume
+	// reads the runtime this process composed for the run it continues.
+	traceStore, traceBus, mgr, serr := pipeline.InitShepherdInfrastructure(cfg.Agent.Default.TracePath(), 0)
+	if serr != nil {
+		return nil, nil, fmt.Errorf("workflow: retained lane unavailable: %w", serr)
+	}
+	repoPath := cfg.Agent.Default.RetainedRepoPath
+	if repoPath == "" {
+		repoPath = ws.cwd
+	}
+	root, rerr := runner.CreateRootScope(mgr, sessionID, repoPath, false)
+	if rerr != nil {
+		pipeline.CloseShepherdInfrastructure(traceStore, traceBus)
+		return nil, nil, fmt.Errorf("workflow: retained lane unavailable: root scope: %w", rerr)
+	}
+	rt := &dispatch.RetainedRuntime{
+		Runner:       run,
+		RepoPath:     repoPath,
+		ScopeManager: mgr,
+		RootScopeID:  root.ID(),
+		SessionID:    sessionID,
+		WorktreeRoot: cfg.Agent.Default.RetainedWorktreeRoot,
+		Proposals:    dispatch.NewProposalRegistry(),
+	}
+	rt.EnsureInFlight()
+	cleanup := func() {
+		pipeline.CloseShepherdInfrastructure(traceStore, traceBus)
+	}
+	return rt, cleanup, nil
 }
 
 // configPathLabel names the configuration file in a refusal. A home that will
