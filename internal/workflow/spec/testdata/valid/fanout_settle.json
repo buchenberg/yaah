@@ -45,6 +45,7 @@
       {
         "id": "build",
         "kind": "fanout",
+        "needs": ["plan"],
         "over": { "from": "steps.plan.output.workstreams" },
         "as": "ws",
         "max_parallel": 4,
@@ -61,6 +62,7 @@
       {
         "id": "review",
         "kind": "fanout",
+        "needs": ["build"],
         "over": { "from": "steps.build.collect" },
         "as": "proposal",
         "max_parallel": 4,
@@ -70,7 +72,7 @@
           "kind": "delegate",
           "role": "reviewer",
           "lane": "report",
-          "prompt": "Review this proposal for correctness. Proposal id: {{ proposal.id }}\nDiff: {{ proposal.diff }}\nReturn JSON: {\"verdict\":\"pass\"|\"fail\",\"reasons\":[]}.\n",
+          "prompt": "Review this proposal for correctness. Proposal id: {{ proposal.proposal_id }}\nRole: {{ proposal.role }}, lane: {{ proposal.lane }}.\nReturn JSON: {\"verdict\":\"pass\"|\"fail\",\"reasons\":[]}.\n",
           "output": "Verdict"
         },
         "collect": "reviews"
@@ -78,6 +80,7 @@
       {
         "id": "land",
         "kind": "settle",
+        "needs": ["build", "review"],
         "proposals": { "from": "steps.build.collect" },
         "where": { "from": "steps.review.collect", "field": "verdict", "equals": "pass" },
         "action": "apply",
@@ -89,6 +92,7 @@
       {
         "id": "report",
         "kind": "emit",
+        "needs": ["land"],
         "value": "Landed {{ steps.land.output.settled }} proposal(s).\n"
       }
     ]
