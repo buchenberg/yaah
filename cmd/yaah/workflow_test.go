@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"regexp"
 	"sort"
@@ -542,4 +543,192 @@ func TestWorkflowExplainMermaidDirection(t *testing.T) {
 	if !strings.Contains(m, "loop ×3") {
 		t.Errorf("loop width missing from the subgraph label:\n%s", m)
 	}
+}
+
+// TestWorkflowExplainMermaidLiteralItems pins the per-item expansion: a fan-out
+// over a LITERAL list draws its body once per item, labeled with the item it
+// binds and carrying the instance path the executor will mint
+// ("steps.x.items[i].body[j]"), while the subgraph label keeps its ×N width —
+// width at a glance, items in detail. Selector fan-outs and loops keep the
+// single-template form (their items and iterations are not static parallel
+// items), nested literal fan-outs expand recursively, and a literal list past
+// the cap falls back to the template form.
+func TestWorkflowExplainMermaidLiteralItems(t *testing.T) {
+	mermaidOf := func(t *testing.T, spec string, extra ...string) string {
+		t.Helper()
+		args := append([]string{"--json"}, extra...)
+		out, err := runWfExplain(t, append(args, spec)...)
+		if err != nil {
+			t.Fatalf("explain %s: %v\n%s", spec, err, out)
+		}
+		var rep explainReport
+		if jerr := json.Unmarshal([]byte(out), &rep); jerr != nil {
+			t.Fatalf("%s: %v", spec, jerr)
+		}
+		return rep.Mermaid
+	}
+	// The goldens take a required task parameter; the temp specs declare none.
+	goldenMermaid := func(t *testing.T, name string) string {
+		t.Helper()
+		return mermaidOf(t, wfGoldens+name+".yaml", "--param", "task=t")
+	}
+	writeSpec := func(t *testing.T, name, src string) string {
+		t.Helper()
+		p := t.TempDir() + "/" + name
+		if err := os.WriteFile(p, []byte(src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	// declaredIDs returns the node ids the leaf declaration lines open with,
+	// for the lines whose label carries an item annotation.
+	declaredIDs := func(t *testing.T, m string) map[string]bool {
+		t.Helper()
+		ids := map[string]bool{}
+		for _, line := range strings.Split(m, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if !strings.Contains(trimmed, "item: ") || strings.HasPrefix(trimmed, "subgraph ") {
+				continue
+			}
+			end := strings.IndexAny(trimmed, "[({")
+			if end <= 0 {
+				t.Fatalf("cannot read a node id from %q", line)
+			}
+			ids[trimmed[:end]] = true
+		}
+		return ids
+	}
+
+	t.Run("literal fan-out draws one body copy per item", func(t *testing.T) {
+		m := goldenMermaid(t, "speculative")
+		// speculative fans out over [conservative, idiomatic, minimal] with a
+		// single delegate body, so each item owns one declared copy.
+		for i, style := range []string{"conservative", "idiomatic", "minimal"} {
+			path := fmt.Sprintf("steps.candidates.items[%d].body[0]", i)
+			if !strings.Contains(m, path) {
+				t.Errorf("item %d body copy %q missing:\n%s", i, path, m)
+			}
+			if !strings.Contains(m, "item: "+style) {
+				t.Errorf("item %d not labeled item: %s:\n%s", i, style, m)
+			}
+		}
+		if got := len(declaredIDs(t, m)); got != 3 {
+			t.Errorf("declared item copies = %d, want 3 (one per literal item):\n%s", got, m)
+		}
+		// The synthesized ids are declarations only; the template body is not
+		// drawn beside them.
+		if strings.Contains(m, `"steps.candidates.body[0] (`) {
+			t.Errorf("template body drawn beside the per-item copies:\n%s", m)
+		}
+		// The width stays on the label, so the diagram states it twice on
+		// purpose: at a glance, and item by item.
+		if !strings.Contains(m, "(fanout ×3)") {
+			t.Errorf("fan-out width dropped from the subgraph label:\n%s", m)
+		}
+	})
+
+	t.Run("selector fan-out keeps the template", func(t *testing.T) {
+		m := goldenMermaid(t, "fanout_settle")
+		// fanout_settle fans over selectors: the items are a run-time fact, so
+		// drawing invented ones would lie about the document.
+		if strings.Contains(m, ".items[") || strings.Contains(m, "item: ") {
+			t.Errorf("selector fan-out drew invented items:\n%s", m)
+		}
+		if !strings.Contains(m, "(fanout ×N)") {
+			t.Errorf("selector fan-out width missing from the subgraph label:\n%s", m)
+		}
+	})
+
+	t.Run("loop gains no per-iteration copies", func(t *testing.T) {
+		m := goldenMermaid(t, "bounded_repair")
+		// bounded_repair repairs up to three times: iterations are sequential,
+		// not parallel items, so the two body nodes stay one template.
+		if got := strings.Count(m, "steps.repair.body["); got != 2 {
+			t.Errorf("loop body declarations = %d, want 2 (fix and check):\n%s", got, m)
+		}
+		if strings.Contains(m, "item: ") || strings.Contains(m, ".items[") {
+			t.Errorf("loop iterations drawn as items:\n%s", m)
+		}
+		if !strings.Contains(m, "(loop ×3)") {
+			t.Errorf("loop bound missing from the subgraph label:\n%s", m)
+		}
+	})
+
+	t.Run("nested literal fan-outs expand recursively", func(t *testing.T) {
+		src := `apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: nested
+spec:
+  steps:
+    - id: outer
+      kind: fanout
+      over: [a, b]
+      as: x
+      max_parallel: 2
+      join: all
+      on_item_failure: collect_failures
+      body:
+        kind: fanout
+        over: [p, q]
+        as: y
+        max_parallel: 2
+        join: all
+        on_item_failure: collect_failures
+        body:
+          kind: delegate
+          role: developer
+          prompt: p
+          output: proposal
+        collect: inner
+      collect: outer_out
+`
+		p := writeSpec(t, "nested.yaml", src)
+		m := mermaidOf(t, p)
+		// The whole subtree is static, and the instance paths chain exactly as
+		// exec does.
+		for _, outer := range []int{0, 1} {
+			for _, inner := range []int{0, 1} {
+				path := fmt.Sprintf("steps.outer.items[%d].body[0].items[%d].body[0]", outer, inner)
+				if !strings.Contains(m, path) {
+					t.Errorf("nested copy %q missing:\n%s", path, m)
+				}
+			}
+		}
+		for _, item := range []string{"p", "q"} {
+			if got := strings.Count(m, "item: "+item); got != 2 {
+				t.Errorf("inner item %q appears %d times, want 2 (once per outer item):\n%s", item, got, m)
+			}
+		}
+		if got := len(declaredIDs(t, m)); got != 4 {
+			t.Errorf("declared copies = %d, want 4 (2 outer items × 2 inner items):\n%s", got, m)
+		}
+		// The nested container is itself copied: one subgraph per outer item.
+		if got := strings.Count(m, "subgraph "); got != 3 {
+			t.Errorf("subgraphs = %d, want 3 (the outer fan-out plus one inner copy per outer item):\n%s", got, m)
+		}
+	})
+
+	t.Run("past the cap the template and width carry it", func(t *testing.T) {
+		items := make([]string, 0, 13)
+		for i := 0; i < 13; i++ {
+			items = append(items, fmt.Sprintf("v%d", i))
+		}
+		src := "apiVersion: yaah.workflow/v1\nkind: Workflow\nmetadata:\n  name: wide\nspec:\n  steps:\n" +
+			"    - id: f\n      kind: fanout\n      over: [" + strings.Join(items, ", ") + "]\n" +
+			"      as: x\n      max_parallel: 13\n      join: all\n      on_item_failure: collect_failures\n" +
+			"      body:\n        kind: delegate\n        role: developer\n        prompt: p\n        output: proposal\n" +
+			"      collect: out\n"
+		p := writeSpec(t, "wide.yaml", src)
+		m := mermaidOf(t, p)
+		if strings.Contains(m, "item: ") || strings.Contains(m, ".items[") {
+			t.Errorf("a 13-item fan-out was expanded past the cap:\n%s", m)
+		}
+		if !strings.Contains(m, "steps.f.body[0]") {
+			t.Errorf("single-template form not drawn:\n%s", m)
+		}
+		if !strings.Contains(m, "(fanout ×13)") {
+			t.Errorf("width missing from the subgraph label:\n%s", m)
+		}
+	})
 }

@@ -135,7 +135,7 @@ const WorkflowExplainSchemaJSON = `{
         }
       }
     },
-    "mermaid": { "type": "string", "description": "The resolved DAG as a Mermaid flowchart (containment as subgraphs)." },
+    "mermaid": { "type": "string", "description": "The resolved DAG as a Mermaid flowchart (containment as subgraphs, one body copy per literal fan-out item)." },
     "fanout": {
       "type": "object",
       "additionalProperties": true,
