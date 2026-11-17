@@ -340,7 +340,18 @@ func walkPath(v any, path []string, r *Ref) (any, error) {
 	for _, seg := range path {
 		m, ok := v.(map[string]any)
 		if !ok {
-			return nil, &RenderError{Ref: r.String(), Message: fmt.Sprintf("value has no field %q (value is not a mapping)", seg)}
+			// A delegate's delivered result is text, so a structured
+			// output reaches the scope as a string. Decode a string
+			// holding a JSON object on demand — the same rule exec's
+			// walkValue applies to the values a settle reads.
+			if s, isStr := v.(string); isStr {
+				if decoded, isObj := decodeObjectText(s); isObj {
+					m = decoded
+				}
+			}
+			if m == nil {
+				return nil, &RenderError{Ref: r.String(), Message: fmt.Sprintf("value has no field %q (value is not a mapping)", seg)}
+			}
 		}
 		v, ok = m[seg]
 		if !ok {
@@ -348,6 +359,30 @@ func walkPath(v any, path []string, r *Ref) (any, error) {
 		}
 	}
 	return v, nil
+}
+
+// decodeObjectText reads the first JSON object in a string. A delegate's
+// delivered result is model text, and a model returning JSON often wraps it
+// in prose or a markdown fence; the object is still the structured payload a
+// reference asks a field of. The scan is bounded (first 128 '{' positions)
+// so a large malformed text cannot make it quadratic; prose with no object
+// at all is a refusal, not a payload.
+func decodeObjectText(s string) (map[string]any, bool) {
+	attempts := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] != '{' {
+			continue
+		}
+		if attempts++; attempts > 128 {
+			return nil, false
+		}
+		dec := json.NewDecoder(strings.NewReader(s[i:]))
+		var m map[string]any
+		if err := dec.Decode(&m); err == nil {
+			return m, true
+		}
+	}
+	return nil, false
 }
 
 // valueText renders a resolved value as template text. Scalars render

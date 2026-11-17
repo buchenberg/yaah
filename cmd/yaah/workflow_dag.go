@@ -412,8 +412,10 @@ func (a *workflowAnalysis) fanoutView(w workflowWalk) fanoutView {
 // uses for the run record, so a top-down layout lists what runs first at the
 // top. Node shapes carry the kind's meaning — work is a rectangle, decisions
 // are a diamond, outputs are a stadium — and a fan-out's subgraph label names
-// its width, because the body template alone does not show that three items
-// run in parallel.
+// its width. A fan-out over a literal list also draws its body once per item,
+// labeled with the item it binds: the width says "three at once" at a glance
+// and the copies say which three, because one body template alone shows
+// neither.
 func (a *workflowAnalysis) mermaid(w workflowWalk, edges []edgeView) string {
 	var b strings.Builder
 	b.WriteString("flowchart TD\n")
@@ -475,7 +477,8 @@ func mermaidShape(n *ir.Node) (open, close string) {
 // subgraph label. A fan-out's literal list names its length; a selector fans
 // over a run-time list, so it names the unknown width; a loop names its
 // declared bound. The body template alone does not show that several items
-// run in parallel.
+// run in parallel, so the width is stated on the label even where the items
+// are also drawn one copy each: width at a glance, items in detail.
 func mermaidFanoutWidth(n *ir.Node) string {
 	if n.Kind == ir.KindLoop {
 		if n.MaxIterations != nil {
@@ -495,24 +498,110 @@ func mermaidFanoutWidth(n *ir.Node) string {
 	return ""
 }
 
+// mermaidItemCopyCap is the largest literal fan-out the picture expands into
+// one body copy per item. A literal list is a static fact, so copies state a
+// fact the template cannot; past this cap the subgraph would be a wall of
+// nodes rather than a diagram, so the single template plus the ×N width on
+// the subgraph label carries it instead.
+const mermaidItemCopyCap = 12
+
+// mermaidScope is what one level of the picture inherits from its enclosing
+// container: the node-id prefix that keeps an item copy's synthesized ids
+// unique, the template/instance path pair the copies substitute into, and the
+// item value the copies are labeled with (empty outside an item copy).
+type mermaidScope struct {
+	idPrefix string
+	template string // enclosing container's template path
+	instance string // ... and the instance path its body copies live under
+	item     string // display value of the item this level is a copy of
+}
+
+// instancePath rewrites a child's template path into the path the executor
+// mints at run time — the container's path with the item discriminator
+// inserted between it and the body index — so nested containers chain exactly
+// as exec does ("steps.outer.items[0].body[1].items[3].body[0]").
+func (s mermaidScope) instancePath(path string) string {
+	if s.template == "" {
+		return path
+	}
+	rest, ok := strings.CutPrefix(path, s.template)
+	if !ok {
+		return path
+	}
+	return s.instance + rest
+}
+
 func writeMermaidNodes(b *strings.Builder, w workflowWalk, nodes []*ir.Node, depth int) {
+	writeMermaidLevel(b, w, nodes, depth, mermaidScope{})
+}
+
+func writeMermaidLevel(b *strings.Builder, w workflowWalk, nodes []*ir.Node, depth int, sc mermaidScope) {
 	ind := strings.Repeat("  ", depth)
 	for _, n := range nodes {
 		if n == nil {
 			continue
 		}
-		id := w.idOf[n]
+		id := sc.idPrefix + w.idOf[n]
+		path := sc.instancePath(n.Path)
 		if len(n.Body) > 0 {
-			label := mermaidEscape(fmt.Sprintf("%s (%s%s)", n.Path, mermaidKindLabel(n), mermaidFanoutWidth(n)))
-			fmt.Fprintf(b, "%ssubgraph %s[\"%s\"]\n", ind, id, label)
-			writeMermaidNodes(b, w, n.Body, depth+1)
+			fmt.Fprintf(b, "%ssubgraph %s[\"%s\"]\n", ind, id, mermaidNodeLabel(path, n, sc.item))
+			if items, expand := mermaidLiteralItems(n); expand {
+				// A literal fan-out's items are static, so the body is drawn
+				// once per item and labeled with the item it will bind. A
+				// nested literal fan-out expands the same way: the whole
+				// subtree is static. The ids synthesized per copy are
+				// declarations only — the body edges are skipped in the edge
+				// pass, because the subgraph already states containment.
+				for i, item := range items {
+					writeMermaidLevel(b, w, n.Body, depth+1, mermaidScope{
+						idPrefix: fmt.Sprintf("%s_i%d_", id, i),
+						template: n.Path,
+						instance: fmt.Sprintf("%s.items[%d]", path, i),
+						item:     workflowDisplayValue(item),
+					})
+				}
+			} else {
+				writeMermaidLevel(b, w, n.Body, depth+1, mermaidScope{
+					idPrefix: sc.idPrefix,
+					template: n.Path,
+					instance: path,
+					item:     sc.item,
+				})
+			}
 			fmt.Fprintf(b, "%send\n", ind)
 			continue
 		}
 		open, close := mermaidShape(n)
-		label := mermaidEscape(fmt.Sprintf("%s (%s)", n.Path, mermaidKindLabel(n)))
-		fmt.Fprintf(b, "%s%s%s\"%s\"%s\n", ind, id, open, label, close)
+		fmt.Fprintf(b, "%s%s%s\"%s\"%s\n", ind, id, open, mermaidNodeLabel(path, n, sc.item), close)
 	}
+}
+
+// mermaidNodeLabel is one node's quoted label: its path (the instance path
+// inside an item copy), the kind's meaning plus, for a container, the width
+// its subgraph states, and then the item a copy binds.
+func mermaidNodeLabel(path string, n *ir.Node, item string) string {
+	kind := mermaidKindLabel(n) + mermaidFanoutWidth(n)
+	if item != "" {
+		kind += ", item: " + item
+	}
+	return mermaidEscape(fmt.Sprintf("%s (%s)", path, kind))
+}
+
+// mermaidLiteralItems returns the items a fan-out is drawn per item for, and
+// whether the picture expands them at all. Only a fan-out over a literal list
+// qualifies, and only up to mermaidItemCopyCap items: a selector fan-out's
+// items are a run-time fact and drawing invented ones would lie, a loop's
+// iterations are sequential rather than parallel items, and a list past the
+// cap is carried by the subgraph's width instead of by copies.
+func mermaidLiteralItems(n *ir.Node) ([]any, bool) {
+	if n.Kind != ir.KindFanout || n.Over == nil || len(n.Over.Literals) == 0 {
+		return nil, false
+	}
+	items := n.Over.Literals
+	if len(items) > mermaidItemCopyCap {
+		return nil, false
+	}
+	return items, true
 }
 
 // mermaidEscape sanitizes text interpolated into a Mermaid quoted label.

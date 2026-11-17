@@ -747,7 +747,9 @@ func (r *Run) stepValue(n *ir.Node, st *NodeState) any {
 
 // walkValue walks a dotted access path into a recorded value, decoding a JSON
 // object body on demand. It is the Scope-side half of the same rule
-// ir.template's walkPath applies to a rendered reference.
+// ir.template's walkPath applies to a rendered reference: a delivered result is
+// model text, so the object may be wrapped in prose or a fence, and the first
+// decodable object in the text is the payload a field is asked of.
 func walkValue(v any, path []string) (any, error) {
 	for _, seg := range path {
 		m, ok := v.(map[string]any)
@@ -770,16 +772,28 @@ func walkValue(v any, path []string) (any, error) {
 	return v, nil
 }
 
+// decodeJSONObject reads the first JSON object in a string. A delivered
+// result is model text, and a model returning JSON often wraps it in prose or
+// a markdown fence; the object is still the structured payload a field is
+// asked of. The scan is bounded (first 128 '{' positions) so a large
+// malformed text cannot make it quadratic; text with no object at all is a
+// refusal, not a payload.
 func decodeJSONObject(s string) (map[string]any, bool) {
-	trimmed := strings.TrimSpace(s)
-	if trimmed == "" || trimmed[0] != '{' {
-		return nil, false
+	attempts := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] != '{' {
+			continue
+		}
+		if attempts++; attempts > 128 {
+			return nil, false
+		}
+		dec := json.NewDecoder(strings.NewReader(s[i:]))
+		var m map[string]any
+		if err := dec.Decode(&m); err == nil {
+			return m, true
+		}
 	}
-	var m map[string]any
-	if err := json.Unmarshal([]byte(trimmed), &m); err != nil {
-		return nil, false
-	}
-	return m, true
+	return nil, false
 }
 
 // refsFromValue turns a resolved selector value into proposal refs. A ref is a

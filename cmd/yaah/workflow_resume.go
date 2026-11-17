@@ -164,7 +164,7 @@ func runWorkflowResume(cmd *cobra.Command, runID string, opts workflowResumeOpti
 		return herr
 	}
 
-	res, xerr := host.Resume(ctx, host.Options{
+	hostOpts := host.Options{
 		Graph:        a.graph,
 		Params:       paramsOf(a),
 		Runner:       run,
@@ -172,7 +172,15 @@ func runWorkflowResume(cmd *cobra.Command, runID string, opts workflowResumeOpti
 		Store:        st,
 		SpecHash:     hash,
 		SpecPath:     path,
-	}, runID)
+	}
+	// The retained runtime the seam composed for this process's resume, if
+	// any: proposal-lane dispatches and settle nodes need it. A resume of a
+	// run whose document is report-only composes none and the door refuses
+	// proposal nodes by name.
+	if retained := workflowRetainedRuntime.Load(); retained != nil {
+		hostOpts.Retained = retained
+	}
+	res, xerr := host.Resume(ctx, hostOpts, runID)
 	if xerr != nil {
 		return xerr
 	}

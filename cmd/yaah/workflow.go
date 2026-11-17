@@ -164,7 +164,8 @@ validators compute — explain adds no analysis of its own:
               grants, and per-kind bounds; a value inherited from host
               configuration is marked with *
   dag         the resolved graph as Mermaid (needs, branch arms, gate
-              dispositions, and containment as subgraphs)
+              dispositions, containment as subgraphs, and one body copy per
+              literal fan-out item)
   fan-out     the maximum declared concurrency and every container that
               states it
   cost        worst-case dispatch count with its bound honesty flag
