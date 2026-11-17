@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.190.0](https://github.com/buchenberg/yaah/compare/v0.189.0...v0.190.0) (2026-11-17)
+
+
+### Features
+
+* **workflow:** per-item fan-out diagrams, standalone proposal lane, prose-tolerant structured outputs ([#1666](https://github.com/buchenberg/yaah/issues/1666)) ([c99ed1b](https://github.com/buchenberg/yaah/commit/c99ed1b268d922f108488cd084066bfb516ee69d))
+
 ## [0.189.0](https://github.com/buchenberg/yaah/compare/v0.188.1...v0.189.0) (2026-11-16)
 
 
