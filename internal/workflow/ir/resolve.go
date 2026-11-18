@@ -94,6 +94,12 @@ func Resolve(doc *spec.Document) (*Graph, error) {
 		}
 	}
 
+	// The abort-time disposition is a plain enum the decoder already
+	// validated against the registry, so resolve copies what the document
+	// said verbatim: an empty value is the undeclared case, and the executor
+	// — not the graph — owns the halt default it means.
+	g.OnAbort = OnAbort(doc.Spec.OnAbort)
+
 	// Duplicate top-level ids break pathing and scope; reject before
 	// resolving anything.
 	seen := map[string]bool{}

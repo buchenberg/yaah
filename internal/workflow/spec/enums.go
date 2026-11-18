@@ -47,6 +47,7 @@ var (
 	aggStratType  = reflect.TypeOf(AggregateStrategy(""))
 	outputTType   = reflect.TypeOf(OutputType(""))
 	paramTType    = reflect.TypeOf(ParamType(""))
+	onAbortType   = reflect.TypeOf(OnAbortPolicy(""))
 )
 
 // enumRegistry maps enum types to their accepted values, in declaration
@@ -79,6 +80,7 @@ var enumRegistry = map[reflect.Type][]string{
 		string(ParamString), string(ParamInteger), string(ParamNumber),
 		string(ParamBoolean), string(ParamList), string(ParamMap),
 	},
+	onAbortType: {string(OnAbortHalt), string(OnAbortReleaseAll), string(OnAbortDiscardAll)},
 }
 
 // nodeKinds is the set of accepted node kinds, derived from the registry.

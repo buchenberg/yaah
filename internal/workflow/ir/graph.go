@@ -226,8 +226,30 @@ type Graph struct {
 	Name    string           `json:"name"`
 	Params  map[string]Param `json:"params,omitempty"`
 	Budgets *Budgets         `json:"budgets,omitempty"`
-	Steps   []*Node          `json:"steps"`
+	// OnAbort is the document-level abort-time disposition (yaah-0u0v.24).
+	// An empty OnAbort means the policy is undeclared, which the executor
+	// treats as halt; validation (WF025) demands a declaration wherever a
+	// run can end with proposals open, so the graph carries what the
+	// document said rather than a defaulted rewrite of it.
+	OnAbort OnAbort `json:"on_abort,omitempty"`
+	Steps   []*Node `json:"steps"`
 }
+
+// OnAbort is the resolved abort-time disposition: what a run that ends
+// without succeeding does with the proposals it has not disposed of.
+type OnAbort string
+
+// Abort-time dispositions, in the spec's declaration order.
+const (
+	// AbortHalt leaves the open proposals open and reports them.
+	AbortHalt OnAbort = "halt"
+	// AbortReleaseAll releases every open proposal through the settlement
+	// door.
+	AbortReleaseAll OnAbort = "release_all"
+	// AbortDiscardAll discards every open proposal through the settlement
+	// door.
+	AbortDiscardAll OnAbort = "discard_all"
+)
 
 // Node is one resolved workflow node. Payload fields belong to their kind;
 // unset fields stay zero. Path is the stable node path, ID the step id
