@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.192.0](https://github.com/buchenberg/yaah/compare/v0.191.1...v0.192.0) (2026-11-18)
+
+
+### Features
+
+* **workflow:** workflow-level on_abort dispositions (yaah-0u0v.24) ([#1672](https://github.com/buchenberg/yaah/issues/1672)) ([c1bb6ce](https://github.com/buchenberg/yaah/commit/c1bb6ce5cc30d81c08dbc1ec500d367a30577223))
+
+
+### Bug Fixes
+
+* **tools:** retry a Windows atomic replace while another handle holds the target ([#1673](https://github.com/buchenberg/yaah/issues/1673)) ([8984994](https://github.com/buchenberg/yaah/commit/898499462842b3bea44475fafb9a6e07815e6b44))
+
 ## [0.191.1](https://github.com/buchenberg/yaah/compare/v0.191.0...v0.191.1) (2026-11-18)
 
 
