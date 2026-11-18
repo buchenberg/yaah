@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/buchenberg/yaah/internal/atomicfile"
 )
 
 // AtomicWriteFile writes data to path via a temp file in the same
@@ -13,7 +15,11 @@ import (
 // nested path succeeds instead of failing at the temp-file step.
 // When the file already exists, its permission mode is preserved —
 // perm is only applied for newly created files. The rename is atomic
-// on POSIX and uses MoveFileEx(REPLACE_EXISTING) on Windows.
+// on POSIX and uses MoveFileEx(REPLACE_EXISTING) on Windows, where it
+// also waits out another handle's brief hold on the target (see
+// internal/atomicfile: on Windows a replace over an open file is
+// refused, not torn, so a serialized write could still lose the race
+// to a concurrent reader).
 func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -43,9 +49,13 @@ func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 		cleanup()
 		return fmt.Errorf("atomic write: %w", err)
 	}
-	if err := os.Rename(tmpName, path); err != nil {
-		cleanup()
-		return fmt.Errorf("atomic write: rename: %w", err)
+	if err := atomicfile.Replace(tmpName, path); err != nil {
+		// No cleanup here: the replace error names the temp file that still
+		// holds the new bytes, and the target is untouched either way, so
+		// deleting it discards the write the caller asked for and leaves
+		// nothing to recover. Every failure BEFORE this point removes the
+		// temp, because nothing has been delivered yet.
+		return fmt.Errorf("atomic write: %w", err)
 	}
 	return nil
 }

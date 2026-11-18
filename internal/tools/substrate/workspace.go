@@ -19,6 +19,8 @@ import (
 
 	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
+
+	"github.com/buchenberg/yaah/internal/atomicfile"
 )
 
 // ExecRequest describes a command to run in a workspace.
@@ -570,9 +572,11 @@ func (w *LocalWorkspace) Copy(_ context.Context, src, dst string) error {
 		cleanup()
 		return fmt.Errorf("copy: %w", err)
 	}
-	if err := os.Rename(tmpName, dst); err != nil {
-		cleanup()
-		return fmt.Errorf("copy: rename: %w", err)
+	if err := atomicfile.Replace(tmpName, dst); err != nil {
+		// The temp file survives a failed replace on purpose: the replace
+		// error names it, and it is the only artifact of this copy. Every
+		// failure above removes it, because nothing has been delivered yet.
+		return fmt.Errorf("copy: %w", err)
 	}
 	return nil
 }

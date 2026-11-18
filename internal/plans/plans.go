@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode"
+
+	"github.com/buchenberg/yaah/internal/atomicfile"
 )
 
 // Plan represents a discovered plan with its metadata and body.
@@ -397,33 +399,39 @@ func Edit(plan *Plan, description, status, body string) (string, error) {
 // over the target. An interrupted Edit used to truncate PLAN.md in place, and
 // the result is not merely a stale plan: a file whose frontmatter no longer
 // parses is skipped by discovery, so the plan disappeared with no diagnostic.
-// The rename is atomic on POSIX and on Windows via os.Rename.
+// The rename is atomic on POSIX and on Windows via os.Rename, where it also
+// waits out another handle's brief hold on the target (internal/atomicfile).
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	f, err := os.CreateTemp(filepath.Dir(path), ".PLAN-*.tmp")
 	if err != nil {
 		return err
 	}
 	tmp := f.Name()
-	defer os.Remove(tmp) // no-op once the rename below succeeds
-	if _, err := f.Write(data); err != nil {
+	// Cleanup is explicit rather than deferred: once the replace is attempted,
+	// the temp file is the only copy of the new bytes, so a failed replace must
+	// not delete the write the user asked for (atomicfile.ReplaceError names
+	// the path). Every failure before that point removes it.
+	discard := func(err error) error {
 		f.Close()
+		_ = os.Remove(tmp)
 		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		return discard(err)
 	}
 	// Sync before the rename so a crash cannot leave the renamed file
 	// present but empty; without it the atomicity is only against
 	// interruptions, not power loss.
 	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
+		return discard(err)
 	}
 	if err := f.Chmod(perm); err != nil {
-		f.Close()
-		return err
+		return discard(err)
 	}
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	return atomicfile.Replace(tmp, path)
 }
 
 // SetStatus updates only the status field of a plan's frontmatter.

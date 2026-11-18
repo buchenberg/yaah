@@ -32,6 +32,7 @@ yaah/
 │   │   ├── runner/             # sub-agent dispatch wiring
 │   │   ├── subagent/           # role definitions and registry
 │   │   └── supervision/        # advisory rules and destructive guard
+│   ├── atomicfile/             # atomic file replace, with a Windows replace-retry
 │   ├── banner/                 # startup/status banner rendering
 │   ├── config/                 # config load/validate
 │   ├── control/                # control-plane message types
