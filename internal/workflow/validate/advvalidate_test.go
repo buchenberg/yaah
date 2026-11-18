@@ -42,9 +42,12 @@ func advEnv() Env {
 
 // advPipeline runs a document through the same composed analysis the run
 // command gates on: decode, resolve, the three families Validate runs,
-// then Calls and Explain cost+authority — refusing the graph the unit
-// family tests allow themselves, because an attack that never becomes a
-// graph was stopped at the decode layer, which the spec suite pins.
+// then Calls and Explain cost+authority. It fails fatally on a nil graph
+// by contract — an attack that never becomes a graph was stopped at decode
+// or resolve, which is the parser suite's territory (TestAdvInteger...
+// in the spec package), so reaching this helper means the attack owed the
+// graph families a finding. Tests that expect an earlier refusal call
+// Validate directly instead.
 func advPipeline(t *testing.T, steps string, env Env) []Diagnostic {
 	t.Helper()
 	g, diags := Validate(documentWith(steps))

@@ -1,8 +1,10 @@
 # Workflows: security model and threat surface
 
 A workflow file is untrusted input. This document is the threat model the
-adversarial security suite (`yaah-0u0v.26`) enforces; the plan's §9 is the
-design source and this is its operational statement. The user-facing surface
+adversarial security suite (`yaah-0u0v.26`) enforces; §9 of
+[workflow-dsl-plan.md](workflow-dsl-plan.md) is the design source and this
+is its operational statement. The inventory below stands alone — each row
+names the threat, the rule that refuses it, and the test that pins it. The user-facing surface
 guide (workflow YAML, the `validate`/`explain`/`run` commands, bench tasks)
 is `.27`'s scope and will live here too; today this file covers security.
 

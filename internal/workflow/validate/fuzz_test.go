@@ -33,19 +33,22 @@ func fuzzEnv() Env {
 	}
 }
 
-var fuzzCatalog = map[string]bool{
-	CodeWF001: true, CodeWF002: true, CodeWF003: true, CodeWF004: true, CodeWF005: true,
-	CodeWF010: true, CodeWF011: true, CodeWF012: true, CodeWF013: true, CodeWF014: true,
-	CodeWF020: true, CodeWF021: true, CodeWF022: true, CodeWF023: true, CodeWF024: true,
-	CodeWF025: true, CodeWF026: true, CodeWF027: true, CodeWF028: true, CodeWF029: true,
-	CodeWF030: true, CodeWF031: true, CodeWF032: true, CodeWF033: true, CodeWF034: true,
-	CodeWF035: true, CodeWF036: true, CodeWF037: true,
+// fuzzCatalog is derived from allCodes, the code constants' single
+// enumeration, so a new rule code joins it in the same edit that declares
+// the constant — no second catalog to keep in sync.
+func fuzzCatalog() map[string]bool {
+	out := make(map[string]bool, 29)
+	for _, c := range allCodes() {
+		out[c] = true
+	}
+	return out
 }
 
 func checkCatalog(t *testing.T, diags []Diagnostic) {
 	t.Helper()
+	catalog := fuzzCatalog()
 	for _, d := range diags {
-		if !fuzzCatalog[d.Code] {
+		if !catalog[d.Code] {
 			t.Errorf("finding outside the catalog: %+v", d)
 		}
 		if d.Message == "" {

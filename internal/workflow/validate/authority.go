@@ -405,6 +405,11 @@ var secretMarkers = []secretMarker{
 	{"npm token", wordPrefix("npm_")},
 	{"Google OAuth token", wordPrefix("ya29.")},
 	{"API key of sk- form", wordPrefix("sk-")},
+	// JWT markers match the common base64url header prefix "eyJ"
+	// case-insensitively at a word boundary: wordPrefix lowercases, so
+	// 9fJ/eyJ/EyJ all read, while words merely containing those letters
+	// in the middle ("they", "jockey") do not — the boundary check
+	// requires a non-word byte before the prefix.
 	{"JWT", wordPrefix("eyj")},
 }
 

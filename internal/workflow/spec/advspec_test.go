@@ -9,6 +9,7 @@ package spec
 // upgrade that loses the defense fails the suite.
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -30,7 +31,7 @@ func TestAdvSpecNodeCountBomb(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("  steps:\n")
 	for i := 0; i < MaxNodes+1; i++ {
-		b.WriteString("    - {id: n" + string(rune('a'+i%26)) + ", kind: emit, value: x}\n")
+		fmt.Fprintf(&b, "    - {id: n%d, kind: emit, value: x}\n", i)
 	}
 	if _, err := ParseYAML(advDoc(b.String())); err == nil {
 		t.Fatalf("node-count bomb decoded (limits allow %d)", MaxNodes)
@@ -38,10 +39,10 @@ func TestAdvSpecNodeCountBomb(t *testing.T) {
 	// The boundary itself must hold: exactly MaxNodes emit nodes is a
 	// document, not a bomb. Body nesting counts as nodes too, so the
 	// fanout-embedded form is the one worth pinning here.
-	var bounded strings.Builder
+	bounded := strings.Builder{}
 	bounded.WriteString("  steps:\n")
 	for i := 0; i < MaxNodes; i++ {
-		bounded.WriteString("    - {id: n" + string(rune('a'+i%26)) + ", kind: emit, value: x}\n")
+		fmt.Fprintf(&bounded, "    - {id: n%d, kind: emit, value: x}\n", i)
 	}
 	if _, err := ParseYAML(advDoc(bounded.String())); err != nil {
 		t.Fatalf("document of exactly MaxNodes nodes refused: %v", err)
