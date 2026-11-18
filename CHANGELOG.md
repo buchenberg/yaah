@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.194.0](https://github.com/buchenberg/yaah/compare/v0.193.0...v0.194.0) (2026-11-18)
+
+
+### Features
+
+* **workflow:** adversarial security suite for untrusted specs (yaah-0u0v.26) ([#1679](https://github.com/buchenberg/yaah/issues/1679)) ([4ec3dd7](https://github.com/buchenberg/yaah/commit/4ec3dd7467613ddcb898bd596a7085ca2c54fc23))
+
 ## [0.193.0](https://github.com/buchenberg/yaah/compare/v0.192.0...v0.193.0) (2026-11-18)
 
 
