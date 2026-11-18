@@ -172,6 +172,11 @@ type adversarialCase struct {
 	code      string
 	path      string
 	sub       string
+	// explain runs the authority and cost halves (WF030–WF037) over the
+	// resolved graph too, with the same synthetic host the adversarial
+	// suite attacks. Rows without it live in the three families
+	// Validate itself runs.
+	explain bool
 }
 
 var adversarialCases = []adversarialCase{
@@ -244,6 +249,28 @@ var adversarialCases = []adversarialCase{
 		path:      "steps.b.needs",
 		sub:       `unknown step id "ghost"`,
 	},
+	{
+		// The cost bomb (yaah-0u0v.26): nested loops multiply one delegate
+		// past the budget the document itself declares. WF033 is an
+		// authority/cost finding, so the row needs the explain half.
+		file:      "cost_bomb_over_budget.yaml",
+		wantCodes: seq(CodeWF033),
+		code:      CodeWF033,
+		path:      "spec.budgets.max_dispatches",
+		sub:       "over the 3 declared by budgets.max_dispatches",
+		explain:   true,
+	},
+	{
+		// The world escape (yaah-0u0v.26): an emit artifact that climbs
+		// out of its world root. World-relative is a fact about the path,
+		// so the finding holds against any host.
+		file:      "artifact_path_escape.yaml",
+		wantCodes: seq(CodeWF031),
+		code:      CodeWF031,
+		path:      "steps.drop.path",
+		sub:       "artifact path",
+		explain:   true,
+	},
 }
 
 // TestAdversarialFixtures runs every malformed document through the real
@@ -254,6 +281,9 @@ func TestAdversarialFixtures(t *testing.T) {
 		t.Run(strings.TrimSuffix(tc.file, ".yaml"), func(t *testing.T) {
 			data := readFixtureFile(t, filepath.Join("testdata", "adversarial", tc.file))
 			g, diags := Validate(data)
+			if tc.explain && g != nil {
+				diags = append(diags, Explain(g, advEnv()).Diagnostics...)
+			}
 			if got := codeList(diags); got != tc.wantCodes {
 				t.Errorf("emission sequence = %q, want %q;%s", got, tc.wantCodes, render(diags))
 			}

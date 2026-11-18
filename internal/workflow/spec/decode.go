@@ -493,6 +493,11 @@ func stringKeyMap(path string, v any) (map[string]any, error) {
 }
 
 func intValue(path string, v any) (int64, error) {
+	// 2^63 as float64: conversions to int64 are defined only for values
+	// strictly below it (and at math.MinInt64), so an out-of-range integer
+	// must be refused instead of truncated to implementation-dependent
+	// garbage — max_iterations and friends are control limits, not data.
+	const maxFloatInt = 1 << 63
 	switch n := v.(type) {
 	case int:
 		return int64(n), nil
@@ -504,12 +509,13 @@ func intValue(path string, v any) (int64, error) {
 		if i, err := n.Int64(); err == nil {
 			return i, nil
 		}
-		if f, err := n.Float64(); err == nil && f == math.Trunc(f) {
+		if f, err := n.Float64(); err == nil && f == math.Trunc(f) &&
+			f >= math.MinInt64 && f < maxFloatInt {
 			return int64(f), nil
 		}
 		return 0, decodeErrf(path, "expected an integer, got %s", n.String())
 	case float64:
-		if n == math.Trunc(n) {
+		if n == math.Trunc(n) && n >= math.MinInt64 && n < maxFloatInt {
 			return int64(n), nil
 		}
 	}

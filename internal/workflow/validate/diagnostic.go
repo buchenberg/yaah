@@ -69,6 +69,23 @@ func (d Diagnostic) String() string {
 // author still sees which key was unknown at which location. Later
 // families join Validate on top of this seam; none of them should widen
 // it.
+
+// allCodes is the single enumeration of every rule code the families can
+// emit, so exhaustive consumers — the fuzz harness's catalog check, any
+// future exhaustive test — derive from one list instead of growing a
+// second one to maintain. A new code constant joins the constant blocks
+// above and this list in the same edit.
+func allCodes() []string {
+	return []string{
+		CodeWF001, CodeWF002, CodeWF003, CodeWF004, CodeWF005,
+		CodeWF010, CodeWF011, CodeWF012, CodeWF013, CodeWF014,
+		CodeWF020, CodeWF021, CodeWF022, CodeWF023, CodeWF024,
+		CodeWF025, CodeWF026, CodeWF027, CodeWF028, CodeWF029,
+		CodeWF030, CodeWF031, CodeWF032, CodeWF033, CodeWF034,
+		CodeWF035, CodeWF036, CodeWF037,
+	}
+}
+
 func Diagnose(err error) []Diagnostic {
 	if err == nil {
 		return nil
