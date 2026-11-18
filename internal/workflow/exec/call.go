@@ -100,6 +100,11 @@ func (r *Run) callStep(ctx context.Context, path string) (bool, error) {
 		return true, r.failTerminal(path, ReasonRuntimeError+": Runtime.Call: "+err.Error())
 	}
 	if !res.Succeeded {
+		// The child ran even though it did not succeed — its own records are
+		// the proof of what it did — so the node records the same id it would
+		// on success: the parent's trace points at the child's records either
+		// way (yaah-0u0v.25), and a failed child is not an unmentioned child.
+		st.CallRunID = res.ChildRunID
 		reason := ReasonCallFailed + ": subworkflow " + n.Workflow + " (run " + res.ChildRunID + ")"
 		if res.Reason != "" {
 			reason += " — " + res.Reason

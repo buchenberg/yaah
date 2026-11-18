@@ -101,14 +101,19 @@ type Runtime struct {
 	mu          sync.Mutex
 	completions map[string]exec.Completion
 	cancels     map[string]context.CancelFunc
-	// wake closes on every stored completion and is replaced, so a Block that
-	// started waiting cannot miss a completion; unnotified counts completions
-	// that arrived since the last Block returned, which is what keeps Block
-	// from both hanging on a completion it already saw and spinning without
-	// one.
-	wake       chan struct{}
-	unnotified int
-	requests   []dispatch.DispatchRequest
+	requests    []dispatch.DispatchRequest
+	// wake is closed on every stored completion and replaced, so a Block that
+	// started waiting cannot miss a completion; a completion that landed
+	// before a Block grabbed the current channel is one the channel's
+	// replacement already published, which is why the door keeps NO completion
+	// counter: a counter that Block RESETS (rather than decrements per store)
+	// survives a completion the scheduler read through Completed directly,
+	// and its stale count later makes Block return nil with nothing
+	// completable — a door malfunction the scheduler rightly abandons a
+	// running attempt over. The generation swap is the whole signal: closed
+	// before a wait means "a completion landed after the wait armed", and
+	// every nil is one store that just happened.
+	wake chan struct{}
 }
 
 // NewRuntime prepares a door. Runner must be non-nil.
@@ -207,24 +212,18 @@ func (rt *Runtime) Completed(h exec.Handle) (exec.Completion, bool) {
 
 // Block waits until at least one started attempt has become completable, or
 // ctx is done. It never returns nil without a completion behind it — the
-// scheduler treats that as a door malfunction, and a run that spins on it is the
-// failure this door must not produce — and it never waits past a completion that
-// landed between the scheduler's poll and this call, because that count is
-// carried across calls.
+// scheduler treats that as a door malfunction, and a run that spins on it is
+// the failure this door must not produce. The guarantee is the wake
+// channel's generation: a Block arms a wait on the channel the door holds at
+// arm time, and the only way that wait ends without ctx ending is a store
+// closing it — one completion that landed after the wait armed, still
+// outstanding and therefore still completable.
 func (rt *Runtime) Block(ctx context.Context) error {
 	rt.mu.Lock()
-	if rt.unnotified > 0 {
-		rt.unnotified = 0
-		rt.mu.Unlock()
-		return nil
-	}
 	ch := rt.wake
 	rt.mu.Unlock()
 	select {
 	case <-ch:
-		rt.mu.Lock()
-		rt.unnotified = 0
-		rt.mu.Unlock()
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -350,7 +349,6 @@ func (rt *Runtime) Requests() []dispatch.DispatchRequest {
 func (rt *Runtime) store(id string, c exec.Completion) {
 	rt.mu.Lock()
 	rt.completions[id] = c
-	rt.unnotified++
 	close(rt.wake)
 	rt.wake = make(chan struct{})
 	rt.mu.Unlock()
@@ -580,6 +578,14 @@ type Options struct {
 	SpecHash string
 	SpecPath string
 
+	// Door overrides the runtime the run executes against (yaah-0u0v.25).
+	// Nil composes the dispatch door from Runner, which is the only supported
+	// door for real work; the one caller that sets it is `workflow run
+	// --replay`, whose door answers from a recorded run's checkpoint. A
+	// replay door needs no Runner, which is the point: a replay that could
+	// reach a model would not be a replay.
+	Door exec.Runtime
+
 	// Now and Wait override the door's clock and backoff for deterministic
 	// tests.
 	Now  func() time.Time
@@ -616,17 +622,22 @@ func Execute(ctx context.Context, opts Options) (Result, error) {
 	if opts.Graph == nil {
 		return Result{}, errors.New("workflow/host: nil graph")
 	}
-	if opts.Runner == nil {
-		return Result{}, errors.New("workflow/host: no sub-agent runner configured")
+	rt := opts.Door
+	var real *Runtime
+	if rt == nil {
+		if opts.Runner == nil {
+			return Result{}, errors.New("workflow/host: no sub-agent runner configured")
+		}
+		real = NewRuntime(opts.Runner)
+		real.Retained = opts.Retained
+		real.Clock = opts.Now
+		real.Wait = opts.Wait
+		real.calls = opts.Calls
+		real.runStore = opts.Store
+		real.artifactRoot = opts.ArtifactRoot
+		real.callFrames = opts.callFrames
+		rt = real
 	}
-	rt := NewRuntime(opts.Runner)
-	rt.Retained = opts.Retained
-	rt.Clock = opts.Now
-	rt.Wait = opts.Wait
-	rt.calls = opts.Calls
-	rt.runStore = opts.Store
-	rt.artifactRoot = opts.ArtifactRoot
-	rt.callFrames = opts.callFrames
 	cfg := exec.Config{
 		RunID:    opts.RunID,
 		Params:   opts.Params,
@@ -646,8 +657,11 @@ func Execute(ctx context.Context, opts Options) (Result, error) {
 	}
 	res, err := run.Execute(ctx)
 	out := Result{
-		Run:     res,
-		Runtime: rt,
+		Run: res,
+		// A replay door is not the dispatch door: Result.Runtime stays nil
+		// for it, so Requests() reports an empty answer set rather than a
+		// type it cannot hold.
+		Runtime: real,
 	}
 	if err != nil {
 		return out, err
