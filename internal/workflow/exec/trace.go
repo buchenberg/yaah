@@ -115,13 +115,13 @@ func (r *Run) traceRecords(ev Event) []trace.Record {
 	case NodeSucceededEvent:
 		rec := r.nodeRecord(trace.KindNodeFinished, e.NodePath, trace.StatusSucceeded)
 		rec.OutputDigest = r.outputDigest(e.NodePath)
-		r.markCallChild(e.NodePath, rec)
+		rec = r.markCallChild(e.NodePath, rec)
 		return []trace.Record{rec}
 	case NodeFailedEvent:
 		rec := r.nodeRecord(trace.KindNodeFinished, e.NodePath, trace.StatusFailed)
 		rec.Reason = e.Reason
 		rec.OutputDigest = r.outputDigest(e.NodePath)
-		r.markCallChild(e.NodePath, rec)
+		rec = r.markCallChild(e.NodePath, rec)
 		return []trace.Record{rec}
 	case NodeSkippedEvent:
 		rec := r.nodeRecord(trace.KindNodeFinished, e.NodePath, trace.StatusSkipped)

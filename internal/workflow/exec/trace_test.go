@@ -79,3 +79,56 @@ func TestTraceRecordsEmitProposalAndSettle(t *testing.T) {
 		t.Errorf("settle records = %d, want at least 1", counts[trace.KindSettle])
 	}
 }
+
+// TestTraceFinishedCallRecordCarriesChildRunID pins the .23 residue on the
+// trace side: a call node's finished record must name the child run, so
+// `explain --from-trace` can follow the call without the checkpoint.
+func TestTraceFinishedCallRecordCarriesChildRunID(t *testing.T) {
+	t.Run("succeeded", func(t *testing.T) {
+		calls := map[string][]CallResult{
+			"helper": {{
+				Succeeded:  true,
+				ChildRunID: "caller!steps.sub",
+				Status:     RunSucceeded,
+				Outputs:    map[string]string{"summary": "done"},
+			}},
+		}
+		res, _ := runCallGraph(t, callYAML, Config{RunID: "caller"}, calls, nil)
+		if res.Status != RunSucceeded {
+			t.Fatalf("status = %s reason %q", res.Status, res.Reason)
+		}
+		assertChildRunIDOnFinished(t, res, "caller!steps.sub")
+	})
+	t.Run("failed", func(t *testing.T) {
+		calls := map[string][]CallResult{
+			"helper": {{
+				Succeeded:  false,
+				ChildRunID: "caller!steps.sub",
+				Status:     RunFailed,
+				Reason:     "boom",
+			}},
+		}
+		res, _ := runCallGraph(t, callYAML, Config{RunID: "caller"}, calls, nil)
+		if res.Status == RunSucceeded {
+			t.Fatalf("status = %s, want a failed child to sink the run", res.Status)
+		}
+		assertChildRunIDOnFinished(t, res, "caller!steps.sub")
+	})
+}
+
+func assertChildRunIDOnFinished(t *testing.T, res Result, want string) {
+	t.Helper()
+	saw := false
+	for _, r := range res.Records {
+		if r.Kind != trace.KindNodeFinished || r.NodePath != "steps.sub" {
+			continue
+		}
+		saw = true
+		if r.ChildRunID != want {
+			t.Errorf("finished record ChildRunID = %q, want %q", r.ChildRunID, want)
+		}
+	}
+	if !saw {
+		t.Fatalf("no finished trace record for steps.sub:\n%s", strings.Join(res.Events, "\n"))
+	}
+}
