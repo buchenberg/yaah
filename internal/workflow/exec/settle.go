@@ -80,6 +80,14 @@ type ProposalHandle struct {
 type ProposalRef struct {
 	ProposalID string `json:"proposal_id"`
 	Producer   string `json:"producer,omitempty"`
+	// Fields are the remaining bindings the source element carried beside
+	// the id. A settle whose where reads the SAME source as its proposals
+	// — the gate loop's collected check reports, each naming the fix
+	// proposal it verified and the verdict it reached — filters on them
+	// without any join across two steps' sets (yaah-0u0v.27). The three
+	// fields above stay first-class: they are the handle's identity, not
+	// element data.
+	Fields map[string]any `json:"fields,omitempty"`
 }
 
 // SettlePlan is one settle node's resolved work: the handles to dispose of, in
@@ -838,6 +846,13 @@ func refsFromValue(v any) ([]ProposalRef, string) {
 		}
 		return out, ""
 	case string:
+		// A collected product is often the producer's report text, and a
+		// structured report names its proposal inside a JSON body — the
+		// same decode-on-demand a selector's elementField applies, so a
+		// handle set and a field filter read one record (yaah-0u0v.27).
+		if obj, ok := decodeJSONObject(t); ok {
+			return refsFromValue(obj)
+		}
 		if s := strings.TrimSpace(t); s != "" {
 			return []ProposalRef{{ProposalID: s}}, ""
 		}
@@ -848,6 +863,7 @@ func refsFromValue(v any) ([]ProposalRef, string) {
 			if p, ok := t["producer"].(string); ok {
 				ref.Producer = p
 			}
+			ref.Fields = elementFields(t)
 			return []ProposalRef{ref}, ""
 		}
 		if list, ok := t["proposals"]; ok {
@@ -892,6 +908,24 @@ func applyFilter(refs []ProposalRef, sel *ir.Selector) ([]ProposalRef, string) {
 	return out, ""
 }
 
+// elementFields keeps the source element's bindings other than the handle
+// identity, so a same-source where can read what the element said about the
+// proposal it named (yaah-0u0v.27).
+func elementFields(t map[string]any) map[string]any {
+	out := make(map[string]any, len(t))
+	for k, v := range t {
+		switch k {
+		case "proposal_id", "id", "producer":
+			continue
+		}
+		out[k] = v
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func handleField(ref ProposalRef, field string) (any, string) {
 	switch field {
 	case "", "proposal_id", "id":
@@ -903,8 +937,13 @@ func handleField(ref ProposalRef, field string) (any, string) {
 		}
 		return ref.Producer, ""
 	}
+	if ref.Fields != nil {
+		if v, ok := ref.Fields[field]; ok {
+			return v, ""
+		}
+	}
 	return nil, ReasonSettleSourceUnavailable + fmt.Sprintf(
-		": a proposal handle carries no field %q; selecting a proposal by another step's verdict needs the join across two collects, which the scheduler does not perform yet", field)
+		": a proposal handle carries no field %q; the where reads a field its source element did not carry, or names a field of another step's set, which needs the join across two collects", field)
 }
 
 func predicateMatch(v any, p ir.Predicate) (bool, error) {

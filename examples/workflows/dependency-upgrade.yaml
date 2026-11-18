@@ -1,0 +1,119 @@
+# Dependency upgrade sweep — a real workflow, not a bench task (yaah-0u0v.27).
+#
+# Recurring chore it owns: `go get -u` a repo's direct dependencies, one
+# upgrade per retained proposal, each verified before anything lands. This is
+# the document a maintainer runs from inside a yaah session:
+#
+#     yaah workflow validate examples/workflows/dependency-upgrade.yaml
+#     yaah workflow explain  examples/workflows/dependency-upgrade.yaml
+#     yaah workflow run      examples/workflows/dependency-upgrade.yaml \
+#                           --param deps='["modernc.org/sqlite","gopkg.in/yaml.v3"]' \
+#                           --artifact-root .
+#
+# Shape, and why: `plan` inventories what the param names (or reads go.mod
+# itself), the fan-out makes one auditor per dependency, each auditor works
+# inside its own retained worktree and reports the upgrade plus a verdict,
+# and the settles dispose every proposal exactly once — apply what verified,
+# discard what did not, discard the plan's own scratch proposal. The call
+# isn't to a registry subworkflow because each audit differs only in its
+# parameter.
+
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: dependency-upgrade
+  version: 1.0.0
+
+spec:
+  params:
+    # A JSON list of direct dependencies to upgrade; when absent the plan
+    # step inventories go.mod itself.
+    deps:
+      type: string
+      required: false
+
+  defaults:
+    lane: proposal
+    network: deny_all
+    grants:
+      - path: go.mod
+        access: readwrite
+      - path: go.sum
+        access: readwrite
+
+  budgets:
+    max_dispatches: 24
+    max_concurrent_dispatches: 2
+    max_wall_clock_seconds: 3600
+
+  steps:
+    - id: plan
+      kind: delegate
+      role: developer
+      output: plan
+      prompt: |
+        Inventory the direct dependencies of this Go module and decide the
+        upgrade order. {{ params.deps }} names the dependencies to consider;
+        when it is empty, read go.mod and propose the direct requires.
+
+        Return ONLY a JSON object (no prose, no code fence):
+
+            {"dependencies": ["module-path", ...], "notes": "one line"}
+
+        Do not modify anything.
+
+    - id: audits
+      kind: fanout
+      needs: [plan]
+      over: { from: steps.plan.output.dependencies }
+      as: dep
+      max_parallel: 2
+      on_item_failure: collect_failures
+      collect: audits
+      body:
+        - id: audit
+          kind: delegate
+          role: developer
+          output: upgrade
+          prompt: |
+            Upgrade the dependency {{ dep }} to its latest patch release:
+            `go get {{ dep }}@latest`, then `go build ./...` and
+            `go test ./...` in your worktree.
+
+            Return ONLY a JSON object (no prose, no code fence):
+
+                {"verdict": "pass" or "fail", "reasons": [],
+                 "summary": "one line: what changed and what broke"}
+
+    - id: land
+      kind: settle
+      needs: [audits]
+      proposals: { from: steps.audits.collect }
+      where: { from: steps.audits.collect, field: verdict, equals: pass }
+      action: apply
+      policy: three_way
+      on_conflict: escalate
+      on_empty: skip
+
+    - id: reject
+      kind: settle
+      needs: [audits]
+      proposals: { from: steps.audits.collect }
+      where: { from: steps.audits.collect, field: verdict, equals: fail }
+      action: discard
+      on_empty: skip
+
+    - id: reset
+      kind: settle
+      needs: [plan]
+      proposals: { from: steps.plan.output.proposal_id }
+      action: discard
+      on_empty: skip
+
+    - id: report
+      kind: emit
+      needs: [land, reject, reset]
+      value: |
+        dependency-upgrade: {{ steps.land.output.settled }} proposal(s) applied,
+        {{ steps.reject.output.discarded }} discarded; audits: {{ steps.audits.collect }}
+      path: artifacts/dependency-upgrade.md

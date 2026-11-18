@@ -1,0 +1,55 @@
+# orch-recovery as a workflow document (bead yaah-0u0v.27).
+#
+# The task (../task.yaml) is the crash-recovery drill: a previous session died
+# with a live delegated worktree, and the answer file names the worktree the
+# recovery scan adopted. The IR mapping (../IR-MAPPING.md, G7) is right that
+# the ADOPTION itself is not a graph edge — it is a run-lifecycle step, the
+# `yaah shepherd` pre-run command. What a document CAN own here is the other
+# half of the drill: the delegation that runs the scan and reports the adopted
+# path, and the emit that turns the report into recovery.txt.
+#
+# The graph-level complement is durability elsewhere in the same surface: a
+# workflow run disciplined by --state is resumable (`yaah workflow resume`),
+# so a run that dies mid-graph continues from the node it stopped on without
+# re-dispatching completed work. CI pins both halves: this document's
+# report-the-adoption shape end to end, and a crashed run resumed to
+# completion with exactly the missing node re-dispatched (see
+# workflow_bench_spec_test.go).
+
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: orch-recovery
+  version: 1.0.0
+
+spec:
+  defaults:
+    lane: report
+
+  budgets:
+    max_dispatches: 4
+    max_concurrent_dispatches: 1
+    max_wall_clock_seconds: 900
+
+  steps:
+    - id: adopt
+      kind: delegate
+      role: developer
+      prompt: |
+        A previous session crashed while a delegated worktree was still live.
+        The durable supervision trace is at .orch-trace/trace.sqlite and the
+        stale worktree is under .orch-worktree/.
+
+        Run `yaah shepherd` in this workspace to scan and recover the
+        supervision state. The recovered worktree is live work: leave it on
+        disk, and do not touch anything under .orch-worktree/.
+
+        Then report ONLY one line, and nothing else:
+
+            adopted: <the absolute worktree path reported as adopted>
+
+    - id: recovery
+      kind: emit
+      needs: [adopt]
+      value: "{{ steps.adopt.output }}"
+      path: recovery.txt

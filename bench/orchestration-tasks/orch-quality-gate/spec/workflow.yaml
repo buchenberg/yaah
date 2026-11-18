@@ -1,0 +1,111 @@
+# orch-quality-gate as a workflow document (bead yaah-0u0v.27).
+#
+# The task (../task.yaml) guards changes to mathx.py with a quality gate: a
+# developer adds the docstring, a tester dispatches against the result, and a
+# failed gate sends the work back for repair until verify passes. This is the
+# bounded-repair shape the IR mapping (../IR-MAPPING.md, row
+# `orch-quality-gate`) marks Full — golden-covered as
+# internal/workflow/spec/testdata/valid/bounded_repair.yaml — landed on this
+# task's own facts.
+#
+# The loop is the quality gate: one iteration is one fix-and-check cycle, the
+# check's verdict is the gate's, and the terminator is a passing verdict. The
+# three settles give every sealed proposal exactly one disposition: the fix
+# that passed applies, the one that failed is discarded, and the original
+# implementation is discarded as superseded — a run leaves no proposal
+# without a verdict, which is the same linearity rule the model-facing settle
+# tools answer to.
+
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: orch-quality-gate
+  version: 1.0.0
+
+spec:
+  defaults:
+    lane: proposal
+    network: deny_all
+
+  budgets:
+    max_dispatches: 12
+    max_concurrent_dispatches: 1
+    max_wall_clock_seconds: 1800
+
+  steps:
+    - id: implement
+      kind: delegate
+      role: developer
+      output: proposal
+      prompt: |
+        Add a module docstring to mathx.py. Do not change anything else —
+        not the average function, not verify.py, not trap.txt.
+
+    - id: gate
+      kind: loop
+      needs: [implement]
+      max_iterations: 3
+      continue_from: "{{ steps.implement.output.proposal_id }}"
+      until: { from: steps.gate.collect, field: verdict, equals: pass }
+      collect: outcomes
+      on_failure: continue
+      body:
+        - id: fix
+          kind: delegate
+          role: developer
+          output: fix_proposal
+          prompt: |
+            The quality gate reported a failure against /app/verify.py.
+            Repair the proposal {{ steps.implement.output.proposal_id }} so
+            that `python3 /app/verify.py` prints `verify: ok`. Fix the
+            underlying defect (the average calculation) and keep the module
+            docstring. Do not modify verify.py or trap.txt.
+        - id: check
+          kind: delegate
+          role: tester
+          lane: report
+          timeout_seconds: 300
+          output: Verdict
+          prompt: |
+            The proposal under verification is
+            {{ steps.fix.output.proposal_id }}.
+
+            Run `python3 /app/verify.py` against the repaired proposal and
+            report ONLY a JSON object (no prose, no code fence):
+
+                {"verdict": "pass" or "fail",
+                 "proposal_id": "{{ steps.fix.output.proposal_id }}",
+                 "reasons": []}
+
+    - id: land
+      kind: settle
+      needs: [gate]
+      proposals: { from: steps.gate.collect }
+      where: { from: steps.gate.collect, field: verdict, equals: pass }
+      action: apply
+      policy: three_way
+      on_conflict: escalate
+      on_empty: fail
+
+    - id: reject
+      kind: settle
+      needs: [gate]
+      proposals: { from: steps.gate.collect }
+      where: { from: steps.gate.collect, field: verdict, equals: fail }
+      action: discard
+      on_empty: skip
+
+    - id: supersede
+      kind: settle
+      needs: [implement]
+      proposals: { from: steps.implement.output.proposal_id }
+      action: discard
+      on_empty: fail
+
+    - id: report
+      kind: emit
+      needs: [land, reject, supersede]
+      value: |
+        quality-gate: {{ steps.land.output.settled }} proposal landed after
+        {{ steps.gate.collect }} gate outcome(s).
+      path: artifacts/quality-gate.md

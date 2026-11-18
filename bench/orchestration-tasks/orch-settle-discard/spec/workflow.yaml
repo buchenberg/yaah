@@ -1,0 +1,50 @@
+# orch-settle-discard as a workflow document (bead yaah-0u0v.27).
+#
+# The task (../task.yaml) exercises the retained lane's discard path: delegate
+# the fizzbuzz work as a retained proposal, settle it with `discard`, and leave
+# /app exactly as found except for answer.txt naming the discarded proposal.
+#
+# The document IS the orchestration: the delegate node asks for the work on
+# the proposal lane, the settle node refuses it with the discard verb — nothing
+# of the sealed worktree lands; the worktree is destroyed, not parked — and the
+# emit writes the answer the bench verifier reads. The bench's
+# bench-orchestration.yaml pins retained mode and max_concurrency 1 for the
+# live run; that is host config, not graph shape.
+
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: orch-settle-discard
+  version: 1.0.0
+
+spec:
+  budgets:
+    max_dispatches: 4
+    max_concurrent_dispatches: 1
+    max_wall_clock_seconds: 1200
+
+  steps:
+    - id: build
+      kind: delegate
+      role: developer
+      lane: proposal
+      prompt: |
+        Create fizzbuzz.py at the repository root with a `fizzbuzz(n)` function
+        and a `if __name__ == "__main__"` block that prints the values 1..15.
+
+        Your work is returned as a retained proposal — write the file in your
+        workspace and report what you built. Do not touch README.md or trap.txt.
+
+    - id: discard
+      kind: settle
+      needs: [build]
+      proposals: { from: steps.build.output.proposal_id }
+      action: discard
+      on_conflict: escalate
+      on_empty: fail
+
+    - id: answer
+      kind: emit
+      needs: [discard]
+      value: "discarded: {{ steps.build.output.proposal_id }}"
+      path: answer.txt

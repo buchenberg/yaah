@@ -304,6 +304,17 @@ func traceDivergences(cp exec.Checkpoint, specPath string, a *workflowAnalysis, 
 		for _, in := range cp.Instances {
 			instances[in.Path] = true
 		}
+		// A declared body node is "recorded" when any of its instances is:
+		// a container never runs its body template once, it mints an
+		// instance per item or iteration (steps.l.body[0] as
+		// steps.l.iters[1].body[0]), and the instance carries the declared
+		// body path it instantiates (yaah-0u0v.27).
+		instantiated := make(map[string]bool, len(cp.Instances))
+		for _, in := range cp.Instances {
+			if in.BodyPath != "" {
+				instantiated[in.BodyPath] = true
+			}
+		}
 		recorded := map[string]bool{}
 		for _, n := range nodes {
 			if n == nil {
@@ -330,7 +341,7 @@ func traceDivergences(cp exec.Checkpoint, specPath string, a *workflowAnalysis, 
 					missWalk(n.Body)
 					continue
 				}
-				if !recorded[n.Path] {
+				if !recorded[n.Path] && !instantiated[n.Path] {
 					out = append(out, workflowDivergenceView{
 						Kind:     divSpecNodeMissing,
 						NodePath: n.Path,
