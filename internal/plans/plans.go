@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode"
+
+	"github.com/buchenberg/yaah/internal/atomicfile"
 )
 
 // Plan represents a discovered plan with its metadata and body.
@@ -397,7 +399,8 @@ func Edit(plan *Plan, description, status, body string) (string, error) {
 // over the target. An interrupted Edit used to truncate PLAN.md in place, and
 // the result is not merely a stale plan: a file whose frontmatter no longer
 // parses is skipped by discovery, so the plan disappeared with no diagnostic.
-// The rename is atomic on POSIX and on Windows via os.Rename.
+// The rename is atomic on POSIX and on Windows via os.Rename, where it also
+// waits out another handle's brief hold on the target (internal/atomicfile).
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	f, err := os.CreateTemp(filepath.Dir(path), ".PLAN-*.tmp")
 	if err != nil {
@@ -423,7 +426,7 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	return atomicfile.Replace(tmp, path)
 }
 
 // SetStatus updates only the status field of a plan's frontmatter.

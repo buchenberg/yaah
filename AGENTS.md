@@ -58,7 +58,8 @@ yaah/
 │   │   ├── recovery/            #   crash recovery for orphaned scopes
 │   │   ├── runner/              #   sub-agent dispatch wiring
 │   │   ├── subagent/            #   role definitions and registry
-│   │   └── supervision/         #   advisory rules and destructive guard
+│   │   └── supervision/        # advisory rules and destructive guard
+│   ├── atomicfile/              # atomic file replace (Windows replace-retry)
 │   ├── banner/                  # startup/status banner rendering
 │   ├── config/                  # config load, env substitution, validation
 │   ├── control/                 # typed control-plane messages (todos, questions, approvals)
