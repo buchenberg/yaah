@@ -173,6 +173,30 @@ type Record struct {
 	// what lets a replay assert that the output it re-derived is the output the
 	// run recorded, without comparing two copies of the text.
 	OutputDigest string `json:"output_digest,omitempty"`
+
+	// Error is the untruncated cause a status=error dispatch carried
+	// (yaah-0u0v.25). It is the fold's other half: the node's failure reason
+	// quotes both the typed stop reason and this body, so a replay that had
+	// only Reason would re-derive a reason the original never said.
+	Error string `json:"error,omitempty"`
+	// Retryable reports the recovery assert a failed dispatch carried, when
+	// the envelope asserted anything (yaah-0u0v.25). It is a pointer so
+	// "asserted retryable=false" stays distinct from "asserted nothing" —
+	// the retry decision reads exactly that difference.
+	Retryable *bool `json:"retryable,omitempty"`
+	// ChildRunID names the nested run a call node's record is about
+	// (yaah-0u0v.25): the parent's trace points at the child's own records
+	// through the same derivation the composition uses, so a reader can walk
+	// from the parent's record to the child's checkpoint without parsing
+	// prose. Empty on records that are not about a call.
+	ChildRunID string `json:"child_run_id,omitempty"`
+
+	// Files are the paths a disposition touched, when the settlement envelope
+	// reported them (yaah-0u0v.25). They ride the settle record for the same
+	// reason Result rides it: a replay reconstructs the recorded disposition
+	// — and the disposition's own record says which files it landed — rather
+	// than re-touching the world to find out.
+	Files []string `json:"files,omitempty"`
 }
 
 // Digest is the content address of a recorded output: the SHA-256 hex digest of

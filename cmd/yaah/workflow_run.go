@@ -52,6 +52,7 @@ type workflowRunOptions struct {
 	runID        string
 	artifactRoot string
 	statePath    string
+	replayRunID  string
 }
 
 func newWorkflowRunCmd() *cobra.Command {
@@ -92,6 +93,10 @@ Flags:
                        listed as warnings)
   --state path         persist the run's reducer state to this database so
                        'yaah workflow resume <run_id>' can continue it
+  --replay run_id      replay a COMPLETED run's recorded outputs from the
+                       --state database with no model calls: the same graph
+                       re-walked over the recorded answers, the original
+                       run left untouched (workflow_replay.go)
   --strict             warnings refuse the run like errors
   --json               the machine-readable run report
 
@@ -103,10 +108,15 @@ Flags:
 	cmd.Flags().StringVar(&opts.runID, "run-id", "", "label the run (default: minted from the graph name)")
 	cmd.Flags().StringVar(&opts.artifactRoot, "artifact-root", "", "resolve emit artifact paths under this directory")
 	cmd.Flags().StringVar(&opts.statePath, "state", "", "persist the run's reducer state to this database for `workflow resume`")
+	cmd.Flags().StringVar(&opts.replayRunID, "replay", "",
+		"replay a completed run's recorded outputs from the --state database with no model calls")
 	return cmd
 }
 
 func runWorkflowRun(cmd *cobra.Command, path string, opts workflowRunOptions) error {
+	if opts.replayRunID != "" {
+		return runWorkflowReplay(cmd, path, opts)
+	}
 	out := cmd.OutOrStdout()
 
 	calls, oerr := openWorkflowRegistry(opts.workflowRoot)

@@ -580,6 +580,14 @@ type Options struct {
 	SpecHash string
 	SpecPath string
 
+	// Door overrides the runtime the run executes against (yaah-0u0v.25).
+	// Nil composes the dispatch door from Runner, which is the only supported
+	// door for real work; the one caller that sets it is `workflow run
+	// --replay`, whose door answers from a recorded run's checkpoint. A
+	// replay door needs no Runner, which is the point: a replay that could
+	// reach a model would not be a replay.
+	Door exec.Runtime
+
 	// Now and Wait override the door's clock and backoff for deterministic
 	// tests.
 	Now  func() time.Time
@@ -616,17 +624,22 @@ func Execute(ctx context.Context, opts Options) (Result, error) {
 	if opts.Graph == nil {
 		return Result{}, errors.New("workflow/host: nil graph")
 	}
-	if opts.Runner == nil {
-		return Result{}, errors.New("workflow/host: no sub-agent runner configured")
+	rt := opts.Door
+	var real *Runtime
+	if rt == nil {
+		if opts.Runner == nil {
+			return Result{}, errors.New("workflow/host: no sub-agent runner configured")
+		}
+		real = NewRuntime(opts.Runner)
+		real.Retained = opts.Retained
+		real.Clock = opts.Now
+		real.Wait = opts.Wait
+		real.calls = opts.Calls
+		real.runStore = opts.Store
+		real.artifactRoot = opts.ArtifactRoot
+		real.callFrames = opts.callFrames
+		rt = real
 	}
-	rt := NewRuntime(opts.Runner)
-	rt.Retained = opts.Retained
-	rt.Clock = opts.Now
-	rt.Wait = opts.Wait
-	rt.calls = opts.Calls
-	rt.runStore = opts.Store
-	rt.artifactRoot = opts.ArtifactRoot
-	rt.callFrames = opts.callFrames
 	cfg := exec.Config{
 		RunID:    opts.RunID,
 		Params:   opts.Params,
@@ -646,8 +659,11 @@ func Execute(ctx context.Context, opts Options) (Result, error) {
 	}
 	res, err := run.Execute(ctx)
 	out := Result{
-		Run:     res,
-		Runtime: rt,
+		Run: res,
+		// A replay door is not the dispatch door: Result.Runtime stays nil
+		// for it, so Requests() reports an empty answer set rather than a
+		// type it cannot hold.
+		Runtime: real,
 	}
 	if err != nil {
 		return out, err

@@ -3,6 +3,7 @@ package exec
 import (
 	"strings"
 
+	"github.com/buchenberg/yaah/internal/workflow/ir"
 	"github.com/buchenberg/yaah/internal/workflow/trace"
 )
 
@@ -33,7 +34,9 @@ import (
 //	dispatch           attempt_completed                 attempt, dispatch id,
 //	                                                     lane, envelope status,
 //	                                                     stop reason (reason),
-//	                                                     result, output digest
+//	                                                     result, output digest,
+//	                                                     error body, retryable
+//	                                                     assert (yaah-0u0v.25)
 //	proposal           attempt_completed w/ proposal id  proposal id, attempt
 //	settle             settlement_asked                  proposal id, action,
 //	                                                     status=asked
@@ -45,7 +48,10 @@ import (
 //	                                                     is the run's own)
 //	node.finished      node_succeeded                    status, output digest
 //	                   node_failed, node_skipped,        status, reason,
-//	                   node_cancelled                    output digest
+//	                   node_cancelled                    output digest; a
+//	                                                     call node's record
+//	                                                     also names the child
+//	                                                     run (child_run_id)
 //	workflow.ended     run_finished                      run status, reason
 //
 // Events that project no record are the ones whose consequence is already
@@ -109,11 +115,13 @@ func (r *Run) traceRecords(ev Event) []trace.Record {
 	case NodeSucceededEvent:
 		rec := r.nodeRecord(trace.KindNodeFinished, e.NodePath, trace.StatusSucceeded)
 		rec.OutputDigest = r.outputDigest(e.NodePath)
+		r.markCallChild(e.NodePath, rec)
 		return []trace.Record{rec}
 	case NodeFailedEvent:
 		rec := r.nodeRecord(trace.KindNodeFinished, e.NodePath, trace.StatusFailed)
 		rec.Reason = e.Reason
 		rec.OutputDigest = r.outputDigest(e.NodePath)
+		r.markCallChild(e.NodePath, rec)
 		return []trace.Record{rec}
 	case NodeSkippedEvent:
 		rec := r.nodeRecord(trace.KindNodeFinished, e.NodePath, trace.StatusSkipped)
@@ -143,6 +151,7 @@ func (r *Run) traceRecords(ev Event) []trace.Record {
 		rec.Action = e.Settled.Action
 		rec.Reason = settledReason(e)
 		rec.Result = e.Settled.Outcome
+		rec.Files = e.Settled.Files
 		if e.Settled.Outcome != "" {
 			rec.OutputDigest = trace.Digest(e.Settled.Outcome)
 		}
@@ -205,6 +214,19 @@ func (r *Run) attemptRecords(e AttemptCompletedEvent) []trace.Record {
 	rec.Reason = firstSet(e.RuntimeError, c.StopReason, c.Error)
 	rec.Result = c.Result
 	rec.OutputDigest = trace.Digest(c.Result)
+	// The error body and the recovery assert are what the fold reads after
+	// Status: a node's failure reason quotes both, and a retry decision is
+	// exactly the difference between "asserted retryable" and "asserted
+	// nothing". They ride the dispatch record so a replay (yaah-0u0v.25)
+	// re-derives the run's own sequence — not one that fails where the
+	// original retried.
+	if c.Error != "" {
+		rec.Error = c.Error
+	}
+	if c.Recovery != nil {
+		retryable := c.Recovery.Retryable
+		rec.Retryable = &retryable
+	}
 	out := []trace.Record{rec}
 	if c.ProposalID != "" {
 		p := r.nodeRecord(trace.KindProposal, e.NodePath, status)
@@ -229,6 +251,22 @@ func (r *Run) nodeRecord(kind trace.Kind, path, status string) trace.Record {
 	}
 	if inst := r.instances[path]; inst != nil {
 		rec.ScopeID = inst.owner
+	}
+	return rec
+}
+
+// markCallChild points a call node's finished record at the child run's own
+// records (yaah-0u0v.25, the .23 residue): the id is derived from the parent's
+// run id, so the parent's trace can name the child without a second identity
+// scheme. It reads CallRunID, which callStep records when the door answers —
+// before the terminal event the record projects — so this still observes no
+// lifecycle state the fold of THAT event is about to change.
+func (r *Run) markCallChild(path string, rec trace.Record) trace.Record {
+	if n := r.byPath[path]; n == nil || n.Kind != ir.KindCall {
+		return rec
+	}
+	if st := r.state[path]; st != nil {
+		rec.ChildRunID = st.CallRunID
 	}
 	return rec
 }
