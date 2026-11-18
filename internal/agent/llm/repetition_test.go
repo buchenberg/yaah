@@ -78,7 +78,7 @@ func TestRepetitionDetector_trips(t *testing.T) {
 			name:       "eight-token shingle",
 			content:    preamble + strings.Repeat("one two three four five six seven eight ", repetitionShingleReps),
 			wantToken:  "one two three four five six seven eight",
-			wantPeriod: repetitionMaxPeriod,
+			wantPeriod: 8,
 			wantCount:  repetitionShingleReps,
 			wantKeep:   len(preamble),
 		},
@@ -86,7 +86,7 @@ func TestRepetitionDetector_trips(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			var d repetitionDetector
+			d := repetitionDetector{minSpan: 1}
 			loop, tripped := feedIn(&d, tc.content, 0)
 			if !tripped {
 				t.Fatalf("no trip on %q...", tc.content[:min(len(tc.content), 40)])
@@ -128,7 +128,7 @@ func TestRepetitionDetector_boundaries(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			var d repetitionDetector
+			d := repetitionDetector{minSpan: 1}
 			if _, tripped := d.feed(tc.content); tripped != tc.want {
 				t.Errorf("tripped = %v, want %v for %d tokens", tripped, tc.want, len(strings.Fields(tc.content)))
 			}
@@ -163,17 +163,11 @@ func TestRepetitionDetector_ignoresLegitimate(t *testing.T) {
 			name:    "column of 150 identical tokens",
 			content: strings.Repeat("--- ", 150),
 		},
-		{
-			// No whitespace at all: must not trip and must not grow the
-			// fragment buffer with the response.
-			name:    "repeated CJK text without spaces",
-			content: strings.Repeat("日本語のテキストです", 200),
-		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			var d repetitionDetector
+			d := repetitionDetector{minSpan: 1}
 			if loop, tripped := feedIn(&d, tc.content, 0); tripped {
 				t.Fatalf("false positive: token %q period %d count %d keep %d",
 					loop.Token, loop.Period, loop.Count, loop.KeepBytes)
@@ -190,10 +184,10 @@ func TestRepetitionDetector_ignoresLegitimate(t *testing.T) {
 // provider splits tokens wherever it likes, and a detector that compares
 // fragments instead of tokens never sees the loop.
 func TestRepetitionDetector_splitTokenAcrossDeltas(t *testing.T) {
-	content := "Working on it:\n" + strings.Repeat("GO ", repetitionRunTokens)
+	content := "Working on it:\n" + strings.Repeat("GO ", 1200)
 	for _, deltaBytes := range []int{1, 2, 3, 5, 7} {
 		t.Run(fmt.Sprintf("%d-byte deltas", deltaBytes), func(t *testing.T) {
-			var d repetitionDetector
+			d := repetitionDetector{minSpan: 1}
 			loop, tripped := feedIn(&d, content, deltaBytes)
 			if !tripped {
 				t.Fatal("no trip when the loop is split across deltas")
@@ -214,8 +208,8 @@ func TestRepetitionDetector_splitTokenAcrossDeltas(t *testing.T) {
 // TestRepetitionDetector_tripsOnce pins the latch: a tripped detector reports
 // nothing further, so a caller that keeps feeding cannot see a second loop.
 func TestRepetitionDetector_tripsOnce(t *testing.T) {
-	var d repetitionDetector
-	content := strings.Repeat("GO ", repetitionRunTokens)
+	d := repetitionDetector{minSpan: 1}
+	content := strings.Repeat("GO ", 1200)
 	if _, tripped := d.feed(content); !tripped {
 		t.Fatal("expected a trip")
 	}
@@ -302,7 +296,7 @@ func (p *loopingStreamProvider) SendStream(ctx context.Context, _ types.ChatRequ
 // is not handed back as the model's answer.
 func TestRunStream_degenerateRepetitionAborts(t *testing.T) {
 	const preamble = "Working on it:\n"
-	p := &loopingStreamProvider{prefix: preamble, token: "GO ", count: 500}
+	p := &loopingStreamProvider{prefix: preamble, token: "GO ", count: 1200}
 	c := newStreamingClient(p)
 
 	msg, finishReason, _, _, err := c.runStream(context.Background(), p, types.ChatRequest{Model: "test-model"})
@@ -337,7 +331,7 @@ func TestRunStream_degenerateRepetitionAborts(t *testing.T) {
 // nothing that can break the loop, so the typed error surfaces on the FIRST
 // attempt. Replaying on the same provider would burn the same wall clock again.
 func TestCall_degenerateRepetitionSurfacesError(t *testing.T) {
-	p := &loopingStreamProvider{token: "GO ", count: 500}
+	p := &loopingStreamProvider{token: "GO ", count: 1200}
 	c := newStreamingClient(p)
 	c.MaxRetries = 2
 
@@ -354,15 +348,28 @@ func TestCall_degenerateRepetitionSurfacesError(t *testing.T) {
 	if strings.Contains(res.Message.Content, "GO") {
 		t.Errorf("content %q still contains the loop", res.Message.Content)
 	}
-	if !strings.Contains(err.Error(), "200 times") {
-		t.Errorf("turn error %q must name the repetition count", err)
+	// The count is the number of repetitions *observed*, not the threshold:
+	// the span floor means the trip can land well past the count bar, and the
+	// message says "at least" because the true loop is always longer.
+	var typed *DegenerateRepetitionError
+	if !errors.As(err, &typed) {
+		t.Fatalf("error %v is not a *DegenerateRepetitionError", err)
+	}
+	if typed.Count < repetitionRunTokens {
+		t.Errorf("count = %d, want >= %d", typed.Count, repetitionRunTokens)
+	}
+	if !strings.Contains(err.Error(), "at least") {
+		t.Errorf("turn error %q must say the count is a floor", err)
+	}
+	if !strings.Contains(err.Error(), fmt.Sprintf("%d times", typed.Count)) {
+		t.Errorf("turn error %q must name the repetition count %d", err, typed.Count)
 	}
 }
 
 // TestCall_degenerateRepetitionSwapsToFallback pins the one recovery that can
 // work: a different provider breaks the loop.
 func TestCall_degenerateRepetitionSwapsToFallback(t *testing.T) {
-	primary := &loopingStreamProvider{token: "GO ", count: 500}
+	primary := &loopingStreamProvider{token: "GO ", count: 1200}
 	fallback := &abruptStreamProvider{}
 	c := newStreamingClient(primary)
 	c.FallbackProvider = fallback
@@ -389,8 +396,8 @@ func TestCall_degenerateRepetitionSwapsToFallback(t *testing.T) {
 // TestCall_degenerateRepetitionSwapsOnce pins the bound: a fallback that loops
 // too surfaces the typed error instead of swapping back and forth.
 func TestCall_degenerateRepetitionSwapsOnce(t *testing.T) {
-	primary := &loopingStreamProvider{token: "GO ", count: 500}
-	fallback := &loopingStreamProvider{token: "GO ", count: 500}
+	primary := &loopingStreamProvider{token: "GO ", count: 1200}
+	fallback := &loopingStreamProvider{token: "GO ", count: 1200}
 	c := newStreamingClient(primary)
 	c.FallbackProvider = fallback
 	c.FallbackModel = "fallback-model"

@@ -26,19 +26,28 @@ const maxAssistantContentBytes = 256 << 10
 // incomplete without mistaking the note for output.
 const assistantTruncationMarker = "\n…[yaah: assistant message truncated, %d bytes dropped]\n"
 
-// capAssistantContent bounds an assistant message's content, keeping the head
+// CapAssistantContent bounds an assistant message's content, keeping the head
 // and the tail and replacing the middle with a marker naming the dropped byte
 // count.
 //
 // Both ends survive because both carry meaning: the head holds what the answer
-// set out to say, the tail holds how it concluded. The message is capped here,
-// before it is appended and persisted, so the copy that re-enters the next
-// prompt is the capped one — a cap applied only at persistence would leave a
-// poisoned conversation in memory.
+// set out to say, the tail holds how it concluded. The message is capped at
+// creation, before it is appended and persisted, so the copy that re-enters the
+// next prompt is the capped one — a cap applied only at persistence would leave
+// a poisoned conversation in memory.
+//
+// It is exported because creation is not the only way a message enters a
+// conversation: a resumed session rebuilds its transcript from rows that may
+// predate the cap (see cmd/yaah/resume.go), and that replay path needs the same
+// bound or a session poisoned once stays poisoned for every future resume.
+//
+// Scope: the content field only. ReasoningContent and tool-call arguments are
+// not capped here — they are not what this guard was written for, and both are
+// bounded by the provider's output budget in the ordinary case.
 //
 // A message already within the cap is returned unchanged (same string, no
 // copy), so the common path costs one length comparison.
-func capAssistantContent(msg types.Message) types.Message {
+func CapAssistantContent(msg types.Message) types.Message {
 	if len(msg.Content) <= maxAssistantContentBytes {
 		return msg
 	}

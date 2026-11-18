@@ -24,6 +24,12 @@ type Client struct {
 	// later turn, so the replayed mixed history keeps failing on thinking-
 	// mode endpoints — and the classifier must keep naming the swap as the
 	// cause on every subsequent turn, not just the first (yaah-31j).
+	//
+	// The swap can also be triggered for reasons that have nothing to do with
+	// thinking blocks (a degenerate repetition loop, for one), so the flag is
+	// a fact about the provider, not a diagnosis: a later error whose text
+	// points at reasoning-strip advice may have been caused by an unrelated
+	// swap, and the advice names a fix that has already been applied.
 	swappedFromPrimary bool
 	// ProviderName / FallbackProviderName label the two providers in
 	// error envelopes. They are swapped together with Provider and

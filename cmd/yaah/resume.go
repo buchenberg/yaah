@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/buchenberg/yaah/internal/agent"
 	agentctx "github.com/buchenberg/yaah/internal/agent/context"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/memory"
@@ -98,10 +99,7 @@ func restoreSession(db sessionRestoreStore, resumeSessionID, systemPrompt string
 	if session.SystemPrompt != "" {
 		out.SystemPrompt = session.SystemPrompt
 	}
-	for _, m := range dbMsgs {
-		messages = append(messages, restoreMessage(m))
-	}
-	// The persisted summary is the conversation's anchor (yaah-an55):
+	messages = append(messages, restoreMessages(dbMsgs)...) // The persisted summary is the conversation's anchor (yaah-an55):
 	// hydrate it into the next compaction's prompt, and re-install its
 	// notice in the live transcript only when the transcript does not
 	// already carry it. A normal compaction rebases persistence to the
@@ -134,6 +132,25 @@ func restoreSession(db sessionRestoreStore, resumeSessionID, systemPrompt string
 	out.SessionID = resumeSessionID
 	out.MsgIdx = len(dbMsgs)
 	return out, nil
+}
+
+// restoreMessages maps persisted rows back into conversation messages for a
+// resume, applying the assistant-content cap on the way in.
+//
+// A row written before the creation-time cap existed can be any size (the
+// 2.78 MB repetition loop that motivated the cap is one of them), and a
+// restored transcript IS the next prompt: replaying an unbounded row re-poisons
+// every turn for the rest of the session's life, and every later resume.
+func restoreMessages(rows []memory.Message) []types.Message {
+	out := make([]types.Message, 0, len(rows))
+	for _, m := range rows {
+		msg := restoreMessage(m)
+		if msg.Role == "assistant" {
+			msg = agent.CapAssistantContent(msg)
+		}
+		out = append(out, msg)
+	}
+	return out
 }
 
 // transcriptCarriesSummary reports whether the restored transcript already

@@ -218,15 +218,25 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 				signature.WriteString(delta.ReasoningSignature)
 			}
 
+			// The guard watches content only. The two sibling channels this
+			// loop also accumulates — ReasoningContent above and
+			// ToolCalls[].Function.Arguments below — are neither fed nor
+			// capped here, so a thinking model looping on the thinking
+			// channel, or a tool argument blob that is valid JSON, is bounded
+			// only by the provider's output budget (tracked separately; see
+			// the note in internal/agent/message_cap.go).
 			if delta.Content != "" {
-				// Fed before the delta is accumulated, so a looping delta never
-				// reaches the view and the accumulator is truncated to the text
-				// that preceded the loop. The rest of the stream is abandoned
+				// Accumulated before it is fed: the detector reports the offset
+				// where the loop started, and a provider that emits its whole
+				// loop in one delta would otherwise leave nothing to keep —
+				// truncation would clamp to an empty string. The looping text
+				// is then truncated away by abortRepetition, so it never
+				// becomes the answer. The rest of the stream is abandoned
 				// rather than drained: draining would re-append the loop.
+				content.WriteString(delta.Content)
 				if loop, tripped := repetition.feed(delta.Content); tripped {
 					return abortRepetition(streamSpan, &content, loop, responseModel, totalUsage)
 				}
-				content.WriteString(delta.Content)
 				tokenCount++
 				if c.OnToken != nil {
 					if clean := dsmlFilter.filterToken(delta.Content); clean != "" {

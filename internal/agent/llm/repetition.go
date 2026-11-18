@@ -38,9 +38,16 @@ import (
 //     unit is nobody's deliberate output. (A 64-row table of identical rows
 //     would trip the period for that row's width — accepted, that output is
 //     degenerate whatever produced it.)
-//   - repetitionMaxPeriod (8): the longest shingle considered. Detection is
-//     already unambiguous at 64 repetitions of 8 tokens, and a longer period
-//     costs proportional look-back for no extra signal.
+//   - repetitionMaxPeriod (32): the longest shingle considered. The look-back
+//     is the fixed ring below, so a longer period costs a few KB of memory
+//     and nothing per byte; capping it lower would leave a whole class of
+//     loop undetected (a model repeating a 9-token sentence or a small JSON
+//     object matches no shorter period and would run unbounded).
+//   - repetitionMinSpanBytes (2 KiB): the loop must span this much text
+//     before it trips, whatever its repetition count. The count thresholds
+//     alone are byte-blind: 200 consecutive "0 " tokens is 400 bytes, which a
+//     legitimate single-column data dump reaches, and truncating a correct
+//     answer is worse than catching a short loop late.
 //
 // Period 1 is rule (a) with the 200 threshold rather than rule (b) with 64: a
 // column of identical tokens is legitimate output far more often than a
@@ -49,11 +56,14 @@ import (
 const (
 	repetitionRunTokens     = 200
 	repetitionShingleReps   = 64
-	repetitionMaxPeriod     = 8
-	repetitionRing          = 16 // > repetitionMaxPeriod, so a compared cell is never yet overwritten
+	repetitionMaxPeriod     = 32
+	repetitionRing          = 64 // > repetitionMaxPeriod, so a compared cell is never yet overwritten
 	repetitionTokenBytes    = 128
-	repetitionFragmentBytes = 1024
+	repetitionFragmentBytes = 4096
 	repetitionDescribeBytes = 160
+	// repetitionMinSpanBytes is the byte floor a loop must span before it
+	// trips (see the rationale above).
+	repetitionMinSpanBytes = 2048
 )
 
 // ErrDegenerateRepetition is the sentinel for a model trapped in a repetition
@@ -84,8 +94,11 @@ func (e *DegenerateRepetitionError) Error() string {
 	if e.Period > 1 {
 		unit = fmt.Sprintf("%d-token pattern %q", e.Period, e.Token)
 	}
+	// "at least": the detector trips on the first crossing of a threshold, so
+	// Count is the threshold, never the true length of the loop (the incident
+	// behind this guard ran to 334,144 repetitions).
 	return fmt.Sprintf(
-		"degenerate repetition: the model repeated the same %s %d times in a row; the stream was aborted at %d bytes of output and the looping text was discarded. Replaying the same request against the same model reproduces the loop, so change the prompt or temperature, or switch model/provider",
+		"degenerate repetition: the model repeated the same %s at least %d times in a row; the stream was aborted at %d bytes of output and the looping text was discarded. Replaying the same request against the same model reproduces the loop, so change the prompt or temperature, or switch model/provider",
 		unit, e.Count, e.KeptBytes)
 }
 
@@ -114,24 +127,6 @@ func repetitionTripRepeats(period int) int {
 		return repetitionRunTokens
 	}
 	return repetitionShingleReps
-}
-
-// repetitionSubPeriods lists, for each period, its proper divisors. A
-// period-p run that is really a run of a smaller period q must be counted under
-// q, not under p: all identical tokens are period 1, and without this gate a
-// 127-token identical run would trip as a "period 2" loop long before rule (a)'s
-// 200-token bar. Attributing the run to the primitive period is safe because
-// the smaller period's threshold is smaller and therefore reaches it first.
-// Proper divisors are sufficient: a shingle that is both p- and q-periodic is
-// gcd(p, q)-periodic over the tens of tokens such a run spans.
-var repetitionSubPeriods = [repetitionMaxPeriod + 1][]int{
-	2: {1},
-	3: {1},
-	4: {1, 2},
-	5: {1},
-	6: {1, 2, 3},
-	7: {1},
-	8: {1, 2, 4},
 }
 
 // repetitionCell is one remembered token: its byte offset in the accumulated
@@ -169,8 +164,75 @@ type repetitionDetector struct {
 	// starts[p] is the content offset where the current period-p run's
 	// repeated span begins — the offset to keep when that period trips.
 	starts [repetitionMaxPeriod + 1]int
+	// frag holds the trailing window of a whitespace-free run, so a loop
+	// whose period does not divide the chunk size is still detectable.
+	frag []byte
+	// fail is the KMP failure table scratch for byteLoop, grown once.
+	fail []int
+	// minSpan overrides repetitionMinSpanBytes when positive. Production
+	// leaves it zero; a test that pins the count thresholds in isolation
+	// sets it to 1 so a 600-byte fixture does not also have to satisfy the
+	// byte floor.
+	minSpan int
 	// tripped latches; a tripped detector ignores further input.
 	tripped bool
+}
+
+// spanFloor is the byte span a loop must cover before it trips.
+func (d *repetitionDetector) spanFloor() int {
+	if d.minSpan > 0 {
+		return d.minSpan
+	}
+	return repetitionMinSpanBytes
+}
+
+// byteLoop reports a loop in the trailing window of a whitespace-free run.
+//
+// The window ends at absEnd; its bytes are d.frag, so its first byte sits at
+// absEnd-len(d.frag) in the accumulated content — which is what to keep when
+// the window is itself the loop.
+//
+// The period is found with the KMP failure function: n-fail[n-1] is the minimal
+// period p with s[i] == s[i-p] for every i >= p, for text with no whitespace at
+// all the only structure available. One O(n) scan per window costs nothing per
+// byte, and it catches the shapes the token path cannot see — a repeated
+// sentence in a script without spaces, a minified object, a repeated JSON
+// fragment.
+func (d *repetitionDetector) byteLoop(winStart int) (repetitionLoop, bool) {
+	s := d.frag
+	n := len(s)
+	if n < d.spanFloor() || winStart < 0 {
+		return repetitionLoop{}, false
+	}
+	if cap(d.fail) < n {
+		d.fail = make([]int, n)
+	}
+	fail := d.fail[:n]
+	for i := 1; i < n; i++ {
+		k := fail[i-1]
+		for k > 0 && s[i] != s[k] {
+			k = fail[k-1]
+		}
+		if s[i] == s[k] {
+			k++
+		}
+		fail[i] = k
+	}
+	period := n - fail[n-1]
+	if period <= 0 {
+		return repetitionLoop{}, false
+	}
+	reps := n / period
+	if reps < repetitionShingleReps {
+		return repetitionLoop{}, false
+	}
+	unit := s[n-period:]
+	return repetitionLoop{
+		KeepBytes: winStart,
+		Token:     truncateAtRuneBoundary(string(unit), repetitionDescribeBytes),
+		Count:     reps,
+		Period:    1,
+	}, true
 }
 
 // feed consumes one streamed content delta and reports a loop when it detects
@@ -201,11 +263,24 @@ func (d *repetitionDetector) feed(delta string) (repetitionLoop, bool) {
 			continue
 		}
 		if i-from+1 >= repetitionFragmentBytes {
-			// A whitespace-free run is cut into fixed-size tokens at the
-			// bound instead of growing the buffer with the response. The
-			// cut is deterministic (counted from the run's first byte), so
-			// a periodic blob still produces equal chunks.
-			if loop, tripped := d.token(d.pending[from:i+1], base+from); tripped {
+			// A whitespace-free run — CJK prose, minified JSON, a data blob
+			// — has no tokens to count, and cutting it into fixed-size
+			// chunks hides a loop whose period does not divide the chunk
+			// size (a 30-byte sentence shifts 4 bytes per chunk, so no two
+			// chunks ever match). Keep the chunk in the token ring for the
+			// period-1 case and run the byte-level periodicity check over the
+			// trailing window as well.
+			chunkOff := base + from
+			if loop, tripped := d.token(d.pending[from:i+1], chunkOff); tripped {
+				d.tripped = true
+				return loop, true
+			}
+			d.frag = append(d.frag, d.pending[from:i+1]...)
+			if len(d.frag) > repetitionFragmentBytes {
+				n := copy(d.frag, d.frag[len(d.frag)-repetitionFragmentBytes:])
+				d.frag = d.frag[:n]
+			}
+			if loop, tripped := d.byteLoop(base + i + 1 - len(d.frag)); tripped {
 				d.tripped = true
 				return loop, true
 			}
@@ -260,8 +335,16 @@ func (d *repetitionDetector) token(tok []byte, off int) (repetitionLoop, bool) {
 		}
 		// k consecutive alignment steps span k+p tokens, which is
 		// floor(k/p)+1 repetitions of the p-shingle. Trip when that
-		// reaches the threshold for this period.
+		// reaches the threshold for this period, and only once the loop
+		// spans enough text for the count to mean something: the count
+		// thresholds are byte-blind, so a short-token run would otherwise
+		// truncate a legitimate column of data (see
+		// repetitionMinSpanBytes). A span that is too short is not a
+		// rejection — counting continues, and the next token re-checks.
 		if d.counts[p] >= (repetitionTripRepeats(p)-1)*p {
+			if d.fed-d.starts[p] < d.spanFloor() {
+				continue
+			}
 			d.tripped = true
 			return repetitionLoop{
 				KeepBytes: d.starts[p],
@@ -276,8 +359,19 @@ func (d *repetitionDetector) token(tok []byte, off int) (repetitionLoop, bool) {
 
 // nonPrimitive reports that the period-p run in progress is really a run of a
 // smaller period dividing p, which owns the report and has the lower threshold.
+//
+// All identical tokens are period 1, and without this gate a 127-token
+// identical run would trip as a "period 2" loop long before rule (a)'s 200-token
+// bar. Attributing the run to the primitive period is safe because the smaller
+// period's threshold is smaller and therefore reaches it first. Proper divisors
+// are sufficient: a shingle that is both p- and q-periodic is gcd(p, q)-periodic
+// over the tens of tokens such a run spans. Divisors are computed rather than
+// tabulated so the period bound stays a one-line change.
 func (d *repetitionDetector) nonPrimitive(p int) bool {
-	for _, q := range repetitionSubPeriods[p] {
+	for q := 1; q < p; q++ {
+		if p%q != 0 {
+			continue
+		}
 		// counts[q] >= p means the q-periodic run already spans the last
 		// p tokens, so the p-shingle carries no structure of its own.
 		if d.counts[q] >= p {

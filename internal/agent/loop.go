@@ -407,7 +407,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 			// Bound the message before it joins the conversation: the
 			// appended copy is what re-enters the next prompt, and the
 			// persisted row must match it (yaah-hge6).
-			msg = capAssistantContent(msg)
+			msg = CapAssistantContent(msg)
 			messages = append(messages, msg)
 			l.Persister.Persist(msg)
 			if traceMw != nil {

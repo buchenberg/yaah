@@ -446,6 +446,20 @@ func (s *agentSession) close() {
 // shutdown is the teardown body; callers must go through close.
 func (s *agentSession) shutdown() {
 	ctx := context.Background()
+	// The session row is written FIRST, before anything in this function can
+	// block. Teardown is bounded but not short — three drains of up to 30s
+	// each — and the termination-signal funnel races it, so a row written at
+	// the end is a row that a second Ctrl-C, a terminal close or a hang can
+	// turn back into ended_at = 0 (the reported bug shape). Ended_at, the
+	// usage attribution and the evidence `yaah sessions list` and a resume
+	// read are durable from the first moment of teardown; later usage flushes
+	// keep updating the same row monotonically, which is why one early write
+	// is enough.
+	if s.db != nil {
+		if err := endSessionRow(s.db, s.sessionID, time.Now().Unix(), s.totalUsage, s.subUsage); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: session %s left unclosed in the store: %v\n", s.sessionID, err)
+		}
+	}
 	// Signal wake delivery that the session is going away before anything
 	// blocks in teardown. A watch poller may be mid-delivery on followupCh;
 	// closeCh is what unblocks that send, and wakeCancel stops a turn that
@@ -585,19 +599,8 @@ func (s *agentSession) shutdown() {
 			s.traceStore, s.traceBus = nil, nil
 		}
 	}
-	// The session row is the durable record of the exit — ended_at, the final
-	// usage attribution, and the evidence `yaah sessions list` and a resume
-	// read. It is written BEFORE any view notification: the old ordering sent
-	// control.Done on a blocking channel first, so a teardown with no live
-	// consumer (the TUI after app.Run returns, a headless session whose
-	// channel filled) could hang here forever and leave ended_at at 0. A
-	// failed write is reported, never swallowed: a session that ends without
-	// its row is a bug the operator should see.
-	if s.db != nil {
-		if err := endSessionRow(s.db, s.sessionID, time.Now().Unix(), s.totalUsage, s.subUsage); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: session %s left unclosed in the store: %v\n", s.sessionID, err)
-		}
-	}
+	// The row write above already made the exit durable; the view is told
+	// here only so a live consumer clears its status line.
 	s.mu.RLock()
 	ch := s.ctrlCh
 	s.mu.RUnlock()
@@ -662,10 +665,22 @@ func (s *agentSession) CloseOnInterrupt() (stop func()) {
 // first signal it closes the session (making ended_at, usage and the
 // transcript durable) and only then exits; a channel closed without a signal
 // — the driver's stop — returns with nothing closed and no exit.
+//
+// Closing is not instant (the teardown drains bounded background work, up to a
+// minute), so the first signal says what it is waiting for and a second signal
+// exits immediately: signals must stay an escape hatch. The row write is the
+// first thing teardown does, which is what keeps the second-signal path from
+// losing ended_at.
 func handleTerminationSignal(sigs <-chan os.Signal, closeFn func(), exitFn func(int)) {
 	if _, ok := <-sigs; !ok {
 		return
 	}
+	fmt.Fprintf(os.Stderr, "\ninterrupt: closing the session, this can take up to a minute; press Ctrl-C again to exit immediately\n")
+	go func() {
+		if _, ok := <-sigs; ok {
+			exitFn(interruptExitCode)
+		}
+	}()
 	closeFn()
 	exitFn(interruptExitCode)
 }
