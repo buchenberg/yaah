@@ -13,6 +13,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/workflow/validate"
 	"github.com/spf13/cobra"
+	"path/filepath"
 )
 
 // Tests for the workflow validate/explain CLI (bead yaah-0u0v.9).
@@ -116,7 +117,10 @@ func TestWorkflowValidateRejectsAdversarial(t *testing.T) {
 		status string
 		codes  []string
 	}{
-		{"call_self_no_max_depth.yaml", "invalid", []string{"WF003"}},
+		// WF003 for the unbounded self-recursion; WF002 because a call
+		// without --workflow-root resolves nothing, which is fail-closed and
+		// says so (yaah-0u0v.23).
+		{"call_self_no_max_depth.yaml", "invalid", []string{"WF002", "WF003"}},
 		{"dangling_needs.yaml", "unresolved", []string{"WF001"}},
 		{"duplicate_body_output_names.yaml", "invalid", []string{"WF005", "WF034"}},
 		{"duplicate_output_names.yaml", "invalid", []string{"WF005"}},
@@ -731,4 +735,133 @@ spec:
 			t.Errorf("width missing from the subgraph label:\n%s", m)
 		}
 	})
+}
+
+// ---------------------------------------------------------------- call nodes
+
+// wfCallRoot writes a named subworkflow set into a temp directory and returns
+// the root path. Each doc maps name -> file body; names ending .json keep
+// their extension, everything else writes <name>.yaml.
+func wfCallRoot(t *testing.T, docs map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	for name, body := range docs {
+		path := filepath.Join(root, name+".yaml")
+		if strings.HasSuffix(name, ".json") {
+			path = filepath.Join(root, name)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+const wfCallParent = `apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata: {name: callparent}
+spec:
+  steps:
+    - {id: plan, kind: delegate, role: developer, prompt: plan}
+    - {id: sub, kind: call, workflow: helper, needs: [plan], params: {task: "{{ steps.plan.output }}"}}
+    - {id: report, kind: emit, needs: [sub], value: "{{ steps.sub.output.summary }}"}
+`
+
+const wfCallHelper = `apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata: {name: helper}
+spec:
+  params:
+    task: {type: string, required: true}
+  steps:
+    - {id: work, kind: delegate, role: developer, prompt: "do {{ params.task }}"}
+    - {id: summary, kind: emit, needs: [work], value: "done"}
+`
+
+// TestWorkflowValidateCallsWithRegistry pins the CLI's --workflow-root: a
+// document that calls a named subworkflow validates clean against a registry
+// that resolves it, and the same document is refused fail-closed without the
+// flag.
+func TestWorkflowValidateCallsWithRegistry(t *testing.T) {
+	root := wfCallRoot(t, map[string]string{"helper": wfCallHelper})
+	spec := filepath.Join(root, "parent.yaml")
+	if err := os.WriteFile(spec, []byte(wfCallParent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Without the flag: fail closed, and the finding says what to pass.
+	out, err := runWfValidate(t, spec)
+	if err == nil {
+		t.Fatalf("validate without --workflow-root exited clean:\n%s", out)
+	}
+	if !strings.Contains(out, "WF002") || !strings.Contains(out, "--workflow-root") {
+		t.Errorf("the fail-closed finding does not name the flag:\n%s", out)
+	}
+
+	// With the flag: the named call resolves, the child validates like the
+	// root, and the parent is valid.
+	out, err = runWfValidate(t, "--workflow-root", root, spec)
+	if err != nil {
+		t.Fatalf("validate --workflow-root: %v\noutput:\n%s", err, out)
+	}
+	if !statusValidRE.MatchString(out) {
+		t.Errorf("expected 'status valid' line, got:\n%s", out)
+	}
+}
+
+// TestWorkflowValidateCallChildFindings pins child attribution: a subworkflow
+// under the root that carries its own defect reports that defect through the
+// parent's report, prefixed with the document that carries it — a call into
+// a broken workflow is a finding in the caller's analysis.
+func TestWorkflowValidateCallChildFindings(t *testing.T) {
+	root := wfCallRoot(t, map[string]string{
+		"helper": strings.Replace(wfCallHelper, "needs: [work]", "needs: ghoststep", 1),
+	})
+	spec := filepath.Join(root, "parent.yaml")
+	if err := os.WriteFile(spec, []byte(wfCallParent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runWfValidate(t, "--workflow-root", root, spec)
+	if err == nil {
+		t.Fatalf("a broken child validated clean:\n%s", out)
+	}
+	if !strings.Contains(out, "WF002") || !strings.Contains(out, "subworkflow helper: ") {
+		t.Errorf("the child's finding is not attributed to the subworkflow:\n%s", out)
+	}
+}
+
+// TestWorkflowValidateCallCycle pins the cross-document refusal through the
+// CLI: two documents calling each other are one WF003 no registry can bless.
+func TestWorkflowValidateCallCycle(t *testing.T) {
+	root := wfCallRoot(t, map[string]string{
+		"cya": "apiVersion: yaah.workflow/v1\nkind: Workflow\nmetadata: {name: cya}\nspec:\n" +
+			"  steps:\n    - {id: sub, kind: call, workflow: cyb}\n",
+		"cyb": "apiVersion: yaah.workflow/v1\nkind: Workflow\nmetadata: {name: cyb}\nspec:\n" +
+			"  steps:\n    - {id: sub, kind: call, workflow: cya}\n",
+	})
+	spec := filepath.Join(root, "cya.yaml")
+	out, err := runWfValidate(t, "--workflow-root", root, spec)
+	if err == nil {
+		t.Fatalf("a cross-document cycle validated clean:\n%s", out)
+	}
+	if !strings.Contains(out, "WF003") || !strings.Contains(out, "cya -> cyb -> cya") {
+		t.Errorf("the cycle finding does not name the loop:\n%s", out)
+	}
+}
+
+// TestWorkflowValidateCallTraversalName pins containment through the CLI: a
+// call whose name is a path shape is refused as a name, registry or not.
+func TestWorkflowValidateCallTraversalName(t *testing.T) {
+	root := wfCallRoot(t, map[string]string{"helper": wfCallHelper})
+	spec := filepath.Join(root, "parent.yaml")
+	if err := os.WriteFile(spec, []byte(strings.Replace(wfCallParent, "workflow: helper", `workflow: "../secrets"`, 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runWfValidate(t, "--workflow-root", root, spec)
+	if err == nil {
+		t.Fatalf("a traversal-shaped call name validated clean:\n%s", out)
+	}
+	if !strings.Contains(out, "WF002") || !strings.Contains(out, "not a subworkflow name") {
+		t.Errorf("the traversal refusal is not the name-shape finding:\n%s", out)
+	}
 }

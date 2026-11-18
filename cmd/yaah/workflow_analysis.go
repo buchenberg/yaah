@@ -12,6 +12,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/buchenberg/yaah/internal/workflow/registry"
 	"github.com/buchenberg/yaah/internal/workflow/spec"
 	"github.com/buchenberg/yaah/internal/workflow/validate"
 	"github.com/buchenberg/yaah/internal/worldinfo"
@@ -65,6 +66,11 @@ type workflowAnalysis struct {
 
 	graph *ir.Graph
 	env   validate.Env
+	// calls is the --workflow-root registry the document's call nodes were
+	// resolved against (yaah-0u0v.23), present only when the command was
+	// given one. A document with calls is misvalidated without it, so the
+	// run commands hand the same registry to the host door.
+	calls *registry.Registry
 
 	// params is every declared parameter with the effective value the CLI
 	// resolved for it, in name order.
@@ -112,17 +118,21 @@ func (a *workflowAnalysis) status() string {
 // authoring document, resolves the graph, and runs every family: Structural,
 // Values, Linearity (the three validate.Validate itself runs), then
 // Authority and Cost through Explain — which also yields the two summaries
-// explain reports — and finally Prove for the settlement dispositions.
+// explain reports — and finally Prove for the settlement dispositions. With
+// a registry (yaah-0u0v.23) the Calls family runs too, against the
+// subworkflows --workflow-root loaded, and every loaded entry's own findings
+// join the report attributed to the document that carries them.
 //
 // A returned error means the analysis could not run at all: the file is
-// missing or unreadable, oversized, or a --param was malformed. A document
-// that decodes badly is NOT an error: it is one WF001 finding, reported
-// like every other finding.
-func analyzeWorkflow(path string, rawParams []string, env validate.Env, strict bool) (*workflowAnalysis, error) {
+// missing or unreadable, oversized, a --param was malformed, or a --workflow-root
+// that is not a readable directory. A document that decodes badly is NOT an
+// error: it is one WF001 finding, reported like every other finding.
+func analyzeWorkflow(path string, rawParams []string, env validate.Env, strict bool, calls *registry.Registry) (*workflowAnalysis, error) {
 	a := &workflowAnalysis{
 		path:     path,
 		strict:   strict,
 		env:      env,
+		calls:    calls,
 		errors:   []validate.Diagnostic{},
 		warnings: []validate.Diagnostic{},
 	}
@@ -164,9 +174,20 @@ func analyzeWorkflow(path string, rawParams []string, env validate.Env, strict b
 	}
 	a.graph = g
 
+	if calls != nil {
+		// The registry must be attached before Explain prices the graph:
+		// WF033's call expansion reads the children the registry loaded.
+		env.Calls = calls
+		a.env.Calls = calls
+		calls.Walk(g)
+	}
 	findings := validate.Structural(g)
 	findings = append(findings, validate.Values(doc, g)...)
 	findings = append(findings, validate.Linearity(g)...)
+	findings = append(findings, validate.Calls(g, env)...)
+	if calls != nil {
+		findings = append(findings, subworkflowFindings(calls)...)
+	}
 	ex := validate.Explain(g, env)
 	findings = append(findings, ex.Diagnostics...)
 	a.authority, a.cost = ex.Authority, ex.Cost
@@ -181,6 +202,34 @@ func analyzeWorkflow(path string, rawParams []string, env validate.Env, strict b
 		}
 	}
 	return a, nil
+}
+
+// subworkflowFindings collects the loaded entries' own facts for the report:
+// a document's findings, prefixed with the name and file so a reader sees
+// which document under --workflow-root carries them, and a load failure as
+// the WF001 it is. Findings stay exactly what the validator families said —
+// the prefix is attribution, not judgement.
+func subworkflowFindings(calls *registry.Registry) []validate.Diagnostic {
+	var out []validate.Diagnostic
+	for _, name := range calls.Names() {
+		e, ok := calls.Lookup(name)
+		if !ok {
+			continue
+		}
+		label := "subworkflow " + name + ": "
+		if e.Err != nil {
+			out = append(out, validate.Diagnostic{
+				Code:    validate.CodeWF001,
+				Message: label + e.Err.Error(),
+			})
+			continue
+		}
+		for _, d := range e.Findings {
+			d.Message = label + d.Message
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // sortWorkflowFindings orders findings by code, then path, then message.
@@ -200,6 +249,24 @@ func sortWorkflowFindings(diags []validate.Diagnostic) {
 		}
 		return a.Message < b.Message
 	})
+}
+
+// openWorkflowRegistry resolves the --workflow-root flag into the registry a
+// document's call nodes validate against (yaah-0u0v.23). An empty root is a
+// nil registry and no error — a document with no calls needs none, and a
+// document with calls reports every one as unresolvable, which is the
+// fail-closed finding that says to pass the flag. A root that will not open
+// is an error the command reports before any analysis: a registry the host
+// cannot read makes every call a guess.
+func openWorkflowRegistry(root string) (*registry.Registry, error) {
+	if root == "" {
+		return nil, nil
+	}
+	reg, err := registry.Open(root)
+	if err != nil {
+		return nil, fmt.Errorf("--workflow-root: %w", err)
+	}
+	return reg, nil
 }
 
 // readWorkflowSpec returns the document bytes, refusing an oversized file

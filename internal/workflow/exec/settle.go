@@ -699,6 +699,18 @@ func (r *Run) stepValue(n *ir.Node, st *NodeState) any {
 		// the merged mapping, or a summarize body's product — structured, so a
 		// selector can read into it instead of re-parsing its text.
 		return st.Combined
+	case ir.KindCall:
+		// A call's value is the child run's output bindings — the JSON the
+		// step recorded, so `steps.<id>.output.summary` reads one binding a
+		// child emit produced, the same decode-on-demand walk a structured
+		// report's fields get (yaah-0u0v.23).
+		if obj, ok := decodeJSONObject(st.Result); ok {
+			return obj
+		}
+		if st.CallRunID != "" {
+			return map[string]any{"child_run": st.CallRunID}
+		}
+		return st.Result
 	case ir.KindGate:
 		// A gate's value is its disposition plus the reason and verdict around it,
 		// so `steps.<id>.output.disposition` is what a downstream node routes on

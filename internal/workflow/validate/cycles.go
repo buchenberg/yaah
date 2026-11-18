@@ -67,13 +67,14 @@ func needsCycles(g *ir.Graph) []Diagnostic {
 // unbounded by construction.
 //
 // What one resolved graph cannot see is the cycle that crosses documents: a
-// calls b, b calls a. Detecting that needs the registry that resolves
-// Node.Workflow to another ir.Graph, and the check lands with that bead.
-// The self-call test below is name equality against Graph.Name — the
-// metadata.name that ir.Resolve carries verbatim — so a call reaching the
-// same document under an alias or a file path slips past it: a heuristic,
-// not a guarantee. Until the registry lands the runtime depth guard is the
-// only bound on mutual recursion, and it must not be dropped.
+// calls b, b calls a. The registry that resolves Node.Workflow to another
+// ir.Graph landed with yaah-0u0v.23, and the cross-document walk (cycles and
+// the total depth a chain of documents can compose) is the Calls family in
+// calls.go. The self-call test below stays the single-document half: name
+// equality against Graph.Name — the metadata.name that ir.Resolve carries
+// verbatim — so a call reaching the same document under an alias or a file
+// path slips past it here and the cross-document walk's per-name identity is
+// what catches it.
 func callDepth(g *ir.Graph) []Diagnostic {
 	order, _ := graphNodes(g)
 	var out []Diagnostic

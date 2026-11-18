@@ -122,6 +122,12 @@ type Env struct {
 	// SecondsPerDispatch prices a dispatch that declares no
 	// timeout_seconds. Zero reports no wall-clock bound.
 	SecondsPerDispatch int
+
+	// Calls resolves a call node's `workflow` name to the graph the host's
+	// registry loaded for it (yaah-0u0v.23). Nil means no registry: every
+	// reference a call makes is unresolvable, which the Calls family
+	// reports, and cost keeps its ceiling-times-depth floor for calls.
+	Calls CallResolver
 }
 
 // Authority runs the authority half of the family — WF030, WF031, WF032,

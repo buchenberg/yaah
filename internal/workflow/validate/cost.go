@@ -1,6 +1,9 @@
 package validate
 
 import (
+	"sort"
+	"strings"
+
 	"github.com/buchenberg/yaah/internal/workflow/ir"
 	"github.com/buchenberg/yaah/internal/workflow/spec"
 )
@@ -250,7 +253,15 @@ func estimateCost(g *ir.Graph, env Env) CostEstimate {
 	}
 	order, _ := graphNodes(g)
 	reach := authorityReachable(g)
-	w := &costWalk{env: env, unbound: map[string]bool{}, seen: map[*ir.Node]bool{}}
+	w := &costWalk{
+		env:      env,
+		unbound:  map[string]bool{},
+		seen:     map[*ir.Node]bool{},
+		selfName: g.Name,
+	}
+	if env.Calls != nil {
+		w.calls = newCallCostMemo(env)
+	}
 	// The walk starts at the top-level steps and reaches body nodes only
 	// through their container, because the container's multiplier is what
 	// prices them. graphNodes' flat order is still the frame for the
@@ -258,16 +269,36 @@ func estimateCost(g *ir.Graph, env Env) CostEstimate {
 	// exactly once.
 	w.visit(g.Steps, reach, 1)
 
+	// A self-recursive root repeats its whole one-pass cost up to the bound
+	// its self-calls declare, the same multiplier a registry-resolved child
+	// charges for its own recursion.
+	factor := 1
+	if env.Calls != nil {
+		factor = selfFactor(g.Name, g)
+	}
 	est := CostEstimate{
-		Dispatches: w.dispatches,
+		Dispatches: mulCap(w.dispatches, factor),
 		Complete:   len(w.unbound) == 0,
-		WallClock:  w.wallClock,
+		WallClock:  mulCap(w.wallClock, factor),
 	}
 	for _, n := range order {
 		if w.unbound[n.Path] {
 			est.Unbound = append(est.Unbound, n.Path)
 		}
 	}
+	// Registry-expanded children contribute their own unbound repetition —
+	// keyed "<child>/<path>" so two documents' node paths cannot collide —
+	// and no node of THIS graph carries that key, so the loop above skipped
+	// it. The list stays deterministic: document order for this graph's
+	// nodes, then the child keys sorted by name.
+	var childKeys []string
+	for k := range w.unbound {
+		if !strings.HasPrefix(k, "/") && strings.Contains(k, "/") {
+			childKeys = append(childKeys, k)
+		}
+	}
+	sort.Strings(childKeys)
+	est.Unbound = append(est.Unbound, childKeys...)
 	est.WallClockKnown = !w.wallUnknown && (env.SecondsPerDispatch > 0 || est.WallClock > 0)
 	if env.MaxTurnsPerDispatch > 0 {
 		est.Turns = mulCap(est.Dispatches, env.MaxTurnsPerDispatch)
@@ -307,6 +338,16 @@ type costWalk struct {
 	wallUnknown bool
 	unbound     map[string]bool
 	seen        map[*ir.Node]bool
+	// calls prices registry-resolved call targets, shared with the child
+	// estimates those targets recurse into. Nil means the registry is not
+	// configured and a call keeps its ceiling-times-depth floor semantics.
+	calls *callCostMemo
+	// selfName is the name of the document this walk prices the nodes of —
+	// the registry name it was loaded under, or the root's metadata name. A
+	// call node in it naming that name is a direct self-call: the walk skips
+	// its charge because selfFactor multiplies the whole one-pass total by
+	// the declared recursion bound already.
+	selfName string
 }
 
 func (w *costWalk) visit(nodes []*ir.Node, reach map[*ir.Node]bool, factor int) {
@@ -366,11 +407,40 @@ func (w *costWalk) dispatch(n *ir.Node, e int) {
 	w.wallClock = addCap(w.wallClock, mulCap(e, sec))
 }
 
-// call prices a nested workflow. This graph cannot see the called document,
-// so the bound is the host's configured per-call ceiling times the declared
-// depth; without that ceiling the only defensible number is the depth
-// itself, one dispatch per level, and the total stops being a ceiling.
+// call prices a nested workflow. With a registry the price is the called
+// document's own worst-case estimate, recursing through its calls (WF033's
+// "call expansion", made precise by yaah-0u0v.23). A direct self-call inside
+// the document this walk is pricing charges nothing here — its repetition is
+// the selfFactor its document's estimate is multiplied by, and charging both
+// would count the recursion twice. The declared max_depth on an edge to a
+// DIFFERENT document has no legal realization (re-entry would be the
+// cross-document cycle the Calls family refuses), so it buys no cost here;
+// without a registry it keeps its old meaning approximating the depth of a
+// child the graph cannot see.
 func (w *costWalk) call(n *ir.Node, e int) {
+	if w.calls != nil {
+		if selfCall(w.selfName, n) {
+			return
+		}
+		entry := w.calls.charge(n.Workflow)
+		if entry.state == 2 {
+			w.dispatches = addCap(w.dispatches, mulCap(e, entry.dispatches))
+			for k := range entry.unbound {
+				w.unbound[k] = true
+			}
+			if entry.wallKnown {
+				if !w.wallUnknown {
+					w.wallClock = addCap(w.wallClock, mulCap(e, entry.wallClock))
+				}
+			} else {
+				w.wallUnknown = true
+			}
+			return
+		}
+		// An unresolvable child falls to the floor semantics below: the
+		// Calls family reports the name, and the floor keeps the estimate
+		// honest for callers that price a graph without its findings.
+	}
 	depth := 1
 	if n.MaxDepth != nil && *n.MaxDepth > 1 {
 		depth = *n.MaxDepth

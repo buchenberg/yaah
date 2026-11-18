@@ -64,7 +64,7 @@ func TestBenchSpecsValidate(t *testing.T) {
 	for _, path := range wfBenchSpecs(t) {
 		name := filepath.Base(filepath.Dir(filepath.Dir(path)))
 		t.Run(name, func(t *testing.T) {
-			a, err := analyzeWorkflow(path, nil, workflowEnv(), false)
+			a, err := analyzeWorkflow(path, nil, workflowEnv(), false, nil)
 			if err != nil {
 				t.Fatalf("analyze %s: %v", path, err)
 			}

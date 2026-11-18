@@ -125,4 +125,55 @@ type Runtime interface {
 	// boundaries — it arms no timers — so a virtual clock in a fake makes
 	// wall-clock budget behavior deterministic.
 	Now() time.Time
+
+	// Call executes one nested workflow (yaah-0u0v.23). Like Settle it is
+	// deliberately synchronous with one answer, and it stays on the door's
+	// side of the world for the same reasons: resolving a subworkflow name
+	// reads a registry the reducer cannot see, and running the child composes
+	// a runner, a retained runtime, and a store the graph holds no mention
+	// of. A Call that fails has run something whose side effects stand —
+	// the child run's own state is its record — so the error names the door,
+	// never the child's outcome; the outcome travels on CallResult and the
+	// reducer folds it like any other envelope.
+	Call(ctx context.Context, req CallRequest) (CallResult, error)
+}
+
+// CallRequest is one nested workflow the run is asking the door to execute.
+type CallRequest struct {
+	// Node is the call node, immutable IR: the same single source of truth
+	// the dispatch and settle requests carry.
+	Node *ir.Node
+	// Workflow is the registry name the node declares.
+	Workflow string
+	// MaxDepth is the node's declared max_depth, zero when undeclared. The
+	// door reads it as this edge's bound: the number of copies of the named
+	// workflow that may be in effect along one call path.
+	MaxDepth int
+	// Params are the node's call parameters rendered against the run's
+	// snapshot: templates resolved to text, constants passed through.
+	Params map[string]any
+	// ParentRunID and NodePath derive the child run's durable identity, so
+	// a resume finds the child's record without any parent-side fact
+	// beyond the id derivation itself.
+	ParentRunID string
+	NodePath    string
+}
+
+// CallResult is the child run's outcome as the reducer reads it: whether it
+// succeeded, the identity its record lives under, the status and reason for
+// the report, and the child's output bindings by name — what
+// `steps.<id>.output.<name>` reads in the parent.
+type CallResult struct {
+	Succeeded bool
+	// ChildRunID names the run record the child's state lives under.
+	ChildRunID string
+	// Status and Reason carry the child run's disposition for the report.
+	Status RunStatus
+	Reason string
+	// Outputs is the child's recorded output bindings by name — what
+	// `steps.<id>.output.<name>` reads in the parent.
+	Outputs map[string]string
+	// Warnings are door-side facts from the child (a declined artifact
+	// write, a binding the lane could not honor).
+	Warnings []string
 }

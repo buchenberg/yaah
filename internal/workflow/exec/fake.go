@@ -46,6 +46,13 @@ type FakeRuntime struct {
 	// reported as untouched, the node ends with a runtime failure, and the
 	// path is reachable in a test.
 	SettleErr map[string]error
+	// CallScript maps a call node's workflow name to the results its calls
+	// return, in call order. A workflow with no entry answers CallOK: the
+	// child succeeded with no bindings.
+	CallScript map[string][]CallResult
+	// CallErr scripts a call door malfunction by workflow name: the request
+	// never produced an answer, and the node ends with a runtime error.
+	CallErr map[string]error
 	// Hold names the node paths whose attempts stay IN FLIGHT: Completed reports
 	// nothing for them until the attempt is cancelled (Cancel clears the hold).
 	// It is the one hook a cancellation test needs, because an ordinary scripted
@@ -62,6 +69,7 @@ type FakeRuntime struct {
 	started  []Dispatch
 	cancels  []string
 	settles  []SettleRequest
+	calls    []CallRequest
 	backoffs []time.Duration
 	blocks   int
 	inflight int
@@ -300,6 +308,43 @@ func (f *FakeRuntime) lookupSettleScript(req SettleRequest) (Settled, bool) {
 	}
 	s, ok := f.SettleScript[req.ProposalID]
 	return s, ok
+}
+
+// Call answers one nested workflow call from the script, recording the request
+// so a test can assert the params the reducer rendered. A workflow nobody
+// scripted succeeds with no bindings: the plainest call is a plain success.
+func (f *FakeRuntime) Call(_ context.Context, req CallRequest) (CallResult, error) {
+	f.calls = append(f.calls, req)
+	if err, ok := f.CallErr[req.Workflow]; ok && err != nil {
+		return CallResult{}, err
+	}
+	if script, ok := f.CallScript[req.Workflow]; ok {
+		if len(script) > 0 {
+			res := script[0]
+			f.CallScript[req.Workflow] = script[1:]
+			return res, nil
+		}
+	}
+	return CallOK(req), nil
+}
+
+// CallOK is the result a fake reports for a call nobody scripted: the child
+// succeeded, under the run id the request derives.
+func CallOK(req CallRequest) CallResult {
+	return CallResult{
+		Succeeded:  true,
+		ChildRunID: ChildRunID(req.ParentRunID, req.NodePath),
+		Status:     RunSucceeded,
+		Reason:     "",
+		Outputs:    map[string]string{},
+	}
+}
+
+// Calls returns the call requests the fake answered, in call order.
+func (f *FakeRuntime) Calls() []CallRequest {
+	out := make([]CallRequest, len(f.calls))
+	copy(out, f.calls)
+	return out
 }
 
 // SettledOK is the settlement a fake reports for a proposal nobody scripted:

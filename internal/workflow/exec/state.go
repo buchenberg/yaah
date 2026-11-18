@@ -243,6 +243,12 @@ type NodeState struct {
 	// a re-parse of its text, while Result carries the text.
 	Combined any
 
+	// CallRunID (yaah-0u0v.23) is the child run's identity when a call node's
+	// nested workflow succeeded — the run record its state lives under, so a
+	// report or an audit can follow a call into the workflow it ran. Empty
+	// before the first call and on a node that did not succeed.
+	CallRunID string
+
 	// Candidates, Chosen, Selection, SelectPolicy, and Verdict are a select
 	// node's own ledger (yaah-0u0v.20): what it chose among, which one won, the
 	// winning value, the effective policy with the folded default applied, and
