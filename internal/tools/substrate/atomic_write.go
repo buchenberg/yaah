@@ -50,8 +50,12 @@ func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 		return fmt.Errorf("atomic write: %w", err)
 	}
 	if err := atomicfile.Replace(tmpName, path); err != nil {
-		cleanup()
-		return fmt.Errorf("atomic write: rename: %w", err)
+		// No cleanup here: the replace error names the temp file that still
+		// holds the new bytes, and the target is untouched either way, so
+		// deleting it discards the write the caller asked for and leaves
+		// nothing to recover. Every failure BEFORE this point removes the
+		// temp, because nothing has been delivered yet.
+		return fmt.Errorf("atomic write: %w", err)
 	}
 	return nil
 }

@@ -149,8 +149,9 @@ func TestIsReplaceContention(t *testing.T) {
 	}
 }
 
-// TestReplaceWrapsFailure pins the sentinel, so a caller can tell an atomic
-// replace failure from any other file error and mention the retry in a message.
+// TestReplaceWrapsFailure pins the sentinel and the retained path: a caller
+// must be able to tell an atomic replace failure from any other file error and
+// say where the new bytes still are.
 func TestReplaceWrapsFailure(t *testing.T) {
 	dir := t.TempDir()
 	tmp := dir + string(os.PathSeparator) + "missing-tmp"
@@ -159,9 +160,16 @@ func TestReplaceWrapsFailure(t *testing.T) {
 		t.Fatal("want an error for a missing temp file")
 	}
 	if !errors.Is(err, ErrReplace) {
-		t.Errorf("error = %v, want it to wrap ErrReplace", err)
+		t.Errorf("error = %v, want it to report ErrReplace", err)
 	}
-	if !strings.Contains(err.Error(), "atomic replace") {
-		t.Errorf("error = %v, want the sentinel text", err)
+	var re *ReplaceError
+	if !errors.As(err, &re) {
+		t.Fatalf("error = %v (%T), want a *ReplaceError", err, err)
+	}
+	if re.Temp != tmp {
+		t.Errorf("ReplaceError.Temp = %q, want %q", re.Temp, tmp)
+	}
+	if !strings.Contains(err.Error(), "atomic replace") || !strings.Contains(err.Error(), tmp) {
+		t.Errorf("error = %v, want the sentinel text and the retained path", err)
 	}
 }

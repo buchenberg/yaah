@@ -407,21 +407,26 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 		return err
 	}
 	tmp := f.Name()
-	defer os.Remove(tmp) // no-op once the rename below succeeds
-	if _, err := f.Write(data); err != nil {
+	// Cleanup is explicit rather than deferred: once the replace is attempted,
+	// the temp file is the only copy of the new bytes, so a failed replace must
+	// not delete the write the user asked for (atomicfile.ReplaceError names
+	// the path). Every failure before that point removes it.
+	discard := func(err error) error {
 		f.Close()
+		_ = os.Remove(tmp)
 		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		return discard(err)
 	}
 	// Sync before the rename so a crash cannot leave the renamed file
 	// present but empty; without it the atomicity is only against
 	// interruptions, not power loss.
 	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
+		return discard(err)
 	}
 	if err := f.Chmod(perm); err != nil {
-		f.Close()
-		return err
+		return discard(err)
 	}
 	if err := f.Close(); err != nil {
 		return err

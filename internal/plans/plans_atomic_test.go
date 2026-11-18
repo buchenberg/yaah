@@ -1,12 +1,15 @@
 package plans
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/buchenberg/yaah/internal/atomicfile"
 )
 
 // TestCreateIsExclusive pins yaah-34b: Create used to Stat and then Write, so
@@ -342,5 +345,57 @@ func TestParseHandlesEscapedQuotesInFrontmatter(t *testing.T) {
 	// swallow the rest of the line.
 	if want := "it''s done"; plan.Status != want {
 		t.Errorf("status = %q; want %q", plan.Status, want)
+	}
+}
+
+// TestWriteFileAtomic_keepsTheNewBytesOnReplaceFailure pins the contract:
+// replacing a live file is the last step of writeFileAtomic, and when it cannot
+// land the temp file holds the only copy of the new plan. It used to be removed
+// by a deferred cleanup, so a plan edit that lost the replace race left nothing
+// to recover (atomicfile.ReplaceError names the retained path).
+func TestWriteFileAtomic_keepsTheNewBytesOnReplaceFailure(t *testing.T) {
+	dir := t.TempDir()
+	// A directory target makes the rename fail on every platform.
+	target := filepath.Join(dir, "PLAN.md")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := writeFileAtomic(target, []byte("# plan\n"), 0o644)
+	if err == nil {
+		t.Fatal("want a replace failure")
+	}
+	var re *atomicfile.ReplaceError
+	if !errors.As(err, &re) {
+		t.Fatalf("error = %v (%T), want a *atomicfile.ReplaceError", err, err)
+	}
+	if !strings.Contains(err.Error(), re.Temp) {
+		t.Errorf("error %q does not name the retained temp file %s", err, re.Temp)
+	}
+	got, readErr := os.ReadFile(re.Temp)
+	if readErr != nil {
+		t.Fatalf("temp file %s was removed after a failed replace: %v", re.Temp, readErr)
+	}
+	if string(got) != "# plan\n" {
+		t.Errorf("retained temp holds %q, want the new plan", got)
+	}
+}
+
+// TestWriteFileAtomic_leavesNoTempOnSuccess keeps the success path clean: the
+// retained-on-failure rule must not start littering every plan write.
+func TestWriteFileAtomic_leavesNoTempOnSuccess(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "PLAN.md")
+	if err := writeFileAtomic(target, []byte("# plan\n"), 0o644); err != nil {
+		t.Fatalf("writeFileAtomic: %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".PLAN-") {
+			t.Errorf("temp artifact left behind on the success path: %s", e.Name())
+		}
 	}
 }

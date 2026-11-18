@@ -573,8 +573,10 @@ func (w *LocalWorkspace) Copy(_ context.Context, src, dst string) error {
 		return fmt.Errorf("copy: %w", err)
 	}
 	if err := atomicfile.Replace(tmpName, dst); err != nil {
-		cleanup()
-		return fmt.Errorf("copy: rename: %w", err)
+		// The temp file survives a failed replace on purpose: the replace
+		// error names it, and it is the only artifact of this copy. Every
+		// failure above removes it, because nothing has been delivered yet.
+		return fmt.Errorf("copy: %w", err)
 	}
 	return nil
 }

@@ -20,6 +20,7 @@ package atomicfile
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"runtime"
@@ -40,15 +41,38 @@ const (
 // ErrReplace reports that the temp file could not be moved onto the target.
 var ErrReplace = errors.New("atomic replace")
 
+// ReplaceError is a failed replace that deliberately left the temp file in
+// place: at that point the temp file is the only copy of the new bytes, and
+// removing it would turn a retryable error into data loss. Carrying the path in
+// the error is what makes keeping it useful — the operator (or the agent) can
+// recover the content instead of redoing the work blind.
+type ReplaceError struct {
+	// Temp is the temp file that still holds the new content.
+	Temp string
+	// Err is the underlying rename failure.
+	Err error
+}
+
+func (e *ReplaceError) Error() string {
+	return fmt.Sprintf("atomic replace: %v (the new content is left at %s)", e.Err, e.Temp)
+}
+
+// Unwrap exposes the rename failure, so errors.Is(err, fs.ErrPermission) and
+// friends keep working through the wrapper.
+func (e *ReplaceError) Unwrap() error { return e.Err }
+
+// Is makes errors.Is(err, ErrReplace) work alongside Unwrap.
+func (e *ReplaceError) Is(target error) bool { return target == ErrReplace }
+
 // Replace moves tmp onto dst, replacing dst if it exists.
 //
-// On failure the temp file is left in place for the caller to remove: it is the
-// only copy of the data at that point, and deleting it here would turn a
-// retryable error into data loss.
+// On failure it returns a *ReplaceError naming the temp file, which is left in
+// place: it is the only copy of the data at that point, and deleting it here
+// would turn a retryable error into data loss. Callers must not remove it
+// either — see the contract note in the package doc.
 func Replace(tmp, dst string) error {
-	err := replaceWith(os.Rename, policyFor(runtime.GOOS), tmp, dst)
-	if err != nil {
-		return errors.Join(ErrReplace, err)
+	if err := replaceWith(os.Rename, policyFor(runtime.GOOS), tmp, dst); err != nil {
+		return &ReplaceError{Temp: tmp, Err: err}
 	}
 	return nil
 }
