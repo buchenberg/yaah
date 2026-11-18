@@ -24,6 +24,12 @@ type Client struct {
 	// later turn, so the replayed mixed history keeps failing on thinking-
 	// mode endpoints — and the classifier must keep naming the swap as the
 	// cause on every subsequent turn, not just the first (yaah-31j).
+	//
+	// The swap can also be triggered for reasons that have nothing to do with
+	// thinking blocks (a degenerate repetition loop, for one), so the flag is
+	// a fact about the provider, not a diagnosis: a later error whose text
+	// points at reasoning-strip advice may have been caused by an unrelated
+	// swap, and the advice names a fix that has already been applied.
 	swappedFromPrimary bool
 	// ProviderName / FallbackProviderName label the two providers in
 	// error envelopes. They are swapped together with Provider and
@@ -294,6 +300,24 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 			ProviderSwapped: c.swappedFromPrimary,
 		}
 		classified := errorclassify.Classify(err, meta)
+
+		// A repeated-token loop is deterministic, not a flake: the same model
+		// handed the same prompt runs the same loop, so an unchanged replay
+		// only buys another 40 minutes of wall clock (yaah-wbew). Allow the
+		// one recovery that can actually help — swapping to the fallback
+		// provider — and otherwise surface the typed error with the repeated
+		// token and count. Handled before the empty-degenerate and
+		// premature-close ladders, which would replay on the same provider.
+		if errors.Is(err, ErrDegenerateRepetition) {
+			if c.FallbackProvider != nil && !providerSwapped {
+				c.swapToFallback(&req)
+				providerSwapped = true
+				c.swappedFromPrimary = true
+				attempt--
+				continue
+			}
+			return attach(result), err
+		}
 
 		if isDegenerateStream(err) && c.replayCount < 2 {
 			c.replayCount++

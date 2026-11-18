@@ -58,6 +58,12 @@ func runTUI() error {
 		return fmt.Errorf("session: %w", err)
 	}
 	defer sess.close()
+	// A termination signal never reaches the deferred close — the process dies
+	// where it stands, leaving the session row open. The funnel closes the
+	// session first, then exits. Installed before the TUI takes the terminal:
+	// in raw mode Ctrl+C is a key event (tview's quit), so the funnel only
+	// fires for the signals that would otherwise bypass the close entirely.
+	defer sess.CloseOnInterrupt()()
 
 	controlCh := make(chan control.Msg, 64)
 	sess.SetCtrlCh(controlCh)

@@ -32,9 +32,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	shepherdtrace "github.com/buchenberg/goatherd-kernel"
@@ -376,6 +378,12 @@ type agentSession struct {
 	// session-is-gone signal every sender selects on.
 	closeCh   chan struct{}
 	closeOnce sync.Once
+	// shutdownOnce runs the teardown body exactly once. close() is reachable
+	// from a driver's deferred close, the serve shutdown, the ACP session
+	// lifecycle and the termination-signal funnel at the same time; tearing
+	// down twice closes channels twice (a panic) or writes the session row
+	// against a store the first close already shut.
+	shutdownOnce sync.Once
 	// wakeCtx scopes harness-initiated turns. close() cancels it before
 	// joining the run gate, so a wake turn is cancellable even in the window
 	// before runPromptLocked publishes runCancel.
@@ -421,9 +429,37 @@ const backgroundJobDrainTimeout = 30 * time.Second
 // a wedged containerd daemon cannot hang session shutdown.
 const workspaceSandboxDestroyTimeout = 30 * time.Second
 
+// close is the single teardown every exit path funnels through: the driver's
+// deferred close, the MCP/HTTP serve shutdown, the ACP session lifecycle, and
+// the termination-signal funnel CloseOnInterrupt installs. The body runs at
+// most once (shutdownOnce) so a second caller — a signal racing the deferred
+// close — cannot tear down channels twice or write the session row against a
+// store the first close already shut; the row write is additionally
+// idempotent at the store (memory.DB.EndSession is monotonic).
 func (s *agentSession) close() {
-	ctx := context.Background()
+	// closed is re-stored on every call: a wake goroutine spawned just before
+	// the first close must observe it even when this call is the second.
 	s.closed.Store(true)
+	s.shutdownOnce.Do(s.shutdown)
+}
+
+// shutdown is the teardown body; callers must go through close.
+func (s *agentSession) shutdown() {
+	ctx := context.Background()
+	// The session row is written FIRST, before anything in this function can
+	// block. Teardown is bounded but not short — three drains of up to 30s
+	// each — and the termination-signal funnel races it, so a row written at
+	// the end is a row that a second Ctrl-C, a terminal close or a hang can
+	// turn back into ended_at = 0 (the reported bug shape). Ended_at, the
+	// usage attribution and the evidence `yaah sessions list` and a resume
+	// read are durable from the first moment of teardown; later usage flushes
+	// keep updating the same row monotonically, which is why one early write
+	// is enough.
+	if s.db != nil {
+		if err := endSessionRow(s.db, s.sessionID, time.Now().Unix(), s.totalUsage, s.subUsage); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: session %s left unclosed in the store: %v\n", s.sessionID, err)
+		}
+	}
 	// Signal wake delivery that the session is going away before anything
 	// blocks in teardown. A watch poller may be mid-delivery on followupCh;
 	// closeCh is what unblocks that send, and wakeCancel stops a turn that
@@ -563,18 +599,23 @@ func (s *agentSession) close() {
 			s.traceStore, s.traceBus = nil, nil
 		}
 	}
+	// The row write above already made the exit durable; the view is told
+	// here only so a live consumer clears its status line.
 	s.mu.RLock()
 	ch := s.ctrlCh
 	s.mu.RUnlock()
 	if ch != nil {
-		ch <- &control.Done{}
+		// Non-blocking, per sendCtrlLocked's contract: a full or abandoned
+		// control channel must never block teardown.
+		select {
+		case ch <- &control.Done{}:
+		default:
+		}
 	}
 	if s.otelShutdown != nil {
 		s.otelShutdown(ctx)
 	}
 	if s.db != nil {
-		s.db.EndSession(s.sessionID, time.Now().Unix(), s.totalUsage.PromptTokens, s.totalUsage.CompletionTokens,
-			s.totalUsage.CachedPromptTokens, s.subUsage.PromptTokens, s.subUsage.CompletionTokens)
 		// Memory hygiene (docs/compaction-as-sleep.md §8): run the age-based
 		// staleness sweep. Sessions are resumable, so session-scoped atoms
 		// are intentionally NOT pruned here — only old, never-accessed
@@ -588,6 +629,88 @@ func (s *agentSession) close() {
 }
 
 func (s *agentSession) Close() { s.close() }
+
+// interruptExitCode is the conventional exit status for a process terminated
+// by an interrupt (128 + SIGINT).
+const interruptExitCode = 130
+
+// CloseOnInterrupt funnels the process's termination signals through close(),
+// and exits when one arrives.
+//
+// The drivers' `defer sess.close()` only runs when the driver returns. A
+// signal — SIGINT in a cooked terminal (the REPL, a one-shot prompt),
+// SIGTERM, or the console event Windows sends when a terminal window is
+// closed — terminates the process where it stands, so the deferred close
+// never runs and the session row keeps ended_at = 0 while the last prompt's
+// session.end hook and updated_at are already on disk: a finished session
+// listed as still open (yaah-cqxg). The funnels already present in serve and
+// web are the same idea one layer up; this is the session-level one the
+// interactive drivers need because they hold no signal context of their own.
+//
+// Idempotent and side-effect-free until a signal arrives. The returned stop
+// uninstalls the handler (the drivers defer it so a normal return does not
+// leave a goroutine armed at a session that is already closed).
+func (s *agentSession) CloseOnInterrupt() (stop func()) {
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	go handleTerminationSignal(sigs, s.close, os.Exit)
+	return func() {
+		signal.Stop(sigs)
+		close(sigs)
+	}
+}
+
+// handleTerminationSignal is the body of the termination funnel, extracted so
+// a test can drive it with a channel instead of a real process signal. On the
+// first signal it closes the session (making ended_at, usage and the
+// transcript durable) and only then exits; a channel closed without a signal
+// — the driver's stop — returns with nothing closed and no exit.
+//
+// Closing is not instant (the teardown drains bounded background work, up to a
+// minute), so the first signal says what it is waiting for and a second signal
+// exits immediately: signals must stay an escape hatch. The row write is the
+// first thing teardown does, which is what keeps the second-signal path from
+// losing ended_at.
+func handleTerminationSignal(sigs <-chan os.Signal, closeFn func(), exitFn func(int)) {
+	if _, ok := <-sigs; !ok {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "\ninterrupt: closing the session, this can take up to a minute; press Ctrl-C again to exit immediately\n")
+	go func() {
+		if _, ok := <-sigs; ok {
+			exitFn(interruptExitCode)
+		}
+	}()
+	closeFn()
+	exitFn(interruptExitCode)
+}
+
+// sessionEnder is the slice of the session store close() needs to make a
+// session's end durable. *memory.DB is the production implementation; the
+// interface is what lets a test drive the seam without a live store.
+type sessionEnder interface {
+	EndSession(id string, endedAt int64, tokensIn int, tokensOut int, tokensCached, subTokensIn, subTokensOut int) error
+}
+
+// endSessionRow durably records the session's terminal row: ended_at plus the
+// final prompt/completion, cache-hit and sub-agent attribution.
+//
+// It is a function of its own because the seam that failed is process exit,
+// which no test can shell out to: this is the one write a session makes on its
+// way out, so a test calls it twice and inspects the row. A failure is
+// returned rather than logged here so the caller decides how loud to be
+// (close warns on stderr).
+func endSessionRow(db sessionEnder, id string, endedAt int64, total, sub types.Usage) error {
+	if db == nil {
+		return nil
+	}
+	err := db.EndSession(id, endedAt, total.PromptTokens, total.CompletionTokens,
+		total.CachedPromptTokens, sub.PromptTokens, sub.CompletionTokens)
+	if err != nil {
+		return fmt.Errorf("end session %q: %w", id, err)
+	}
+	return nil
+}
 
 // Compact attempts :compact under the session's run gate. It refuses rather
 // than blocking when a prompt run holds the gate, so synchronous frontends
