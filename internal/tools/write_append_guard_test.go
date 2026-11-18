@@ -99,7 +99,7 @@ func TestAppendGuard_RewriteVsAppendNeverTears(t *testing.T) {
 	// Baseline: the file already holds a rewrite result before the race
 	// starts, so every legal sample starts with the rewrite prefix.
 	wt := &WriteTool{WS: ws}
-	if _, err := wt.Execute(context.Background(), fmt.Sprintf(`{"filePath":%q,"content":%q}`, path, rewrite)); err != nil {
+	if _, err := wt.Execute(context.Background(), fmt.Sprintf(`{"filePath":%q,"content":%q,"overwrite":true}`, path, rewrite)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -113,7 +113,7 @@ func TestAppendGuard_RewriteVsAppendNeverTears(t *testing.T) {
 		defer wg.Done()
 		<-start
 		for i := 0; i < rounds; i++ {
-			_, err := wt.Execute(context.Background(), fmt.Sprintf(`{"filePath":%q,"content":%q}`, path, rewrite))
+			_, err := wt.Execute(context.Background(), fmt.Sprintf(`{"filePath":%q,"content":%q,"overwrite":true}`, path, rewrite))
 			writeErrs <- err
 		}
 	}()
