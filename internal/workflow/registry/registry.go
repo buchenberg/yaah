@@ -244,6 +244,12 @@ func (r *Registry) walk(g *ir.Graph) {
 		if name == "" {
 			continue // classifyKind and WF014's business, not the loader's
 		}
+		// The entries hit is the walk's cycle breaker, not an optimization
+		// over Load's memoization: Load returns a memoized entry, but the
+		// recursion through r.walk would still descend into a document it
+		// has already walked — a self-recursive entry would loop here,
+		// not in Load. Names already loaded stay walked, whatever shape
+		// their documents compose into.
 		if _, ok := r.entries[name]; ok {
 			continue
 		}

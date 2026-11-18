@@ -287,3 +287,51 @@ func TestCallBudgetIncludesExpansion(t *testing.T) {
 		t.Errorf("finding does not price the child's dispatches: %s", findings[0].Message)
 	}
 }
+
+// TestCallIdentityIsRegistryNameNotMetadata pins the documented edge the
+// single-document and cross-document identities disagree on: callDepth
+// matches a self-call against metadata.name, while the cross-document walk
+// and the runtime frame guard identify documents by registry name. A
+// document whose metadata.name differs from its --workflow-root file name
+// (entry.yaml whose metadata.name is "inner") is invisible to callDepth's
+// "must declare max_depth" rule when it calls its own registry name, and
+// the registry-name identities are what hold it. This test exists so the two
+// identities cannot drift silently: the mismatched self-call is silent along
+// callDepth's axis and terminates on the walk's, while the matching sibling
+// is refused statically.
+func TestCallIdentityIsRegistryNameNotMetadata(t *testing.T) {
+	// The registry entry: metadata.name "inner", calling its own registry
+	// name, undeclared. callDepth cannot see this self-call (it matches on
+	// metadata.name); the walk reads it as the one legal recursion by the
+	// name the registry holds.
+	entryDiags := []byte("apiVersion: yaah.workflow/v1\nkind: Workflow\nmetadata: {name: inner}\nspec:\n  steps:\n" +
+		"    - {id: c, kind: call, workflow: entry}\n")
+	entryGraph, diags := Validate(entryDiags)
+	if entryGraph == nil {
+		t.Fatalf("the registry document did not resolve: %v", render(diags))
+	}
+
+	// The root: a document that calls entry under its registry name while
+	// carrying some other metadata.name of its own.
+	root, diags := Validate([]byte("apiVersion: yaah.workflow/v1\nkind: Workflow\nmetadata: {name: caller}\nspec:\n  steps:\n" +
+		strings.ReplaceAll(callStep, "%s", "entry")))
+	if root == nil {
+		t.Fatalf("the root did not resolve: %v", render(diags))
+	}
+	if findings := Calls(root, Env{Calls: callSet{"entry": entryGraph}}); len(findings) != 0 {
+		t.Errorf("the mismatched self-call is silent statically and must carry no findings: %v", render(findings))
+	}
+
+	// The matching sibling — metadata.name equal to the registry name — is
+	// refused statically by callDepth, the single document's half of the
+	// same rule. The two identities disagree exactly here, deliberately:
+	// see the walk's doc and the runtime frame guard for the enforced half.
+	same, diags := Validate([]byte("apiVersion: yaah.workflow/v1\nkind: Workflow\nmetadata: {name: entry}\nspec:\n  steps:\n" +
+		"    - {id: c, kind: call, workflow: entry}\n"))
+	if same == nil {
+		t.Fatalf("the matching document did not resolve: %v", render(diags))
+	}
+	if findings := Structural(same); len(findings) != 1 || findings[0].Code != CodeWF003 {
+		t.Errorf("the matching undeclared self-call is not refused by callDepth: %v", render(findings))
+	}
+}

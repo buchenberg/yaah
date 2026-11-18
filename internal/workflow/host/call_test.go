@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/workflow/exec"
@@ -231,5 +232,93 @@ spec:
 	// guard refused: the deepest nested call's record is three edges down.
 	if !strings.Contains(res.Reason, "root-run!steps.sub!steps.rec") {
 		t.Errorf("reason %q does not carry the nested run records", res.Reason)
+	}
+}
+
+// TestCallResumesChildFromMidFlightRecord pins the .16 crash-safety contract
+// for calls: a child run whose process died with an attempt in flight — its
+// checkpoint mid-flight, no terminal disposition — is CONTINUED by the re-ask
+// a resumed parent makes: the abandoned attempt is re-dispatched, the
+// finished record's dispatch tally carries both attempts, and nothing is
+// executed from scratch.
+func TestCallResumesChildFromMidFlightRecord(t *testing.T) {
+	reg := callRegistry(t)
+	entry, err := reg.Load("helper")
+	if err != nil {
+		t.Fatalf("registry load: %v", err)
+	}
+	runner := &promptRunner{}
+	st := newMemStore()
+	childID := exec.ChildRunID("root-run", "steps.sub")
+
+	// Craft the crash: drive the child run through the exported exec seam
+	// with a fake that holds its one attempt in flight, persisting the
+	// dispatch_started event, then abandon the Run mid-cycle. The fake holds
+	// no goroutine, so abandoning leaks nothing — the record is exactly
+	// what a killed process would have written at that instant.
+	fake := exec.NewFakeRuntime(time.Unix(0, 0))
+	fake.Hold = map[string]bool{"steps.work": true}
+	childCfg := exec.Config{
+		RunID:    childID,
+		Params:   map[string]any{"task": "the thing"},
+		SpecHash: entry.SpecHash,
+		SpecPath: entry.Path,
+		Store:    st,
+	}
+	crashed, cerr := exec.New(entry.Graph, fake, childCfg)
+	if cerr != nil {
+		t.Fatalf("child New: %v", cerr)
+	}
+	if progressed, aerr := crashed.Advance(context.Background()); !progressed || aerr != nil {
+		t.Fatalf("run_started cycle: progressed=%v err=%v", progressed, aerr)
+	}
+	if progressed, aerr := crashed.Advance(context.Background()); !progressed || aerr != nil {
+		t.Fatalf("dispatch cycle: progressed=%v err=%v", progressed, aerr)
+	}
+	// The record now holds one in-flight attempt and no disposition.
+	cp, err := st.LoadCheckpoint(context.Background(), childID)
+	if err != nil {
+		t.Fatalf("child checkpoint: %v", err)
+	}
+	if cp.Status != exec.RunRunning {
+		t.Fatalf("child status = %s, want running (the crash left a mid-flight record)", cp.Status)
+	}
+
+	// The re-ask: the door resumes the child from its record instead of
+	// executing a fresh child.
+	rt := NewRuntime(runner.run)
+	rt.calls = reg
+	rt.runStore = st
+	res, rerr := rt.Call(context.Background(), exec.CallRequest{
+		Workflow:    "helper",
+		Params:      map[string]any{"task": "the thing"},
+		ParentRunID: "root-run",
+		NodePath:    "steps.sub",
+		MaxDepth:    0,
+	})
+	if rerr != nil {
+		t.Fatalf("re-ask Call: %v", rerr)
+	}
+	if !res.Succeeded {
+		t.Fatalf("the resumed child did not succeed: %+v", res)
+	}
+	// Exactly one real dispatch: the re-dispatched attempt. The abandoned
+	// one was the fake's, and resume re-dispatches rather than re-running
+	// the child from scratch.
+	if len(runner.prompts) != 1 {
+		t.Errorf("runner dispatches = %d, want the one resumed attempt\nprompts: %v", len(runner.prompts), runner.prompts)
+	}
+	// The finished record carries BOTH attempts: the interrupted one the
+	// crash left and the resumed one — the witness that the run continued
+	// rather than started over.
+	final, err := st.LoadCheckpoint(context.Background(), childID)
+	if err != nil {
+		t.Fatalf("final checkpoint: %v", err)
+	}
+	if final.Status != exec.RunSucceeded {
+		t.Errorf("final status = %s, want succeeded", final.Status)
+	}
+	if final.Dispatches != 2 {
+		t.Errorf("final dispatches = %d, want 2 (the interrupted attempt and the resumed one)", final.Dispatches)
 	}
 }
