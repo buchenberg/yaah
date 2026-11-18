@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.194.1](https://github.com/buchenberg/yaah/compare/v0.194.0...v0.194.1) (2026-11-18)
+
+
+### Documentation
+
+* **workflow:** five bench tasks and docs/workflows.md (yaah-0u0v.27) ([#1681](https://github.com/buchenberg/yaah/issues/1681)) ([4977634](https://github.com/buchenberg/yaah/commit/497763488d460eab28c72acfd4dbf1d927500457))
+
 ## [0.194.0](https://github.com/buchenberg/yaah/compare/v0.193.0...v0.194.0) (2026-11-18)
 
 
