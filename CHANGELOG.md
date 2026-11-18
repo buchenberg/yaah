@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.191.1](https://github.com/buchenberg/yaah/compare/v0.191.0...v0.191.1) (2026-11-18)
+
+
+### Bug Fixes
+
+* **agent:** bound degenerate model output and close sessions on exit ([#1668](https://github.com/buchenberg/yaah/issues/1668)) ([1feb57d](https://github.com/buchenberg/yaah/commit/1feb57d39ea96889c6443a94af90abc6c1d5eb11))
+
 ## [0.191.0](https://github.com/buchenberg/yaah/compare/v0.190.0...v0.191.0) (2026-11-18)
 
 
