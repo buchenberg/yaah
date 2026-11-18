@@ -33,6 +33,24 @@ func TestLinearitySmoke(t *testing.T) {
 		t.Errorf("want WF025 exit residue alongside the leak, got:%s", render(diags))
 	}
 
+	// The same leak, with the declaration WF025 asks for: the residue
+	// finding discharges while the leak itself (WF021's subject) remains.
+	declared := `  on_abort: halt
+` + leaky
+	g, diags = Validate(documentWith(declared))
+	if g == nil {
+		t.Fatalf("document did not resolve:%s", render(diags))
+	}
+	if !hasCode(diags, CodeWF021) {
+		t.Errorf("want the WF021 leak to remain under a declared on_abort, got:%s", render(diags))
+	}
+	if hasCode(diags, CodeWF025) {
+		t.Errorf("want no WF025 residue under a declared on_abort, got:%s", render(diags))
+	}
+	if g.OnAbort != "halt" {
+		t.Errorf("resolved graph on_abort = %q, want halt", g.OnAbort)
+	}
+
 	clean := `  steps:
     - id: build
       kind: delegate

@@ -333,7 +333,10 @@ func (r *Run) anyCompleted() bool {
 // for everything the close has to terminate, so one graph yields one sequence.
 // It takes no context by design: teardown is unconditional, and a caller whose
 // context already ended still owes every open attempt its Cancel call —
-// abandoning teardown halfway would orphan real dispatches.
+// abandoning teardown halfway would orphan real dispatches. The abort-time
+// dispositions keep the same order discipline: after the cancels, so nothing
+// is settled while its producer is still in flight, and before the close, so
+// the close's reason reports exactly what the policy left open.
 func (r *Run) stop(status RunStatus, reason string) error {
 	// The run is on its way out from here on: cancelling an item is not an
 	// outcome its fan-out may fold into a success.
@@ -353,6 +356,9 @@ func (r *Run) stop(status RunStatus, reason string) error {
 		}
 	}
 	r.outstanding = nil
+	if err := r.disposeOnAbort(status); err != nil {
+		return err
+	}
 	return r.Apply(RunFinishedEvent{Status: status, Reason: reason})
 }
 

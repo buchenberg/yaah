@@ -14,10 +14,11 @@ import (
 // Two of these codes sit slightly outside the original one-line summaries and
 // each does so for a reason recorded at its rule, in the same voice as WF014:
 //
-//	WF025 is written against an `on_abort` field the v1 vocabulary does not
-//	       have — it is scheduled with the executor — so what this package can
-//	       prove is the exposure such a field would cover, not the
-//	       declaration. The rule says so in its own message.
+//	WF025 demands an `on_abort` declaration wherever a proposal may remain
+//	       open — the field landed with the executor (yaah-0u0v.24), so the
+//	       rule reads the declaration and any of its three values
+//	       discharges the finding: the rule's subject is that the author
+//	       said SOMETHING about the residue, not which thing they said.
 //	WF029 keeps only the clause WF034 cannot reach: WF034 already demands
 //	       max_parallel from every fan-out, so what is left is whether the
 //	       enclosing budget covers it.
@@ -39,9 +40,8 @@ const (
 	// CodeWF024 marks `on_conflict: skip` on a set of more than one proposal
 	// with no later settle that could catch what it skipped.
 	CodeWF024 = "WF024"
-	// CodeWF025 marks a run that can finish with proposals still open. The
-	// vocabulary has no `on_abort` to declare, so this is the residue the
-	// planned field would discharge.
+	// CodeWF025 marks a run that can finish with proposals still open and
+	// declared no `on_abort` for them.
 	CodeWF025 = "WF025"
 	// CodeWF026 marks a settle over a possibly-empty proposal set with no
 	// `on_empty`.
@@ -255,23 +255,21 @@ func skippedNeedsCatch(l *linearity) []Diagnostic {
 
 // -------------------------------------------------------------------- WF025
 
-// openAtExit checks WF025, as far as the v1 vocabulary lets it be checked.
+// openAtExit checks WF025.
 //
-// The plan asks for an explicit `on_abort` wherever a proposal may remain
-// open. There is no such field: spec.Document has no on_abort, no node has
-// one, and the executor's abort-time disposition is scheduled with bead
-// yaah-0u0v.11 — so there is no declaration here to read and no way for any
-// document to satisfy a rule written against one. Inventing the field would
-// make every real workflow fail a check for a key the decoder refuses as
-// unknown (spec's strict decode is WF001), which is worse than silent.
+// The rule demands an explicit `on_abort` wherever a proposal may remain
+// open, and the field exists (yaah-0u0v.24): a document-level selector the
+// decoder validates against the registry. Any of its three values discharges
+// the finding, halt included: the rule's subject is that the author SAID what
+// becomes of the residue, and "leave them for me" is as much a disposition as
+// the two that sweep — choosing it is the declaration WF025 asks for.
 //
-// What is provable now is exactly the exposure the field exists to cover: a
-// run that can reach the end of the graph with proposals still undecided. One
-// finding names the whole set, because the subject is the run and not the
-// proposal — WF021 already reports each proposal on its own at its producer —
-// and because the CLI's exit message is the thing this has to serve: "this
-// workflow can finish with N proposals open". When on_abort lands, the
-// declaration discharges the finding and the rule keeps its number.
+// What is provable is exactly the exposure the field covers: a run that can
+// reach the end of the graph with proposals still undecided. One finding
+// names the whole set, because the subject is the run and not the proposal —
+// WF021 already reports each proposal on its own at its producer — and
+// because the CLI's exit message is the thing this has to serve: "this
+// workflow can finish with N proposals open".
 func openAtExit(l *linearity) []Diagnostic {
 	var open []string
 	for _, id := range l.tokensEverywhere() {
@@ -288,13 +286,19 @@ func openAtExit(l *linearity) []Diagnostic {
 	if len(open) == 0 {
 		return nil
 	}
+	if l.g.OnAbort != "" {
+		// The declaration discharges the finding, whatever it says: halt is
+		// as answered as release_all, because the executor reports what
+		// halt leaves behind instead of sweeping it.
+		return nil
+	}
 	const maxNamed = 4
 	shown := open
 	if len(shown) > maxNamed {
 		shown = append(append([]string{}, shown[:maxNamed]...), fmt.Sprintf("+%d more", len(shown)-maxNamed))
 	}
 	return []Diagnostic{diag(CodeWF025, "spec",
-		"run can end with %s still open (%s); the vocabulary declares no on_abort disposition for them",
+		"run can end with %s still open (%s); declare on_abort: halt|release_all|discard_all for what becomes of them",
 		proposalCount(len(open)), strings.Join(shown, ", "))}
 }
 

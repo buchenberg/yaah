@@ -76,6 +76,13 @@ type Run struct {
 	open    map[string]string
 	claims  map[string]string
 	settled map[string]string
+	// abortAsked is the abort pass's permanent ask record: every proposal the
+	// run has asked an abort-time disposition for, keyed proposal id -> the
+	// verb it was asked with (yaah-0u0v.24). Unlike a settle node's Asked it is
+	// never cleared — the answered proposals leave `open` on a settled answer
+	// and stay in `open` on any other, so the pair (open, abortAsked) is what a
+	// resumed run reads to ask the rest without ever asking twice.
+	abortAsked map[string]string
 
 	// warned keys the run warnings that must be stated once per graph.
 	warned map[string]bool
@@ -150,6 +157,7 @@ func New(g *ir.Graph, rt Runtime, cfg Config) (*Run, error) {
 		open:         map[string]string{},
 		claims:       map[string]string{},
 		settled:      map[string]string{},
+		abortAsked:   map[string]string{},
 		warned:       map[string]bool{},
 		status:       RunRunning,
 	}
@@ -320,6 +328,17 @@ func (r *Run) commit(ev Event, external bool) error {
 			}
 			ev = e
 		}
+		// The abort-time half of the same guard (yaah-0u0v.24): a run that
+		// ends without succeeding names what its on_abort policy leaves
+		// open, however it got there — an undeclared halt, the residue a
+		// sweeping policy could not dispose of, or an ask whose answer a
+		// crash took with it. halt is the loud disposition by design: the
+		// cleanup is the operator's, so the operator gets the list.
+		if e.Status != RunSucceeded && len(r.open) > 0 {
+			e.Reason += fmt.Sprintf("; on_abort: %s leaves %d proposal(s) open (%s)",
+				r.onAbortPolicy(), len(r.open), r.openProposalDetail())
+			ev = e
+		}
 		// Everything that has not terminated is terminated by the close, so
 		// the log cannot claim a finished run with live nodes in it. The close
 		// is the run's own answer: mark it, so an item terminating inside the
@@ -371,6 +390,10 @@ func (r *Run) commit(ev Event, external bool) error {
 		return r.onSettlementAsked(e)
 	case ProposalSettledEvent:
 		return r.onProposalSettled(e)
+	case AbortAskedEvent:
+		return r.onAbortAsked(e)
+	case AbortSettledEvent:
+		return r.onAbortSettled(e)
 	case FanoutExpandedEvent:
 		return r.onFanoutExpanded(e)
 	case LoopIterationStartedEvent:

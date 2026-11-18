@@ -30,14 +30,35 @@ type Metadata struct {
 	Version string `json:"version,omitempty"`
 }
 
-// Spec is the workflow body: parameters, shared defaults, budgets, and the
-// step graph.
+// Spec is the workflow body: parameters, shared defaults, budgets, the
+// abort-time disposition, and the step graph.
 type Spec struct {
 	Params   map[string]ParamSpec `json:"params,omitempty"`
 	Defaults *Defaults            `json:"defaults,omitempty"`
 	Budgets  *Budgets             `json:"budgets,omitempty"`
-	Steps    []Node               `json:"steps"`
+	// OnAbort declares what the run does with the proposals it has not
+	// disposed of when it ends without succeeding (yaah-0u0v.24). It is a
+	// document-level declaration because the aborted run is one subject:
+	// the policy names the whole open set, never one producer.
+	OnAbort OnAbortPolicy `json:"on_abort,omitempty"`
+	Steps   []Node        `json:"steps"`
 }
+
+// OnAbortPolicy enumerates the abort-time dispositions. An undeclared
+// on_abort behaves as halt: the vocabulary has no fourth disposition, and a
+// run that halts says so through the reason its close reports.
+type OnAbortPolicy string
+
+// Abort-time dispositions.
+const (
+	// OnAbortHalt leaves every open proposal open and reports them. The
+	// cleanup is the operator's — or the prune sweep's — not the run's.
+	OnAbortHalt OnAbortPolicy = "halt"
+	// OnAbortReleaseAll releases every proposal the run has not disposed of.
+	OnAbortReleaseAll OnAbortPolicy = "release_all"
+	// OnAbortDiscardAll discards every proposal the run has not disposed of.
+	OnAbortDiscardAll OnAbortPolicy = "discard_all"
+)
 
 // ParamType enumerates the declared workflow parameter types.
 type ParamType string

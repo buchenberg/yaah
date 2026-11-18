@@ -80,11 +80,15 @@ const ReasonSettlementInterrupted = "settlement_outcome_unknown"
 // disposed of, the ones a settle node is working through, and the ones that
 // reached a disposition. It is the reducer's own state, carried in the
 // checkpoint so a resumed run's linearity guards read the same ledger the
-// original run had (yaah-0u0v.13's guards, extended by .16).
+// original run had (yaah-0u0v.13's guards, extended by .16). AbortAsked adds
+// the abort pass's permanent ask record (yaah-0u0v.24): every proposal the run
+// asked an abort-time disposition for, so a resume disposes of the rest
+// without ever asking one twice.
 type Ledger struct {
-	Open    map[string]string `json:"open,omitempty"`
-	Claims  map[string]string `json:"claims,omitempty"`
-	Settled map[string]string `json:"settled,omitempty"`
+	Open       map[string]string `json:"open,omitempty"`
+	Claims     map[string]string `json:"claims,omitempty"`
+	Settled    map[string]string `json:"settled,omitempty"`
+	AbortAsked map[string]string `json:"abort_asked,omitempty"`
 }
 
 // InstanceState is one body instance's identity, recorded so a resume can
@@ -212,9 +216,10 @@ func (r *Run) Checkpoint() Checkpoint {
 		FinishedAt:   r.finishedAt,
 		Params:       copyAnyMap(r.params),
 		Ledger: Ledger{
-			Open:    copyStringMap(r.open),
-			Claims:  copyStringMap(r.claims),
-			Settled: copyStringMap(r.settled),
+			Open:       copyStringMap(r.open),
+			Claims:     copyStringMap(r.claims),
+			Settled:    copyStringMap(r.settled),
+			AbortAsked: copyStringMap(r.abortAsked),
 		},
 		Seq:      r.seq,
 		Warnings: append([]string(nil), r.warnings...),
@@ -285,14 +290,16 @@ func Resume(g *ir.Graph, rt Runtime, cfg Config, cp Checkpoint) (*Run, error) {
 	if cp.RunID == "" {
 		return nil, fmt.Errorf("%w: checkpoint has no run id", ErrRunNotFound)
 	}
-	// A disposition is final. Anything else the record states (including a budget
-	// breach the close has not performed yet) is resumable: the next Advance
-	// finishes the close.
+	// A disposition is final. Anything else the record states is resumable:
+	// the close the next Advance finishes — a budget breach, an abort whose
+	// collapse was checkpointed mid-teardown (an abort's dispose pass
+	// (yaah-0u0v.24) must run even when the crash took the close with it),
+	// or a cancel parked the same way.
 	if !cp.FinishedAt.IsZero() {
 		return nil, fmt.Errorf("%w: run %s ended %s (%s)", ErrRunAlreadyFinished, cp.RunID, cp.Status, cp.Reason)
 	}
 	switch cp.Status {
-	case "", RunRunning, RunBudgetExceeded:
+	case "", RunRunning, RunBudgetExceeded, RunAborted, RunCancelled, RunFailed:
 	default:
 		return nil, fmt.Errorf("%w: run %s ended %s (%s)", ErrRunAlreadyFinished, cp.RunID, cp.Status, cp.Reason)
 	}
@@ -405,6 +412,7 @@ func (r *Run) install(cp Checkpoint) error {
 	r.open = copyStringMap(cp.Ledger.Open)
 	r.claims = copyStringMap(cp.Ledger.Claims)
 	r.settled = copyStringMap(cp.Ledger.Settled)
+	r.abortAsked = copyStringMap(cp.Ledger.AbortAsked)
 
 	// Instances first: they are recorded in canonical result order, so a
 	// container instance exists before the body instances it minted.

@@ -45,6 +45,17 @@ const (
 	// from "never asked". It carries no outcome and changes no disposition.
 	EventSettlementAsked EventKind = "settlement_asked"
 	EventProposalSettled EventKind = "proposal_settled"
+	// EventAbortAsked and EventAbortSettled are the abort-time disposition
+	// pass's half of the settlement discipline (yaah-0u0v.24). The run asks
+	// through the SAME door — Runtime.Settle with release or discard — for
+	// every proposal it has not disposed of when it ends without succeeding,
+	// and the two events mirror settlement_asked / proposal_settled without
+	// owning a node: the pass's subject is the run as a whole. The asked
+	// record is permanent in one respect a settle node's is not: a proposal
+	// the run asked for once is never asked for again, whatever became of
+	// the first answer.
+	EventAbortAsked   EventKind = "abort_asked"
+	EventAbortSettled EventKind = "abort_settled"
 	// EventFanoutExpanded reports the item list one fan-out node resolved from
 	// its declared `over` source (yaah-0u0v.14). It is the fan-out's answer to
 	// the same question a settlement plan answers — what work does this node own
@@ -280,6 +291,32 @@ type ProposalSettledEvent struct {
 func (ProposalSettledEvent) Kind() EventKind  { return EventProposalSettled }
 func (e ProposalSettledEvent) target() string { return e.NodePath }
 
+// AbortAskedEvent records the abort-time disposition the run is about to ask
+// the door for, in settlement_asked's write-ahead shape (yaah-0u0v.24): the
+// reducer commits it — and the store persists it — BEFORE the door is called.
+// Action carries the door's verb for the log line. The ask it records is
+// permanent for the proposal it names: the door's one-disposition invariant is
+// what a resumed run leans on refusing to ask a second time.
+type AbortAskedEvent struct {
+	ProposalID string
+	Action     string
+}
+
+func (AbortAskedEvent) Kind() EventKind  { return EventAbortAsked }
+func (e AbortAskedEvent) target() string { return e.ProposalID }
+
+// AbortSettledEvent carries one abort-time disposition's outcome back from
+// the door. DoorError reports that the door itself malfunctioned: there is
+// no settlement envelope behind it, the proposal keeps whatever state it
+// had, and the run's close is the report of what that left open.
+type AbortSettledEvent struct {
+	Settled   Settled
+	DoorError string
+}
+
+func (AbortSettledEvent) Kind() EventKind  { return EventAbortSettled }
+func (e AbortSettledEvent) target() string { return e.Settled.ProposalID }
+
 // FanoutExpandedEvent reports the items a fan-out node resolved from its
 // declared `over` source. The reducer instantiates one body instance per item
 // and owns what follows: which instance may start, the fan-out's nested
@@ -499,6 +536,19 @@ func detail(ev Event) string {
 		return out
 	case SettlementAskedEvent:
 		return fmt.Sprintf("%s proposal_id=%s action=%s", e.NodePath, orDash(e.ProposalID), orDash(e.Action))
+	case AbortAskedEvent:
+		return fmt.Sprintf("proposal_id=%s action=%s", orDash(e.ProposalID), orDash(e.Action))
+	case AbortSettledEvent:
+		s := e.Settled
+		out := fmt.Sprintf("proposal_id=%s action=%s status=%s left_open=%t",
+			orDash(s.ProposalID), orDash(s.Action), orDash(s.Status), s.LeftOpen)
+		if s.Error != "" {
+			out += " error=" + flatten(s.Error)
+		}
+		if e.DoorError != "" {
+			out += " door_error=" + flatten(e.DoorError)
+		}
+		return out
 	case ProposalSettledEvent:
 		s := e.Settled
 		out := fmt.Sprintf("%s proposal_id=%s action=%s status=%s left_open=%t",

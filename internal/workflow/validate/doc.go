@@ -83,9 +83,10 @@
 // iteration, since a settlement expression is written over the set, and a
 // filtered or conflict-skipped settle counts as naming its set rather than as
 // disposing of every element of it — partial coverage is WF024's and WF026's
-// subject, not WF021's. WF025 has no declaration to read: `on_abort` is
-// scheduled with the executor, so the rule reports the exposure such a field
-// would discharge. Prove publishes the resulting disposition map as a
+// subject, not WF021's. WF025 reads the document-level `on_abort` (yaah-0u0v.24):
+// any of its three values discharges the finding, because the rule's subject is
+// that the author said what becomes of the residue, not which thing they said.
+// Prove publishes the resulting disposition map as a
 // SettlementProof for `yaah workflow explain`.
 //
 // Linearity is the last family the plan calls for, so the table above is the

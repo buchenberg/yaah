@@ -39,6 +39,10 @@ import (
 //	                                                     status=asked
 //	settle             proposal_settled                  proposal id, action,
 //	                                                     door status, reason
+//	settle             abort_asked, abort_settled        proposal id, action,
+//	                                                     door status, reason
+//	                                                     (no node: the record
+//	                                                     is the run's own)
 //	node.finished      node_succeeded                    status, output digest
 //	                   node_failed, node_skipped,        status, reason,
 //	                   node_cancelled                    output digest
@@ -139,6 +143,35 @@ func (r *Run) traceRecords(ev Event) []trace.Record {
 		rec.Action = e.Settled.Action
 		rec.Reason = settledReason(e)
 		rec.Result = e.Settled.Outcome
+		if e.Settled.Outcome != "" {
+			rec.OutputDigest = trace.Digest(e.Settled.Outcome)
+		}
+		return []trace.Record{rec}
+	case AbortAskedEvent:
+		// The abort pass owns no node, so the record is built directly:
+		// identity is the run and the proposal, and the reason carries the
+		// policy that caused the ask so a reader can tell these settled
+		// records from a settle node's at a glance (yaah-0u0v.24).
+		return []trace.Record{{
+			Kind:       trace.KindSettle,
+			Status:     trace.StatusAsked,
+			ProposalID: e.ProposalID,
+			Action:     e.Action,
+			Reason:     "on_abort",
+		}}
+	case AbortSettledEvent:
+		reason := "on_abort"
+		if cause := firstSet(e.DoorError, e.Settled.Error); cause != "" {
+			reason += ": " + flatten(cause)
+		}
+		rec := trace.Record{
+			Kind:       trace.KindSettle,
+			Status:     e.Settled.Status,
+			ProposalID: e.Settled.ProposalID,
+			Action:     e.Settled.Action,
+			Reason:     reason,
+			Result:     e.Settled.Outcome,
+		}
 		if e.Settled.Outcome != "" {
 			rec.OutputDigest = trace.Digest(e.Settled.Outcome)
 		}
