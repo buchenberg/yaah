@@ -5,6 +5,7 @@
 
 ### Features
 
+* **tools:** require an explicit overwrite, stash the old bytes, accept if_digest ([#1675](https://github.com/buchenberg/yaah/issues/1675)) ([b6c68f4](https://github.com/buchenberg/yaah/commit/b6c68f48c9baad4cde993d53be8d62c96d53f102))
 * **workflow:** replay mode and resume idempotency hardening (yaah-0u0v.25) ([#1676](https://github.com/buchenberg/yaah/issues/1676)) ([d82b290](https://github.com/buchenberg/yaah/commit/d82b290e040a4bc557285269ae0ce037ab01676e))
 
 ## [0.192.0](https://github.com/buchenberg/yaah/compare/v0.191.1...v0.192.0) (2026-11-18)
