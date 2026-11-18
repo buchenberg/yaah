@@ -151,7 +151,7 @@ func runWorkflowExplainFromTrace(cmd *cobra.Command, args []string, opts workflo
 		warnings []string
 	)
 	if specPath != "" {
-		a, aerr := analyzeWorkflow(specPath, opts.params, workflowEnv(), false)
+		a, aerr := analyzeWorkflow(specPath, opts.params, workflowEnv(), false, nil)
 		switch {
 		case aerr != nil:
 			warnings = append(warnings, fmt.Sprintf("%s could not be read (%v); divergence analysis reports the run's own record only", specPath, aerr))

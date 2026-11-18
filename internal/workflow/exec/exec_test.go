@@ -501,24 +501,30 @@ func TestWallClockBudgetExceeded(t *testing.T) {
 // validate's proof of the same graph. The refusal reason names the owning bead
 // or door where one is assigned.
 //
-// The fence moved with yaah-0u0v.21: gate executes now, and no golden document
-// carries a call or a human node, so the fence is pinned on the kind table
-// itself — the same discipline TestSelectNoLongerFenced follows, and the only
-// reading that cannot go vacuous when the corpus changes.
+// The fence moved with yaah-0u0v.21 (gate executes) and yaah-0u0v.23 (call
+// executes as a door step), and no golden document carries a human node, so
+// the fence is pinned on the kind table itself — the same discipline
+// TestSelectNoLongerFenced follows, and the only reading that cannot go
+// vacuous when the corpus changes. A call's one remaining refusal is the
+// declaration fact it owns: naming no workflow leaves nothing for the door
+// to resolve.
 func TestNonDelegateKindsRefused(t *testing.T) {
-	refused := []ir.Kind{ir.KindCall, ir.KindHuman}
-	for _, kind := range refused {
-		t.Run(string(kind), func(t *testing.T) {
-			n := &ir.Node{Path: "steps.x", ID: "x", Kind: kind}
-			action, note := classifyKind(n)
-			if action != kindRefuse {
-				t.Fatalf("kind %s classifies as %v, want a refusal", kind, action)
-			}
-			if !strings.Contains(note, ReasonNotImplemented) {
-				t.Errorf("refusal %q does not name %s", note, ReasonNotImplemented)
-			}
-		})
+	if action, _ := classifyKind(&ir.Node{Path: "steps.h", Kind: ir.KindHuman}); action != kindRefuse {
+		t.Error("a human node should refuse: it is an approval door, not a scheduler kind")
 	}
+	t.Run("call", func(t *testing.T) {
+		action, note := classifyKind(&ir.Node{Path: "steps.x", ID: "x", Kind: ir.KindCall})
+		if action != kindRefuse {
+			t.Fatalf("a call naming no workflow classifies as %v, want a refusal", action)
+		}
+		if !strings.Contains(note, ReasonCallWorkflowMissing) {
+			t.Errorf("refusal %q does not name %s", note, ReasonCallWorkflowMissing)
+		}
+		action, note = classifyKind(&ir.Node{Path: "steps.x", ID: "x", Kind: ir.KindCall, Workflow: "review"})
+		if action != kindCallStep {
+			t.Fatalf("a call naming a workflow classifies as %v (%s), want the call step", action, note)
+		}
+	})
 	// The kinds that execute must not be caught by the same fence: a delegate
 	// dispatches, and a gate has its own condition table (yaah-0u0v.21).
 	if action, note := classifyKind(&ir.Node{Path: "steps.d", Kind: ir.KindDelegate}); action != kindDispatch {

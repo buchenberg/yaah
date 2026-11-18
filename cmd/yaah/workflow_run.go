@@ -83,6 +83,10 @@ Flags:
   --param key=value    bind a declared parameter (repeatable; same coercion
                        as validate/explain)
   --run-id id          label the run (default: minted from the graph name)
+  --workflow-root dir  directory a call node's workflow name resolves under:
+                       each name loads <name>.yaml or <name>.json, is
+                       validated and resolved like the root document, and a
+                       document with calls is refused without the flag
   --artifact-root dir  where emit artifact paths are resolved; empty records
                        outputs without writing files (declined writes are
                        listed as warnings)
@@ -105,7 +109,11 @@ Flags:
 func runWorkflowRun(cmd *cobra.Command, path string, opts workflowRunOptions) error {
 	out := cmd.OutOrStdout()
 
-	a, err := analyzeWorkflow(path, opts.params, workflowEnv(), opts.strict)
+	calls, oerr := openWorkflowRegistry(opts.workflowRoot)
+	if oerr != nil {
+		return oerr
+	}
+	a, err := analyzeWorkflow(path, opts.params, workflowEnv(), opts.strict, calls)
 	if err != nil {
 		return err
 	}
@@ -173,6 +181,7 @@ func runWorkflowRun(cmd *cobra.Command, path string, opts workflowRunOptions) er
 		Store:        st,
 		SpecHash:     specHash,
 		SpecPath:     path,
+		Calls:        a.calls,
 	}
 	// The retained runtime the seam composed, if any: proposal-lane
 	// dispatches and settle nodes need it. Nil for a report-only document

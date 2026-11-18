@@ -98,6 +98,15 @@ func (r *Run) Advance(ctx context.Context) (bool, error) {
 	if discarding, derr := r.discardStepOnce(ctx); discarding {
 		return true, derr
 	}
+	// Then the call door (yaah-0u0v.23): one nested workflow per cycle, after
+	// the settlements for the same reason a settlement outranks it — a call
+	// blocks this cycle for the length of the child run, and world work with
+	// one answer waits fine while a ready settle does not. A call starts no
+	// attempt, so it appears nowhere in the dispatch tally this cycle would
+	// otherwise consult.
+	if calling, cerr := r.callStepOnce(ctx); calling {
+		return true, cerr
+	}
 	// Then the fan-out door: one expansion per cycle, after the settle cycle so
 	// a ready settlement still gets its own place in the log. An expansion
 	// dispatches nothing itself, so it appears nowhere in the dispatch tally

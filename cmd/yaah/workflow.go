@@ -78,9 +78,10 @@ The --json report shapes are stable within v1 and documented as JSON Schema:
 // Execute() can be called more than once in a process (tests, embedding)
 // and a shared target would carry flags from the previous run.
 type workflowOptions struct {
-	params []string
-	strict bool
-	asJSON bool
+	params       []string
+	strict       bool
+	asJSON       bool
+	workflowRoot string
 }
 
 func (o *workflowOptions) bind(cmd *cobra.Command, explain bool) {
@@ -93,6 +94,8 @@ func (o *workflowOptions) bind(cmd *cobra.Command, explain bool) {
 		cmd.Flags().BoolVar(&o.asJSON, "json", false,
 			"emit the documented yaah.workflow.validate.v1 object instead of the text report")
 	}
+	cmd.Flags().StringVar(&o.workflowRoot, "workflow-root", "",
+		"directory a call node's workflow name resolves under: each name loads <name>.yaml or <name>.json from the root, is validated and resolved like the root document, and a name outside the root never resolves")
 	cmd.Flags().BoolVar(&o.strict, "strict", false,
 		"treat host-relative warnings as failures")
 }
@@ -210,7 +213,11 @@ document always encodes to the same bytes.`, workflowSeverityHelp, workflowExitH
 // runWorkflow is the whole command: resolve the host authority, analyse the
 // document, print it, and map the verdict onto an exit code.
 func runWorkflow(cmd *cobra.Command, path string, opts workflowOptions, explain bool) error {
-	a, err := analyzeWorkflow(path, opts.params, workflowEnv(), opts.strict)
+	calls, oerr := openWorkflowRegistry(opts.workflowRoot)
+	if oerr != nil {
+		return oerr
+	}
+	a, err := analyzeWorkflow(path, opts.params, workflowEnv(), opts.strict, calls)
 	if err != nil {
 		return err
 	}

@@ -525,6 +525,11 @@ func (r *Run) settle(n *ir.Node) error {
 		// run state and records the binding, so it never reaches the door
 		// and never consumes a dispatch.
 		return r.settleValueStep(n, st)
+	case kindCallStep:
+		// A call stays ready: the driver asks the door for the nested run
+		// once its params can render (yaah-0u0v.23), and the outcome's fold
+		// lives in Apply like every other envelope.
+		return nil
 	}
 	return nil
 }

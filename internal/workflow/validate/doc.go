@@ -12,8 +12,14 @@
 //	       resolution failed (unknown fields, unknown enum values,
 //	       missing required fields, parse limits, unbound references)
 //	WF002  node ids are unique in their scope and every step reference
-//	       (needs, branch arms, gate dispositions) names a step that exists
-//	WF003  needs is acyclic, and a call node's declared depth is bounded
+//	       (needs, branch arms, gate dispositions) names a step that exists,
+//	       and a call names a subworkflow the registry resolves: a legal
+//	       name under --workflow-root loadable as a document, or a shape
+//	       that cannot be one (path shapes are refused as names)
+//	WF003  needs is acyclic, a call node's declared depth is bounded, and
+//	       the call graph the registry resolves is acyclic across documents
+//	       within the depth ceiling — the direct self-call stays the one
+//	       legal recursion, bounded by its declared max_depth
 //	WF004  every node is reachable from the entry set
 //	WF005  output bindings have non-empty unique names in their scope, and a
 //	       declared schema is a schema name or a well-formed JSON Schema

@@ -52,6 +52,7 @@ import (
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/workflow/exec"
 	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/buchenberg/yaah/internal/workflow/registry"
 )
 
 // Runtime is the exec.Runtime door over the dispatch lane.
@@ -83,6 +84,19 @@ type Runtime struct {
 	// by ctx; a test supplies a recorder that returns at once, so no test in
 	// this package sleeps.
 	Wait func(ctx context.Context, d time.Duration) error
+
+	// calls is the subworkflow registry call nodes resolve against
+	// (yaah-0u0v.23); nil refuses calls at the door. See call.go.
+	calls *registry.Registry
+	// runStore and artifactRoot are the composition facts Runtime.Call needs
+	// to run a child the way the command ran the root: a durable resume and
+	// the artifact root the child's emit paths resolve under. runStore, not
+	// store: the completion store is a method and wins the name.
+	runStore     exec.Store
+	artifactRoot string
+	// callFrames is the workflow-name path this run was composed under;
+	// empty for a root run. See call.go.
+	callFrames []string
 
 	mu          sync.Mutex
 	completions map[string]exec.Completion
@@ -512,6 +526,12 @@ type Artifact struct {
 	Bytes    int    `json:"bytes"`
 }
 
+// Calls is the registry a call node's `workflow` name resolves against. The
+// name exists so Options reads as configuration; there is exactly one
+// implementation — what --workflow-root loaded, validated, and resolved
+// (yaah-0u0v.23).
+type Calls = *registry.Registry
+
 // Options configures one run.
 type Options struct {
 	// Graph is the resolved graph. Required.
@@ -535,6 +555,20 @@ type Options struct {
 	// Result.Warnings — the run still succeeds, because the value was
 	// produced and recorded; only the file was not asked for.
 	ArtifactRoot string
+
+	// Calls is the subworkflow registry a call node's name resolves against
+	// (yaah-0u0v.23): what --workflow-root loaded, validated, and resolved.
+	// Nil refuses every call at the door with an honest error — a document
+	// with call nodes was validated against a registry, and running it
+	// without one would be a run the validators never approved.
+	Calls Calls
+
+	// callFrames is the workflow-name path a nested run is composed under
+	// (yaah-0u0v.23). Set by Runtime.Call only; the root's stays empty. It
+	// travels on Options because the depth guards are composition-scoped: a
+	// child's Runtime is a new door, and without carrying the frames each
+	// level would see only its own slice of the path.
+	callFrames []string
 
 	// Store is the durable projection of the run (yaah-0u0v.16). Nil means the
 	// run keeps no state between processes, which is what a one-shot run does;
@@ -589,6 +623,10 @@ func Execute(ctx context.Context, opts Options) (Result, error) {
 	rt.Retained = opts.Retained
 	rt.Clock = opts.Now
 	rt.Wait = opts.Wait
+	rt.calls = opts.Calls
+	rt.runStore = opts.Store
+	rt.artifactRoot = opts.ArtifactRoot
+	rt.callFrames = opts.callFrames
 	cfg := exec.Config{
 		RunID:    opts.RunID,
 		Params:   opts.Params,
@@ -647,6 +685,10 @@ func Resume(ctx context.Context, opts Options, runID string) (Result, error) {
 	rt.Retained = opts.Retained
 	rt.Clock = opts.Now
 	rt.Wait = opts.Wait
+	rt.calls = opts.Calls
+	rt.runStore = opts.Store
+	rt.artifactRoot = opts.ArtifactRoot
+	rt.callFrames = opts.callFrames
 	cfg := exec.Config{
 		RunID:    runID,
 		Limits:   exec.LimitsFromBudgets(opts.Graph.Budgets),

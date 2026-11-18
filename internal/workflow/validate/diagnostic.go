@@ -18,9 +18,15 @@ const (
 	CodeWF001 = "WF001"
 	// CodeWF002 marks an id-scope defect or a step reference that names
 	// no step: duplicate ids, an unlabelled top-level step, an unknown
-	// needs, branch arm, or gate disposition.
+	// needs, branch arm, or gate disposition — and, for a call node, a
+	// workflow the registry does not resolve: no name, a shape that cannot
+	// be one (path shapes), no registry, or no document under
+	// --workflow-root carries it (yaah-0u0v.23).
 	CodeWF002 = "WF002"
-	// CodeWF003 marks a needs cycle or an unbounded call depth.
+	// CodeWF003 marks a needs cycle, an unbounded call depth, or the
+	// cross-document defects the registry exposed: a cycle of documents
+	// calling one another, or a call chain deeper than the ceiling the
+	// validator holds (yaah-0u0v.23).
 	CodeWF003 = "WF003"
 	// CodeWF004 marks a node the scheduler can never enter: needs joins
 	// on every entry, so one need that names no step or is itself

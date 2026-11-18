@@ -95,6 +95,10 @@ Flags:
   --artifact-root dir  where emit artifact paths are resolved; artifacts are
                        rewritten from the recorded values, so a partial write is
                        repaired rather than duplicated
+  --workflow-root dir  directory call node names resolve against, for the
+                       re-ask a resumed call node makes: a child run resumes
+                       from its own record under a derived run id, rather than
+                       running twice
   --json               the machine-readable run report
 
 Exit codes:
@@ -145,7 +149,11 @@ func runWorkflowResume(cmd *cobra.Command, runID string, opts workflowResumeOpti
 		return fmt.Errorf("run %s records no spec path; pass --spec <path>", runID)
 	}
 
-	a, aerr := analyzeWorkflow(path, opts.params, workflowEnv(), opts.strict)
+	calls, oerr := openWorkflowRegistry(opts.workflowRoot)
+	if oerr != nil {
+		return oerr
+	}
+	a, aerr := analyzeWorkflow(path, opts.params, workflowEnv(), opts.strict, calls)
 	if aerr != nil {
 		return aerr
 	}
@@ -172,6 +180,7 @@ func runWorkflowResume(cmd *cobra.Command, runID string, opts workflowResumeOpti
 		Store:        st,
 		SpecHash:     hash,
 		SpecPath:     path,
+		Calls:        a.calls,
 	}
 	// The retained runtime the seam composed for this process's resume, if
 	// any: proposal-lane dispatches and settle nodes need it. A resume of a

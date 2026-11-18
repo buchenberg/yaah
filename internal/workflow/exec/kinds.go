@@ -37,6 +37,13 @@ const (
 	// ReasonUnknownKind prefixes a node whose kind is not in the resolved
 	// vocabulary at all: a hand-built graph, not an authored document.
 	ReasonUnknownKind = "unknown_kind"
+	// ReasonCallWorkflowMissing prefixes a call node that names no workflow:
+	// a declaration fact, so the node may not run at all.
+	ReasonCallWorkflowMissing = "call_workflow_missing"
+	// ReasonCallFailed prefixes a call whose nested workflow did not succeed
+	// — the child run failed, aborted, or exhausted a budget, or the door
+	// refused the request itself.
+	ReasonCallFailed = "call_failed"
 )
 
 // kindAction is what the fixed kind switch decides for a ready node.
@@ -94,6 +101,12 @@ const (
 	// so that policy classifies as kindDispatch instead and this step only
 	// resolves the candidate set the verdict will name one of.
 	kindSelectStep
+	// kindCallStep asks the door to run one nested workflow (yaah-0u0v.23).
+	// Like a settle it starts no attempt and consumes no dispatch budget —
+	// the child run prices its own, against the document the child is — but
+	// unlike a settle its state change is recorded from the call's outcome
+	// rather than the proposal ledger.
+	kindCallStep
 	// kindRefuse ends the node failed with ReasonNotImplemented.
 	kindRefuse
 )
@@ -111,7 +124,9 @@ const (
 // implementation; a fan-out expands into item instances the ordinary scheduler
 // then runs (yaah-0u0v.14); a loop, a branch, and an aggregate resolve
 // themselves in the reducer and, where they run a body at all, expand into body
-// instances the ordinary scheduler runs (yaah-0u0v.15). Everything else is
+// instances the ordinary scheduler runs (yaah-0u0v.15). A call asks the door
+// to run a nested workflow composed from the registry the host resolves its
+// name against (yaah-0u0v.23). Everything else is
 // refused with a reason naming the bead that owns it, for the reason given in the
 // package doc: a container that reported success would contradict validate's
 // proof of the same graph.
@@ -213,7 +228,16 @@ func classifyKind(n *ir.Node) (kindAction, string) {
 		}
 		return kindRefuse, ReasonSelectPolicyUnsupported + ": " + n.Path + " policy " + selectPolicyLabel(policy)
 	case ir.KindCall:
-		return kindRefuse, ReasonNotImplemented + ": nested workflow calls are not in the scheduler core"
+		// A call is door work like a settlement (yaah-0u0v.23): the registry
+		// that resolves its name, the child run the door composes, and the
+		// depth guards are all world facts this core cannot see. All it can
+		// refuse at declaration time is the one fact the graph holds: a call
+		// naming no workflow has nothing to resolve, and running it to find
+		// that out would dispatch a child to report an authoring defect.
+		if n.Workflow == "" {
+			return kindRefuse, ReasonCallWorkflowMissing + ": " + n.Path + " names no workflow"
+		}
+		return kindCallStep, ""
 	case ir.KindEmit:
 		return kindValueStep, ""
 	case ir.KindHuman:
