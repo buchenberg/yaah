@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/buchenberg/yaah/internal/jobs"
@@ -298,16 +299,21 @@ func TestWorkflowRunRefusesCostBombAndEscapes(t *testing.T) {
 		})
 	}
 	t.Run("declared budget bounds the bomb at runtime", func(t *testing.T) {
-		calls := 0
-		swapRunRunner(t, echoRunner("done"), &calls)
+		// The budget stop cancels in-flight attempts, so a dispatch
+		// goroutine can still be winding down when the command returns —
+		// an atomic count reads cleanly after a killed run.
+		var calls atomic.Int64
+		swapRunRunner(t, func(ctx context.Context, prompt string, params jobs.SubAgentParams) (string, error) {
+			calls.Add(1)
+			return "done", nil
+		}, new(int))
 		out, err := runWfRun(t, wfAdversarial+"cost_bomb_over_budget.yaml")
 		if err == nil {
 			t.Errorf("cost bomb ran to success (want the declared budget to bite):\n%s", out)
 		}
-		if calls > 3 {
-			t.Errorf("runner called %d times, want at most the 3 dispatches the document budgets", calls)
-		}
-		if calls == 0 {
+		if got := calls.Load(); got > 3 {
+			t.Errorf("runner called %d times, want at most the 3 dispatches the document budgets", got)
+		} else if got == 0 {
 			t.Errorf("runner never called; the fixture was refused outright:\n%s", out)
 		}
 	})

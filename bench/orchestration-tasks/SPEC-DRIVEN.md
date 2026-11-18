@@ -124,3 +124,53 @@ record-shape change fails CI first.
   is a JSON document. The workspace layers (`APP`, `seed`,
   `assert_no_unexpected_changes`, `assert_byte_identical`) are imported from
   `orch_assert`, so nothing is forked — only the trace reader is new.
+
+## yaah-0u0v.27: five more tasks run from their specs
+
+`orch-settle-discard`, `orch-guard`, `orch-quality-gate`, `orch-escalation`,
+and `orch-recovery` now each carry a `spec/workflow.yaml`, and CI runs each
+model-free the way `orch-fanout` runs (deterministic runners through the
+`workflow run` + `explain --from-trace` surfaces,
+`cmd/yaah/workflow_bench_run_test.go`):
+
+| Task | The document's shape | What CI pins |
+|---|---|---|
+| `orch-settle-discard` | delegate on the proposal lane → settle `discard` → emit `answer.txt` naming the discarded id | one sealed proposal, one settle with the discard verb, `fizzbuzz.py` nowhere (artifact root and host repo), answer names the id |
+| `orch-guard` | loop (one supervised attempt per iteration) over a probe delegate, terminator on the child's own `outcome`, collect as the audit trail, summariser delegate, two emits | five probes + one summary, `answer.txt` with the attempt count and the quoted warning, `ok.txt`, `attempts=5` semantics |
+| `orch-quality-gate` | bounded repair: implement (proposal) → loop [fix (proposal), check (report/verdict)] until pass → settle `apply` where the check passed, `discard` where it failed, `discard` the superseded implement, emit report | the repaired `mathx.py` landed on the host repo exactly once (the passing proposal), all three dispositions settled, five dispatches |
+| `orch-escalation` | one delegate whose contract is the escalation block (refuse to fabricate), one emit writing it verbatim | `answer.txt` is the block byte-for-byte, refusing-to-fabricate is the run succeeding, one dispatch |
+| `orch-recovery` | delegate runs the `yaah shepherd` scan and reports the adopted path, emit writes `recovery.txt`; plus the resume-contract pin | the artifact, the prompt carrying the scan, and — at the command seam — `workflow resume` refusing a finished run by name with zero re-dispatch |
+
+Two honest boundaries, both stated in the specs' own headers:
+
+- **`orch-guard` is Partial by the IR mapping (G3)**: the supervision
+  error-rate rule is host machinery with no spec field, and the injected
+  warning is a conversation event. The document owns what a graph can own —
+  the retry loop across dispatches, the collect as the audit trail, the
+  summariser — and the child's report carries the warning it saw.
+- **`orch-recovery`'s adoption is a pre-run lifecycle step, not a graph
+  edge** — it is `yaah shepherd`'s. The spec owns the reporting half, and the
+  workflow surface's actual recovery story is durability: `--state` runs are
+  resumable, and crash/resume idempotency (no re-dispatch, at most one
+  settlement per proposal per life) is proven at the scheduler core
+  (`internal/workflow/exec/resume_property_test.go`). A run whose
+  disposition was already final is refused by `resume` — a fact is not a
+  todo — and CI pins that refusal too.
+
+A real chore beyond the bench: `examples/workflows/dependency-upgrade.yaml`
+(the dependency-upgrade sweep this repo would run), validated by CI through
+the same gate (`TestExampleSpecsValidate`). The user-facing reference is
+`docs/workflows.md`.
+
+### Bugs the corpus found on the way
+
+Driving these five through the real pipeline hardened three seams; all have
+regression coverage via the bench tests above:
+
+- a repeated identical template reference tripped WF013 the second time
+  (Refs dedups by string, integrity compared pointers);
+- a prompt template referencing a loop's `collect` failed to render
+  (the dispatch snapshot exposed only fan-out collects);
+- a `settle` whose `where` selected by the check report's `verdict` could
+  not read the verdict off the collected handle (handles now carry their
+  element's fields; report strings decode on demand).

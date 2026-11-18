@@ -1,0 +1,86 @@
+# orch-guard as a workflow document (bead yaah-0u0v.27).
+#
+# The task (../task.yaml) makes the orchestrator drive a flaky command through
+# a visible retry loop and report the attempt count plus the supervision
+# warning. The IR mapping (../IR-MAPPING.md, row `orch-guard`) calls this one
+# Partial: the supervision error-rate rule itself is host machinery with no
+# spec field (G3), and the warning text it injects is a conversation event,
+# not a node output. What the graph CAN own — and owns here — is the retry
+# loop: each iteration is a fresh dispatch, the terminator is the child's own
+# outcome, and the collect is the audit trail of attempts.
+#
+# So the document is honest about the boundary: the loop models one
+# supervised attempt per iteration (the task forbids the child from retrying
+# inside one shell command, so the supervisor's saw-each-attempt property is
+# the loop's), and the child's report carries both its outcome and, once the
+# host injected the warning, its quoted text.
+
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: orch-guard
+  version: 1.0.0
+
+spec:
+  defaults:
+    lane: report
+
+  budgets:
+    max_dispatches: 12
+    max_concurrent_dispatches: 2
+    max_wall_clock_seconds: 1200
+
+  steps:
+    - id: flaky
+      kind: loop
+      max_iterations: 8
+      collect: attempts
+      until: { from: steps.flaky.collect, field: outcome, equals: ok }
+      on_failure: abort
+      needs: []
+      body:
+        - id: probe
+          kind: delegate
+          role: developer
+          prompt: |
+            Run /app/flaky.sh exactly once. Do not loop inside one shell
+            command and do not chain attempts with `&&` or `;` — one tool call,
+            one attempt.
+
+            Then report ONLY a JSON object (no prose, no code fence) with
+            these fields:
+
+                {"outcome": "ok" or "fail", "attempt": <your attempt number>,
+                 "warning": "<the full text of any supervisor warning injected
+                              into your conversation, or \"\"> "}
+
+            If a supervisor warning about the tool error rate was injected,
+            quote its full text in `warning`.
+
+    - id: summarise
+      kind: delegate
+      needs: [flaky]
+      role: developer
+      prompt: |
+        The supervised retry loop recorded these attempts, in order:
+
+        {{ steps.flaky.collect }}
+
+        Report ONLY a JSON object (no prose, no code fence) with these fields:
+
+            {"attempts": <number of attempts recorded>,
+             "warning": "<the warning text from the attempt reports, or \"\">"}
+
+    - id: answer
+      kind: emit
+      needs: [summarise]
+      value: |
+        attempts: {{ steps.summarise.output.attempts }}
+        {{ steps.summarise.output.warning }}
+      path: answer.txt
+
+    - id: ok
+      kind: emit
+      needs: [summarise]
+      value: "attempts={{ steps.summarise.output.attempts }}"
+      path: ok.txt

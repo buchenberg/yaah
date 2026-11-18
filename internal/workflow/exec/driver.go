@@ -552,7 +552,12 @@ func (r *Run) snapshot(path string, attempt int) ir.Scope {
 		if n.ID != "" && r.instances[p] == nil {
 			s.ids[n.ID] = p
 		}
-		if n.Kind == ir.KindFanout && n.Collect != "" {
+		// A closed container's collect is part of the state a later node
+		// renders against: fan-outs and loops both accumulate one, and a
+		// template reading `{{ steps.<loop>.collect }}` must see the same
+		// list a settle selector does (found by the bench spec corpus;
+		// yaah-0u0v.27).
+		if (n.Kind == ir.KindFanout || n.Kind == ir.KindLoop) && n.Collect != "" {
 			s.collect[p] = st.Collect
 		}
 	}

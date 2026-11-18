@@ -68,10 +68,10 @@ func templateIntegrity(at site, t *ir.Template) []Diagnostic {
 		out = append(out, diag(CodeWF013, at.path,
 			"template has raw text but no compiled segments"))
 	}
-	declared := make(map[*ir.Ref]bool, len(t.Refs))
+	declared := make(map[string]bool, len(t.Refs))
 	for _, r := range t.Refs {
 		if r != nil {
-			declared[r] = true
+			declared[r.String()] = true
 		}
 	}
 	rendered := make(map[*ir.Ref]bool, len(t.Segments))
@@ -91,7 +91,12 @@ func templateIntegrity(at site, t *ir.Template) []Diagnostic {
 			continue
 		}
 		rendered[seg.Ref] = true
-		if !declared[seg.Ref] {
+		// A repeated identical reference compiles a fresh Ref pointer per
+		// occurrence while Refs dedups by string, so declaredness is by
+		// string — the second `{{ steps.fix.output.proposal_id }}` in one
+		// prompt is still the same declared reference, not an undeclared
+		// one (found by the bench spec corpus; yaah-0u0v.27).
+		if !declared[seg.Ref.String()] {
 			out = append(out, diag(CodeWF013, where,
 				"template renders the reference %q without declaring it", seg.Ref.String()))
 		}

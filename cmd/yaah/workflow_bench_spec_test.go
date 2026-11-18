@@ -265,3 +265,38 @@ func TestBenchSpecOrchFanoutRunsFromTheDocument(t *testing.T) {
 		t.Errorf("trace records %d dispatched step(s), want 6: %v", len(dispatched), dispatched)
 	}
 }
+
+// wfExampleDir is the checked-in example set, relative to this package.
+const wfExampleDir = "../../examples/workflows"
+
+// TestExampleSpecsValidate holds every example to the same gate a bench spec
+// passes: decode, resolve, every family at error severity. An example that
+// drifts out of the vocabulary fails CI instead of failing the first person
+// who runs it (yaah-0u0v.27).
+func TestExampleSpecsValidate(t *testing.T) {
+	paths, err := filepath.Glob(filepath.Join(wfExampleDir, "*.yaml"))
+	if err != nil {
+		t.Fatalf("globbing example specs: %v", err)
+	}
+	if len(paths) == 0 {
+		t.Fatalf("no example workflow specs found under %s", wfExampleDir)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		t.Run(strings.TrimSuffix(filepath.Base(path), ".yaml"), func(t *testing.T) {
+			a, err := analyzeWorkflow(path, nil, workflowEnv(), false, nil)
+			if err != nil {
+				t.Fatalf("analyze %s: %v", path, err)
+			}
+			for _, d := range a.errors {
+				t.Errorf("%s: error %s at %s: %s", path, d.Code, d.Path, d.Message)
+			}
+			if a.graph == nil {
+				t.Fatalf("%s did not resolve into a graph; status %s", path, a.status())
+			}
+			if got := a.status(); got != "valid" {
+				t.Errorf("status = %q, want valid", got)
+			}
+		})
+	}
+}

@@ -388,3 +388,21 @@ fallback, and sub-agents can each use a different provider/model. The
 `providers` map supports API-key and OAuth authentication, per-provider
 `max_tokens`, timeouts, extra headers, and model lists. See
 [configuration.md](./configuration.md#provider-reference).
+
+## Workflows
+
+Recurring orchestrations can be written down as `yaah.workflow/v1`
+documents — YAML or JSON specs that name the dispatches, their prompts and
+roles, the graph between them, the budgets, and the settlement verbs. The
+spec is the artifact: `yaah workflow validate` checks it against five
+validator families (WF001–WF037) before anything runs, `explain` diagrams
+it and prices its worst case, and `run` executes it deterministically with
+every dispatch, proposal, and settlement recorded. Runs are durable
+(`--state`), resumable (`yaah workflow resume <run_id>`), and replayable
+(`run --replay <run_id>`), with crash/resume idempotency proven by a seeded
+property suite. The full guide — node kinds, templates, validation codes,
+commands, and the security model for untrusted specs — is
+[workflows.md](./workflows.md); checked-in examples live in
+[examples/workflows/](../examples/workflows/) and the orchestration bench's
+six `orch-*` tasks run from their own specs under
+[bench/orchestration-tasks/](../bench/orchestration-tasks/).
