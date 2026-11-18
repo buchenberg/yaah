@@ -238,7 +238,7 @@ func (rt *Runtime) Settle(_ context.Context, req exec.SettleRequest) (exec.Settl
 	key := req.ProposalID + " " + req.Verb
 	s, ok := rt.settles[key]
 	if !ok {
-		return exec.Settled{
+		missing := exec.Settled{
 			ProposalID: req.ProposalID,
 			Producer:   req.Producer,
 			Action:     req.Verb,
@@ -246,7 +246,8 @@ func (rt *Runtime) Settle(_ context.Context, req exec.SettleRequest) (exec.Settl
 			Error: fmt.Sprintf("replay: no recorded disposition of %s (%s) in run %s",
 				req.ProposalID, req.Verb, rt.runID),
 			LeftOpen: true,
-		}, fmt.Errorf(
+		}
+		return missing, fmt.Errorf(
 			"workflow/replay: run %s recorded no disposition of %s (%s) — refusing to settle what the record does not cover",
 			rt.runID, req.ProposalID, req.Verb)
 	}

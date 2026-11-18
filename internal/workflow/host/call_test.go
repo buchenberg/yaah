@@ -48,18 +48,40 @@ spec:
 // promptRunner is the sub-agent seam: it records every prompt it was handed
 // and answers from a script, in call order — the same discipline the recorder
 // in host_test.go follows, with the prompt kept for the assertions here.
+// The slice is mutex-guarded because the door runs dispatches in their own
+// goroutines: two nodes dispatched in the same cycle reach this closure
+// concurrently.
 type promptRunner struct {
+	mu      sync.Mutex
 	prompts []string
 	results []string
 }
 
 func (r *promptRunner) run(_ context.Context, prompt string, _ jobs.SubAgentParams) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	i := len(r.prompts)
 	r.prompts = append(r.prompts, prompt)
 	if i < len(r.results) {
 		return r.results[i], nil
 	}
 	return "the report", nil
+}
+
+// promptAt is one recorded prompt under the same lock the runner writes
+// with: an assertion after a killed run may race a dispatch goroutine that
+// has not wound down yet.
+func (r *promptRunner) promptAt(i int) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.prompts[i]
+}
+
+// promptCount is the recorded count under the same lock.
+func (r *promptRunner) promptCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.prompts)
 }
 
 // memStore is the exec.Store the compose tests hold: a map of checkpoints,
@@ -131,11 +153,11 @@ func TestCallComposesNestedRun(t *testing.T) {
 		t.Errorf("child run id = %q, want the derived record name", st.CallRunID)
 	}
 	// The child's delegate got the params the parent rendered into the call.
-	if len(runner.prompts) != 2 {
-		t.Fatalf("dispatches = %d (%v), want the parent's plan and the child's work", len(runner.prompts), runner.prompts)
+	if runner.promptCount() != 2 {
+		t.Fatalf("dispatches = %d, want the parent's plan and the child's work", runner.promptCount())
 	}
-	if !strings.Contains(runner.prompts[1], "do the the workstream") {
-		t.Errorf("child prompt = %q, want the rendered param", runner.prompts[1])
+	if !strings.Contains(runner.promptAt(1), "do the the workstream") {
+		t.Errorf("child prompt = %q, want the rendered param", runner.promptAt(1))
 	}
 	// The parent read the child's binding through the call node's value.
 	out := nodeState(t, res.Run, "steps.report")
@@ -169,7 +191,7 @@ func TestCallReAskReadsFinishedChildFromRecord(t *testing.T) {
 	if !first.Succeeded || first.Outputs["summary"] == "" {
 		t.Fatalf("first Call result = %+v, want the child's summary", first)
 	}
-	dispatches := len(runner.prompts)
+	dispatches := runner.promptCount()
 
 	second, err := rt.Call(context.Background(), req)
 	if err != nil {
@@ -181,8 +203,8 @@ func TestCallReAskReadsFinishedChildFromRecord(t *testing.T) {
 	if second.Outputs["summary"] != first.Outputs["summary"] {
 		t.Errorf("second Call outputs = %v, want the recorded %v", second.Outputs, first.Outputs)
 	}
-	if len(runner.prompts) != dispatches {
-		t.Errorf("runner dispatches grew from %d to %d: a finished child was re-executed", dispatches, len(runner.prompts))
+	if runner.promptCount() != dispatches {
+		t.Errorf("runner dispatches grew from %d to %d: a finished child was re-executed", dispatches, runner.promptCount())
 	}
 }
 
@@ -305,7 +327,7 @@ func TestCallResumesChildFromMidFlightRecord(t *testing.T) {
 	// Exactly one real dispatch: the re-dispatched attempt. The abandoned
 	// one was the fake's, and resume re-dispatches rather than re-running
 	// the child from scratch.
-	if len(runner.prompts) != 1 {
+	if runner.promptCount() != 1 {
 		t.Errorf("runner dispatches = %d, want the one resumed attempt\nprompts: %v", len(runner.prompts), runner.prompts)
 	}
 	// The finished record carries BOTH attempts: the interrupted one the

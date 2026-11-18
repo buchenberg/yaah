@@ -101,14 +101,19 @@ type Runtime struct {
 	mu          sync.Mutex
 	completions map[string]exec.Completion
 	cancels     map[string]context.CancelFunc
-	// wake closes on every stored completion and is replaced, so a Block that
-	// started waiting cannot miss a completion; unnotified counts completions
-	// that arrived since the last Block returned, which is what keeps Block
-	// from both hanging on a completion it already saw and spinning without
-	// one.
-	wake       chan struct{}
-	unnotified int
-	requests   []dispatch.DispatchRequest
+	requests    []dispatch.DispatchRequest
+	// wake is closed on every stored completion and replaced, so a Block that
+	// started waiting cannot miss a completion; a completion that landed
+	// before a Block grabbed the current channel is one the channel's
+	// replacement already published, which is why the door keeps NO completion
+	// counter: a counter that Block RESETS (rather than decrements per store)
+	// survives a completion the scheduler read through Completed directly,
+	// and its stale count later makes Block return nil with nothing
+	// completable — a door malfunction the scheduler rightly abandons a
+	// running attempt over. The generation swap is the whole signal: closed
+	// before a wait means "a completion landed after the wait armed", and
+	// every nil is one store that just happened.
+	wake chan struct{}
 }
 
 // NewRuntime prepares a door. Runner must be non-nil.
@@ -207,24 +212,18 @@ func (rt *Runtime) Completed(h exec.Handle) (exec.Completion, bool) {
 
 // Block waits until at least one started attempt has become completable, or
 // ctx is done. It never returns nil without a completion behind it — the
-// scheduler treats that as a door malfunction, and a run that spins on it is the
-// failure this door must not produce — and it never waits past a completion that
-// landed between the scheduler's poll and this call, because that count is
-// carried across calls.
+// scheduler treats that as a door malfunction, and a run that spins on it is
+// the failure this door must not produce. The guarantee is the wake
+// channel's generation: a Block arms a wait on the channel the door holds at
+// arm time, and the only way that wait ends without ctx ending is a store
+// closing it — one completion that landed after the wait armed, still
+// outstanding and therefore still completable.
 func (rt *Runtime) Block(ctx context.Context) error {
 	rt.mu.Lock()
-	if rt.unnotified > 0 {
-		rt.unnotified = 0
-		rt.mu.Unlock()
-		return nil
-	}
 	ch := rt.wake
 	rt.mu.Unlock()
 	select {
 	case <-ch:
-		rt.mu.Lock()
-		rt.unnotified = 0
-		rt.mu.Unlock()
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -350,7 +349,6 @@ func (rt *Runtime) Requests() []dispatch.DispatchRequest {
 func (rt *Runtime) store(id string, c exec.Completion) {
 	rt.mu.Lock()
 	rt.completions[id] = c
-	rt.unnotified++
 	close(rt.wake)
 	rt.wake = make(chan struct{})
 	rt.mu.Unlock()
