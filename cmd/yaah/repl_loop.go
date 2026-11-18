@@ -76,6 +76,12 @@ func startREPL() error {
 		return err
 	}
 	defer sess.Close()
+	// The REPL reads stdin in cooked mode, so Ctrl+C is a real SIGINT: without
+	// this funnel it terminates the process while the scan below is blocked,
+	// the deferred Close never runs, and the session row is left at
+	// ended_at = 0 with the last turn's message already persisted (yaah-cqxg).
+	// The funnel closes the session, then exits.
+	defer sess.CloseOnInterrupt()()
 	// A watch that fires while the prompt is idle starts its own turn. The
 	// REPL's stdin scan stays blocked; the wake turn writes to the terminal
 	// view installed here, and each user prompt replaces it. The requester

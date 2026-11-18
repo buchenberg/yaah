@@ -318,11 +318,45 @@ func DeriveSessionTitle(content string) string {
 
 // EndSession sets the ended_at timestamp and final token counts for a
 // session, including the cache-hit and sub-agent attribution columns.
+//
+// Idempotent-safe by construction, because every exit of a session funnels
+// its close through here and more than one caller can reach it (a signal
+// funnel racing the driver's deferred close, a retried teardown):
+//
+//   - ended_at only ever moves FORWARD, so a second close can neither reopen
+//     a row (ended_at back to 0) nor pin it to a stale clock. Forward-only is
+//     what a resumed session needs: its row still carries the previous
+//     process's ended_at, and the next close must advance it.
+//   - the usage columns take the maximum of the stored and offered values,
+//     mirroring UpdateSessionUsage's monotonic flush. A close carrying a
+//     stale or zeroed snapshot therefore cannot shrink what the row already
+//     reports.
+//
+// A close for an id with no row returns ErrSessionNotFound instead of
+// succeeding on zero rows: the write is the only evidence the session ended,
+// and a row left at ended_at = 0 is exactly the failure this guards against.
 func (d *DB) EndSession(id string, endedAt int64, tokensIn int, tokensOut int, tokensCached, subTokensIn, subTokensOut int) error {
-	_, err := d.sql.Exec(
-		`UPDATE sessions SET ended_at = ?, tokens_in = ?, tokens_out = ?, tokens_cached = ?, sub_tokens_in = ?, sub_tokens_out = ? WHERE id = ?`,
+	res, err := d.sql.Exec(
+		`UPDATE sessions SET
+			ended_at = MAX(COALESCE(ended_at, 0), ?),
+			tokens_in = MAX(COALESCE(tokens_in, 0), ?),
+			tokens_out = MAX(COALESCE(tokens_out, 0), ?),
+			tokens_cached = MAX(COALESCE(tokens_cached, 0), ?),
+			sub_tokens_in = MAX(COALESCE(sub_tokens_in, 0), ?),
+			sub_tokens_out = MAX(COALESCE(sub_tokens_out, 0), ?)
+		WHERE id = ?`,
 		endedAt, tokensIn, tokensOut, tokensCached, subTokensIn, subTokensOut, id)
-	return err
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrSessionNotFound
+	}
+	return nil
 }
 
 // UpdateSessionUsage flushes the running usage counters without ending

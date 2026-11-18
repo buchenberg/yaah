@@ -27,6 +27,13 @@ var ErrPrematureStreamClose = errors.New("stream closed before finish_reason")
 // runStream handles a streaming request and returns the assembled assistant
 // message, finish reason, response model, usage, and any error.
 func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.ChatRequest) (types.Message, string, string, types.Usage, error) {
+	// The read loop can abandon a stream early (a degenerate repetition, a
+	// transport error): cancelling the derived context tears the provider's
+	// request down instead of leaving it streaming — and billing — into a
+	// channel nobody reads.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	var streamSpan trace.Span
 	if c.OtelEnabled {
 		ctx, streamSpan = observability.StartStream(ctx, req.Model)
@@ -50,6 +57,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 	var reasoning strings.Builder
 	var signature strings.Builder
 	var dsmlFilter dsmlTokenFilter
+	var repetition repetitionDetector
 	// The held tail may only be released when the message is actually
 	// delivered, or a replayed attempt shows the fragment twice. Delivery is
 	// decided by the finish_reason return, not by the channel state: a stream
@@ -211,6 +219,13 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 			}
 
 			if delta.Content != "" {
+				// Fed before the delta is accumulated, so a looping delta never
+				// reaches the view and the accumulator is truncated to the text
+				// that preceded the loop. The rest of the stream is abandoned
+				// rather than drained: draining would re-append the loop.
+				if loop, tripped := repetition.feed(delta.Content); tripped {
+					return abortRepetition(streamSpan, &content, loop, responseModel, totalUsage)
+				}
 				content.WriteString(delta.Content)
 				tokenCount++
 				if c.OnToken != nil {
@@ -314,6 +329,29 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 			return partialStreamedMessage(content.String()), "", "", totalUsage, ctx.Err()
 		}
 	}
+}
+
+// abortRepetition truncates the accumulated content at the offset where the
+// repetition loop started and returns the typed error describing it. The
+// looping partial must not be handed back as the model's answer, and the text
+// that preceded the loop is kept (the same rule as partialStreamedMessage) so a
+// caller can still read what the model was doing before it got stuck.
+func abortRepetition(span trace.Span, content *strings.Builder, loop repetitionLoop, responseModel string, usage types.Usage) (types.Message, string, string, types.Usage, error) {
+	kept := truncateAtRuneBoundary(content.String(), loop.KeepBytes)
+	content.Reset()
+	content.WriteString(kept)
+
+	err := &DegenerateRepetitionError{
+		Token:     loop.Token,
+		Period:    loop.Period,
+		Count:     loop.Count,
+		KeptBytes: len(kept),
+	}
+	if span != nil {
+		observability.RecordError(span, err)
+		span.End()
+	}
+	return partialStreamedMessage(kept), "", responseModel, usage, err
 }
 
 // checkTruncatedStream validates the assembled streamed message and returns it

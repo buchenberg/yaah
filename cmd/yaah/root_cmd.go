@@ -91,6 +91,10 @@ func runOneShotWith(cmd *cobra.Command, prompt string, opts SessionOptions) erro
 		return err
 	}
 	defer sess.close()
+	// A one-shot run in cooked mode sees Ctrl+C as a real SIGINT: without this
+	// funnel the process dies where it stands, the deferred close never runs,
+	// and the session row keeps ended_at = 0 (yaah-cqxg).
+	defer sess.CloseOnInterrupt()()
 
 	cmd.Printf("\n  %s %s/%s\n\n", Dim("provider:"), sess.ProviderName(), sess.ModelName())
 

@@ -295,6 +295,24 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 		}
 		classified := errorclassify.Classify(err, meta)
 
+		// A repeated-token loop is deterministic, not a flake: the same model
+		// handed the same prompt runs the same loop, so an unchanged replay
+		// only buys another 40 minutes of wall clock (yaah-wbew). Allow the
+		// one recovery that can actually help — swapping to the fallback
+		// provider — and otherwise surface the typed error with the repeated
+		// token and count. Handled before the empty-degenerate and
+		// premature-close ladders, which would replay on the same provider.
+		if errors.Is(err, ErrDegenerateRepetition) {
+			if c.FallbackProvider != nil && !providerSwapped {
+				c.swapToFallback(&req)
+				providerSwapped = true
+				c.swappedFromPrimary = true
+				attempt--
+				continue
+			}
+			return attach(result), err
+		}
+
 		if isDegenerateStream(err) && c.replayCount < 2 {
 			c.replayCount++
 			attempt--
