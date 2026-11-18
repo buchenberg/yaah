@@ -1,0 +1,21 @@
+# WF033: the declared budget is three dispatches, but nested loops multiply a
+# single delegate's worst case to fifteen — an author writing a cost bomb
+# as a budget that lies about the work it reaches.
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: cost-bomb-over-budget
+spec:
+  budgets:
+    max_dispatches: 3
+  steps:
+    - id: outer
+      kind: loop
+      max_iterations: 3
+      body:
+        kind: loop
+        max_iterations: 5
+        body:
+          kind: delegate
+          role: developer
+          prompt: spin

@@ -265,3 +265,50 @@ func TestRunReportCarriesStrict(t *testing.T) {
 		t.Error("strict = true without the flag")
 	}
 }
+
+// TestWorkflowRunRefusesCostBombAndEscapes pins the §9 acceptance at the
+// command seam. Authority and cost findings are warnings by contract — the
+// host they will run on may have looser ceilings — so the gate refuses
+// them only under --strict, which these fixtures exercise with the runner
+// never constructed. Without --strict, the cost-bomb half is defused the
+// other way: the run proceeds, but the runtime honors the document's own
+// declared budget of three dispatches.
+func TestWorkflowRunRefusesCostBombAndEscapes(t *testing.T) {
+	refusals := []struct {
+		fixture string
+		code    string
+	}{
+		{"cost_bomb_over_budget.yaml", "WF033"},
+		{"artifact_path_escape.yaml", "WF031"},
+	}
+	for _, tc := range refusals {
+		t.Run("strict refuses "+tc.fixture, func(t *testing.T) {
+			calls := 0
+			swapRunRunner(t, echoRunner(""), &calls)
+			out, err := runWfRun(t, "--strict", wfAdversarial+tc.fixture)
+			if err == nil {
+				t.Fatalf("expected --strict refusal, got success:\n%s", out)
+			}
+			if calls != 0 {
+				t.Errorf("runner called %d times for a --strict refusal", calls)
+			}
+			if !strings.Contains(out, tc.code) {
+				t.Errorf("refusal output missing %s:\n%s", tc.code, out)
+			}
+		})
+	}
+	t.Run("declared budget bounds the bomb at runtime", func(t *testing.T) {
+		calls := 0
+		swapRunRunner(t, echoRunner("done"), &calls)
+		out, err := runWfRun(t, wfAdversarial+"cost_bomb_over_budget.yaml")
+		if err == nil {
+			t.Errorf("cost bomb ran to success (want the declared budget to bite):\n%s", out)
+		}
+		if calls > 3 {
+			t.Errorf("runner called %d times, want at most the 3 dispatches the document budgets", calls)
+		}
+		if calls == 0 {
+			t.Errorf("runner never called; the fixture was refused outright:\n%s", out)
+		}
+	})
+}

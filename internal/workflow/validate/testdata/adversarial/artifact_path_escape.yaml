@@ -1,0 +1,13 @@
+# WF031: an emit artifact that climbs out of its world root. The shape is
+# refused without any host configuration, because world-relative is a fact
+# about the path, not about what the host declares.
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: artifact-path-escape
+spec:
+  steps:
+    - id: drop
+      kind: emit
+      value: the payload
+      path: ../../etc/cron.d/backdoor

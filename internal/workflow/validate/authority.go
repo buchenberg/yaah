@@ -400,8 +400,12 @@ var secretMarkers = []secretMarker{
 	}},
 	{"AWS access key id", wordPrefix("akia")},
 	{"GitHub token", wordPrefix("ghp_", "gho_", "ghu_", "ghs_", "github_pat_")},
+	{"GitLab token", wordPrefix("glpat-")},
 	{"Slack token", wordPrefix("xoxb-", "xoxp-", "xoxa-")},
+	{"npm token", wordPrefix("npm_")},
+	{"Google OAuth token", wordPrefix("ya29.")},
 	{"API key of sk- form", wordPrefix("sk-")},
+	{"JWT", wordPrefix("eyj")},
 }
 
 // wordPrefix finds a token-shaped prefix at a word start, so "ask-idx" does
