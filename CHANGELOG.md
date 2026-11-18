@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.191.0](https://github.com/buchenberg/yaah/compare/v0.190.0...v0.191.0) (2026-11-18)
+
+
+### Features
+
+* **workflow:** call subworkflows with registry and depth limits (yaah-0u0v.23) ([#1669](https://github.com/buchenberg/yaah/issues/1669)) ([27b7617](https://github.com/buchenberg/yaah/commit/27b76179596a0be58bb5501b4f05935561f9ea59))
+
 ## [0.190.0](https://github.com/buchenberg/yaah/compare/v0.189.0...v0.190.0) (2026-11-17)
 
 
