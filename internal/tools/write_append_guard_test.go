@@ -99,7 +99,7 @@ func TestAppendGuard_RewriteVsAppendNeverTears(t *testing.T) {
 	// Baseline: the file already holds a rewrite result before the race
 	// starts, so every legal sample starts with the rewrite prefix.
 	wt := &WriteTool{WS: ws}
-	if _, err := wt.Execute(context.Background(), fmt.Sprintf(`{"filePath":%q,"content":%q}`, path, rewrite)); err != nil {
+	if _, err := wt.Execute(context.Background(), fmt.Sprintf(`{"filePath":%q,"content":%q,"overwrite":true}`, path, rewrite)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -113,7 +113,7 @@ func TestAppendGuard_RewriteVsAppendNeverTears(t *testing.T) {
 		defer wg.Done()
 		<-start
 		for i := 0; i < rounds; i++ {
-			_, err := wt.Execute(context.Background(), fmt.Sprintf(`{"filePath":%q,"content":%q}`, path, rewrite))
+			_, err := wt.Execute(context.Background(), fmt.Sprintf(`{"filePath":%q,"content":%q,"overwrite":true}`, path, rewrite))
 			writeErrs <- err
 		}
 	}()
@@ -221,7 +221,7 @@ func TestWriteGuard_RefusesStaleWrite(t *testing.T) {
 	}
 
 	tool := &WriteTool{WS: &staleRewriteWorkspace{Workspace: ws, target: path}}
-	_, err := tool.Execute(context.Background(), fmt.Sprintf(`{"filePath":%q,"content":%q}`, path, "tool result"))
+	_, err := tool.Execute(context.Background(), fmt.Sprintf(`{"filePath":%q,"content":%q,"overwrite":true}`, path, "tool result"))
 	if err == nil {
 		t.Fatal("write over an out-of-band change must fail")
 	}
@@ -280,7 +280,7 @@ func TestWriteGuard_CreatesNewFileAndNotifiesOverwrite(t *testing.T) {
 	}
 	meta := map[string]any(nil)
 	ctx := WithSupervisionMeta(context.Background(), &meta)
-	if _, err := tool.Execute(ctx, fmt.Sprintf(`{"filePath":%q,"content":%q}`, existing, "new")); err != nil {
+	if _, err := tool.Execute(ctx, fmt.Sprintf(`{"filePath":%q,"content":%q,"overwrite":true}`, existing, "new")); err != nil {
 		t.Fatal(err)
 	}
 	if meta["file_existed"] != true {

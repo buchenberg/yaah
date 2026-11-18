@@ -36,10 +36,14 @@ func TestWriteTool_overwritesExistingFile(t *testing.T) {
 	os.WriteFile(path, []byte("old content"), 0o644)
 
 	wt := &WriteTool{}
-	args, _ := json.Marshal(map[string]any{"content": "new content", "filePath": path})
-	_, err := wt.Execute(context.Background(), string(args))
+	args, _ := json.Marshal(map[string]any{"content": "new content", "filePath": path, "overwrite": true})
+	result, err := wt.Execute(context.Background(), string(args))
 	if err != nil {
 		t.Fatalf("Execute() error: %v", err)
+	}
+	// The previous bytes must be recoverable, and the result must say where.
+	if !strings.Contains(result, "stashed at") {
+		t.Errorf("result = %q, want the stash path reported", result)
 	}
 
 	data, _ := os.ReadFile(path)
@@ -140,7 +144,7 @@ func TestWriteTool_supervisionMetaRecordsExistence(t *testing.T) {
 
 	meta := map[string]any(nil)
 	ctx := WithSupervisionMeta(context.Background(), &meta)
-	args, _ := json.Marshal(map[string]any{"content": "next", "filePath": existing})
+	args, _ := json.Marshal(map[string]any{"content": "next", "filePath": existing, "overwrite": true})
 	if _, err := wt.Execute(ctx, string(args)); err != nil {
 		t.Fatalf("existing-file Execute() error: %v", err)
 	}

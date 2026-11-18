@@ -44,7 +44,7 @@ func TestWriteReceipt_LastLineNamesDeltaAndDigest(t *testing.T) {
 	t.Run("overwrite", func(t *testing.T) {
 		path := filepath.Join(dir, "over.txt")
 		writeFileAt(t, path, "old content\n")
-		out, err := wt.Execute(context.Background(), fmt.Sprintf(`{"filePath":%q,"content":"new\n"}`, path))
+		out, err := wt.Execute(context.Background(), fmt.Sprintf(`{"filePath":%q,"content":"new\n","overwrite":true}`, path))
 		if err != nil {
 			t.Fatalf("write failed: %v", err)
 		}
